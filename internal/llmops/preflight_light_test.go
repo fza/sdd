@@ -438,3 +438,34 @@ func TestPreflightLight_DistinctObservationsOnASharedBasisStay(t *testing.T) {
 		t.Fatalf("each call's distinct observation on the shared basis should stay, got %d of %d: %+v", strains, result.Calls, result.Findings)
 	}
 }
+
+// The deep reading's ref fit renders each ref with the applicability lines
+// pre-flight reads beneath its target, and says why where it has none.
+func TestDeepRefFit(t *testing.T) {
+	done := &model.Entry{ID: "20261101-110000-s-tac-don", Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical}
+	graph := model.NewGraph([]*model.Entry{done})
+	refined := model.FitRef(graph, model.Ref{ID: done.ID, Kind: model.RefKindRefines})
+	missing := model.FitRef(graph, model.Ref{ID: "20261101-130000-s-tac-gon", Kind: model.RefKindRelated})
+	legacy := model.FitRef(graph, model.Ref{ID: done.ID, Kind: model.RefKindUnknown})
+	rendered, err := llmops.DeepRefFit([]model.RefFit{refined, missing, legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admissible []string
+	for _, kind := range refined.Admissible {
+		admissible = append(admissible, string(kind))
+	}
+	for _, want := range []string{
+		"\n## Ref fit\n",
+		"refs[0] " + done.ID + " (refines)\nAdmissible ref kinds for this target (terminal-done): " + strings.Join(admissible, ", ") + "\nChosen ref kind: refines, inapplicable: " + refined.Cell.Note + ".",
+		"refs[1] 20261101-130000-s-tac-gon (related)\nIts target resolves in neither this graph nor a dependency.\n",
+		"refs[2] " + done.ID + " (unknown)\nIts kind is outside the capturable set.\n",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the ref fit should render %q:\n%s", want, rendered)
+		}
+	}
+	if empty, err := llmops.DeepRefFit(nil); err != nil || empty != "" {
+		t.Fatalf("a draft without refs should render no ref fit, got %q, %v", empty, err)
+	}
+}

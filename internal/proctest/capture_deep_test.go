@@ -186,6 +186,27 @@ func TestCaptureDeep_ADraftLargerThanAPageServesWhole(t *testing.T) {
 	}
 }
 
+// Page 1 states each ref's fit as pre-flight reads it: the target's class,
+// the kinds it admits and the chosen kind's applicability.
+func TestCaptureDeep_TheReadingStatesEachRefsFit(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-ref-fit", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
+	first := resume.Open[0].Instructions
+	var admissible []string
+	for _, kind := range model.AdmissibleRefKinds(model.TargetLiveDecision) {
+		admissible = append(admissible, string(kind))
+	}
+	for _, want := range []string{
+		"refs[0] " + captureRefID + " (addresses)\nAdmissible ref kinds for this target (live-decision): " + strings.Join(admissible, ", ") + "\n",
+		"Chosen ref kind: addresses, applicable: ",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("page 1 should state the ref's fit, %q:\n%s", want, first)
+		}
+	}
+}
+
 // readingPages returns how many pages the reading page 1 opens takes.
 func readingPages(t *testing.T, first string) int {
 	t.Helper()

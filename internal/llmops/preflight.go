@@ -412,7 +412,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 			if !ok {
 				continue
 			}
-			parts = append(parts, formatReferencedEntry(owner, e)+refApplicabilityLines(owner, ref, e))
+			parts = append(parts, formatReferencedEntry(owner, e)+refApplicabilityLines(model.FitRef(graph, ref)))
 			if rr := owner.ResolveRef(e.ID); rr.IsStale() {
 				if head, ok := owner.ByID[rr.Head()]; ok {
 					parts = append(parts, "(live head of "+ref.ID+")\n"+formatReferencedEntry(owner, head))
@@ -518,20 +518,27 @@ func formatReferencedEntry(graph *model.Graph, e *model.Entry) string {
 // nothing (the mechanical check rejects them), and a template failure
 // degrades to no lines rather than blocking capture — the templates are
 // embedded, so neither is expected.
-func refApplicabilityLines(graph *model.Graph, ref model.Ref, target *model.Entry) string {
-	class := model.ClassifyRefTarget(target, graph.DerivedStatus(target))
-	cell, ok := model.RefKindApplicability(ref.Kind, class)
-	if !ok {
+func refApplicabilityLines(fit model.RefFit) string {
+	if !fit.Capturable {
 		return ""
 	}
-	kinds := model.AdmissibleRefKinds(class)
-	names := make([]string, len(kinds))
-	for i, k := range kinds {
+	lines, err := refApplicability(fit)
+	if err != nil {
+		return ""
+	}
+	return "\n" + lines
+}
+
+// refApplicability renders a resolved, capturable fit through the
+// ref_applicability template.
+func refApplicability(fit model.RefFit) (string, error) {
+	names := make([]string, len(fit.Admissible))
+	for i, k := range fit.Admissible {
 		names[i] = string(k)
 	}
 	tmpl, err := parsedPreflightTemplates()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var sb strings.Builder
 	err = tmpl.ExecuteTemplate(&sb, "ref_applicability", struct {
@@ -541,16 +548,43 @@ func refApplicabilityLines(graph *model.Graph, ref model.Ref, target *model.Entr
 		Applicable bool
 		Note       string
 	}{
-		Class:      class,
+		Class:      fit.Class,
 		Admissible: strings.Join(names, ", "),
-		Chosen:     ref.Kind,
-		Applicable: cell.Applicable,
-		Note:       cell.Note,
+		Chosen:     fit.Ref.Kind,
+		Applicable: fit.Cell.Applicable,
+		Note:       fit.Cell.Note,
 	})
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("rendering the applicability of ref %s: %w", fit.Ref.ID, err)
 	}
-	return "\n" + strings.TrimSpace(sb.String())
+	return strings.TrimSpace(sb.String()), nil
+}
+
+// DeepRefFit renders the deep verifier's ref fit: each ref of the draft
+// under the applicability lines pre-flight reads beneath its target, or
+// why it has none.
+func DeepRefFit(fits []model.RefFit) (string, error) {
+	if len(fits) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	b.WriteString("\n## Ref fit\n")
+	for i, fit := range fits {
+		fmt.Fprintf(&b, "\nrefs[%d] %s (%s)\n", i, fit.Ref.ID, fit.Ref.Kind)
+		switch {
+		case !fit.Resolved:
+			b.WriteString("Its target resolves in neither this graph nor a dependency.\n")
+		case !fit.Capturable:
+			b.WriteString("Its kind is outside the capturable set.\n")
+		default:
+			lines, err := refApplicability(fit)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(lines + "\n")
+		}
+	}
+	return b.String(), nil
 }
 
 // derivedStatusForPrompt renders a Status as plain prose for the validator
