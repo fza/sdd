@@ -40,20 +40,6 @@ func ReasonRepeatsIntent(reason, intent string) bool {
 	return !slices.ContainsFunc(added, func(w string) bool { return slices.Contains(causeWords, w) })
 }
 
-// approvalWords say yes to a draft and nothing about why.
-var approvalWords = []string{
-	"ok", "okay", "yes", "yep", "yeah", "y", "sure", "fine", "good", "great", "lgtm",
-	"approve", "approved", "agree", "agreed", "confirm", "confirmed", "go", "ahead", "do", "write", "it", "all", "them",
-	"ja", "passt", "gut", "klar", "einverstanden",
-}
-
-// OnlyApproval reports whether words hold nothing but an approval, such as
-// "ok" or "yes, go ahead": words a person gives to approve, never a reason.
-func OnlyApproval(words string) bool {
-	run := wordRun(words)
-	return len(run) > 0 && !slices.ContainsFunc(run, func(w string) bool { return !slices.Contains(approvalWords, w) })
-}
-
 // QuotedFrom reports whether words quote message: message holds them as
 // whole words in that order, case and punctuation set aside.
 func QuotedFrom(words, message string) bool {

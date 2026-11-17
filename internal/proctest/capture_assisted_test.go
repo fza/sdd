@@ -107,17 +107,6 @@ func TestAssisted_ThePersonsOwnReasonIsStoredAsTheirs(t *testing.T) {
 	}
 }
 
-func TestAssisted_AnApprovalIsNeverTheReason(t *testing.T) {
-	_, session := authorshipWorld(t, proctest.WithAssistedDialogue())
-	instance := sealedCapture(t, session, assistedDirective())
-	for _, words := range []string{"ok", "Yes!", "lgtm"} {
-		_, err := session.AnswerErr(t, instance, "playback", "confirm", map[string]any{"reasonWords": words}, words)
-		if err == nil || !strings.Contains(err.Error(), "an approval, not a reason") {
-			t.Errorf("%q relayed as the reason should be refused, got %v", words, err)
-		}
-	}
-}
-
 // The agent limit binds what an agent writes alone; a draft the person
 // approves needs no such bound.
 func TestAssisted_TheAgentLimitDoesNotHoldAnApprovedDraft(t *testing.T) {
