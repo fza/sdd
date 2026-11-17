@@ -30,7 +30,15 @@ func (s *Session) holdForApproval(inst *Instance, step *Step) {
 		return
 	}
 	inst.parking = &Parking{Step: step.ID, Reason: approvalHoldReason, Since: s.now()}
-	s.appendEvent(inst.ID, EventParked, map[string]any{"step": step.ID, "reason": approvalHoldReason, "held": true})
+	inst.sealed = inst.Store.StateSnapshot()
+	s.appendEvent(inst.ID, EventParked, map[string]any{"step": step.ID, "reason": approvalHoldReason, "held": true, "snapshot": inst.sealed})
+}
+
+// revisedSinceGate holds a draft the person sent back from its approval gate
+// until it changed: their adjust asks for a revision, and a draft played back
+// unchanged would ask them again for nothing.
+func revisedSinceGate(ctx *Context) (bool, error) {
+	return ctx.sealed == "" || ctx.Store.StateSnapshot() != ctx.sealed, nil
 }
 
 // Approved reports whether store holds a person's approval of its current

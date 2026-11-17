@@ -61,6 +61,9 @@ type Context struct {
 	// approval is whether the step is an assisted session's approval gate,
 	// where only the person answers.
 	approval bool
+	// sealed is the state snapshot an assisted session's approval gate last
+	// held the instance at; empty in any other session.
+	sealed string
 	// Cap is the effective bound on the running inject's result: the spec's
 	// declaration over the query's registered default. A query that cuts its
 	// result at whole units sizes that cut from Cap and returns a

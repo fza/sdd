@@ -181,6 +181,15 @@ func registerBuiltinPredicates(r *Registry) {
 
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
+			Name: "revisedSinceGate",
+			Doc:  "The draft changed since an assisted session's approval gate last held it, or no such gate held it: a draft the person sent back waits for its revision.",
+		},
+		Fn:          revisedSinceGate,
+		FailMessage: "the person sent this draft back at its approval gate: revise it before it is checked and played back again",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
 			Name: "specLoads",
 			Doc: "For a procedure draft, the declared workflow loads: procedureSpec parses and validates " +
 				"against this registry through the engine's own loader — capture never duplicates spec rules. " +

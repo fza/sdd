@@ -149,5 +149,8 @@ func (s *Session) replayParked(ev Event) error {
 	step, _ := ev.Data["step"].(string)
 	reason, _ := ev.Data["reason"].(string)
 	inst.parking = &Parking{Step: step, Reason: reason, Since: ev.TS}
+	if sealed, ok := ev.Data["snapshot"].(string); ok {
+		inst.sealed = sealed
+	}
 	return nil
 }

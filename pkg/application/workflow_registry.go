@@ -44,6 +44,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowTiming,
 		w.registerUserWords,
 		w.registerAuthorship,
+		w.registerBatch,
 		w.registerWorkflowDeep,
 		w.registerWorkflowRecheck,
 	} {

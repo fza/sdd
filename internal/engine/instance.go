@@ -67,6 +67,9 @@ type Instance struct {
 	// parking is the step an autonomous session parked the instance at,
 	// cleared by its next answer.
 	parking *Parking
+	// sealed is the state snapshot the approval gate last held the instance
+	// at (revisedSinceGate); replayed from the park event.
+	sealed string
 	// forkPending marks a delegate dispatch answered whose fork is not
 	// recorded yet, so a delegateEnded route does not fire before it.
 	forkPending bool
@@ -288,6 +291,9 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading, hooksJoined: joined}
 	if step := inst.currentStep(); step != nil {
 		ctx.Arrived = inst.arrived(step)
+	}
+	if s.DialogueMode == model.DialogueAssisted {
+		ctx.sealed = inst.sealed
 	}
 	return ctx, nil
 }

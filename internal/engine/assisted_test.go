@@ -261,3 +261,67 @@ func TestAssistedSealedDrafts(t *testing.T) {
 		t.Error("outside an assisted session no draft should join an answer")
 	}
 }
+
+// A draft the person sends back unrevised holds where it returns until it
+// changes: their adjust asks for a revision.
+func TestAssistedSendBackHoldsUntilRevised(t *testing.T) {
+	machine := `state:
+    body: {type: text, optional: true, desc: x}
+steps:
+    - id: draft
+      guard: revisedSinceGate
+      collect: ["body?"]
+      transitions:
+          - otherwise: gate
+    - id: gate
+      chooser: user
+      options:
+          - {choice: confirm, call: confirmPlayback, to: end(completed)}
+          - {choice: adjust, collect: ["body?"], to: draft}`
+	spec := mustParseLanes(t, machine, "## unit: draft\n\nDraft.\n\n## unit: gate\n\nPlay back.\n")
+	for name, opts := range map[string][]engine.SessionOption{"assisted": {assisted()}, "guided": nil} {
+		t.Run(name, func(t *testing.T) {
+			sink := &recordingSink{}
+			eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+			session := eng.NewSession("s_assisted", "tester", sink, opts...)
+			sv, err := session.Start(spec, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sv.Step != "gate" {
+				t.Fatalf("a draft never played back should pass, got %s", sv.Step)
+			}
+			sv, err = session.Answer(sv.Instance, "gate", "adjust", nil, "not this one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "guided" {
+				if sv.Step != "gate" {
+					t.Errorf("a guided session holds no draft for its revision, got %s", sv.Step)
+				}
+				return
+			}
+			if sv.Step != "draft" || !slices.ContainsFunc(sv.Diagnostics, func(d string) bool { return strings.Contains(d, "sent this draft back") }) {
+				t.Fatalf("the unrevised draft should hold, got step %s diagnostics %v", sv.Step, sv.Diagnostics)
+			}
+			replayed, err := eng.ReplaySession("s_assisted", "tester", sink.events, func(string) (*engine.Spec, error) { return spec, nil }, nopSink{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sv, err = replayed.Serve(sv.Instance); err != nil || sv.Step != "draft" || len(sv.Diagnostics) == 0 {
+				t.Fatalf("a resumed session should keep holding the draft, got step %s diagnostics %v err %v", sv.Step, sv.Diagnostics, err)
+			}
+			session.SetDialogue(model.DialogueGuided, "")
+			if released, err := session.Poll(sv.Instance); err != nil || released.Step != "gate" {
+				t.Fatalf("outside an assisted session no gate holds the draft, got %+v err %v", released, err)
+			}
+			sv, err = replayed.Report(sv.Instance, map[string]any{"body": "revised"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sv.Step != "gate" {
+				t.Errorf("the revised draft should go on to the gate, got %s", sv.Step)
+			}
+		})
+	}
+}

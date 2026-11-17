@@ -772,8 +772,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	}
 	live := w.liveChildren(request.Instance)
 	var (
-		serve *engine.Serve
-		err   error
+		serve   *engine.Serve
+		err     error
+		settled string
 	)
 	chooser, hasChooser := request.Report["chooser"].(string)
 	choice, hasChoice := request.Report["choice"].(string)
@@ -798,7 +799,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		// (20260811-233331-s-tac-bjn). Refuse by name instead.
 		for _, key := range slices.Sorted(maps.Keys(request.Report)) {
 			switch key {
-			case "chooser", "choice", "fields", "userWords", "reason":
+			case "chooser", "choice", "fields", "userWords", "reason", "batch":
 			default:
 				return nil, fmt.Errorf("field %q cannot ride a chooser answer at the top level and was not applied — state a chooser answer collects goes inside its fields object", key)
 			}
@@ -809,7 +810,14 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		if err := w.checkUserWordsQuoted(request.Instance, fields, words); err != nil {
 			return nil, err
 		}
+		batch, batchErr := w.readBatch(request.Instance, chooser, request.Report["batch"])
+		if batchErr != nil {
+			return nil, batchErr
+		}
 		serve, err = w.session.AnswerWith(request.Instance, chooser, choice, fields, engine.AnswerWords{User: words, Reason: reason})
+		if err == nil && len(batch) > 0 {
+			settled, err = w.answerBatch(ctx, identity, chooser, words, batch)
+		}
 	} else {
 		serve, err = w.session.Report(request.Instance, request.Report)
 	}
@@ -843,6 +851,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	result, err := w.publicServe(serve)
 	if err != nil {
 		return nil, err
+	}
+	if settled != "" {
+		result.Instructions = strings.TrimSpace(result.Instructions + "\n\n" + settled)
 	}
 	result.Dispatches, err = w.filledDispatches(ctx, identity)
 	if forked != nil {
