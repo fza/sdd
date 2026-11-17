@@ -227,7 +227,10 @@ func TestHooksRefuseACommandThatIsAFolder(t *testing.T) {
 // project repository, committed before local, each against its own hooks
 // folder and keyed by its repository's real root.
 func TestHooksReadEveryLayerOfAProjectDirLayout(t *testing.T) {
-	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	global := filepath.Join(base, "config", "sdd", "config.yaml")
 	work, project := filepath.Join(base, "work"), filepath.Join(base, "project")
 	hook := func(command string) string { return "hooks:\n  - event: entry.written\n    command: " + command + "\n" }
@@ -625,6 +628,7 @@ func TestRunRunsTheFileWithoutAShellInItsHooksFolder(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "my lint.sh"), `pwd -P; printf '%s|' "$@"; cat`)
 	w.commit(t, "  - event: entry.written\n    command: my\\ lint.sh\n    args: [\"$HOME\", \"a b\"]\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	output, err := w.commands().Run(t.Context(), w.only(t), []byte(`{"event":"entry.written"}`))
 	if err != nil {
@@ -675,6 +679,7 @@ func TestRunCapsTheHooksOutput(t *testing.T) {
 	script(t, filepath.Join(w.hooksDir(), "loud.sh"), "head -c 2000000 /dev/zero")
 	script(t, filepath.Join(w.hooksDir(), "noisy.sh"), "head -c 100000 /dev/zero | tr '\\0' x >&2; exit 1")
 	w.commit(t, "  - event: entry.written\n    command: loud.sh\n  - event: entry.written\n    command: noisy.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	resolved := w.hooks(t)
 	if _, err := w.commands().Run(t.Context(), resolved[0], nil); err == nil || !strings.Contains(err.Error(), "more than 1 MiB to stdout") {
@@ -703,6 +708,7 @@ func TestRunStopsTheHookAndItsChildrenWhenTheContextEnds(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "hang.sh"), "sleep 30 & echo $! > child.pid; wait")
 	w.commit(t, "  - event: entry.written\n    command: hang.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	hook := w.only(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
@@ -750,5 +756,27 @@ func TestSweepDropsTheAllowsOfVanishedCheckouts(t *testing.T) {
 	}
 	if state := w.only(t).State; state != model.HookAllowed {
 		t.Errorf("the allow of a present checkout should stay, got %s", state)
+	}
+}
+
+// A project inside a repository that tracks none of its hook files cannot
+// have them allowed: an allow would cover the declarations alone, and a
+// changed script would run unasked.
+func TestHooksWhoseFilesGitTracksNoneOfFailClosed(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+
+	hook := w.only(t)
+	if hook.State != model.HookPending || !strings.Contains(hook.Notice, "git tracks none of the files") {
+		t.Fatalf("a hook whose files git does not track should wait, saying why, got %+v", hook)
+	}
+	if _, err := w.commands().Reviews(t.Context()); err == nil || !strings.Contains(err.Error(), "track them in the repository holding the project") {
+		t.Fatalf("its review should fail naming the way out, got %v", err)
+	}
+
+	w.track(t, ".sdd")
+	if hook := w.only(t); hook.State != model.HookPending || strings.Contains(hook.Notice, "git tracks none") {
+		t.Fatalf("once tracked the hook should wait for an allow alone, got %+v", hook)
 	}
 }

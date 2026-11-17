@@ -309,6 +309,7 @@ func TestInitAllowsThePendingHooksOnATerminal(t *testing.T) {
 	if err := os.Chmod(filepath.Join(work, ".sdd", "hooks", "lint.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gitIn(t, work, "add", "-f", ".sdd/hooks")
 	if output, err := runAppErr(t, work, "init", "--scope", "project", "--participant", "Ada", "--agents", "claude"); err != nil {
 		t.Fatalf("sdd init: %v\n%s", err, output)
 	}

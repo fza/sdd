@@ -564,7 +564,7 @@ An allow records a hash over the repository's hook declarations, each with its l
 - `sdd init` offers the waiting repositories when it runs in a terminal, and otherwise names how many hooks wait.
 - Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each repository waiting at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks allow`. A hook that changes while the call runs fails the call the same way.
 
-sdd fails closed. A repository git cannot list, such as a folder without `.git` or one git refuses, has hooks that neither run nor can be allowed, and the call names why. A hooks folder whose link leads out of the repository is refused the same way.
+sdd fails closed. A repository git cannot list, such as a folder without `.git` or one git refuses, has hooks that neither run nor can be allowed, and the call names why. A hooks folder whose link leads out of the repository is refused the same way, and so is one holding files outside `local/` while git tracks none of them, as in a project unpacked inside a repository that does not track it: track the files, or give the project a repository of its own.
 
 The allow record is `~/.local/state/sdd/hooks/allowed.json`, readable only by you. It is keyed by the checkout's real path, which a repository cannot choose, so each checkout is allowed on its own. An unreadable record allows nothing, and the next `sdd hooks allow` rewrites it. The [daily sweep](#the-daily-sweep) drops the allows of checkouts gone from disk.
 
