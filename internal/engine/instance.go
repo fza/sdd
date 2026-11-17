@@ -476,6 +476,9 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
 	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
+	if step := inst.currentStep(); step != nil {
+		ctx.approval = s.approvalGateAt(inst, step)
+	}
 	if cmd.Rounds {
 		step := inst.currentStep()
 		ctx.Round = func(fields map[string]any) error {
@@ -712,6 +715,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	if s.unattendedAt(step) != nil && inst.unattendedSpent(step) {
 		return sv, s.park(inst, step, sv)
 	}
+	if s.approvalGateAt(inst, step) {
+		s.holdForApproval(inst, step)
+	}
 	switch {
 	case len(step.Await) == 0:
 		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
@@ -830,7 +836,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		switch {
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
-		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAuto:
+		case s.approvalGateAt(inst, step):
+			sv.Goal = "play the checked draft back to the person; relay their answer verbatim"
+		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode.AgentAnswers():
 			sv.Goal = "decide yourself; answer with a one-line reason"
 		case step.Chooser == ChooserUser:
 			sv.Goal = "put the choice to the user; relay their answer verbatim"
@@ -1121,8 +1129,8 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 const dialogueModeValue = "dialogueMode"
 
 func (s *Session) dialogueMode() model.DialogueMode {
-	if s.DialogueMode == model.DialogueAuto {
-		return model.DialogueAuto
+	if s.DialogueMode.AgentAnswers() {
+		return s.DialogueMode
 	}
 	return model.DialogueGuided
 }

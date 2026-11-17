@@ -71,7 +71,7 @@ func TestServeRefusesAnUnknownDialogueMode(t *testing.T) {
 			if result.err == nil {
 				t.Fatal("serve should refuse a config carrying an unknown dialogue mode")
 			}
-			for _, part := range []string{tc.file, "autonomous", "guided or auto"} {
+			for _, part := range []string{tc.file, "autonomous", "guided, auto or assisted"} {
 				if !strings.Contains(result.err.Error(), part) {
 					t.Errorf("the refusal should name the file, the value and the valid values, missing %q: %v", part, result.err)
 				}

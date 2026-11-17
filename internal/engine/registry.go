@@ -58,6 +58,9 @@ type Context struct {
 	// hooksJoined is whether the hooks joined findings into the current
 	// step's channel when it was last left.
 	hooksJoined bool
+	// approval is whether the step is an assisted session's approval gate,
+	// where only the person answers.
+	approval bool
 	// Cap is the effective bound on the running inject's result: the spec's
 	// declaration over the query's registered default. A query that cuts its
 	// result at whole units sizes that cut from Cap and returns a

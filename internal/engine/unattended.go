@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/networkteam/sdd/internal/model"
 )
 
 // Parking is where an autonomous session parked an instance: the step a
@@ -19,7 +17,7 @@ type Parking struct {
 // unattendedAt returns the step's unattended bound when it is in force: at a
 // user chooser in an autonomous session.
 func (s *Session) unattendedAt(step *Step) *Unattended {
-	if s.DialogueMode != model.DialogueAuto || step.Chooser != ChooserUser {
+	if !s.DialogueMode.AgentAnswers() || step.Chooser != ChooserUser {
 		return nil
 	}
 	return step.Unattended
@@ -72,13 +70,17 @@ func (s *Session) checkUnattended(inst *Instance, step *Step, choice, userWords 
 
 // RefuseUnattendedAbandon refuses abandoning a running instance that waits at
 // an unattended step of an autonomous session: dropping a blocked move is the
-// user's, as overriding its check is, so an agent alone parks it instead.
+// user's, as overriding its check is, so an agent alone parks it instead. A
+// draft at an assisted session's approval gate is the person's to drop too.
 func (s *Session) RefuseUnattendedAbandon(instanceID string) error {
 	inst, ok := s.instances[instanceID]
 	if !ok || inst.Status != StatusRunning {
 		return nil
 	}
 	step := inst.currentStep()
+	if step != nil && s.approvalGateAt(inst, step) {
+		return fmt.Errorf("%s at %s is not abandoned by the agent: it waits for the person's approval, and the person drops it by answering abort", instanceID, step.ID)
+	}
 	if step == nil || s.unattendedAt(step) == nil {
 		return nil
 	}

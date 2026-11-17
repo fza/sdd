@@ -39,6 +39,9 @@ const (
 type playbackConfirmation struct {
 	Snapshot string `json:"snapshot"`
 	Step     string `json:"step"`
+	// Approval marks a person's confirmation at an assisted session's
+	// approval gate.
+	Approval bool `json:"approval,omitempty"`
 }
 
 // presenceFields maps each presence predicate to the store field it reads.
@@ -469,13 +472,14 @@ func registerBuiltinCommands(r *Registry) {
 	mustRegisterCommand(r, Command{
 		Doc: FuncDoc{
 			Name:   "confirmPlayback",
-			Doc:    "Records the user's confirmation bound to the current state snapshot (chooser call, user options only). Any later state edit invalidates it and reopens the recording chooser.",
+			Doc:    "Records the user's confirmation bound to the current state snapshot (chooser call, user options only), at an assisted session's approval gate as the person's approval. Any later state edit invalidates it and reopens the recording chooser.",
 			Writes: []string{fieldPlaybackConfirmation},
 		},
 		Fn: func(ctx *Context) error {
 			return ctx.Store.WriteEngine(fieldPlaybackConfirmation, playbackConfirmation{
 				Snapshot: ctx.Store.StateSnapshot(),
 				Step:     ctx.Step,
+				Approval: ctx.approval,
 			})
 		},
 	})
@@ -1027,10 +1031,11 @@ func asConfirmation(v any) (playbackConfirmation, bool) {
 	case map[string]any:
 		snap, _ := c["snapshot"].(string)
 		step, _ := c["step"].(string)
+		approval, _ := c["approval"].(bool)
 		if snap == "" {
 			return playbackConfirmation{}, false
 		}
-		return playbackConfirmation{Snapshot: snap, Step: step}, true
+		return playbackConfirmation{Snapshot: snap, Step: step, Approval: approval}, true
 	default:
 		return playbackConfirmation{}, false
 	}

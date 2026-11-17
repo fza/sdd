@@ -64,7 +64,7 @@ func TestConfigSetRefusesAValueOutsideTheAllowedSet(t *testing.T) {
 		{"global", "verify.runner", "docker", "subagent, claude or driver", "claude"},
 		{"local", "verify.runner", "codex", "subagent, claude or driver", "claude"},
 		{"global", "verify.claude.effort", "ultra", "low, medium, high, xhigh or max", "xhigh"},
-		{"local", "dialogue.mode", "free", "guided or auto", "auto"},
+		{"local", "dialogue.mode", "free", "guided, auto or assisted", "auto"},
 		{"global", "llm.structured_output", "xml", "json_schema, json_object or auto", "json_object"},
 		{"global", "llm_prefilter.protocol", "bm25", "systemone, cohere-rerank or generate", "generate"},
 		{"global", "llm_prefilter.structured_output", "xml", "json_schema, json_object or auto", "auto"},
