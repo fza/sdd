@@ -47,6 +47,15 @@ func newCaptureWorld(t *testing.T, connID string, options ...proctest.Option) (*
 	return world, session
 }
 
+// clientActor records an actor naming the MCP client connID, which an
+// autonomous capture from it needs (clientActorKnown).
+func clientActor(connID string) proctest.Option {
+	return proctest.WithEntries(&model.Entry{
+		ID: "20260101-080000-s-prc-cli", Type: model.TypeSignal, Kind: model.KindActor, Layer: model.LayerProcess,
+		Canonical: "Agent", Aliases: []string{connID}, Content: "The agent behind the fixture's MCP client.",
+	})
+}
+
 // captureDraft is the one-shot batched report covering every assemble field.
 func captureDraft() map[string]any {
 	return map[string]any{
@@ -604,7 +613,7 @@ func TestCapture_WritingGuideRecheckRunsFreshOnReworkedDraft(t *testing.T) {
 // In an autonomous capture the writing guide and the verifier run before
 // playback, since no dialogue edits follow.
 func TestCapture_AutonomousRunsGuideAndVerifierBeforePlayback(t *testing.T) {
-	world, session := newCaptureWorld(t, "core-autonomous-checks", proctest.WithAutonomousDialogue(), proctest.WithGroundingEnforced(),
+	world, session := newCaptureWorld(t, "core-autonomous-checks", proctest.WithAutonomousDialogue(), clientActor("core-autonomous-checks"), proctest.WithGroundingEnforced(),
 		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
@@ -624,7 +633,7 @@ func TestCapture_AutonomousRunsGuideAndVerifierBeforePlayback(t *testing.T) {
 // Without the verifier, an autonomous capture runs the guide before playback
 // and pre-flight after the confirm, as before.
 func TestCapture_AutonomousWithoutVerifierKeepsPreflightAfterConfirm(t *testing.T) {
-	world, session := newCaptureWorld(t, "core-autonomous-off", proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, "core-autonomous-off", proctest.WithAutonomousDialogue(), clientActor("core-autonomous-off"))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	serve = session.Report(t, instance, captureDraft())

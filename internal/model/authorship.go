@@ -228,20 +228,35 @@ func (g *Graph) AgentMarks() map[string]AgentMark {
 }
 
 // ClientActor names the actor an MCP client stands for: the canonical of the
-// active actor whose canonical or alias matches the client's name, ignoring
-// case, separators and an "mcp client" suffix (claude-code matches the alias
-// Claude Code), else the client name itself.
+// active actor naming it (NamesClient), else "".
 func (g *Graph) ClientActor(client string) string {
-	want := clientKey(client)
-	if want == "" {
-		return ""
-	}
 	for _, actor := range g.ActiveActorHeads() {
-		if clientKey(actor.Canonical) == want || slices.ContainsFunc(actor.Aliases, func(alias string) bool { return clientKey(alias) == want }) {
+		if actor.NamesClient(client) {
 			return actor.Canonical
 		}
 	}
-	return strings.TrimSpace(client)
+	return ""
+}
+
+// ClientParticipant names the participant an agent's entry e records for the
+// MCP client: e's own canonical when e is the actor naming the client, else
+// ClientActor.
+func (g *Graph) ClientParticipant(e *Entry, client string) string {
+	if e.Kind == KindActor && e.NamesClient(client) {
+		return e.Canonical
+	}
+	return g.ClientActor(client)
+}
+
+// NamesClient reports whether e's canonical or an alias matches the MCP
+// client's name, ignoring case, separators and an "mcp client" suffix
+// (claude-code matches the alias Claude Code).
+func (e *Entry) NamesClient(client string) bool {
+	want := clientKey(client)
+	if want == "" {
+		return false
+	}
+	return clientKey(e.Canonical) == want || slices.ContainsFunc(e.Aliases, func(alias string) bool { return clientKey(alias) == want })
 }
 
 func clientKey(name string) string {

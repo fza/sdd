@@ -342,10 +342,11 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 		if len(draft.Participants) > 0 {
 			return nil, nil, nil, captureValidationError([]model.Finding{{Field: "participants", Message: agentParticipantsRule}})
 		}
-		entry.DecidedBy, entry.RunBy, entry.Participants = model.DecidedByAgent, participant, nil
-		if actor := snapshot.graph.ClientActor(draft.agent.client); actor != "" {
-			entry.Participants = []string{actor}
+		actor := snapshot.graph.ClientParticipant(entry, draft.agent.client)
+		if actor == "" {
+			return nil, nil, nil, captureValidationError([]model.Finding{{Field: "participants", Message: unknownClientRule(draft.agent.client)}})
 		}
+		entry.DecidedBy, entry.RunBy, entry.Participants = model.DecidedByAgent, participant, []string{actor}
 	case draft.approval != nil:
 		markApproved(entry, participant, *draft.approval)
 	case len(entry.Participants) == 0 && participant != "":

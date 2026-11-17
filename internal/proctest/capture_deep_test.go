@@ -710,7 +710,7 @@ func TestCaptureDeep_ACutSkipEndsWithTheDraftItCovered(t *testing.T) {
 }
 
 func TestCaptureDeep_AutonomousVerifiesBeforePlayback(t *testing.T) {
-	world, session := newDeepWorld(t, "deep-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue())
+	world, session := newDeepWorld(t, "deep-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue(), clientActor("deep-autonomous"))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Gather(t, instance)

@@ -109,7 +109,7 @@ func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
 // No user reads an autonomous playback, so a deep finding accepted without an
 // edit is put to the agent's own check, not shown to a user.
 func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing.T) {
-	world, session := newDeepWorld(t, "deep-unedited-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue())
+	world, session := newDeepWorld(t, "deep-unedited-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue(), clientActor("deep-unedited-autonomous"))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Gather(t, instance)

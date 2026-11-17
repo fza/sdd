@@ -12,7 +12,7 @@ import (
 // so a pre-flight parked there has no confirmation behind it. A person taking
 // it over in the guided mode gets the playback first.
 func TestCapture_AGuidedRetryOfAnUnconfirmedParkedPreflightReopensPlayback(t *testing.T) {
-	world, session := newCaptureWorld(t, "mode-switch-unconfirmed", proctest.WithAutonomousDialogue(),
+	world, session := newCaptureWorld(t, "mode-switch-unconfirmed", proctest.WithAutonomousDialogue(), clientActor("mode-switch-unconfirmed"),
 		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))
 	world.LLM.PreflightErr = preflightTimedOut()
 	serve := session.Start(t, "capture", nil)

@@ -94,7 +94,7 @@ func TestCapture_SignalNeedsNoUserWords(t *testing.T) {
 }
 
 func TestCapture_AutonomousDecisionNeedsNoUserWords(t *testing.T) {
-	world := proctest.NewWorld(t, proctest.WithAutonomousDialogue())
+	world := proctest.NewWorld(t, proctest.WithAutonomousDialogue(), clientActor("reason-autonomous"))
 	session := world.Open(t, "reason-autonomous")
 	serve := session.Start(t, "capture", nil)
 	draft := decisionDraft("directive")
