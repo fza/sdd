@@ -551,7 +551,7 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	// unwritten, and publish routes to lateEntries.
 	late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
 		w.graphs.Invalidate()
-		return w.graphs.CurrentFor(ctx.Store)
+		return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
 	})
 	if err != nil {
 		return err
