@@ -237,13 +237,39 @@ func TestClientActor(t *testing.T) {
 		"claude-code":      "Claude",
 		"Claude":           "Claude",
 		"codex-mcp-client": "Codex",
-		"cursor-vscode":    "cursor-vscode",
+		"cursor-vscode":    "",
 		"":                 "",
 	}
 	for client, want := range cases {
 		if got := g.ClientActor(client); got != want {
 			t.Errorf("ClientActor(%q) = %q, want %q", client, got, want)
 		}
+	}
+}
+
+func TestClientParticipant(t *testing.T) {
+	g := model.NewGraph([]*model.Entry{
+		{ID: "20260101-090000-s-prc-cla", Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindActor, Canonical: "Claude", Aliases: []string{"Claude Code"}},
+	})
+	cursor := &model.Entry{Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindActor, Canonical: "Cursor", Aliases: []string{"cursor-vscode"}}
+	gap := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap}
+	cases := []struct {
+		name   string
+		entry  *model.Entry
+		client string
+		want   string
+	}{
+		{name: "a known client", entry: gap, client: "claude-code", want: "Claude"},
+		{name: "an unknown client", entry: gap, client: "cursor-vscode", want: ""},
+		{name: "the actor naming the client", entry: cursor, client: "cursor-vscode", want: "Cursor"},
+		{name: "an actor naming another client", entry: cursor, client: "zed", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := g.ClientParticipant(tc.entry, tc.client); got != tc.want {
+				t.Errorf("ClientParticipant(%q) = %q, want %q", tc.client, got, tc.want)
+			}
+		})
 	}
 }
 

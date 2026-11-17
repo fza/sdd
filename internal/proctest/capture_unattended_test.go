@@ -17,7 +17,7 @@ import (
 // keeps a high finding open.
 func blockedAutonomousCapture(t *testing.T, connID string) (*proctest.World, *proctest.Session, string) {
 	t.Helper()
-	world, session := newCaptureWorld(t, connID, proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, connID, proctest.WithAutonomousDialogue(), clientActor(connID))
 	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "Review this finding."}}
 	serve := session.Start(t, "capture", nil)
 	session.Report(t, serve.Instance, captureDraft())
@@ -98,7 +98,7 @@ func TestUnattended_ASecondBlockParksTheCapture(t *testing.T) {
 }
 
 func TestUnattended_ATimedOutPreflightRetriesOnceThenParks(t *testing.T) {
-	world, session := newCaptureWorld(t, "unattended-timeout", proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, "unattended-timeout", proctest.WithAutonomousDialogue(), clientActor("unattended-timeout"))
 	world.LLM.PreflightErr = preflightTimedOut()
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance

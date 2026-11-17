@@ -59,6 +59,36 @@ func (w *WorkflowSession) markAgentDraft(instance string, draft *EntryDraft) err
 	return nil
 }
 
+// unknownClientRule names the fix for an autonomous capture from a client no
+// actor names: sdd never writes the client's raw name as participant.
+func unknownClientRule(client string) string {
+	return fmt.Sprintf("no actor names the MCP client %q, and in auto mode sdd writes the client's actor as the participant: "+
+		"capture an actor signal for the MCP client %q first (kind actor, a canonical such as Claude, %q among its aliases), then report this draft again", client, client, client)
+}
+
+// clientActorRule is unknownClientRule for an autonomous draft whose
+// starting client resolves to no actor (model.Graph.ClientParticipant), else
+// "".
+func (w *WorkflowSession) clientActorRule(ctx *engine.Context) (string, error) {
+	if !w.Autonomous() || w.assisted() {
+		return "", nil
+	}
+	if ctx.Graph == nil {
+		return "", errors.New("clientActorKnown needs a graph")
+	}
+	client, err := w.startingClient(ctx.Instance)
+	if err != nil || strings.TrimSpace(client) == "" {
+		return "", err
+	}
+	kind, _ := workflowStoreString(ctx.Store, "entryKind")
+	canonical, _ := workflowStoreString(ctx.Store, "canonical")
+	draft := &model.Entry{Kind: model.Kind(kind), Canonical: canonical, Aliases: workflowStoreStrings(ctx.Store, "aliases")}
+	if ctx.Graph.ClientParticipant(draft, client) != "" {
+		return "", nil
+	}
+	return unknownClientRule(client), nil
+}
+
 var errNamelessClient = errors.New("an unattended capture writes for the MCP client that started it, and this client sent no name: send a name in the client info to capture unattended")
 
 // refuseNamelessCapture refuses starting an autonomous move that writes an
@@ -194,6 +224,25 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 		FailMessage: "the draft's authorship fields do not fit the dialogue mode",
 		FailDetail: func(ctx *engine.Context) string {
 			return strings.Join(w.authorshipMissing(ctx.Store), "; ")
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{
+			Name:  "clientActorKnown",
+			Doc:   "In auto mode an actor names the MCP client that started the capture, or the draft is that actor: sdd writes the actor as the participant, never the client's name.",
+			Reads: []string{"entryKind", "canonical", "aliases"},
+		},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			rule, err := w.clientActorRule(ctx)
+			return rule == "", err
+		},
+		FailMessage: "no actor names your MCP client",
+		FailDetail: func(ctx *engine.Context) string {
+			rule, _ := w.clientActorRule(ctx)
+			return rule
 		},
 	})
 	if err != nil {

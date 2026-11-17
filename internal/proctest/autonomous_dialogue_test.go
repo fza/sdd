@@ -39,7 +39,7 @@ func TestAutonomousDialogue_GuidedShellKeepsItsWording(t *testing.T) {
 }
 
 func TestAutonomousDialogue_AgentConfirmsACapture(t *testing.T) {
-	_, session := newCaptureWorld(t, "autonomous-capture", proctest.WithAutonomousDialogue())
+	_, session := newCaptureWorld(t, "autonomous-capture", proctest.WithAutonomousDialogue(), clientActor("autonomous-capture"))
 	serve := session.Start(t, "capture", nil)
 	serve = session.Report(t, serve.Instance, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
@@ -73,7 +73,7 @@ func TestAutonomousDialogue_CaptureAsksForTheBodyInline(t *testing.T) {
 }
 
 func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
-	world, session := newCaptureWorld(t, "autonomous-override", proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, "autonomous-override", proctest.WithAutonomousDialogue(), clientActor("autonomous-override"))
 	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "Review this finding."}}
 	serve := session.Start(t, "capture", nil)
 	session.Report(t, serve.Instance, captureDraft())
@@ -92,7 +92,7 @@ func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 // No user reads an autonomous playback, so the sentences a guide revision
 // added are put to the agent's own check.
 func TestAutonomousDialogue_GuideRevisionPlaybackAddressesTheAgent(t *testing.T) {
-	world, session := newCaptureWorld(t, "autonomous-guide-added", proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, "autonomous-guide-added", proctest.WithAutonomousDialogue(), clientActor("autonomous-guide-added"))
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
 		Reasoning: "the body names no reason the gap matters", Axis: "stranding",
 		Quote: "the fixture observes something", Repair: "write-in", Severity: "substantive",
@@ -116,7 +116,7 @@ func TestAutonomousDialogue_GuideRevisionPlaybackAddressesTheAgent(t *testing.T)
 // No user reads an autonomous playback, so the sentences a guide revision
 // removed are put to the agent's own check.
 func TestAutonomousDialogue_GuideRevisionRemovalsAddressTheAgent(t *testing.T) {
-	world, session := newCaptureWorld(t, "autonomous-guide-removed", proctest.WithAutonomousDialogue())
+	world, session := newCaptureWorld(t, "autonomous-guide-removed", proctest.WithAutonomousDialogue(), clientActor("autonomous-guide-removed"))
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
 		Reasoning: "the second sentence repeats the first", Axis: "stranding",
 		Quote: "It blocks the release.", Repair: "cut", Severity: "substantive",
