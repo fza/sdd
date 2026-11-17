@@ -86,7 +86,7 @@ An approved entry loses its mark and stops the chain: an agent's entry built on 
 
 ## Entries you approve
 
-Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
+Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once, through your agent's question tool: `AskUserQuestion` in Claude Code, `request_user_input` in Codex where its tools list it. Every choice sdd puts to you goes the same way, in `guided` too. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
 
 Your approval binds to the draft you saw. Any change after it, such as an `adjust`, sends the draft back through the checks and plays it back again. The entry is then yours, without `decided-by`:
 
@@ -94,15 +94,15 @@ Your approval binds to the draft you saw. Any change after it, such as an `adjus
 approved-by: Ada         # the participant sdd runs as
 participants: [Ada]
 reason: The flaky step fails one run in ten.   # decisions only
-reason-by: agent         # or Ada, when your answer gave the reason
-intent-by: agent         # directives only; Ada when your answer gave it
+reason-by: Ada           # decisions only
+intent-by: Ada           # directives only
 ```
 
-A decision always carries a reason. When your answer states why, your words are the reason and `reason-by` names you. When you only approve, as with `ok`, the agent's drafted reason is kept and `reason-by: agent` says so; sdd refuses `ok` relayed as your reason. A directive's intent works the same way through `intent-by`. No agent limit applies, since you approve every entry. An approved entry is never marked as agent reasoning and stops a chain as a person's entry does.
+A decision always carries your reason. When your answer states why, your words are the reason. When you only approve, as with `ok`, the agent asks you for the reason before it confirms: you pick its drafted reason, shown in full, or write your own. For several drafts it offers one reason for all, a reason per entry, or one you write, which applies to every entry unless you name which. The reason you pick or write is relayed verbatim and stored as yours; sdd refuses an approval of a decision without it. The playback names a directive's intent plainly: `pending` needs follow-up, `guiding` is a standing guideline, `settled` is closed when written. Approving adopts it as yours; changing it is an `adjust`. No agent limit applies, since you approve every entry. An approved entry is never marked as agent reasoning and stops a chain as a person's entry does.
 
-The agent may hold several sealed drafts and play them back together. One answer settles them all: the agent answers one draft's playback and names the others in `batch`, by the choice each takes. In "all except 3", the others take `confirm` and draft 3 takes `adjust`: it returns to the draft and waits there until the agent revises it, then is checked and played back again. Each approval still binds to its own draft.
+The agent may hold several sealed drafts and play them back together. One answer settles them all: the agent answers one draft's playback and names the others in `batch`, by the choice each takes. In "all except 3", the others take `confirm` and draft 3 takes `adjust`: it returns to the draft and waits there until the agent revises it, then is checked and played back again. A reason in the answer applies to every draft taking the same choice; a draft listed as `{"instance": "<id>", "reasonWords": "..."}` carries its own. Each approval still binds to its own draft.
 
-A sealed draft you never answer waits at its playback, parked. Nothing is written. `sdd sessions` lists it as parked at `playback`. Resume the session in `assisted` or `guided` to answer it yourself. Resumed in `auto`, the agent confirms it as its own, with `decided-by: agent`, and a draft past the agent limit parks at `agentLimit`.
+A sealed draft you never answer waits at its playback, parked. Nothing is written. `sdd sessions` lists it as parked at `playback`, and every `assisted` session opens by naming the drafts other sessions left waiting, so you approve, batch or drop them. Resume the session in `assisted` or `guided` to answer it yourself. Resumed in `auto`, the agent confirms it as its own, with `decided-by: agent`, and a draft past the agent limit parks at `agentLimit`, named there as drafted in `assisted`.
 
 ## Wrap up sessions
 
