@@ -78,17 +78,54 @@ func TestAssisted_TheAgentCannotApprove(t *testing.T) {
 	}
 }
 
-func TestAssisted_ABareApprovalKeepsTheAgentsReason(t *testing.T) {
+// The play-back names a directive's intent plainly and says how to ask the
+// person for a reason they did not give, one for each draft or one shared.
+func TestAssisted_ThePlaybackAsksForThePersonsReason(t *testing.T) {
+	_, session := authorshipWorld(t, proctest.WithAssistedDialogue())
+	serve := session.Start(t, "capture", nil)
+	first := serve.Instance
+	serve = session.Report(t, first, assistedDirective())
+	proctest.RequireStep(t, serve, "playback")
+	for _, want := range []string{"`guiding`: a standing guideline", "Other: you write the reason", "through the AskUserQuestion tool"} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("the playback should say %q, got:\n%s", want, serve.Instructions)
+		}
+	}
+	if strings.Contains(serve.Instructions, "reason-by: agent") {
+		t.Errorf("no approval should leave the agent's reason as the agent's, got:\n%s", serve.Instructions)
+	}
+	second := assistedDirective()
+	second["body"] = strings.Replace(authorshipBody, ".", ", in every suite.", 1)
+	sealedCapture(t, session, second)
+	serve, err := session.WF.Advance(t.Context(), session.World.Identity, sdd.WorkflowAdvanceRequest{Instance: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"One reason for all", "A reason per entry", "it applies to every entry unless you name which"} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("a playback of several drafts should offer %q, got:\n%s", want, serve.Instructions)
+		}
+	}
+}
+
+// Every approved decision carries the person's reason: a bare approval is
+// refused until they state one or pick the agent's, which is then theirs, as
+// the intent they approved is.
+func TestAssisted_AnApprovedDecisionCarriesThePersonsReason(t *testing.T) {
 	world, session := authorshipWorld(t, proctest.WithAssistedDialogue())
 	instance := sealedCapture(t, session, assistedDirective())
+	if _, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "ok"); err == nil || !strings.Contains(err.Error(), "without the person's reason") {
+		t.Fatalf("a bare approval of a decision should be refused for the person's reason, got %v", err)
+	}
+	picked := "ok\nThe drafted reason: " + assistedReason
 	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
-		return session.Answer(t, instance, "playback", "confirm", nil, "ok")
+		return session.Answer(t, instance, "playback", "confirm", map[string]any{"reasonWords": assistedReason}, picked)
 	})
 	if entry.ApprovedBy != "Ada" || entry.AgentDecided() || entry.DecidedBy != "" || entry.RunBy != "" {
 		t.Errorf("the approved entry should be the person's, got approved-by %q decided-by %q run-by %q", entry.ApprovedBy, entry.DecidedBy, entry.RunBy)
 	}
-	if entry.Reason != assistedReason || entry.ReasonBy != model.DraftedByAgent || entry.IntentBy != model.DraftedByAgent {
-		t.Errorf("a bare approval should keep the agent's drafted reason and intent, marked as the agent's, got reason %q by %q, intent by %q", entry.Reason, entry.ReasonBy, entry.IntentBy)
+	if entry.Reason != assistedReason || entry.ReasonBy != "Ada" || entry.IntentBy != "Ada" {
+		t.Errorf("the picked reason and the approved intent should be the person's, got reason %q by %q, intent by %q", entry.Reason, entry.ReasonBy, entry.IntentBy)
 	}
 	if !slices.Equal(entry.Participants, []string{"Ada"}) {
 		t.Errorf("the approved entry should name the local participant, got %v", entry.Participants)
@@ -116,7 +153,7 @@ func TestAssisted_TheAgentLimitDoesNotHoldAnApprovedDraft(t *testing.T) {
 	draft["approves"] = []any{agentEntryID}
 	instance := sealedCapture(t, session, draft)
 	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
-		return session.Answer(t, instance, "playback", "confirm", nil, "approved")
+		return session.Answer(t, instance, "playback", "confirm", map[string]any{"reasonWords": "the agent's entry holds"}, "approved: the agent's entry holds")
 	})
 	if !slices.Equal(entry.Approves, []string{agentEntryID}) || entry.ApprovedBy != "Ada" {
 		t.Errorf("the person's approval should be written, got approves %v approved-by %q", entry.Approves, entry.ApprovedBy)

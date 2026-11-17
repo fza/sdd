@@ -348,7 +348,9 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 		}
 		entry.DecidedBy, entry.RunBy, entry.Participants = model.DecidedByAgent, participant, []string{actor}
 	case draft.approval != nil:
-		markApproved(entry, participant, *draft.approval)
+		if err := markApproved(entry, participant, *draft.approval); err != nil {
+			return nil, nil, nil, err
+		}
 	case len(entry.Participants) == 0 && participant != "":
 		entry.Participants = []string{participant}
 	}
@@ -395,26 +397,35 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 	return validated, snapshot, attachments, nil
 }
 
-// markApproved writes entry as approved by person: their own words stand as
-// the reason and set the intent where they gave them, else the agent's draft
-// does, marked as the agent's.
-func markApproved(entry *model.Entry, person string, approval approvalAuthor) {
+// markApproved writes entry as approved by person. Once they approved it, a
+// decision's reason is the one they gave or picked and a directive's intent
+// the one they approved, both theirs; the checks before their answer read
+// both as the agent's draft.
+func markApproved(entry *model.Entry, person string, approval approvalAuthor) error {
 	entry.ApprovedBy = person
 	if len(entry.Participants) == 0 {
 		entry.Participants = []string{person}
 	}
-	if entry.Type == model.TypeDecision {
-		entry.ReasonBy = model.DraftedByAgent
-		if words := strings.TrimSpace(approval.reasonWords); words != "" {
-			entry.Reason, entry.ReasonBy = words, person
+	if !approval.given {
+		if entry.Type == model.TypeDecision {
+			entry.ReasonBy = model.DraftedByAgent
 		}
+		if entry.Kind == model.KindDirective {
+			entry.IntentBy = model.DraftedByAgent
+		}
+		return nil
+	}
+	if entry.Type == model.TypeDecision {
+		words := strings.TrimSpace(approval.reasonWords)
+		if words == "" {
+			return fmt.Errorf("the person approved decision %s without a reason of theirs: an approved decision carries the reason they gave or picked", entry.ID)
+		}
+		entry.Reason, entry.ReasonBy = words, person
 	}
 	if entry.Kind == model.KindDirective {
-		entry.IntentBy = model.DraftedByAgent
-		if strings.TrimSpace(approval.intentWords) != "" {
-			entry.IntentBy = person
-		}
+		entry.IntentBy = person
 	}
+	return nil
 }
 
 func captureValidationError(findings []model.Finding) error {

@@ -70,6 +70,29 @@ func (w *WorkflowSession) registerUserWords(registry *engine.Registry) error {
 	})
 }
 
+// checkApprovalReason refuses the person's approval of a decision that
+// carries no reason of theirs, in fields or held by the draft: the agent's
+// drafted reason is written only once the person picks it. An answer without
+// the person's words is the engine's to refuse.
+func (w *WorkflowSession) checkApprovalReason(instanceID, chooser, choice, userWords string, fields map[string]any) error {
+	if userWords == "" || !w.session.Approving(instanceID, chooser, choice) {
+		return nil
+	}
+	inst, _ := w.session.Instance(instanceID)
+	kind, _ := workflowStoreString(inst.Store, "entryKind")
+	if owed, _ := model.UserWordsOwed(model.Kind(kind)); !owed {
+		return nil
+	}
+	words, _ := fields[fieldReasonWords].(string)
+	if strings.TrimSpace(words) == "" {
+		words, _ = workflowStoreString(inst.Store, fieldReasonWords)
+	}
+	if strings.TrimSpace(words) != "" {
+		return nil
+	}
+	return fmt.Errorf("%s approves a decision without the person's reason: put the reason question to them as the play-back says, then confirm with their answers as userWords and the reason they picked or wrote, verbatim, as %s", instanceID, fieldReasonWords)
+}
+
 // checkUserWordsQuoted refuses an answer relaying the user's message that sets
 // the user's quoted words to anything that message does not say: a wording
 // change to the draft goes into the body, never into these quotes.

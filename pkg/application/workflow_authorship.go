@@ -22,10 +22,11 @@ type agentAuthor struct {
 
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
-// approvalAuthor carries the person's own words for an approved draft's reason
-// and a directive's intent, each empty when they gave none.
+// approvalAuthor marks a draft the person approves: given once they did, with
+// their words for a decision's reason.
 type approvalAuthor struct {
-	reasonWords, intentWords string
+	given       bool
+	reasonWords string
 }
 
 // markDraft marks whose a capture's draft is (model.Entry.Approved): the
@@ -33,10 +34,9 @@ type approvalAuthor struct {
 // checks an assisted session runs before that gate; otherwise the agent's
 // where the agent answers.
 func (w *WorkflowSession) markDraft(ctx *engine.Context, draft *EntryDraft, beforeGate bool) error {
-	if engine.Approved(ctx.Store) || beforeGate && w.assisted() {
+	if approved := engine.Approved(ctx.Store); approved || beforeGate && w.assisted() {
 		reason, _ := workflowStoreString(ctx.Store, fieldReasonWords)
-		intent, _ := workflowStoreString(ctx.Store, fieldIntentWords)
-		draft.approval = &approvalAuthor{reasonWords: reason, intentWords: intent}
+		draft.approval = &approvalAuthor{given: approved, reasonWords: reason}
 		return nil
 	}
 	return w.markAgentDraft(ctx.Instance, draft)

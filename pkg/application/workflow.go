@@ -178,11 +178,13 @@ type WorkflowServe struct {
 
 // WorkflowParked is where an autonomous session parked a move: the step, the
 // one-line reason, since when, and the call a person resumes it with.
+// Approval marks a draft waiting at an assisted session's approval gate.
 type WorkflowParked struct {
-	Step   string
-	Reason string
-	Since  time.Time
-	Resume string
+	Step     string
+	Reason   string
+	Since    time.Time
+	Resume   string
+	Approval bool
 }
 
 // ComposeInstructions joins host-recomposed unit text (e.g. the deduped lane
@@ -332,9 +334,10 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(&workflowHooks{workflow: w}))
-	if !w.Autonomous() {
-		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id); err != nil {
+	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source),
+		engine.WithQuestionTool(model.QuestionTool(request.ClientName)), engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(&workflowHooks{workflow: w}))
+	if !w.Autonomous() || w.assisted() {
+		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id, w.assisted()); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -472,7 +475,12 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
-	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink, engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(&workflowHooks{workflow: w}))
+	var client string
+	if attachment := stored.Metadata.Attachment; attachment != nil {
+		client = attachment.ClientName
+	}
+	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink,
+		engine.WithQuestionTool(model.QuestionTool(client)), engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(&workflowHooks{workflow: w}))
 	if err != nil {
 		return nil, fmt.Errorf("replaying session %s: %w", stored.Metadata.ID, err)
 	}
@@ -810,7 +818,10 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		if err := w.checkUserWordsQuoted(request.Instance, fields, words); err != nil {
 			return nil, err
 		}
-		batch, batchErr := w.readBatch(request.Instance, chooser, request.Report["batch"])
+		if err := w.checkApprovalReason(request.Instance, chooser, choice, words, fields); err != nil {
+			return nil, err
+		}
+		batch, batchErr := w.readBatch(request.Instance, chooser, choice, words, fields, request.Report["batch"])
 		if batchErr != nil {
 			return nil, batchErr
 		}
@@ -1507,8 +1518,10 @@ func (a *Application) ListWorkflowSessions(ctx context.Context, identity Request
 }
 
 // parkedBlock renders the moves an autonomous session parked in the project,
-// for the person whose session opens; empty when none waits.
-func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity, project ProjectID, opening SessionID) (string, error) {
+// for the person whose session opens; only the drafts waiting at an approval
+// gate for an assisted one, the moves the person there can settle. Empty when
+// none waits.
+func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity, project ProjectID, opening SessionID, approvals bool) (string, error) {
 	sessions, err := a.ListWorkflowSessions(ctx, identity, project)
 	if err != nil {
 		return "", err
@@ -1516,7 +1529,7 @@ func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity,
 	var b strings.Builder
 	for _, session := range sessions {
 		for _, open := range session.Open {
-			if open.Parked == nil || session.Session == opening {
+			if open.Parked == nil || session.Session == opening || approvals && !open.Parked.Approval {
 				continue
 			}
 			title := session.Label
@@ -1527,8 +1540,11 @@ func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity,
 				open.Parked.Since.Local().Format("2006-01-02 15:04"), open.Parked.Reason, open.Parked.Resume)
 		}
 	}
-	if b.Len() == 0 {
+	switch {
+	case b.Len() == 0:
 		return "", nil
+	case approvals:
+		return "Drafts in other sessions wait for the person's approval. Tell them about each; resuming its session plays it back, so they approve it, batch it with the others waiting there, or drop it:" + b.String(), nil
 	}
 	return "Parked moves wait for a person. Tell the user about each:" + b.String(), nil
 }
@@ -2297,6 +2313,7 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 					step, _ := event.Data["step"].(string)
 					reason, _ := event.Data["reason"].(string)
 					item.parked = workflowParked(id, step, reason, event.TS)
+					item.parked.Approval = engine.ParkedForApproval(event)
 				}
 			}
 		case engine.EventMutationOutcome:
