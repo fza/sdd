@@ -239,6 +239,66 @@ func TestAuthorship_AParkedDraftResumesForAPersonAsTheirs(t *testing.T) {
 	}
 }
 
+// A decision drafted in auto mode holds no words of a person. Confirmed or
+// written in the guided mode, it returns to assemble for the person's own
+// reason and intent, and is then theirs.
+func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionAsksForTheUsersWords(t *testing.T) {
+	cases := []struct {
+		name string
+		// toGuided turns the session guided and returns the serve that
+		// follows the person's first answer.
+		toGuided func(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *sdd.WorkflowServe
+	}{
+		{name: "a playback confirmed after a mode switch", toGuided: func(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *sdd.WorkflowServe {
+			world.SetDialogue("guided")
+			session.Refresh(t)
+			serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+			if got := world.LLM.Calls("preflight"); got != 0 {
+				t.Errorf("the confirm should ask for the words before pre-flight judges the draft, ran %d times", got)
+			}
+			return serve
+		}},
+		{name: "a parked write the person retries", toGuided: func(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *sdd.WorkflowServe {
+			world.LLM.PreflightErr = preflightTimedOut()
+			serve := session.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
+			proctest.RequireStep(t, serve, "preflightTimedOut")
+			serve = session.Decide(t, instance, "preflightTimedOut", "retry", nil, "a slow call may pass")
+			if serve.Parked == nil {
+				t.Fatalf("a second timeout should park the capture, got step %s", serve.Step)
+			}
+			world.SetDialogue("guided")
+			world.LLM.PreflightErr = nil
+			session.Refresh(t)
+			return session.Answer(t, instance, "preflightTimedOut", "retry", nil, "retry it")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			world, session := authorshipWorld(t, proctest.WithAutonomousDialogue())
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			draft := directiveDraft("tactical")
+			draft["reason"] = "The flaky step fails one run in ten."
+			serve = session.Report(t, instance, draft)
+			proctest.RequireStep(t, serve, "playback")
+
+			serve = tc.toGuided(t, world, session, instance)
+			proctest.RequireStep(t, serve, "assemble")
+			if !hasDiagnostic(serve, "missing reasonWords, intentWords") {
+				t.Fatalf("assemble should ask for the person's reason and intent, got %v", serve.Diagnostics)
+			}
+			serve = session.Report(t, instance, map[string]any{"reasonWords": "the step fails one run in ten", "intentWords": "do it next"})
+			proctest.RequireStep(t, serve, "playback")
+			entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
+				return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+			})
+			if entry.AgentDecided() || entry.Reason != "" || !slices.Equal(entry.Participants, []string{"Ada"}) {
+				t.Errorf("the decision should be the person's, got decided-by %q reason %q participants %v", entry.DecidedBy, entry.Reason, entry.Participants)
+			}
+		})
+	}
+}
+
 func TestAuthorship_APersonApprovesAnAgentsEntry(t *testing.T) {
 	world, session := authorshipWorld(t)
 	serve := session.Start(t, "capture", nil)
