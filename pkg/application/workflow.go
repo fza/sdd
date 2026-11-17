@@ -1449,8 +1449,23 @@ func (g *workflowGraphs) CurrentFor(store *engine.Store) (*model.Graph, error) {
 	return view.snapshot.graph, nil
 }
 
+// currentForInstance resolves the graph of instance's target from store; a
+// command passes its instance, because its candidate store is a clone
+// projectFor cannot place.
+func (g *workflowGraphs) currentForInstance(instance string, store *engine.Store) (*model.Graph, error) {
+	view, err := g.projectView(g.workflow.instanceProject(instance), store)
+	if err != nil {
+		return nil, err
+	}
+	return view.snapshot.graph, nil
+}
+
 func (g *workflowGraphs) viewFor(store *engine.Store) (*materializedGraphView, error) {
-	target, source := g.workflow.effectiveTargetSource(g.workflow.projectFor(store), store)
+	return g.projectView(g.workflow.projectFor(store), store)
+}
+
+func (g *workflowGraphs) projectView(project ProjectID, store *engine.Store) (*materializedGraphView, error) {
+	target, source := g.workflow.effectiveTargetSource(project, store)
 	view, err := g.targetView(target, source == targetSourceBinding)
 	if err != nil && source != "" && source != targetSourceBinding {
 		// The acquisition boundary speaks of a mutation target; a graph read
