@@ -24,8 +24,9 @@ type Repeats struct {
 	pointed bool
 	field   model.WordCounts
 	// briefs, on RenderWithin's first pass, collects the brief of every entry
-	// that could print as its pointer.
-	briefs *strings.Builder
+	// that could print as its pointer, by ID in ownBriefs as well.
+	briefs    *strings.Builder
+	ownBriefs map[string]string
 }
 
 // pointer returns the pointer an entry prints as when the call holds it. An
@@ -36,6 +37,7 @@ func (r *Repeats) pointer(id, brief string) (string, bool) {
 	}
 	if r.briefs != nil {
 		r.briefs.WriteString(brief + "\n")
+		r.ownBriefs[id] += brief + "\n"
 		return "", false
 	}
 	if r.Held == nil {
@@ -54,6 +56,20 @@ func (r *Repeats) anchor(id, body string) string {
 	if r == nil || r.Anchor == nil {
 		return body
 	}
+	// An entry served in full prints no pointer, so its own brief is not in
+	// the result: a body that repeats its brief keeps its words as prompts.
+	// The shared counts are lowered for this call alone.
+	own := model.CountWords(r.ownBriefs[id])
+	if r.field != nil {
+		for word, n := range own {
+			r.field[word] -= n
+		}
+		defer func() {
+			for word, n := range own {
+				r.field[word] += n
+			}
+		}()
+	}
 	return r.Anchor(id, body, r.field)
 }
 
@@ -65,7 +81,8 @@ func (r *Repeats) anchor(id, body string) string {
 func RenderWithin(w io.Writer, r *Repeats, render func(io.Writer, *Repeats) error) error {
 	if r != nil && r.Anchor != nil {
 		var whole, briefs strings.Builder
-		if err := render(&whole, &Repeats{briefs: &briefs}); err != nil {
+		first := &Repeats{briefs: &briefs, ownBriefs: map[string]string{}}
+		if err := render(&whole, first); err != nil {
 			return err
 		}
 		whole.WriteString("\n" + briefs.String())
@@ -73,6 +90,7 @@ func RenderWithin(w io.Writer, r *Repeats, render func(io.Writer, *Repeats) erro
 		whole.WriteString(pointerText("", "", "abcd", "x") + "\n")
 		(&Repeats{pointed: true}).WriteWayBack(&whole)
 		r.field = model.CountWords(whole.String())
+		r.ownBriefs = first.ownBriefs
 	}
 	return render(w, r)
 }

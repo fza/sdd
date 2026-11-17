@@ -150,3 +150,24 @@ func TestShowText_AnchorsEntriesOverTheWholeResult(t *testing.T) {
 		t.Error("the result's counts should be taken once for every entry it anchors")
 	}
 }
+
+// An entry served in full prints no pointer, so its own brief does not count
+// against its body: a short body repeating its brief keeps prompt words.
+func TestShowText_AnchorsABodyRepeatingItsBriefWithItsWordsOnce(t *testing.T) {
+	entry := types.ShownEntry{ID: "20260101-100000-s-tac-one", Type: "signal", Layer: "tactical", Kind: "gap",
+		Body: "Verdicts oscillate on identical input.", Brief: "Verdicts oscillate on identical input."}
+	var counted int
+	r := &presenters.Repeats{
+		Held: func(string) (string, string, bool) { return "", "", false },
+		Anchor: func(_, body string, field map[string]int) string {
+			counted = field["oscillate"]
+			return body
+		},
+	}
+	if _, err := presenters.ShowText([]types.ShownEntry{entry}, r); err != nil {
+		t.Fatal(err)
+	}
+	if counted != 1 {
+		t.Errorf("the body's word should count once beside the entry's own brief, counted %d", counted)
+	}
+}
