@@ -24,8 +24,10 @@ func personEntry(id string, refs ...model.Ref) *model.Entry {
 
 func ref(id string, kind model.RefKind) model.Ref { return model.Ref{ID: id, Kind: kind} }
 
-func approval(id string, approves ...string) *model.Entry {
-	return &model.Entry{ID: id, Type: model.TypeDecision, Layer: model.LayerTactical, Kind: model.KindDirective, Intent: model.IntentSettled, Approves: approves}
+const approvalID = "20260102-090000-d-tac-apr"
+
+func approval(approves ...string) *model.Entry {
+	return &model.Entry{ID: approvalID, Type: model.TypeDecision, Layer: model.LayerTactical, Kind: model.KindDirective, Intent: model.IntentSettled, Approves: approves}
 }
 
 func TestAgentMarks(t *testing.T) {
@@ -34,7 +36,7 @@ func TestAgentMarks(t *testing.T) {
 		b  = "20260101-100100-s-tac-bbb"
 		c  = "20260101-100200-s-tac-ccc"
 		d  = "20260101-100300-s-tac-ddd"
-		ap = "20260102-090000-d-tac-apr"
+		ap = approvalID
 	)
 	cases := []struct {
 		name      string
@@ -77,7 +79,7 @@ func TestAgentMarks(t *testing.T) {
 				agentEntry(c, ref(b, model.RefKindGroundedIn)),
 				agentEntry(d, ref(c, model.RefKindGroundedIn)),
 			},
-			approvals: []*model.Entry{approval(ap, b)},
+			approvals: []*model.Entry{approval(b)},
 			want: map[string]model.AgentMark{
 				a: {Marked: true, Roots: []string{a}, Hops: 0},
 				c: {Marked: true, Roots: []string{c}, Hops: 0},
@@ -91,7 +93,7 @@ func TestAgentMarks(t *testing.T) {
 				agentEntry(b, ref(a, model.RefKindGroundedIn)),
 			},
 			approvals: []*model.Entry{
-				approval(ap, b),
+				approval(b),
 				{ID: "20260102-090100-d-tac-sup", Type: model.TypeDecision, Layer: model.LayerTactical, Kind: model.KindDirective, Intent: model.IntentSettled, Supersedes: []string{ap}},
 			},
 			want: map[string]model.AgentMark{
@@ -105,7 +107,7 @@ func TestAgentMarks(t *testing.T) {
 				agentEntry(a),
 			},
 			approvals: []*model.Entry{
-				func() *model.Entry { e := approval(ap, a); e.DecidedBy = model.DecidedByAgent; return e }(),
+				func() *model.Entry { e := approval(a); e.DecidedBy = model.DecidedByAgent; return e }(),
 			},
 			want: map[string]model.AgentMark{
 				a:  {Marked: true, Roots: []string{a}, Hops: 0},
@@ -359,7 +361,7 @@ func TestApprovalValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e := approval("20260102-090000-d-tac-apr", agent)
+			e := approval(agent)
 			e.Confidence, e.Content = "high", "Body."
 			tc.edit(e)
 			construction, findings := model.ConstructFromEntry(e)
@@ -379,7 +381,7 @@ func TestApprovalValidation(t *testing.T) {
 			}
 		})
 	}
-	text := model.FormatFrontmatter(approval("20260102-090000-d-tac-apr", agent))
+	text := model.FormatFrontmatter(approval(agent))
 	if !strings.Contains(text, "approves:\n    - "+agent) {
 		t.Errorf("frontmatter lacks the approves list:\n%s", text)
 	}
