@@ -46,7 +46,11 @@ type ShownEntry struct {
 	DecidedBy string
 	RunBy     string
 	Reason    string
-	AgentMark *AgentMark
+	// ApprovedBy, ReasonBy and IntentBy are the stored approval mark.
+	ApprovedBy string
+	ReasonBy   string
+	IntentBy   string
+	AgentMark  *AgentMark
 	// Grounding and Verification record a skipped grounding reading and a
 	// skipped deep verification.
 	Grounding     string

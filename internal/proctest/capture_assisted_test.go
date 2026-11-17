@@ -134,6 +134,17 @@ func TestAssisted_TheAgentLimitDoesNotHoldAnApprovedDraft(t *testing.T) {
 	}
 }
 
+// The catch-up names who approved an entry and who gave its reason.
+func TestAssisted_TheCatchUpNamesTheApproval(t *testing.T) {
+	approved := &model.Entry{ID: "20260101-090300-d-tac-apr", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Intent: model.IntentPending,
+		Participants: []string{"Ada"}, ApprovedBy: "Ada", Reason: assistedReason, ReasonBy: model.DraftedByAgent, IntentBy: model.DraftedByAgent, Content: "An approved directive."}
+	_, session := authorshipWorld(t, proctest.WithEntries(approved))
+	serve := session.Start(t, "catch-up", nil)
+	if !strings.Contains(serve.Instructions, approved.ID+" tactical directive decision [approved-by: Ada] [reason-by: agent]") {
+		t.Errorf("the briefing should name the approval, got:\n%s", serve.Instructions)
+	}
+}
+
 // Sent back, the draft is revised and checked again, and the person sees it
 // once more before anything is written.
 func TestAssisted_AnAdjustPlaysTheRevisionBackAgain(t *testing.T) {

@@ -145,6 +145,9 @@ type showEnvelope struct {
 	Approves     []string           `yaml:"approves,omitempty"`
 	DecidedBy    string             `yaml:"decided-by,omitempty"`
 	RunBy        string             `yaml:"run-by,omitempty"`
+	ApprovedBy   string             `yaml:"approved-by,omitempty"`
+	ReasonBy     string             `yaml:"reason-by,omitempty"`
+	IntentBy     string             `yaml:"intent-by,omitempty"`
 	AgentMark    string             `yaml:"agent-mark,omitempty"`
 	Reason       string             `yaml:"reason,omitempty"`
 	Attachments  []string           `yaml:"attachments,omitempty"`
@@ -188,6 +191,9 @@ func writeEnvelope(w io.Writer, entry types.ShownEntry, opts ShowOptions) error 
 		Approves:     entry.Approves,
 		DecidedBy:    entry.DecidedBy,
 		RunBy:        entry.RunBy,
+		ApprovedBy:   entry.ApprovedBy,
+		ReasonBy:     entry.ReasonBy,
+		IntentBy:     entry.IntentBy,
 		AgentMark:    FormatAgentMark(entry.AgentMark),
 		Reason:       entry.Reason,
 		Attachments:  entry.Attachments,

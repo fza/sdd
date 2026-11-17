@@ -52,6 +52,8 @@ type ListedEntry struct {
 	Participants  []string
 	DecidedBy     string
 	RunBy         string
+	ApprovedBy    string
+	ReasonBy      string
 	AgentMark     *AgentMark
 	// Topics is the effective topic set: the entry's own topics merged with
 	// the topic annotations naming it.
