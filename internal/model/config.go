@@ -1116,7 +1116,8 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# user-global config, under sync.default and sync.hosts.\n" +
 		"\n" +
 		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
-		"# choices an engine session otherwise puts to you.\n" +
+		"# choices an engine session otherwise puts to you; mode: assisted\n" +
+		"# does too, and plays each checked entry back for your approval.\n" +
 		"# dialogue:\n" +
 		"#   mode: " + string(DialogueGuided) + "\n"
 }
