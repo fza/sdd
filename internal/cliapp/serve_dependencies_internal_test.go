@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -67,25 +68,20 @@ func TestConnectedDependenciesNameTheFixForADeferredClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	cloneGit := &synctest.CloneGit{Files: map[string]string{".sdd/config.yaml": "repo_id: " + repoID + "\n"}, Remote: "git@github.com:acme/platform.git"}
+	gate := gitgate.New(gitgate.Options{StateDir: loc.StateRoot, Limits: func(string) gitgate.Limits {
+		limits := model.DefaultGitLimits()
+		limits.SSHPerHour = 0
+		return limits
+	}})
 	registry := repos.NewRegistry(loc)
 	deps := &connectedDependencies{
 		registry: registry,
-		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, synctest.Gate(loc.StateRoot, nil), synctest.CloneLocks{})),
+		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, gate, synctest.CloneLocks{})),
 		build: func(sdd.RepoID, string, *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			return &sdd.ProjectRuntime{}, nil
 		},
 	}
-	if _, err := deps.resolve(t.Context(), repoID); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := registry.CloneDir(repoID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatal(err)
-	}
-	_, err = deps.resolve(t.Context(), repoID)
+	_, err := deps.resolve(t.Context(), repoID)
 	var appErr *sdd.ApplicationError
 	if !errors.As(err, &appErr) || appErr.Code != sdd.ErrorProjectUnavailable || !strings.Contains(appErr.Message, "sdd repo sync "+repoID) {
 		t.Errorf("a deferred clone should be unavailable with the fix named, got %v", err)

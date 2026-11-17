@@ -136,6 +136,20 @@ func TestCreditsFromIdleSlices(t *testing.T) {
 	}
 }
 
+// A clone starts a fetch slice as a fetch does, so the slices idle before it
+// earn nothing after it.
+func TestCloneStartsAFetchSlice(t *testing.T) {
+	setup := newSetup(t)
+	target := setup.clone(t, "git@gitlab.com:group/project.git")
+	mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
+	mustRun(t, setup, t.Context(), target, gitgate.Clone, t0.Add(9*time.Minute))
+
+	paid, _ := paidPushes(t, setup, target, t0.Add(18*time.Minute))
+	if paid != 0 {
+		t.Errorf("the slice the clone started should still be in progress, paid %d", paid)
+	}
+}
+
 // Only an operation its caller marks may spend a credit, and only of the kind
 // it marks.
 func TestCreditSpendNeedsTheMark(t *testing.T) {
@@ -332,6 +346,23 @@ func TestAutomaticFetchesKeepAReserve(t *testing.T) {
 	if skip.Reason != gitgate.ReasonHourly {
 		t.Errorf("the reserve should end at the hourly limit, got %v", skip)
 	}
+}
+
+// A clone takes a fetch's credits: commanded, it uses the reserve.
+func TestCommandedCloneUsesTheReserve(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.SSHPerHour = 10
+	setup.limits.SSHPerMinute = 100
+	for i := range 9 {
+		mustRun(t, setup, t.Context(), mustTarget(t, fmt.Sprintf("git@gitlab.com:group/p%d.git", i)), gitgate.Fetch, t0)
+	}
+
+	target := mustTarget(t, "git@gitlab.com:group/clone.git")
+	skip := deferred(t, runAt(t, setup, t.Context(), target, gitgate.Clone, t0))
+	if skip.Reason != gitgate.ReasonHourly {
+		t.Errorf("an automatic clone should stop at the fetch share, got %v", skip)
+	}
+	mustRun(t, setup, gitgate.WithCredits(t.Context(), gitgate.Fetch), target, gitgate.Clone, t0)
 }
 
 func TestPushUsesTheReserve(t *testing.T) {

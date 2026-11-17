@@ -136,6 +136,43 @@ func TestManagerClonesThroughTheGate(t *testing.T) {
 	}
 }
 
+// The cooldown ledger is per machine, the clones per data home: a data home
+// holding no clone of a remote another one just fetched clones it, while the
+// existing clone still waits out its cooldown.
+func TestFirstCloneIsNotHeldByAnotherDataHomesCooldown(t *testing.T) {
+	git := &countingGit{remote: "https://example.test/acme/other.git"}
+	gate := fixedGate(t)
+	repo := repos.ConnectedRepo{RepoID: "example.test/acme/other", CloneURL: "https://example.test/acme/other.git"}
+	home := testLocations(t)
+	homeClones := repos.NewGraphClones(home, git, gate, synctest.CloneLocks{})
+	homeManager := repos.NewManager(repos.NewRegistry(home), homeClones)
+	_, _, err := homeManager.Ensure(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	other := testLocations(t)
+	otherManager := repos.NewManager(repos.NewRegistry(other), repos.NewGraphClones(other, git, gate, synctest.CloneLocks{}))
+	due, _, err := otherManager.FetchDue(t.Context(), repo)
+	if err != nil || !due {
+		t.Errorf("the first clone into another data home should be due, got %v %v", due, err)
+	}
+	_, cloned, err := otherManager.Ensure(t.Context(), repo)
+	if err != nil || !cloned || git.clones != 2 {
+		t.Fatalf("the first clone into another data home should run, got %v %v after %d clones", cloned, err, git.clones)
+	}
+
+	due, _, err = homeManager.FetchDue(t.Context(), repo)
+	if err != nil || due {
+		t.Errorf("a fetch of the existing clone should wait for its cooldown, got %v %v", due, err)
+	}
+	err = homeClones.Widen(t.Context(), repo.RepoID, "records")
+	var deferred *gitgate.DeferredError
+	if !errors.As(err, &deferred) || deferred.Reason != gitgate.ReasonCooldown || git.coneSets != 0 {
+		t.Errorf("a fetch into the existing clone should be deferred by its cooldown, got %v after %d cone sets", err, git.coneSets)
+	}
+}
+
 func TestManagerWithoutGateRefusesToClone(t *testing.T) {
 	git := &countingGit{}
 	loc := testLocations(t)

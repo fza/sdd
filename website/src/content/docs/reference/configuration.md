@@ -186,7 +186,7 @@ In a guided dialogue the writing guide runs once on the content the user approve
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `sync.default.fetch_cooldown` | `5m` | Least time between two fetches from one remote. A value below `1m` is ignored. sdd lengthens it when the remotes on one host would otherwise exceed the hourly limit. |
+| `sync.default.fetch_cooldown` | `5m` | Least time between two fetches from one remote. A value below `1m` is ignored. sdd lengthens it when the remotes on one host would otherwise exceed the hourly limit. A clone where none exists yet is not held by it. |
 | `sync.default.push_cooldown` | `30s` | Least time between two pushes to one remote. A value below `10s` is ignored. |
 | `sync.default.retries` | `2` | Retries of a git network operation that failed. |
 | `sync.default.concurrency` | `2` | Git network operations that run at the same time against one host. |
