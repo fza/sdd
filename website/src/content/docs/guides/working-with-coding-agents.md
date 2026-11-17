@@ -54,6 +54,34 @@ How best to hand work between agent sessions this way is still being worked out.
 
 Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself. The agent cannot drop a blocked capture: sdd refuses its abandon of the move, and its end of the session by the session's handle, while the move waits at such a step. You drop it in a guided dialogue, or end the session with `sdd sessions abandon <session>`.
 
+## Decisions an agent takes alone
+
+Under `dialogue.mode: auto` no one confirms the playback, so the reason a decision rests on is the agent's own. sdd marks every entry it writes in `auto` as the agent's:
+
+```yaml
+decided-by: agent
+run-by: Ada              # the participant sdd runs as
+participants: [Claude]   # the agent's actor
+reason: The flaky step fails one run in ten.   # decisions only
+```
+
+The participant is the actor whose canonical or alias matches the name the agent's MCP client reports: Claude Code reports `claude-code`, which matches an actor `Claude` with the alias `Claude Code`. A client no actor matches goes in under the name it reports. The agent reports no participants itself, and a decision without its own `reason` does not pass the draft. An entry without `decided-by` is a person's.
+
+An agent alone writes every signal kind, and plans, activities and pending directives on the tactical and operational layers. It never supersedes or closes an entry a person decided; a done may close any. Any other draft parks for you before a check runs: every strategic, conceptual and process decision, a guiding or settled directive, an aspiration, contract, role, focus or procedure, and an approval. The park reason names the rule, for example `agent limit: a conceptual decision takes a person`, and `sdd sessions` lists the capture parked at `agentLimit`. Resume the session in a guided dialogue: you adjust the draft with your own reason and it is written as yours, or you drop it.
+
+An agent's entry built on another unapproved agent entry through `grounded-in`, `builds-on`, `refines` or `depends-on` carries the mark on: `sdd view` and `sdd show` name its origin, as in `{agent-reasoned via d-tac-agt, 2 steps}`. A person's entry is never marked and stops the chain. The catch-up lists each chain still waiting for review.
+
+To review a chain, approve or dismiss it in a guided session or with `sdd new --approves`. An approval is a settled directive that lists the entries it vouches for:
+
+```yaml
+kind: directive
+intent: settled
+approves:
+    - 20261117-101500-d-tac-agt
+```
+
+An approved entry loses its mark and stops the chain: an agent's entry built on it starts a chain of its own. A dismissal is a settled directive that closes the agent's entries; the catch-up then drops a chain whose start it closed. In `auto` both park for you.
+
 ## Wrap up sessions
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
