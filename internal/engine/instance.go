@@ -318,12 +318,7 @@ func (s *Session) cascade(inst *Instance) error {
 				return err
 			}
 			if !ok {
-				// Confirmation staleness: when the gate is held by
-				// playbackConfirmed and a stale confirmation record exists,
-				// reopen the chooser that recorded it — the
-				// edit-after-confirm rule, owned entirely by the
-				// confirmPlayback/playbackConfirmed pair.
-				if reopened, err := s.reopenStalePlayback(inst, failing); err != nil {
+				if reopened, err := s.reopenPlayback(inst, failing); err != nil {
 					return err
 				} else if reopened {
 					continue
@@ -404,11 +399,12 @@ func (s *Session) selectTransition(inst *Instance, step *Step) (string, error) {
 	return "", nil
 }
 
-// reopenStalePlayback implements edit-after-confirm: if the failing
-// predicates include playbackConfirmed and the store holds a confirmation
-// whose snapshot no longer matches, the confirmation is cleared and the
-// instance returns to the chooser step that recorded it.
-func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate) (bool, error) {
+// reopenPlayback returns a gate held on playbackConfirmed to a chooser that
+// records a confirmation: the one whose stale record it clears
+// (edit-after-confirm), or with none recorded the spec's confirming chooser,
+// since only a confirmation moves such a gate on. A gate reaches that state
+// when a mode switch drops the selector that let it pass unconfirmed.
+func (s *Session) reopenPlayback(inst *Instance, failing []FailedPredicate) (bool, error) {
 	holdsOnConfirmation := false
 	for _, f := range failing {
 		if f.Name == "playbackConfirmed" {
@@ -419,28 +415,51 @@ func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate)
 	if !holdsOnConfirmation {
 		return false, nil
 	}
-	v, ok := inst.Store.Get(fieldPlaybackConfirmation)
-	if !ok {
-		return false, nil // never confirmed — a plain stall, not staleness
+	target := confirmingStep(inst.Spec)
+	v, _ := inst.Store.Get(fieldPlaybackConfirmation)
+	conf, recorded := asConfirmation(v)
+	if recorded {
+		if conf.Snapshot == inst.Store.StateSnapshot() {
+			return false, nil // confirmation is current; the gate is held by something else
+		}
+		if inst.Spec.StepByID[conf.Step] != nil {
+			target = conf.Step
+		}
 	}
-	conf, ok := asConfirmation(v)
-	if !ok || conf.Step == "" || inst.Spec.StepByID[conf.Step] == nil {
+	if target == "" {
 		return false, nil
 	}
-	if conf.Snapshot == inst.Store.StateSnapshot() {
-		return false, nil // confirmation is current; the gate is held by something else
+	if recorded {
+		if err := inst.Store.WriteEngine(fieldPlaybackConfirmation, nil); err != nil {
+			return false, err
+		}
+		s.appendEvent(inst.ID, EventOpResult, map[string]any{
+			"step": inst.Step,
+			"fn":   "reopenPlayback",
+			"writes": map[string]any{
+				fieldPlaybackConfirmation: nil,
+			},
+		})
 	}
-	if err := inst.Store.WriteEngine(fieldPlaybackConfirmation, nil); err != nil {
-		return false, err
+	return true, s.transitionTo(inst, target, true)
+}
+
+// confirmingStep returns the one step with an option calling
+// confirmPlayback, empty when the spec has none or several.
+func confirmingStep(spec *Spec) string {
+	found := ""
+	for _, step := range spec.Steps {
+		for _, o := range step.Options {
+			if o.Call != "confirmPlayback" {
+				continue
+			}
+			if found != "" && found != step.ID {
+				return ""
+			}
+			found = step.ID
+		}
 	}
-	s.appendEvent(inst.ID, EventOpResult, map[string]any{
-		"step": inst.Step,
-		"fn":   "reopenPlayback",
-		"writes": map[string]any{
-			fieldPlaybackConfirmation: nil,
-		},
-	})
-	return true, s.transitionTo(inst, conf.Step, true)
+	return found
 }
 
 // runCommand executes a registry command at the instance's current step and
