@@ -24,7 +24,11 @@ type EntryConstruction struct {
 	Refs         []Ref
 	Supersedes   []string
 	Closes       []string
+	Approves     []string
 	Participants []string
+	DecidedBy    DecidedBy
+	RunBy        string
+	Reason       string
 	Confidence   string
 	// Topics carries inline topic labels — valid on any non-annotation kind.
 	// Annotation topic assignments live on the Annotation block instead.
@@ -211,7 +215,11 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 		Refs:         e.Refs,
 		Supersedes:   e.Supersedes,
 		Closes:       e.Closes,
+		Approves:     e.Approves,
 		Participants: e.Participants,
+		DecidedBy:    e.DecidedBy,
+		RunBy:        e.RunBy,
+		Reason:       e.Reason,
 		Confidence:   e.Confidence,
 		Topics:       e.Topics,
 		Body:         e.Content,
@@ -324,7 +332,11 @@ func (c *EntryConstruction) Entry() *Entry {
 		Refs:         c.Refs,
 		Supersedes:   c.Supersedes,
 		Closes:       c.Closes,
+		Approves:     c.Approves,
 		Participants: c.Participants,
+		DecidedBy:    c.DecidedBy,
+		RunBy:        c.RunBy,
+		Reason:       c.Reason,
 		Confidence:   c.Confidence,
 		Topics:       c.Topics,
 		Content:      c.Body,
@@ -479,7 +491,38 @@ func (c *EntryConstruction) Validate(g *Graph) []Finding {
 	}
 
 	findings = append(findings, c.validateInlineTopics()...)
+	findings = append(findings, c.validateAuthorship()...)
 
+	return findings
+}
+
+// validateAuthorship checks the authorship mark and approvals: a reason
+// belongs only to an agent-decided decision, which must state one, and only a
+// person's settled directive approves.
+func (c *EntryConstruction) validateAuthorship() []Finding {
+	var findings []Finding
+	add := func(field, value, message string) {
+		findings = append(findings, Finding{Field: field, Value: value, Message: message})
+	}
+	agent := c.DecidedBy == DecidedByAgent
+	if c.DecidedBy != "" && !agent {
+		add("decided-by", string(c.DecidedBy), fmt.Sprintf("decided-by: only %q is defined; omit it on a person's entry", DecidedByAgent))
+	}
+	switch {
+	case c.Reason != "" && (!agent || c.Type != TypeDecision):
+		add("reason", "", "reason is only valid on a decision an agent decided")
+	case agent && c.Type == TypeDecision && strings.TrimSpace(c.Reason) == "":
+		findings = append(findings, Finding{Field: "reason", Message: "a decision an agent decided states the agent's own reason", WriteOnly: true})
+	}
+	if len(c.Approves) > 0 {
+		settled := c.isKind(TypeDecision, KindDirective) && c.Directive != nil && c.Directive.Intent == IntentSettled
+		switch {
+		case !settled:
+			add("approves", "", ApprovalRule)
+		case agent:
+			add("approves", "", "an agent does not approve: an approval is a person's")
+		}
+	}
 	return findings
 }
 

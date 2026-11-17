@@ -453,7 +453,7 @@ func (g *Graph) TopologicalOrder() []*Entry {
 				maxDep = d
 			}
 		}
-		for _, c := range e.Closes {
+		for _, c := range slices.Concat(e.Closes, e.Approves) {
 			if d := computeDepth(c) + 1; d > maxDep {
 				maxDep = d
 			}
@@ -1009,6 +1009,8 @@ func validateEdges(e *Entry, g *Graph) {
 	validateRefs(e, g)
 	validateIDRefs(e, g, "closes", e.Closes)
 	validateIDRefs(e, g, "supersedes", e.Supersedes)
+	validateIDRefs(e, g, "approves", e.Approves)
+	validateApproves(e, g)
 	validateCloses(e, g)
 	validateSupersedes(e, g)
 }

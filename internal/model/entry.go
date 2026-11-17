@@ -234,8 +234,16 @@ type Entry struct {
 	Refs         []Ref
 	Supersedes   []string
 	Closes       []string
+	// Approves lists the agent-decided entries a person's approval, a settled
+	// directive, vouches for (see Graph.AgentMarks).
+	Approves     []string
 	Participants []string
-	Confidence   string
+	// DecidedBy, RunBy and Reason are the authorship mark sdd writes on an
+	// autonomous capture (see DecidedBy).
+	DecidedBy  DecidedBy
+	RunBy      string
+	Reason     string
+	Confidence string
 	// Intent is the lifecycle posture of a directive (pending|guiding|settled).
 	// Stored frontmatter, meaningful only on kind: directive decisions; empty on
 	// every other entry and on legacy directives captured before the attribute
@@ -603,7 +611,10 @@ type frontmatter struct {
 	Refs         []Ref             `yaml:"refs,omitempty"`
 	Supersedes   idOnlyList        `yaml:"supersedes,omitempty"`
 	Closes       idOnlyList        `yaml:"closes,omitempty"`
+	Approves     idOnlyList        `yaml:"approves,omitempty"`
 	Participants []string          `yaml:"participants,omitempty"`
+	DecidedBy    string            `yaml:"decided-by,omitempty"`
+	RunBy        string            `yaml:"run-by,omitempty"`
 	Confidence   string            `yaml:"confidence,omitempty"`
 	Intent       string            `yaml:"intent,omitempty"`
 	Canonical    string            `yaml:"canonical,omitempty"`
@@ -626,6 +637,7 @@ type frontmatter struct {
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Grounding    string            `yaml:"grounding,omitempty"`
 	Verification string            `yaml:"verification,omitempty"`
+	Reason       string            `yaml:"reason,omitempty"`
 	Title        string            `yaml:"title,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 }
@@ -701,7 +713,11 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Refs:         fm.Refs,
 		Supersedes:   []string(fm.Supersedes),
 		Closes:       []string(fm.Closes),
+		Approves:     []string(fm.Approves),
 		Participants: fm.Participants,
+		DecidedBy:    DecidedBy(fm.DecidedBy),
+		RunBy:        fm.RunBy,
+		Reason:       fm.Reason,
 		Confidence:   fm.Confidence,
 		Intent:       Intent(fm.Intent),
 		Canonical:    fm.Canonical,
@@ -823,6 +839,16 @@ func ParseID(id string) (IDParts, error) {
 	}, nil
 }
 
+// ShortID returns the type-layer-suffix form of an entry ID (d-cpt-xs5), or
+// the ID itself when it does not parse.
+func ShortID(id string) string {
+	parts, err := ParseID(id)
+	if err != nil {
+		return id
+	}
+	return parts.TypeCode + "-" + parts.LayerCode + "-" + parts.Suffix
+}
+
 // EntryPathGlob matches the relative path IDToRelPath gives an entry, and no
 // attachment or WIP marker beside it, as a gitattributes pattern.
 const EntryPathGlob = "[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md"
@@ -941,7 +967,11 @@ func FormatFrontmatter(e *Entry) string {
 		Refs:         e.Refs,
 		Supersedes:   idOnlyList(e.Supersedes),
 		Closes:       idOnlyList(e.Closes),
+		Approves:     idOnlyList(e.Approves),
 		Participants: e.Participants,
+		DecidedBy:    string(e.DecidedBy),
+		RunBy:        e.RunBy,
+		Reason:       e.Reason,
 		Confidence:   e.Confidence,
 		Intent:       string(e.Intent),
 		Canonical:    e.Canonical,

@@ -233,6 +233,9 @@ func upstreamChildren(e *Entry) []childEdge {
 	for _, c := range e.Closes {
 		add(c, "closes", "", "")
 	}
+	for _, a := range e.Approves {
+		add(a, "approves", "", "")
+	}
 	for _, s := range e.Supersedes {
 		add(s, "supersedes", "", "")
 	}
