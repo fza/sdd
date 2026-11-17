@@ -86,7 +86,7 @@ An approved entry loses its mark and stops the chain: an agent's entry built on 
 
 ## Entries you approve
 
-Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once, through your agent's question tool: `AskUserQuestion` in Claude Code, `request_user_input` in Codex where its tools list it. Every choice sdd puts to you goes the same way, in `guided` too. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
+Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once, through your agent's question tool: `AskUserQuestion` in Claude Code and Claude Desktop, `request_user_input` in Codex where its tools list it. Every choice sdd puts to you goes the same way, in `guided` too. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
 
 Your approval binds to the draft you saw. Any change after it, such as an `adjust`, sends the draft back through the checks and plays it back again. The entry is then yours, without `decided-by`:
 

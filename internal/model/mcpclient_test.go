@@ -27,12 +27,14 @@ func TestMCPClients_MatchTheNameCaseInsensitively(t *testing.T) {
 }
 
 // A choice put to the person goes through the question tool of the agent the
-// client name names, and through no tool sdd guesses for any other.
+// client name names, and through no tool sdd guesses for any other. Claude
+// Desktop reports claude-ai and offers AskUserQuestion in chat.
 func TestQuestionTool_NamesTheClientsTool(t *testing.T) {
 	for client, want := range map[string]string{
 		"claude-code":      "AskUserQuestion",
+		"claude-ai":        "AskUserQuestion",
+		"Claude Desktop":   "AskUserQuestion",
 		"codex-mcp-client": "request_user_input",
-		"Claude Desktop":   "",
 		"cursor":           "",
 		"":                 "",
 	} {
