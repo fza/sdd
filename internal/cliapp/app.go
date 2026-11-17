@@ -943,6 +943,10 @@ func newCmd() *cli.Command {
 				Usage: "Comma-separated list of entry IDs this closes/resolves",
 			},
 			&cli.StringFlag{
+				Name:  "approves",
+				Usage: "Comma-separated list of agent-decided entry IDs this settled directive approves",
+			},
+			&cli.StringFlag{
 				Name:  "participants",
 				Usage: "Comma-separated list of participants",
 			},
@@ -1173,6 +1177,7 @@ func newCmd() *cli.Command {
 				Refs:              refs,
 				Supersedes:        splitCSV(cmd.String("supersedes")),
 				Closes:            splitCSV(cmd.String("closes")),
+				Approves:          splitCSV(cmd.String("approves")),
 				Confidence:        confidence,
 				Canonical:         strings.TrimSpace(cmd.String("canonical")),
 				Aliases:           splitCSV(cmd.String("aliases")),

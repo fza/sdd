@@ -506,3 +506,40 @@ Same-suffix decision — triggers collision.
 		t.Errorf("error = %v, want collision message", err)
 	}
 }
+
+// An approval listing a rewritten entry follows it to its new ID.
+func TestRewriteEntry_ApprovalFollowsTheEntry(t *testing.T) {
+	graphDir := t.TempDir()
+	writeEntryFile(t, graphDir, "20260418-101837-s-tac-agt", `---
+type: signal
+layer: tactical
+kind: gap
+decided-by: agent
+---
+
+An agent's misclassified observation.
+`)
+	writeEntryFile(t, graphDir, "20260419-090000-d-tac-apr", `---
+type: decision
+layer: tactical
+kind: directive
+intent: settled
+approves:
+  - 20260418-101837-s-tac-agt
+---
+
+The observation holds.
+`)
+	h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &recordingCommitter{}, Mover: &recordingMover{}})
+	err := h.RewriteEntry(context.Background(), &command.RewriteEntryCmd{EntryID: "20260418-101837-s-tac-agt", NewType: model.TypeDecision, NewKind: model.KindActivity})
+	if err != nil {
+		t.Fatalf("RewriteEntry: %v", err)
+	}
+	approval, err := os.ReadFile(filepath.Join(graphDir, "2026/04/19-090000-d-tac-apr.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(approval), "approves:\n    - 20260418-101837-d-tac-agt") {
+		t.Errorf("the approval should list the rewritten entry's new ID:\n%s", approval)
+	}
+}

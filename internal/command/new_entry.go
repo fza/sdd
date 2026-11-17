@@ -35,6 +35,7 @@ type NewEntryCmd struct {
 	Refs         []model.Ref
 	Supersedes   []string
 	Closes       []string
+	Approves     []string
 	Participants []string
 	Confidence   string
 
@@ -161,6 +162,7 @@ func (c *NewEntryCmd) BuildEntry(id string) (*model.Entry, error) {
 		Refs:         c.Refs,
 		Supersedes:   c.Supersedes,
 		Closes:       c.Closes,
+		Approves:     c.Approves,
 		Participants: c.Participants,
 		Confidence:   c.Confidence,
 		Intent:       model.Intent(c.Intent),
