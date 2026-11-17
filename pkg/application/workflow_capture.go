@@ -60,7 +60,7 @@ func credentialGuideFinding(err error) (query.GuideFinding, bool) {
 	return query.GuideFinding{Reasoning: err.Error(), Axis: credentialFinding, Quote: secrets.RefusedPassage(err), Repair: "remove the credential from the draft", Severity: query.GuideSubstantive}, true
 }
 
-var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
+var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "approves", "reason", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 	for _, filename := range draft.AttachmentHandles {
@@ -81,6 +81,9 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	draft := w.draftFromStore(ctx.Store)
 	draft.Target = target
 	if err := captureAttachments(&draft, w.staged); err != nil {
+		return err
+	}
+	if err := w.markAgentDraft(&draft); err != nil {
 		return err
 	}
 	deepJudges, err := w.deepJudgesPreflight(ctx)

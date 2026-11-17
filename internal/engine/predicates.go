@@ -230,7 +230,7 @@ func registerBuiltinPredicates(r *Registry) {
 		Doc: FuncDoc{
 			Name:  "refsResolve",
 			Doc:   "Every entry referenced by refs, supersedes, and closes exists in the graph (capture-time invariant).",
-			Reads: []string{"refs", "supersedes", "closes"},
+			Reads: []string{"refs", "supersedes", "closes", "approves"},
 		},
 		Fn:          refsResolve,
 		FailMessage: "a referenced entry does not resolve in the graph; every reference must point at an existing entry",
@@ -242,7 +242,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Doc: "Every draft ref (refs, supersedes, closes) was served to this session at full depth — " +
 				"a show call, an injected chain's primary, or a same-session write. The read set is " +
 				"session-level, so evidence inspected by a dispatching parent counts for its seeded children.",
-			Reads: []string{"refs", "supersedes", "closes"},
+			Reads: []string{"refs", "supersedes", "closes", "approves"},
 		},
 		Fn: func(ctx *Context) (bool, error) {
 			return len(uninspectedRefs(ctx)) == 0, nil
@@ -274,7 +274,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Doc: "The drafted fields satisfy the construction boundary's structural rules for their kind " +
 				"(model.EntryConstruction, per the type-system contract) — so a gate never restates a " +
 				"per-kind required-field list. Graph-edge resolution stays with refsResolve.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "participants", "supersedes", "closes", "approves", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen"},
 		},
 		Fn: func(ctx *Context) (bool, error) {
 			return len(draftStructuralFindings(ctx)) == 0, nil
@@ -576,7 +576,7 @@ func refsResolve(ctx *Context) (bool, error) {
 			}
 		}
 	}
-	for _, field := range []string{"supersedes", "closes"} {
+	for _, field := range []string{"supersedes", "closes", "approves"} {
 		v, ok := ctx.Store.Get(field)
 		if !ok {
 			continue
@@ -590,7 +590,7 @@ func refsResolve(ctx *Context) (bool, error) {
 	return true, nil
 }
 
-// uninspectedRefs returns the draft's ref targets (refs, supersedes, closes)
+// uninspectedRefs returns the draft's ref targets (refs, supersedes, closes, approves)
 // not yet served to the session at full depth, sorted. Presence and
 // resolution are other predicates' jobs — this one only compares against the
 // read set.
@@ -617,7 +617,7 @@ func uninspectedRefs(ctx *Context) []string {
 			check(r.ID)
 		}
 	}
-	for _, field := range []string{"supersedes", "closes"} {
+	for _, field := range []string{"supersedes", "closes", "approves"} {
 		if v, ok := ctx.Store.Get(field); ok {
 			for _, id := range asStrings(v) {
 				check(id)
@@ -761,7 +761,7 @@ func draftEntryFromStore(store *Store) (*model.Entry, []model.Finding) {
 		Content: str("body"), Confidence: str("confidence"),
 		Intent:    model.Intent(str("intent")),
 		Canonical: str("canonical"), Aliases: strs("aliases"), ActorKind: model.ActorKind(str("actorKind")), Actor: str("roleActor"),
-		Participants: strs("participants"), Closes: strs("closes"), Supersedes: strs("supersedes"),
+		Participants: strs("participants"), Closes: strs("closes"), Supersedes: strs("supersedes"), Approves: strs("approves"),
 		FocusActors: strs("focusActors"), Attachments: strs("attachments"),
 	}
 	if v, ok := store.Get("refs"); ok {

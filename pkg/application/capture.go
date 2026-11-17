@@ -333,14 +333,21 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 	if len(findings) > 0 {
 		return nil, nil, nil, captureValidationError(findings)
 	}
-	if len(entry.Participants) == 0 {
-		participant, err := a.participantFor(ctx, principal, runtime)
-		if err != nil {
-			return nil, nil, nil, err
+	participant, err := a.participantFor(ctx, principal, runtime)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	switch {
+	case draft.agent != nil:
+		if len(draft.Participants) > 0 {
+			return nil, nil, nil, captureValidationError([]model.Finding{{Field: "participants", Message: agentParticipantsRule}})
 		}
-		if participant != "" {
-			entry.Participants = []string{participant}
+		entry.DecidedBy, entry.RunBy, entry.Participants = model.DecidedByAgent, participant, nil
+		if actor := snapshot.graph.ClientActor(draft.agent.client); actor != "" {
+			entry.Participants = []string{actor}
 		}
+	case len(entry.Participants) == 0 && participant != "":
+		entry.Participants = []string{participant}
 	}
 	attachmentDir, err := model.AttachDirRelPath(draft.EntryID)
 	if err != nil {
@@ -363,6 +370,12 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 	}
 	if entry.Supersedes, err = snapshot.graph.ResolveIDs(entry.Supersedes); err != nil {
 		return nil, nil, nil, fmt.Errorf("resolving supersedes: %w", err)
+	}
+	if entry.Approves, err = snapshot.graph.ResolveIDs(entry.Approves); err != nil {
+		return nil, nil, nil, fmt.Errorf("resolving approves: %w", err)
+	}
+	if rule := snapshot.graph.AgentLimit(entry); draft.agent != nil && rule != "" {
+		return nil, nil, nil, captureValidationError([]model.Finding{{Field: "decided-by", Message: rule}})
 	}
 	construction, findings := model.ConstructFromEntry(entry)
 	validated, writeFindings := construction.ValidateForWrite(snapshot.graph)

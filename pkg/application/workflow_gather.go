@@ -80,5 +80,6 @@ func captureAnswered(store *engine.Store) []string {
 		}
 	}
 	answered = append(answered, workflowStoreStrings(store, "supersedes")...)
+	answered = append(answered, workflowStoreStrings(store, "approves")...)
 	return append(answered, workflowStoreStrings(store, "closes")...)
 }

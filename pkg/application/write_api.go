@@ -33,20 +33,26 @@ type FactIndex struct {
 }
 
 type EntryDraft struct {
-	EntryID           string
-	Publication       PublicationKey
-	Target            MutationTarget
-	Kind              string
-	Layer             string
-	Intent            string
-	Body              string
-	Refs              []EntryRef
-	Closes            []string
-	Supersedes        []string
-	Participants      []string
-	Confidence        string
-	Topics            []string
-	Index             *FactIndex
+	EntryID      string
+	Publication  PublicationKey
+	Target       MutationTarget
+	Kind         string
+	Layer        string
+	Intent       string
+	Body         string
+	Refs         []EntryRef
+	Closes       []string
+	Supersedes   []string
+	Approves     []string
+	Participants []string
+	// Reason is an agent-decided decision's own reason (model.Entry.Reason).
+	Reason     string
+	Confidence string
+	Topics     []string
+	Index      *FactIndex
+	// agent marks a draft an autonomous capture writes: sdd writes it as
+	// decided by the agent of that MCP client (model.DecidedBy).
+	agent             *agentAuthor
 	AttachmentHandles []string
 	Attachments       []StagedAttachment
 	// Canonical, Aliases and ActorKind carry a kind: actor signal's identity;
@@ -249,6 +255,8 @@ func entryFromDraft(draft EntryDraft, id string, now time.Time) (*model.Entry, [
 	}
 	entry.Closes = append([]string(nil), draft.Closes...)
 	entry.Supersedes = append([]string(nil), draft.Supersedes...)
+	entry.Approves = append([]string(nil), draft.Approves...)
+	entry.Reason = draft.Reason
 	if draft.SkipGrounding {
 		entry.Grounding = model.GroundingSkipped
 		entry.Confidence = "low"
