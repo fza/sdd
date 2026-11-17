@@ -434,8 +434,8 @@ func TestDeepReadingPagesNameTheirFullEntries(t *testing.T) {
 	}
 }
 
-// Briefs fill the room the lead page and the rules' last page leave; a block
-// moves whole to the next page when it does not fit.
+// Briefs fill the room the lead page, bounded tighter, and the rules' last
+// page leave; a block moves whole to the next page when it does not fit.
 func TestDeepReadingPagesPackBriefsIntoTheRoomLeft(t *testing.T) {
 	block := func(id string, chars int) model.DeepReadingBlock {
 		header := "ID: " + id + "\n"
@@ -463,7 +463,7 @@ func TestDeepReadingPagesPackBriefsIntoTheRoomLeft(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target := block("t", 2000)
-			pages := model.DeepReadingPages(strings.Repeat("d", 3000), tc.rules, []model.DeepReadingBlock{target}, briefs)
+			pages := model.DeepReadingPages(strings.Repeat("d", 500), tc.rules, []model.DeepReadingBlock{target}, briefs)
 			if len(pages) != len(tc.want) {
 				t.Fatalf("briefs should fill the room left on earlier pages, got %d pages", len(pages))
 			}
@@ -486,6 +486,102 @@ func TestDeepReadingPagesPackBriefsIntoTheRoomLeft(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A lead larger than a page runs on across pages of its own before the rules,
+// each within the page bound and each later one opening with the
+// continuation marker. A page break inside a fence closes the fence on its
+// page and reopens it on the next, so every page reads as balanced Markdown,
+// and the pages joined without their openings and the added fences are the
+// lead again.
+func TestDeepReadingPagesRunAnOversizedLeadOn(t *testing.T) {
+	const marker = "(continued from the page before)\n\n"
+	draft := strings.Repeat(strings.Repeat("d", 99)+"\n", model.DeepPageChars/60)
+	lead := "## Draft\n\n```\n" + draft + "the draft's last line\n```\n\n## Already raised by pre-flight\n\n- [low] tone: terse\n"
+	rules := model.DeepReadingPage{Text: "## Pre-flight's rules\n\nrule"}
+	pages := model.DeepReadingPages(lead, []model.DeepReadingPage{rules}, []model.DeepReadingBlock{{ID: "t", Text: "target"}}, nil)
+	for i, page := range pages {
+		bound := model.DeepPageChars
+		if i == 0 {
+			bound = model.DeepFirstPageChars
+		}
+		if model.ServedChars(page.Text) > bound {
+			t.Fatalf("page %d should stay within its page bound, nothing cut at serving, got %d", i+1, model.ServedChars(page.Text))
+		}
+		if fenceLines(page.Text)%2 != 0 {
+			t.Fatalf("page %d should close every fence it opens:\n%s", i+1, page.Text)
+		}
+	}
+	last := slices.IndexFunc(pages, func(page model.DeepReadingPage) bool { return strings.Contains(page.Text, "- [low] tone: terse") })
+	if last < 1 || len(pages) != last+2 || pages[last+1].Text != rules.Text {
+		t.Fatalf("the lead should run on across pages of its own, the rules after it, got %d pages, the lead ending on page %d", len(pages), last+1)
+	}
+	if !slices.Equal(pages[last].FullIDs, []string{"t"}) {
+		t.Fatalf("the lead's last page should take the target that fits, got %v", pages[last].FullIDs)
+	}
+	var joined strings.Builder
+	for i, page := range pages[:last+1] {
+		body := page.Text
+		if i > 0 {
+			var ok bool
+			body, ok = strings.CutPrefix(body, marker+"```\n")
+			if !ok {
+				t.Fatalf("page %d should open with the continuation marker and reopen the fence:\n%.80s", i+1, page.Text)
+			}
+		}
+		if i < last {
+			var ok bool
+			body, ok = strings.CutSuffix(body, "```\n")
+			if !ok {
+				t.Fatalf("page %d should close the fence its break splits", i+1)
+			}
+		} else {
+			body = strings.TrimSuffix(body, "\n\ntarget")
+		}
+		joined.WriteString(body)
+	}
+	if joined.String() != lead {
+		t.Fatal("the lead's pages joined should be the lead again, nothing cut")
+	}
+}
+
+// A lead that fits a later page but not the first runs on to a second page.
+func TestDeepReadingPagesRunOnALeadPastTheFirstPage(t *testing.T) {
+	lead := strings.Repeat(strings.Repeat("d", 99)+"\n", (model.DeepFirstPageChars+model.DeepPageChars)/200)
+	pages := model.DeepReadingPages(lead, nil, nil, nil)
+	if len(pages) != 2 || model.ServedChars(pages[0].Text) > model.DeepFirstPageChars {
+		t.Fatalf("the lead should run on past the first page's tighter bound, got %d pages", len(pages))
+	}
+}
+
+// A fence broken inside one long line still closes on its own line, and the
+// added fence lines keep every page within the bound.
+func TestDeepContinuedPagesCloseAFenceBrokenMidLine(t *testing.T) {
+	pages := model.DeepContinuedPages("# Draft\n\n", "# Draft, continued\n\n", "```\n"+strings.Repeat("x", model.DeepPageChars*2)+"\n```\n")
+	if len(pages) < 3 || !strings.HasSuffix(pages[1].Text, "x\n```\n") {
+		t.Fatalf("the long line should break mid-line and close its fence on a line of its own, got %d pages", len(pages))
+	}
+	for i, page := range pages {
+		if model.ServedChars(page.Text) > model.DeepPageChars {
+			t.Fatalf("page %d should stay within the page bound with its added fences, got %d", i+1, model.ServedChars(page.Text))
+		}
+		if i > 0 && strings.Split(page.Text, "\n")[2] != "```" {
+			t.Fatalf("page %d should reopen the fence after its opening:\n%.40s", i+1, page.Text)
+		}
+		if fenceLines(page.Text)%2 != 0 {
+			t.Fatalf("page %d should close every fence it opens", i+1)
+		}
+	}
+}
+
+func fenceLines(text string) int {
+	n := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "```") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestMarkVerificationSkipped(t *testing.T) {

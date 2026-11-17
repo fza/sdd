@@ -319,7 +319,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn: w.prepareDeep,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "sendDeepRevision", Doc: "Sends the live verifier the revision prepareDeep opened: the passages changed since the verdict.", Reads: []string{fieldDeepBase, fieldDeepVerdict, fieldDeepRevisions}, Writes: []string{fieldDeepRevision}},
+			Doc: engine.FuncDoc{Name: "sendDeepRevision", Doc: "Sends the live verifier the notice of the revision prepareDeep opened; its pages carry the passages changed since the verdict.", Reads: []string{fieldDeepRevisions}, Writes: []string{fieldDeepRevision}},
 			Fn:  w.sendDeepRevision,
 		},
 		{

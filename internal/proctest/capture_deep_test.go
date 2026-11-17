@@ -162,6 +162,30 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	}
 }
 
+// A draft larger than a page reaches the verifier whole: its lead runs on
+// across pages that serve uncut, and findings wait for the last of them.
+func TestCaptureDeep_ADraftLargerThanAPageServesWhole(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-large", sdd.VerifierPolicy{})
+	draft := captureDraft()
+	const end = "The draft's closing sentence names the last observation."
+	draft["body"] = strings.Repeat("The fixture observes one more thing about the capture writer and its pages.\n\n", 200) + end
+	x := startDeep(t, world, session, draft)
+	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
+	reading := resume.Open[0].Instructions
+	x.delegate.Refresh(t)
+	count := readingPages(t, reading)
+	_, err := x.delegate.AnswerErr(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("page 1 of %d is the last served", count)) {
+		t.Fatalf("findings before every page of the draft was served should be refused, got %v", err)
+	}
+	for range count - 1 {
+		reading += x.delegate.Answer(t, x.child, "read", "more", nil, "").Instructions
+	}
+	if strings.Contains(strings.ToLower(reading), "cut for size") || !strings.Contains(reading, end) {
+		t.Fatalf("every page should serve uncut, the draft's end included:\n%s", reading)
+	}
+}
+
 // readingPages returns how many pages the reading page 1 opens takes.
 func readingPages(t *testing.T, first string) int {
 	t.Helper()

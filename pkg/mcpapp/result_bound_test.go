@@ -502,8 +502,18 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 }
 
 // Every page of the deep verifier's reading serves in one result within the
-// bound: the page and the step around it, no lane left waiting.
+// bound: the page and the step around it, no lane left waiting, a draft
+// larger than a page included.
 func TestEveryDeepReadingPageServesWithinTheResultBound(t *testing.T) {
+	for name, body := range map[string]string{
+		"short draft": "A tactical gap: the deep fixture observes the reading under load.",
+		"large draft": strings.Repeat("The deep fixture observes one more thing about the reading under load.\n\n", 200),
+	} {
+		t.Run(name, func(t *testing.T) { deepReadingServesWithinTheResultBound(t, body) })
+	}
+}
+
+func deepReadingServesWithinTheResultBound(t *testing.T, draft string) {
 	var entries []*model.Entry
 	var ids []string
 	for n := range 12 {
@@ -531,7 +541,7 @@ func TestEveryDeepReadingPageServesWithinTheResultBound(t *testing.T) {
 	capture := serve.Instance
 	callRaw(t, cs, "gather", map[string]any{"session": session, "instance": capture, "ids": ids})
 	call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{
-		"body": "A tactical gap: the deep fixture observes the reading under load.", "entryKind": "gap", "layer": "tactical",
+		"body": draft, "entryKind": "gap", "layer": "tactical",
 		"refs":   []map[string]any{{"id": ids[0], "kind": "related", "desc": "the entry this gap sits beside"}},
 		"topics": []string{"testing/fixture"}, "confidence": "medium", "widenReport": "opened every fixture entry",
 	}}, &serve)

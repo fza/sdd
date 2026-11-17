@@ -109,6 +109,26 @@ func TestCaptureDeep_NewWordsInsideTheVerifiersEditGoToTheVerifier(t *testing.T)
 	}
 }
 
+// A revised draft larger than a page reaches the verifier whole, its lead run
+// on across pages that serve uncut.
+func TestCaptureDeep_ARevisionLargerThanAPageServesWhole(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-revision-large", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, subjectFinding("observes something."))
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	const end = "The revision's closing sentence names the last observation."
+	proctest.RequireStep(t, x.settleWithAChange(t, strings.Repeat("The fixture observes one more thing about the capture writer and its pages.\n\n", 200)+end), "deepWait")
+	serve := x.pickUpRevision(t)
+	reading := serve.Instructions
+	for !strings.Contains(serve.Instructions, "Every page is served.") {
+		serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
+		reading += serve.Instructions
+	}
+	if strings.Contains(strings.ToLower(reading), "cut for size") || strings.Count(reading, end) != 2 {
+		t.Fatalf("every revision page should serve uncut, the draft's end and its changed passage included:\n%s", reading)
+	}
+}
+
 func TestCaptureDeep_ARevisionCanBeReadWhole(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-revision-reread", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())

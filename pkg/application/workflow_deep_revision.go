@@ -134,10 +134,12 @@ func revisionPassages(store *engine.Store, base string) string {
 	return b.String()
 }
 
+// sendDeepRevision names the revision only: the exchange lane serves the
+// message on every page under the store-value cap, and the revision's pages
+// carry the changed passages whole.
 func (w *WorkflowSession) sendDeepRevision(ctx *engine.Context) error {
-	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)
 	number, _ := ctx.Store.Get(fieldDeepRevisions)
-	return ctx.Store.WriteEngine(fieldDeepRevision, fmt.Sprintf("Revision %d of the draft. Changed since your last findings:\n\n%s", deepRoundCount(number), revisionPassages(ctx.Store, base)))
+	return ctx.Store.WriteEngine(fieldDeepRevision, fmt.Sprintf("Revision %d of the draft: its pages serve the revised draft and the passages changed since your last findings.", deepRoundCount(number)))
 }
 
 // loadVerifyRevision loads the revised draft and the revision's reading from
