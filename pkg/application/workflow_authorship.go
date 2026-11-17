@@ -1,10 +1,13 @@
 package application
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
+	"github.com/networkteam/sdd/internal/serveview"
 )
 
 const fieldReason = "reason"
@@ -73,7 +76,23 @@ func (w *WorkflowSession) agentLimitRule(ctx *engine.Context) string {
 }
 
 func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
-	err := registry.RegisterPredicate(engine.Predicate{
+	err := registry.RegisterQuery(engine.Query{
+		Doc: engine.FuncDoc{
+			Name: "agentChains",
+			Doc:  "The chains of agent reasoning awaiting a person's review (model.Graph.AgentChains): each live root an agent decided with no approval, and the marked entries resting on it.",
+		},
+		ServeSafe: true,
+		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Default().Cap(serveview.PartText)},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			var rendered bytes.Buffer
+			presenters.RenderAgentChains(&rendered, ctx.Graph.AgentChains())
+			return strings.TrimRight(rendered.String(), "\n"), nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name:  "authorshipHeld",
 			Doc:   "In auto mode a decision states the agent's own reason, a signal none, and no draft reports participants; a guided draft owes nothing here.",

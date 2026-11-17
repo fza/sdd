@@ -38,8 +38,15 @@ type ShownEntry struct {
 	Refs        []ShownRef
 	Closes      []string
 	Supersedes  []string
+	Approves    []string
 	Attachments []string
 	Preflight   string
+	// DecidedBy, RunBy and Reason are the stored authorship mark, AgentMark
+	// the derived chain mark.
+	DecidedBy string
+	RunBy     string
+	Reason    string
+	AgentMark *AgentMark
 	// Grounding and Verification record a skipped grounding reading and a
 	// skipped deep verification.
 	Grounding     string
@@ -142,6 +149,14 @@ type DerivedStatus struct {
 	Kind          string
 	By            string
 	SupersedePath []string
+}
+
+// AgentMark marks an entry resting on agent reasoning no person approved:
+// the nearest chain origins and how many steps away they are, zero for an
+// origin itself.
+type AgentMark struct {
+	Roots []string
+	Hops  int
 }
 
 // ShownRef is one entry of an entry's refs.

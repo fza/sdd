@@ -228,6 +228,7 @@ func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole,
 	var b strings.Builder
 	writeDeepFirstLine(&b, e, graph.DerivedStatus(e), true)
 	writeReadingContext(&b, graph, e)
+	writeAgentMark(&b, graph, e)
 	if role != model.LightRoleBrief {
 		writeReadingRole(&b, role, code)
 	}
@@ -276,6 +277,21 @@ func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status,
 		fmt.Fprintf(b, " | Time: %s", e.Time.Format("2006-01-02 15:04:05"))
 	}
 	b.WriteByte('\n')
+}
+
+// writeAgentMark states who decided e when an agent did, and where the
+// unapproved agent reasoning it rests on starts.
+func writeAgentMark(b *strings.Builder, graph *model.Graph, e *model.Entry) {
+	if e.AgentDecided() {
+		fmt.Fprintf(b, "Decided by: an agent alone, run by %s\n", e.RunBy)
+	}
+	if mark := graph.AgentMark(e.ID); mark.Hops > 0 {
+		roots := make([]string, 0, len(mark.Roots))
+		for _, root := range mark.Roots {
+			roots = append(roots, model.ShortID(root))
+		}
+		fmt.Fprintf(b, "Agent-reasoned via %s, %d step(s) back: no person approved the agent reasoning it rests on\n", strings.Join(roots, " and "), mark.Hops)
+	}
 }
 
 func writeReadingContext(b *strings.Builder, graph *model.Graph, e *model.Entry) {

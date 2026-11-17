@@ -142,6 +142,11 @@ type showEnvelope struct {
 	Refs         []model.Ref        `yaml:"refs,omitempty"`
 	Closes       []string           `yaml:"closes,omitempty"`
 	Supersedes   []string           `yaml:"supersedes,omitempty"`
+	Approves     []string           `yaml:"approves,omitempty"`
+	DecidedBy    string             `yaml:"decided-by,omitempty"`
+	RunBy        string             `yaml:"run-by,omitempty"`
+	AgentMark    string             `yaml:"agent-mark,omitempty"`
+	Reason       string             `yaml:"reason,omitempty"`
 	Attachments  []string           `yaml:"attachments,omitempty"`
 	Preflight    string             `yaml:"preflight,omitempty"`
 	Grounding    string             `yaml:"grounding,omitempty"`
@@ -180,6 +185,11 @@ func writeEnvelope(w io.Writer, entry types.ShownEntry, opts ShowOptions) error 
 		Refs:         envelopeRefs(entry.Refs),
 		Closes:       entry.Closes,
 		Supersedes:   entry.Supersedes,
+		Approves:     entry.Approves,
+		DecidedBy:    entry.DecidedBy,
+		RunBy:        entry.RunBy,
+		AgentMark:    FormatAgentMark(entry.AgentMark),
+		Reason:       entry.Reason,
 		Attachments:  entry.Attachments,
 		Preflight:    entry.Preflight,
 		Grounding:    entry.Grounding,

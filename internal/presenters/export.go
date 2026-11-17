@@ -51,6 +51,10 @@ type exportEntryJSON struct {
 	SupersededBy     []string               `json:"superseded_by,omitempty"`
 	Closes           []string               `json:"closes,omitempty"`
 	Supersedes       []string               `json:"supersedes,omitempty"`
+	Approves         []string               `json:"approves,omitempty"`
+	DecidedBy        string                 `json:"decided_by,omitempty"`
+	RunBy            string                 `json:"run_by,omitempty"`
+	Reason           string                 `json:"reason,omitempty"`
 	Refs             []refJSON              `json:"refs,omitempty"`
 	Heat             float64                `json:"heat"`
 	InDegree         int                    `json:"in_degree"`
@@ -183,7 +187,8 @@ func exportEntryJSONFrom(x query.ExportEntry) exportEntryJSON {
 		ID: e.ID, FullID: x.FullID, Type: e.Type, Kind: e.Kind, Layer: e.Layer,
 		Confidence: e.Confidence, Intent: e.Intent, Participants: e.Participants,
 		Time: e.Time.Format(wallClockLayout), Status: x.Status.Kind, StatusBy: x.Status.By,
-		ClosedBy: x.ClosedBy, SupersededBy: x.SupersededBy, Closes: e.Closes, Supersedes: e.Supersedes,
+		ClosedBy: x.ClosedBy, SupersededBy: x.SupersededBy, Closes: e.Closes, Supersedes: e.Supersedes, Approves: e.Approves,
+		DecidedBy: string(e.DecidedBy), RunBy: e.RunBy, Reason: e.Reason,
 		Heat: x.Heat, InDegree: x.InDegree, Title: e.Title, Summary: e.Summary, Body: e.Content,
 		Canonical: e.Canonical, Aliases: e.Aliases, Class: e.Class, Actor: e.Actor, Override: e.Override,
 		FocusActors: e.FocusActors, FocusWhen: focusWhenJSONFrom(e.FocusWhen), Preflight: e.Preflight, Grounding: e.Grounding, Verification: e.Verification,

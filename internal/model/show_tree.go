@@ -277,6 +277,9 @@ func (g *Graph) downstreamChildren(id string) []childEdge {
 	for _, eid := range g.ClosedBy[id] {
 		add(eid, "closed-by", "", "")
 	}
+	for _, eid := range g.ApprovedBy[id] {
+		add(eid, "approved-by", "", "")
+	}
 	for _, eid := range g.SupersededBy[id] {
 		add(eid, "superseded-by", "", "")
 	}

@@ -17,6 +17,7 @@ type Graph struct {
 	RefsTo       map[string][]string // reverse index: entry ID -> IDs that reference it
 	ClosedBy     map[string][]string // reverse index: entry ID -> IDs that close it
 	SupersededBy map[string][]string // reverse index: entry ID -> IDs that supersede it
+	ApprovedBy   map[string][]string // reverse index: entry ID -> IDs that approve it
 	// InboundRefs is RefsTo resolved through supersession, keyed by live head
 	// with hop distance. Ranking-only: every other consumer needs RefsTo's
 	// literal keying (d-cpt-x6z).
@@ -40,6 +41,8 @@ type Graph struct {
 	// dependencies; cloneFetched is when that clone last fetched.
 	further      bool
 	cloneFetched time.Time
+	// marks holds AgentMarks, derived once on first read.
+	marks *agentMarkCache
 }
 
 // nodeKeyFor is the graph-qualified identity of an entry for rendering and
@@ -89,8 +92,10 @@ func NewGraphWithLoadIssues(entries []*Entry, issues []LoadIssue) *Graph {
 		RefsTo:       make(map[string][]string),
 		ClosedBy:     make(map[string][]string),
 		SupersededBy: make(map[string][]string),
+		ApprovedBy:   make(map[string][]string),
 		InboundRefs:  make(map[string][]InboundRef),
 		LoadIssues:   issues,
+		marks:        &agentMarkCache{},
 	}
 
 	for _, e := range entries {
@@ -118,6 +123,12 @@ func NewGraphWithLoadIssues(entries []*Entry, issues []LoadIssue) *Graph {
 				continue
 			}
 			g.SupersededBy[s] = append(g.SupersededBy[s], e.ID)
+		}
+		for _, a := range e.Approves {
+			if IsCrossRepoID(a) {
+				continue
+			}
+			g.ApprovedBy[a] = append(g.ApprovedBy[a], e.ID)
 		}
 	}
 
@@ -414,6 +425,10 @@ func (g *Graph) Downstream(id string) []*Entry {
 
 	// Entries that supersede this ID
 	for _, eid := range g.SupersededBy[id] {
+		add(eid)
+	}
+
+	for _, eid := range g.ApprovedBy[id] {
 		add(eid)
 	}
 

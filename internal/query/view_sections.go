@@ -46,7 +46,8 @@ func listedEntry(e *model.Entry, g *model.Graph) types.ListedEntry {
 	return types.ListedEntry{
 		ID: e.ID, Title: e.Title, ListingTitle: e.ListingTitle(), Type: string(e.Type), Kind: string(e.Kind), Layer: string(e.Layer),
 		Status: statusText(status), DerivedStatus: derivedStatus(status, nil), Confidence: e.Confidence, Intent: string(e.Intent),
-		Participants: slices.Clone(e.Participants), Topics: topicLabels(g.EffectiveTopics(e)), Summary: e.Summary,
+		Participants: slices.Clone(e.Participants), DecidedBy: string(e.DecidedBy), RunBy: e.RunBy, AgentMark: shownAgentMark(g.AgentMark(e.ID)),
+		Topics: topicLabels(g.EffectiveTopics(e)), Summary: e.Summary,
 		BodyExcerpt: e.ShortContent(200), Canonical: e.Canonical, Brief: model.EntryBrief(e),
 	}
 }
@@ -182,4 +183,12 @@ func viewBodies(g *model.Graph, bodies model.Bodies) *types.ViewBodies {
 		shown.Withheld = append(shown.Withheld, listedEntry(e, g))
 	}
 	return shown
+}
+
+// shownAgentMark is the mark in its public form; nil for an unmarked entry.
+func shownAgentMark(mark model.AgentMark) *types.AgentMark {
+	if !mark.Marked {
+		return nil
+	}
+	return &types.AgentMark{Roots: slices.Clone(mark.Roots), Hops: mark.Hops}
 }

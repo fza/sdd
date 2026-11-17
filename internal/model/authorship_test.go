@@ -307,10 +307,10 @@ func TestAuthorshipMarkConstruction(t *testing.T) {
 func TestAuthorshipMarkRoundTrip(t *testing.T) {
 	e := &model.Entry{
 		ID: "20260101-100000-d-tac-new", Type: model.TypeDecision, Layer: model.LayerTactical, Kind: model.KindPlan,
-		Participants: []string{"Claude"}, DecidedBy: model.DecidedByAgent, RunBy: "Felix", Reason: "The build needs it.", Content: "Body.",
+		Participants: []string{"Claude"}, DecidedBy: model.DecidedByAgent, RunBy: "Ada", Reason: "The build needs it.", Content: "Body.",
 	}
 	text := model.FormatFrontmatter(e) + "\n" + e.Content + "\n"
-	for _, line := range []string{"decided-by: agent", "run-by: Felix", "reason: The build needs it."} {
+	for _, line := range []string{"decided-by: agent", "run-by: Ada", "reason: The build needs it."} {
 		if !strings.Contains(text, line) {
 			t.Errorf("frontmatter lacks %q:\n%s", line, text)
 		}
@@ -319,7 +319,7 @@ func TestAuthorshipMarkRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !parsed.AgentDecided() || parsed.RunBy != "Felix" || parsed.Reason != "The build needs it." {
+	if !parsed.AgentDecided() || parsed.RunBy != "Ada" || parsed.Reason != "The build needs it." {
 		t.Errorf("parsed mark = %q, %q, %q", parsed.DecidedBy, parsed.RunBy, parsed.Reason)
 	}
 	construction, _ := model.ConstructFromEntry(parsed)
@@ -389,5 +389,40 @@ func TestApprovalValidation(t *testing.T) {
 	}
 	if !slices.Equal(parsed.Approves, []string{agent}) {
 		t.Errorf("parsed approves = %v", parsed.Approves)
+	}
+}
+
+func TestAgentChains(t *testing.T) {
+	const (
+		a = "20260101-100000-s-tac-aaa"
+		b = "20260101-100100-s-tac-bbb"
+		c = "20260101-100200-s-tac-ccc"
+		d = "20260101-100300-s-tac-ddd"
+		e = "20260101-100400-s-tac-eee"
+	)
+	g := model.NewGraph([]*model.Entry{
+		agentEntry(a),
+		agentEntry(b, ref(a, model.RefKindGroundedIn)),
+		agentEntry(c, ref(b, model.RefKindBuildsOn)),
+		agentEntry(d),
+		personEntry(e),
+		{ID: "20260101-100500-s-tac-cls", Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindDone, Closes: []string{d}},
+	})
+	chains := g.AgentChains()
+	if len(chains) != 1 || chains[0].Root.ID != a {
+		t.Fatalf("one live chain rooted at a should await review, the dismissed d none, got %v", chains)
+	}
+	var resting []string
+	for _, entry := range chains[0].Resting {
+		resting = append(resting, entry.ID)
+	}
+	if !slices.Equal(resting, []string{b, c}) {
+		t.Errorf("the chain should list the entries resting on its root, oldest first, got %v", resting)
+	}
+	if mark := g.AgentMark(c); !mark.Marked || mark.Hops != 2 || !slices.Equal(mark.Roots, []string{a}) {
+		t.Errorf("AgentMark should read the derived mark, got %+v", mark)
+	}
+	if mark := g.AgentMark(e); mark.Marked {
+		t.Errorf("a person's entry should carry no mark, got %+v", mark)
 	}
 }

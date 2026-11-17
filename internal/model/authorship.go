@@ -4,7 +4,61 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
+
+type agentMarkCache struct {
+	once  sync.Once
+	marks map[string]AgentMark
+}
+
+// AgentMark is the chain mark of the entry id (see AgentMarks), derived once
+// per graph.
+func (g *Graph) AgentMark(id string) AgentMark {
+	if g.marks == nil {
+		return g.AgentMarks()[id]
+	}
+	g.marks.once.Do(func() { g.marks.marks = g.AgentMarks() })
+	return g.marks.marks[id]
+}
+
+// AgentChain is a chain of agent reasoning awaiting a person's review: its
+// root, and the marked entries resting on it, oldest first.
+type AgentChain struct {
+	Root    *Entry
+	Resting []*Entry
+}
+
+// AgentChains lists the chains whose root is live, neither closed nor
+// superseded, newest root first.
+func (g *Graph) AgentChains() []AgentChain {
+	byRoot := map[string]*AgentChain{}
+	var chains []*AgentChain
+	for _, e := range g.Entries {
+		for _, root := range g.AgentMark(e.ID).Roots {
+			chain := byRoot[root]
+			if chain == nil {
+				r, ok := g.ByID[root]
+				if !ok || len(g.ClosedBy[root]) > 0 || len(g.SupersededBy[root]) > 0 {
+					continue
+				}
+				chain = &AgentChain{Root: r}
+				byRoot[root] = chain
+				chains = append(chains, chain)
+			}
+			if root != e.ID {
+				chain.Resting = append(chain.Resting, e)
+			}
+		}
+	}
+	out := make([]AgentChain, 0, len(chains))
+	for _, chain := range chains {
+		slices.SortFunc(chain.Resting, func(a, b *Entry) int { return a.Time.Compare(b.Time) })
+		out = append(out, *chain)
+	}
+	slices.SortFunc(out, func(a, b AgentChain) int { return b.Root.Time.Compare(a.Root.Time) })
+	return out
+}
 
 // DecidedBy names who decided an entry. sdd writes DecidedByAgent on every
 // entry an autonomous capture writes, with the agent's own reason on a

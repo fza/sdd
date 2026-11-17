@@ -237,3 +237,33 @@ func TestAuthorship_TheWriteGateHoldsTheAgentLimit(t *testing.T) {
 		t.Errorf("pre-flight should refuse the draft naming the agent limit, got:\n%s", serve.Instructions)
 	}
 }
+
+// The catch-up lists what an agent decided alone that no person reviewed, and
+// drops it once a person approved it.
+func TestAuthorship_TheCatchUpListsUnreviewedAgentDecisions(t *testing.T) {
+	world, session := authorshipWorld(t)
+	serve := session.Start(t, "catch-up", nil)
+	if !strings.Contains(serve.Instructions, "## Agent-decided, awaiting review (1)") || !strings.Contains(serve.Instructions, agentEntryID) {
+		t.Fatalf("the catch-up should list the agent's unreviewed directive, got:\n%s", serve.Instructions)
+	}
+	session.Report(t, serve.Instance, map[string]any{"briefing": "A briefing."})
+	session.Answer(t, serve.Instance, "junction", "conclude", nil, "nothing for now")
+
+	capture := session.Start(t, "capture", nil)
+	draft := directiveDraft("tactical")
+	draft["intent"] = "settled"
+	draft["body"] = "Approval: the agent's retry directive holds."
+	draft["approves"] = []any{agentEntryID}
+	draft["reasonWords"] = "I read the retry logs"
+	draft["intentWords"] = "settled now"
+	serve = session.Report(t, capture.Instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	writeCapture(t, world, session, capture.Instance, func() *sdd.WorkflowServe {
+		return session.Answer(t, capture.Instance, "playback", "confirm", nil, "I read the retry logs, settled now, capture it")
+	})
+
+	serve = session.Start(t, "catch-up", nil)
+	if strings.Contains(serve.Instructions, "## Agent-decided, awaiting review") {
+		t.Errorf("an approved decision should leave the catch-up lane, got:\n%s", serve.Instructions)
+	}
+}

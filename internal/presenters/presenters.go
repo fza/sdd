@@ -20,7 +20,7 @@ import (
 // writeEntryLine writes the entry line every listing shares, view entries and
 // search hits alike; a NaN score omits the score segment.
 //
-// Format: `<id> <layer> <kind>? <type> [confidence: <conf>]? [intent: guiding]? (<participants>) {status: <status>}? {score: <score>}? <topics>? <summary>`
+// Format: `<id> <layer> <kind>? <type> [confidence: <conf>]? [intent: guiding]? [decided-by: agent]? [run-by: <participant>]? (<participants>) {status: <status>}? {agent-reasoned via <root>, <n> steps}? {score: <score>}? <topics>? <summary>`
 // Kind renders as a qualifier alongside layer/type — it's identity, not an
 // attribute (d-cpt-omm's two-type redesign makes every entry carry a kind).
 // Square brackets denote stored attributes (confidence; intent, but only its
@@ -53,12 +53,21 @@ func writeEntryLine(w io.Writer, line types.ListedEntry, score float64) {
 		sb.WriteString(" ")
 		sb.WriteString(in)
 	}
+	if line.DecidedBy != "" {
+		sb.WriteString(" [decided-by: " + line.DecidedBy + "]")
+	}
+	if line.RunBy != "" {
+		sb.WriteString(" [run-by: " + line.RunBy + "]")
+	}
 	sb.WriteString(" (")
 	sb.WriteString(strings.Join(line.Participants, ", "))
 	sb.WriteString(")")
 	if s := FormatStatus(model.Status{Kind: model.StatusKind(line.DerivedStatus.Kind), By: line.DerivedStatus.By}); s != "" {
 		sb.WriteString(" ")
 		sb.WriteString(s)
+	}
+	if mark := FormatAgentMark(line.AgentMark); mark != "" {
+		sb.WriteString(" {" + mark + "}")
 	}
 	if !math.IsNaN(score) {
 		sb.WriteString(" ")
@@ -86,10 +95,10 @@ const briefTitleWidth = 110
 // writeEntryLineBrief writes the compact entry line the `brief` layout
 // modifier selects: identity qualifiers plus the listing title, with every
 // attribute segment (confidence, intent, participants, status, score,
-// topics) dropped. Built for injection surfaces where full lines cost
-// context without informing the decision at hand.
+// topics) dropped but the agent's authorship. Built for injection surfaces
+// where full lines cost context without informing the decision at hand.
 //
-// Format: `<id> <layer> <kind>? <type> <title>`
+// Format: `<id> <layer> <kind>? <type> [decided-by: agent]? <title>`
 func writeEntryLineBrief(w io.Writer, line types.ListedEntry) {
 	var sb strings.Builder
 	sb.WriteString("  ")
@@ -102,6 +111,9 @@ func writeEntryLineBrief(w io.Writer, line types.ListedEntry) {
 	}
 	sb.WriteString(" ")
 	sb.WriteString(line.Type)
+	if line.DecidedBy != "" {
+		sb.WriteString(" [decided-by: " + line.DecidedBy + "]")
+	}
 	sb.WriteString(" ")
 	sb.WriteString(model.ShortTitle(line.ListingTitle, briefTitleWidth))
 	sb.WriteString("\n")
@@ -143,6 +155,24 @@ func formatTopics(labels []string) string {
 		return ""
 	}
 	return "<" + strings.Join(labels, ", ") + ">"
+}
+
+// FormatAgentMark names where the agent reasoning an entry rests on starts,
+// as in `agent-reasoned via d-tac-agt, 2 steps`; "" for an unmarked entry or
+// a chain's origin, whose decided-by says it.
+func FormatAgentMark(mark *types.AgentMark) string {
+	if mark == nil || mark.Hops == 0 {
+		return ""
+	}
+	roots := make([]string, 0, len(mark.Roots))
+	for _, root := range mark.Roots {
+		roots = append(roots, model.ShortID(root))
+	}
+	steps := "steps"
+	if mark.Hops == 1 {
+		steps = "step"
+	}
+	return fmt.Sprintf("agent-reasoned via %s, %d %s", strings.Join(roots, " and "), mark.Hops, steps)
 }
 
 // FormatConfidence renders a stored confidence attribute in square-bracket notation.
