@@ -108,6 +108,43 @@ func TestCloneIsNotHeldByCooldownOrRetryWait(t *testing.T) {
 	}
 }
 
+// A clone that failed itself waits like a fetch: the retry wait, or the
+// cooldown once no retry is left.
+func TestAFailedCloneWaitsLikeAFetch(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		reason gitgate.Reason
+		next   time.Time
+	}{
+		{"retry wait", "fatal: the remote end hung up unexpectedly", gitgate.ReasonRetryWait, t0.Add(90 * time.Second)},
+		{"cooldown", "fatal: repository not found", gitgate.ReasonCooldown, t0.Add(5 * time.Minute)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := newSetup(t)
+			gate := setup.gate()
+			target := mustTarget(t, "git@gitlab.com:group/project.git")
+			runs := 0
+			err := gate.Run(t.Context(), target, gitgate.Clone, failingOp(t, &runs, tt.output))
+			if err == nil || errors.As(err, new(*gitgate.DeferredError)) {
+				t.Fatalf("the first clone should run and fail, got %v", err)
+			}
+
+			setup.clock.Set(t0.Add(time.Minute))
+			skip := deferred(t, gate.Run(t.Context(), target, gitgate.Clone, sshOp(t, &runs)))
+			if skip.Reason != tt.reason || !skip.Next.Equal(tt.next) || runs != 1 {
+				t.Errorf("a clone after its own failure should wait for the %s until %v, got %v after %d runs", tt.name, tt.next.Sub(t0), skip, runs)
+			}
+
+			setup.clock.Set(tt.next)
+			if err := gate.Run(t.Context(), target, gitgate.Clone, sshOp(t, &runs)); err != nil || runs != 2 {
+				t.Errorf("the clone should run once the %s ends, got %v after %d runs", tt.name, err, runs)
+			}
+		})
+	}
+}
+
 func TestCloneIsHeldByBuckets(t *testing.T) {
 	tests := []struct {
 		name   string

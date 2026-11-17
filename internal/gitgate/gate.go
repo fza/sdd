@@ -315,7 +315,7 @@ func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time,
 	} else {
 		record = repo.Fetch
 	}
-	if kind != Clone && record != nil && now.Before(record.Next) {
+	if record != nil && (kind != Clone || record.CloneFailed) && now.Before(record.Next) {
 		switch {
 		case !record.RetryAt.IsZero() && !now.Before(record.RetryAt):
 			v.viaRetry = true
@@ -403,6 +403,7 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 	period := l.cooldown(repo, target, kind, limits)
 	result := classify(opErr)
 	record.Outcome = result
+	record.CloneFailed = kind == Clone && result != outcomeOK
 	record.RetryAt = time.Time{}
 	if result == outcomeOK {
 		record.LastSuccess = now.UTC()
