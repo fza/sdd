@@ -611,6 +611,12 @@ jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
     severity: (if .Severity == "error" then "high" elif .Severity == "warning" then "medium" else "low" end)}]}'
 ```
 
+## sdd serve flags
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--output-schema` | Off | For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it. |
+
 ## Environment variables
 
 | Variable | Default | Effect |

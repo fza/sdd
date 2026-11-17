@@ -168,6 +168,12 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 // serveWith is serve with a client of the given options.
 func (f *appFixture) serveWith(t *testing.T, options *mcp.ClientOptions, check func(*mcp.ClientSession)) {
 	t.Helper()
+	f.serveArgs(t, nil, options, check)
+}
+
+// serveArgs is serveWith with extra serve flags.
+func (f *appFixture) serveArgs(t *testing.T, flags []string, options *mcp.ClientOptions, check func(*mcp.ClientSession)) {
+	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
 	// No deadline bounds the serve: it runs until the client disconnects, and
@@ -178,7 +184,7 @@ func (f *appFixture) serveWith(t *testing.T, options *mcp.ClientOptions, check f
 	done := make(chan struct{})
 	var runErr error
 	go func() {
-		runErr = command.Run(ctx, []string{"sdd", "serve", "--transport", "stdio"})
+		runErr = command.Run(ctx, append([]string{"sdd", "serve", "--transport", "stdio"}, flags...))
 		close(done)
 	}()
 	defer func() {

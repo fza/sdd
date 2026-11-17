@@ -58,6 +58,10 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				Usage:   "bearer token required on every HTTP request (transport=http only)",
 				Sources: cli.EnvVars("SDD_SERVE_TOKEN"),
 			},
+			&cli.BoolFlag{
+				Name:  "output-schema",
+				Usage: "For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it.",
+			},
 		),
 		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
@@ -110,6 +114,7 @@ func runMCPServerWith(ctx context.Context, cmd *cli.Command, options mcpserver.O
 	options.SearchSyncMode = sdd.SearchSyncAll
 	options.LocalClient = transport == "stdio"
 	options.Version = cmd.Root().Version
+	options.OutputSchema = cmd.Bool("output-schema")
 	srv, err := mcpserver.New(options)
 	if err != nil {
 		return err
