@@ -92,6 +92,33 @@ func TestAuthorship_TheStartingClientStaysTheParticipant(t *testing.T) {
 	}
 }
 
+// A client that sends no name has no actor to write for: its autonomous
+// capture is refused at the start, and at the write when the session turned
+// autonomous after it started.
+func TestAuthorship_ANamelessClientCannotCaptureUnattended(t *testing.T) {
+	t.Run("at the start", func(t *testing.T) {
+		world, _ := authorshipWorld(t, proctest.WithAutonomousDialogue())
+		session := world.Open(t, "")
+		if _, err := session.StartErr(t, "capture", nil); err == nil || !strings.Contains(err.Error(), "send a name") {
+			t.Errorf("the start should be refused telling the client to send a name, got %v", err)
+		}
+	})
+	t.Run("at the write", func(t *testing.T) {
+		world, _ := authorshipWorld(t)
+		session := world.Open(t, "")
+		session.LogRead(t, "show", []string{captureRefID}, nil)
+		serve := session.Start(t, "capture", nil)
+		instance := serve.Instance
+		serve = session.Report(t, instance, captureDraft())
+		proctest.RequireStep(t, serve, "playback")
+		world.SetDialogue("auto")
+		session.Refresh(t)
+		if _, err := session.DecideErr(t, instance, "playback", "confirm", nil, "the draft holds"); err == nil || !strings.Contains(err.Error(), "send a name") {
+			t.Errorf("the write should be refused telling the client to send a name, got %v", err)
+		}
+	})
+}
+
 func TestAuthorship_AGuidedCaptureCarriesNoMark(t *testing.T) {
 	world, session := authorshipWorld(t)
 	serve := session.Start(t, "capture", nil)

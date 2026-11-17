@@ -693,6 +693,9 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	if startsDelegate(spec) {
 		return nil, fmt.Errorf("%s runs as a delegate: answering the option whose dispatch names it forks it, so it is never started by hand", spec.Canonical)
 	}
+	if err := w.refuseNamelessCapture(spec, request.ClientName); err != nil {
+		return nil, err
+	}
 	// The target is settled before the instance exists, so a project the
 	// session may not work in refuses the start rather than leaving an
 	// instance behind that derives the wrong one.

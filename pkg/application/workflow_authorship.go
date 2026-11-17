@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,7 +32,21 @@ func (w *WorkflowSession) markAgentDraft(instance string, draft *EntryDraft) err
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(client) == "" {
+		return errNamelessClient
+	}
 	draft.agent = &agentAuthor{client: client}
+	return nil
+}
+
+var errNamelessClient = errors.New("an unattended capture writes for the MCP client that started it, and this client sent no name: send a name in the client info to capture unattended")
+
+// refuseNamelessCapture refuses starting an autonomous move that writes an
+// entry from a client that sent no name.
+func (w *WorkflowSession) refuseNamelessCapture(spec *engine.Spec, client string) error {
+	if w.Autonomous() && publishesEntry(spec) && strings.TrimSpace(client) == "" {
+		return errNamelessClient
+	}
 	return nil
 }
 
