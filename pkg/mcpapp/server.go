@@ -41,6 +41,10 @@ type Options struct {
 	// call with it, a notice rides once on the call's result, and the call
 	// runs under the context it returns, its own when that is nil.
 	BeforeCall func(ctx context.Context) (call context.Context, notice string, err error)
+	// OutputSchema declares each tool's outputSchema in tools/list, as the
+	// SDK derives it from the tool's result type. Results carry structured
+	// content either way; off, the listing stays a fraction of the size.
+	OutputSchema bool
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -53,6 +57,7 @@ type toolSet struct {
 	version        string
 	cacheNotice    func(context.Context) string
 	before         func(context.Context) (context.Context, string, error)
+	outputSchema   bool
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -74,6 +79,7 @@ func newToolSet(opts Options) (*toolSet, error) {
 		version:        opts.Version,
 		cacheNotice:    opts.CacheNotice,
 		before:         opts.BeforeCall,
+		outputSchema:   opts.OutputSchema,
 		sessions:       newSessionCache(),
 	}, nil
 }

@@ -507,7 +507,7 @@ type RegistryResult struct {
 
 func (s *toolSet) register(srv *mcp.Server) {
 	srv.AddReceivingMiddleware(refuseSingleFileStaging)
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "start_session",
 		Description: "Open a fresh dialogue session. One of the two doors, and the only tool that takes a " +
 			"project. Auto-starts the session shell (user-dialogue by default). Returns its opening serve: " +
@@ -517,17 +517,17 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"Without project, a sole accessible project is inferred. With several, the response lists them " +
 			"(status project-required) and opens no session. Every call opens a new dialogue under a new " +
 			"handle. To re-serve an existing one, present its handle to resume_session.",
-	}, toolBoundary(s, s.startSession))
+	}, s.startSession)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "start_procedure",
 		Description: "Start a procedure instance (a playbook move such as capture); session required. " +
 			"Returns the current step's instructions, the report schema to answer with, and the goal " +
 			"that advances it. The only path to graph writes: writes happen inside procedure " +
 			"transitions, never through a direct tool.",
-	}, toolBoundary(s, s.startProcedure))
+	}, s.startProcedure)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "next",
 		Description: "Advance a procedure instance; session required. Send state fields per the served " +
 			"report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, " +
@@ -537,26 +537,26 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"effects in place and return to the preceding interaction. Other transitions stay blocked " +
 			"until the operation is retried or cancelled. When a move ends, the response carries the " +
 			"session shell's serve: where the dialogue lands.",
-	}, toolBoundary(s, s.next))
+	}, s.next)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "abandon",
 		Description: "Abandon a running move instance (instance, plus session naming the session it belongs " +
 			"to). Or tear down a session directly by handle (session alone): one call, no resume, no " +
 			"framing. The response names the label and discarded threads. Nothing is cleaned up " +
 			"implicitly: held WIP markers are surfaced and left standing for resume or grooming. The " +
 			"session shell concludes through its own junction, never through abandon.",
-	}, toolBoundary(s, s.abandon))
+	}, s.abandon)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "park",
 		Description: "Park a running move back to the session junction; session required. State and step " +
 			"position keep. The move lists as an open thread (at junctions and on conclude), and next " +
 			"resumes it. Use it when the user shelves work mid-dialogue. A seeded draft then parks as a " +
 			"graph-visible thread, not as an agent promise living in conversation memory.",
-	}, toolBoundary(s, s.park))
+	}, s.park)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "resume_session",
 		Description: "The second door, and the compaction escape. Re-serves the current position of the " +
 			"session whose handle you present: its framing plus every running move at its current step, " +
@@ -565,16 +565,16 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"declares you need re-serving: every piece of the position serves in full. " +
 			"Only recorded session state resumes (step position, collected fields, staged files), " +
 			"never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
-	}, toolBoundary(s, s.resumeSession))
+	}, s.resumeSession)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "bind_branch",
 		Description: "Declare or clear the attached session's durable branch binding. Pass exactly one of " +
 			"branch or clear:true. Setting validates the live registered checkout before changing the " +
 			"session; clearing needs no branch capability.",
-	}, toolBoundary(s, s.bindBranch))
+	}, s.bindBranch)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "stage_attachment",
 		Description: "Stage one or more files into the session scratch in one call; session required. Each " +
 			"files item takes a name and exactly one of content, path and patches. Returns, per file in call " +
@@ -584,59 +584,59 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"not re-staged whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
 			"Never a graph write: the write gate materializes " +
 			"staged files with the entry.",
-	}, toolBoundary(s, s.stageAttachment))
+	}, s.stageAttachment)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "search",
 		Description: "Search graph entries: terms (text/regex), query (semantic phrase), or both (hybrid). " +
 			"A free read; session required. No move needed, never blocked by procedure state. Runs in " +
 			"that session's project and branch.",
-	}, toolBoundary(s, s.search))
+	}, s.search)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "view",
 		Description: "Run an sdd view layout pipeline over the graph: overview sections, topic counts, " +
 			"ranked lists. A free read; session required.",
-	}, toolBoundary(s, s.view))
+	}, s.view)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "show",
 		Description: "Read entries in full with their upstream and downstream reference chains; session " +
 			"required. Use whenever the dialogue touches a specific entry: summaries are pointers, not facts.",
-	}, toolBoundary(s, s.show))
+	}, s.show)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "gather",
 		Description: "Ground a draft before its capture, in one call; session required. On a small graph: " +
 			"every live entry's brief. Above it: a semantic search, keyword searches and the live listing " +
 			"of every draft topic, written from the draft. Name the running capture as instance: only " +
 			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
 			"An entry the call proves it holds prints as a pointer with its brief.",
-	}, toolBoundary(s, s.gather))
+	}, s.gather)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "read_attachment",
 		Description: "Read an attachment's content, paged; session required. Either an entry's, by ID and " +
 			"filename, or a file staged to that session before any entry carries it, by handle. Never " +
 			"derive storage paths.",
-	}, toolBoundary(s, s.readAttachment))
+	}, s.readAttachment)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name:        "info",
 		Description: "Session framing header; session required. Project, local participant, configured language, available search modes.",
-	}, toolBoundary(s, s.info))
+	}, s.info)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name:        "registry",
 		Description: "Engine function contracts (predicates, queries, commands) for procedure spec authors. Carries the session handle like every other tool.",
-	}, toolBoundary(s, s.registryDocs))
+	}, s.registryDocs)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, s, &mcp.Tool{
 		Name: "sync_repos",
 		Description: "Run the sync round of the connected repositories; session required. Each repository's " +
 			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
 			"name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
-	}, toolBoundary(s, s.syncRepos))
+	}, s.syncRepos)
 }
 
 // attachedSession returns the named session locked and replayed from its
@@ -1467,16 +1467,29 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 	return nil, result, nil
 }
 
+// addTool registers handler behind toolBoundary. Unless outputSchema is set,
+// the output type is erased to any so the SDK declares no outputSchema; the
+// structured content is still marshalled from the returned value.
+func addTool[In, Out any](srv *mcp.Server, s *toolSet, tool *mcp.Tool, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
+	bounded := toolBoundary(s, handler)
+	if s.outputSchema {
+		mcp.AddTool(srv, tool, bounded)
+		return
+	}
+	mcp.AddTool(srv, tool, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		return bounded(ctx, req, in)
+	})
+}
+
 // toolBoundary is where an error meets the agent: a coded application error
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
-// The output type is erased to any so the SDK declares no outputSchema; the
-// structured content is still marshalled from the returned value.
-func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		call, hostNotice, err := s.beforeCall(ctx)
 		if err != nil {
-			return nil, nil, err
+			var none Out
+			return nil, none, err
 		}
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(call, syncNoticeKey{}, slot), req, in)
