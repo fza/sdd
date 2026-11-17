@@ -182,16 +182,11 @@ func composedRunnerIn(cfg model.LLMConfig, sddDir func() (string, error)) (pkgll
 	return log.Runner(pkgllm.Observed(runner, statsSinkIn(sddDir))), nil
 }
 
-// statsSink is the recording sink both the chat runner and the embedder are
-// observed into: one debug log line per call, and one row in .sdd/stats/llm.jsonl
-// that `sdd stats` reads. Best-effort: outside an sdd repo, or when the sink
-// directory cannot be created, calls are logged but not recorded.
-func statsSink() pkgllm.StatsSink {
-	return statsSinkIn(resolveSDDDir)
-}
-
-// statsSinkIn is statsSink for the project whose .sdd/ directory sddDir
-// resolves.
+// statsSinkIn is the recording sink both the chat runner and the embedder of
+// the project whose .sdd/ directory sddDir resolves are observed into: one
+// debug log line per call, and one row in .sdd/stats/llm.jsonl that `sdd
+// stats` reads. Best-effort: outside an sdd repo, or when the sink directory
+// cannot be created, calls are logged but not recorded.
 func statsSinkIn(sddDir func() (string, error)) pkgllm.StatsSink {
 	dir, err := sddDir()
 	if err != nil {
