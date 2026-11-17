@@ -239,7 +239,7 @@ func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootO
 	if projectRepo == "" && WithinDir(projectRoot, graphDir) {
 		return nil
 	}
-	graphRepo, err := rootOf(graphDir)
+	graphRepo, err := rootOf(existingFolder(graphDir))
 	if err != nil {
 		return err
 	}
@@ -297,6 +297,18 @@ func SameDir(a, b string) bool {
 
 // splitExisting splits path into its nearest existing ancestor and the names
 // below it.
+// existingFolder is path's nearest folder on disk: path itself, or the
+// folder holding the file or the parts not yet created that path names. A
+// graph_dir naming a file, such as a stock sdd's guard file, lies in the
+// repository its folder does.
+func existingFolder(path string) string {
+	base, _ := splitExisting(path)
+	if info, err := os.Stat(base); err == nil && !info.IsDir() {
+		return filepath.Dir(base)
+	}
+	return base
+}
+
 func splitExisting(path string) (string, []string) {
 	var rest []string
 	for {
