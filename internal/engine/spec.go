@@ -341,10 +341,13 @@ type dispatchYAML struct {
 // Unattended bounds an autonomous session at a user chooser guarding a check:
 // the agent answers only Answer, with its reason, never user words. Limit > 0
 // parks the instance at the step once the agent answered it Limit times,
-// until a person answers it.
+// until a person answers it. Park instead parks the instance at the step on
+// arrival, the agent answering nothing: it names the predicate whose failure
+// message is the park reason.
 type Unattended struct {
 	Answer string `yaml:"answer"`
 	Limit  int    `yaml:"limit"`
+	Park   string `yaml:"park"`
 }
 
 type transitionYAML struct {
@@ -806,6 +809,11 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 			addProblem("%s: unattended applies only to a user chooser", prefix)
 		case sy.Delegable:
 			addProblem("%s: unattended and delegable exclude each other", prefix)
+		case u.Park != "" && (u.Answer != "" || u.Limit != 0):
+			addProblem("%s: unattended park excludes answer and limit", prefix)
+		case u.Park != "" && !isValidFuncName(u.Park):
+			addProblem("%s: unattended park names %q, not a predicate name (identifiers only)", prefix, u.Park)
+		case u.Park != "":
 		case u.Limit < 0:
 			addProblem("%s: unattended limit %d is negative", prefix, u.Limit)
 		case !slices.ContainsFunc(sy.Options, func(o optionYAML) bool { return o.Choice == u.Answer }):
