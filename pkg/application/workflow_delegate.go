@@ -535,12 +535,15 @@ func delegatePrompt(session SessionID, instance string) string {
 	return fmt.Sprintf("sdd delegate. One task, sdd MCP tools only. No sdd CLI, no graph file reads. "+
 		"Handles: session %s, instance %s. Only these. Every call names the session; next also the instance. "+
 		"First call resume_session: task at its current step, schema to continue, full exchange so far. "+
-		"Follow each serve. End your turn only when a serve says it is waiting for the dispatching move. A step with options waits on you. You get continued or relaunched, same handles; next without report picks the input up.", session, instance)
+		"Follow each serve. End your turn only when a serve says it is waiting for the dispatching move. A step with options waits on you. You get continued or relaunched, same handles; next without report picks the input up. "+
+		delegateFinalReply, session, instance)
 }
 
 func delegateContinuePrompt(session SessionID, instance string) string {
-	return fmt.Sprintf("Dispatching move sent next input. Call next with session %s, instance %s, no report. Then continue the task.", session, instance)
+	return fmt.Sprintf("Dispatching move sent next input. Call next with session %s, instance %s, no report. Then continue the task. "+delegateFinalReply, session, instance)
 }
+
+const delegateFinalReply = "Final reply: one line, delivered, waiting for the dispatching move, or failed with the reason. Results travel only through sdd, never in your reply."
 
 // launchDelegate hands the delegate's launch to the launcher and, once the
 // launcher took it on, starts the round's process and records the round's
