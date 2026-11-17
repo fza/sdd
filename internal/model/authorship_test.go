@@ -30,9 +30,9 @@ func approval(id string, approves ...string) *model.Entry {
 
 func TestAgentMarks(t *testing.T) {
 	const (
-		a = "20260101-100000-s-tac-aaa"
-		b = "20260101-100100-s-tac-bbb"
-		c = "20260101-100200-s-tac-ccc"
+		a  = "20260101-100000-s-tac-aaa"
+		b  = "20260101-100100-s-tac-bbb"
+		c  = "20260101-100200-s-tac-ccc"
 		d  = "20260101-100300-s-tac-ddd"
 		ap = "20260102-090000-d-tac-apr"
 	)
@@ -108,7 +108,7 @@ func TestAgentMarks(t *testing.T) {
 				func() *model.Entry { e := approval(ap, a); e.DecidedBy = model.DecidedByAgent; return e }(),
 			},
 			want: map[string]model.AgentMark{
-				a: {Marked: true, Roots: []string{a}, Hops: 0},
+				a:  {Marked: true, Roots: []string{a}, Hops: 0},
 				ap: {Marked: true, Roots: []string{ap}, Hops: 0},
 			},
 		},

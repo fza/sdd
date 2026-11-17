@@ -227,13 +227,13 @@ func IsValidIntent(s string) bool {
 type Warning = types.Warning
 
 type Entry struct {
-	ID           string
-	Type         EntryType
-	Layer        Layer
-	Kind         Kind // only meaningful for decisions; empty = directive (default)
-	Refs         []Ref
-	Supersedes   []string
-	Closes       []string
+	ID         string
+	Type       EntryType
+	Layer      Layer
+	Kind       Kind // only meaningful for decisions; empty = directive (default)
+	Refs       []Ref
+	Supersedes []string
+	Closes     []string
 	// Approves lists the agent-decided entries a person's approval, a settled
 	// directive, vouches for (see Graph.AgentMarks).
 	Approves     []string
