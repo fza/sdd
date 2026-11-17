@@ -325,3 +325,118 @@ steps:
 		})
 	}
 }
+
+// Approving tells a person's approval at the gate from every other answer.
+func TestAssistedApprovingNamesThePersonsApproval(t *testing.T) {
+	session, sv := assistedSession(t, nopSink{}, assisted())
+	if session.Approving(sv.Instance, "pick", "go") {
+		t.Error("a choice before the gate should not approve")
+	}
+	sv = toGate(t, session, sv.Instance)
+	if !session.Approving(sv.Instance, "gate", "confirm") {
+		t.Error("the confirm at the gate should be the person's approval")
+	}
+	if session.Approving(sv.Instance, "gate", "adjust") || session.Approving("nope", "gate", "confirm") {
+		t.Error("only the confirming option of a known draft should approve")
+	}
+	session.SetDialogue(model.DialogueGuided, "")
+	if session.Approving(sv.Instance, "gate", "confirm") {
+		t.Error("outside an assisted session no confirm is an approval")
+	}
+}
+
+// A park at the gate is told apart from every other park.
+func TestAssistedGateParkIsMarked(t *testing.T) {
+	sink := &recordingSink{}
+	session, sv := assistedSession(t, sink, assisted())
+	toGate(t, session, sv.Instance)
+	marked := 0
+	for _, ev := range sink.events {
+		if engine.ParkedForApproval(ev) {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Errorf("the gate's park should be marked as waiting for an approval once, got %d of %+v", marked, sink.events)
+	}
+}
+
+// heldForApproval tells a step after the gate that the gate held the draft
+// at its current state, when the session left assisted before the person
+// answered.
+func TestAssistedHeldForApproval(t *testing.T) {
+	machine := `state:
+    body: {type: text, optional: true, desc: x}
+steps:
+    - id: gate
+      chooser: user
+      delegable: true
+      options:
+          - {choice: confirm, call: confirmPlayback, to: limit}
+    - id: limit
+      chooser: user
+      options:
+          - {choice: done, to: end(completed)}`
+	spec := mustParseLanes(t, machine, "## unit: gate\n\nPlay back.\n\n## unit: limit\n\n{{if .heldForApproval}}held{{else}}fresh{{end}}\n")
+	for _, tc := range []struct {
+		name    string
+		opts    []engine.SessionOption
+		changed bool
+		want    string
+	}{
+		{name: "held at the gate", opts: []engine.SessionOption{assisted()}, want: "held"},
+		{name: "changed since", opts: []engine.SessionOption{assisted()}, changed: true, want: "fresh"},
+		{name: "never held", opts: []engine.SessionOption{autonomous()}, want: "fresh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+			session := eng.NewSession("s_held", "tester", nopSink{}, tc.opts...)
+			sv, err := session.Start(spec, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			session.SetDialogue(model.DialogueAuto, "")
+			if tc.changed {
+				if err := session.Update(sv.Instance, map[string]any{"body": "changed"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sv, err = session.AnswerWith(sv.Instance, "gate", "confirm", nil, engine.AnswerWords{Reason: "holds"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sv.UnitText != tc.want {
+				t.Errorf("the step after the gate should read %q, got %q", tc.want, sv.UnitText)
+			}
+		})
+	}
+}
+
+// A batch lists a draft by its id, or with the confirming option's fields
+// for that draft alone.
+func TestAssistedBatchItemCarriesTheConfirmingFields(t *testing.T) {
+	spec := mustParseLanes(t, strings.Replace(assistedMachine, "{choice: confirm, call: confirmPlayback", `{choice: confirm, collect: ["body?"], call: confirmPlayback`, 1), assistedBody)
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	session := eng.NewSession("s_assisted", "tester", nopSink{}, assisted())
+	sv, err := session.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv = toGate(t, session, sv.Instance)
+	props, _ := sv.ReportSchema["properties"].(map[string]any)
+	batch, _ := props["batch"].(map[string]any)
+	lists, _ := batch["additionalProperties"].(map[string]any)
+	items, _ := lists["items"].(map[string]any)
+	forms, _ := items["anyOf"].([]any)
+	if len(forms) != 2 {
+		t.Fatalf("a batch item should be an id or an object, got %v", items)
+	}
+	object, _ := forms[1].(map[string]any)
+	fields, _ := object["properties"].(map[string]any)
+	if _, ok := fields["instance"]; !ok {
+		t.Errorf("an item object should name its instance, got %v", fields)
+	}
+	if _, ok := fields["body"]; !ok {
+		t.Errorf("an item object should carry the confirming option's fields, got %v", fields)
+	}
+}

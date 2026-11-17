@@ -843,11 +843,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
 		case s.approvalGateAt(inst, step):
-			sv.Goal = "play the checked draft back to the person; relay their answer verbatim"
+			sv.Goal = "play the checked draft back to the person and ask through " + s.questionTool() + "; relay their answer verbatim"
 		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode.AgentAnswers():
 			sv.Goal = "decide yourself; answer with a one-line reason"
 		case step.Chooser == ChooserUser:
-			sv.Goal = "put the choice to the user; relay their answer verbatim"
+			sv.Goal = "put the choice to the user through " + s.questionTool() + "; relay their answer verbatim"
 		default:
 			sv.Goal = "judge the chooser; answer with the evidence its option collects"
 		}
@@ -1120,19 +1120,29 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 		}
 		ctx[name] = value
 	}
-	if _, ok := inst.Spec.Params[dialogueModeValue]; ok {
-		return nil, fmt.Errorf("template value %q collides with a procedure param", dialogueModeValue)
-	}
-	if _, ok := inst.Spec.State[dialogueModeValue]; ok {
-		return nil, fmt.Errorf("template value %q collides with a procedure state field", dialogueModeValue)
+	for _, name := range []string{dialogueModeValue, questionToolValue, heldForApprovalValue} {
+		if _, ok := inst.Spec.Params[name]; ok {
+			return nil, fmt.Errorf("template value %q collides with a procedure param", name)
+		}
+		if _, ok := inst.Spec.State[name]; ok {
+			return nil, fmt.Errorf("template value %q collides with a procedure state field", name)
+		}
 	}
 	ctx[dialogueModeValue] = string(s.dialogueMode())
+	ctx[questionToolValue] = s.questionTool()
+	ctx[heldForApprovalValue] = inst.sealed != "" && inst.sealed == inst.Store.StateSnapshot()
 	return ctx, nil
 }
 
-// dialogueModeValue names the session's dialogue mode in every unit's
-// template context.
-const dialogueModeValue = "dialogueMode"
+// dialogueModeValue names the session's dialogue mode, questionToolValue how
+// the agent puts a choice to its person, and heldForApprovalValue whether an
+// assisted approval gate held the instance at its current state, in every
+// unit's template context.
+const (
+	dialogueModeValue    = "dialogueMode"
+	questionToolValue    = "questionTool"
+	heldForApprovalValue = "heldForApproval"
+)
 
 func (s *Session) dialogueMode() model.DialogueMode {
 	if s.DialogueMode.AgentAnswers() {

@@ -231,6 +231,9 @@ type Session struct {
 	// through SetDialogue; DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
 	DialogueSource string
+	// QuestionTool says how the agent puts a choice to its person
+	// (model.QuestionTool); empty reads as the neutral wording.
+	QuestionTool string
 	// Lineage names the dispatching instance of a delegate child session; nil
 	// on every session a user dialogue opened.
 	Lineage *Link
@@ -288,6 +291,18 @@ func WithDialogue(mode model.DialogueMode, source string) SessionOption {
 		s.DialogueMode = mode
 		s.DialogueSource = source
 	}
+}
+
+// WithQuestionTool sets how the agent puts a choice to its person.
+func WithQuestionTool(how string) SessionOption {
+	return func(s *Session) { s.QuestionTool = how }
+}
+
+func (s *Session) questionTool() string {
+	if s.QuestionTool == "" {
+		return model.QuestionTool("")
+	}
+	return s.QuestionTool
 }
 
 // SetDialogue puts the session in mode from now on: steps served and answers

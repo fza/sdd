@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -31,7 +32,29 @@ func (s *Session) holdForApproval(inst *Instance, step *Step) {
 	}
 	inst.parking = &Parking{Step: step.ID, Reason: approvalHoldReason, Since: s.now()}
 	inst.sealed = inst.Store.StateSnapshot()
-	s.appendEvent(inst.ID, EventParked, map[string]any{"step": step.ID, "reason": approvalHoldReason, "held": true, "snapshot": inst.sealed})
+	s.appendEvent(inst.ID, EventParked, map[string]any{"step": step.ID, "reason": approvalHoldReason, "held": true, "snapshot": inst.sealed, "approval": true})
+}
+
+// ParkedForApproval reports whether ev parked a draft at an assisted
+// session's approval gate.
+func ParkedForApproval(ev Event) bool {
+	approval, _ := ev.Data["approval"].(bool)
+	return ev.Event == EventParked && approval
+}
+
+// Approving reports whether answering choice at chooser of instanceID is the
+// person's approval: the option confirming playback at the approval gate the
+// instance waits at.
+func (s *Session) Approving(instanceID, chooser, choice string) bool {
+	inst, ok := s.instances[instanceID]
+	if !ok || inst.Status != StatusRunning {
+		return false
+	}
+	step := inst.currentStep()
+	if step == nil || step.ID != chooser || !s.approvalGateAt(inst, step) {
+		return false
+	}
+	return slices.ContainsFunc(step.Options, func(o Option) bool { return o.Choice == choice && o.Call == "confirmPlayback" })
 }
 
 // revisedSinceGate holds a draft the person sent back from its approval gate

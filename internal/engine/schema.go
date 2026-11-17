@@ -163,8 +163,8 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 		properties["batch"] = map[string]any{
 			"type":                 "object",
 			"propertyNames":        map[string]any{"enum": choices},
-			"additionalProperties": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"description":          "other sealed drafts this one answer settles, as choice to instance ids: each takes that choice",
+			"additionalProperties": map[string]any{"type": "array", "items": s.batchItemSchema(step)},
+			"description":          "other sealed drafts this one answer settles, as choice to drafts: each takes that choice",
 		}
 	case step.Chooser == ChooserUser && step.Delegable && mode.AgentAnswers():
 		properties["userWords"] = map[string]any{
@@ -197,6 +197,27 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 		"required":             required,
 		"additionalProperties": false,
 	}
+}
+
+// batchItemSchema is one draft a batch lists at the approval gate step: its
+// instance id, or an object naming it with the fields the confirming option
+// collects, for that draft alone.
+func (s *Spec) batchItemSchema(step *Step) map[string]any {
+	props := map[string]any{"instance": map[string]any{"type": "string"}}
+	for _, o := range step.Options {
+		if o.Call != "confirmPlayback" {
+			continue
+		}
+		for _, cf := range o.Collect {
+			if decl, ok := s.State[cf.Name]; ok {
+				props[cf.Name] = schemaForState(decl)
+			}
+		}
+	}
+	return map[string]any{"anyOf": []any{
+		map[string]any{"type": "string"},
+		map[string]any{"type": "object", "properties": props, "required": []string{"instance"}, "additionalProperties": false},
+	}}
 }
 
 func schemaForState(decl VarDecl) map[string]any {
