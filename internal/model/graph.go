@@ -927,9 +927,10 @@ func validateRoleOrphans(g *Graph) {
 }
 
 // validateParticipantCoverage surfaces every distinct participant name in
-// the graph that does not match any actor canonical per plan d-cpt-d34
-// AC 10. The match set is every canonical in every actor-identity chain's
-// history — active or retired. A retired chain still uniquely owns its
+// the graph that does not match any actor canonical or alias per plan
+// d-cpt-d34 AC 10. The match set is every canonical in every actor-identity
+// chain's history — active or retired — and every alias its entries
+// declare. A retired chain still uniquely owns its
 // canonicals (write-once across chains), so a participant whose name
 // resolves to a closed chain is still known to the graph; only truly
 // unregistered names surface. This differs from the pre-flight mechanical
@@ -946,6 +947,11 @@ func validateParticipantCoverage(g *Graph) {
 	for _, chain := range g.ActorChains() {
 		for _, c := range chain.CanonicalHistory {
 			known[c] = struct{}{}
+		}
+		for _, e := range chain.Entries {
+			for _, alias := range e.Aliases {
+				known[strings.TrimSpace(alias)] = struct{}{}
+			}
 		}
 	}
 	for _, e := range g.Entries {
@@ -965,7 +971,7 @@ func validateParticipantCoverage(g *Graph) {
 			e.Warnings = append(e.Warnings, Warning{
 				Field:   "participants",
 				Value:   p,
-				Message: fmt.Sprintf("participant %q does not match any actor canonical in the graph", p),
+				Message: fmt.Sprintf("participant %q does not match any actor canonical or alias in the graph", p),
 			})
 		}
 	}
