@@ -1,7 +1,8 @@
 // Package gitgate keeps the git network operations sdd starts within a
 // per-machine budget per remote host and protocol: a cooldown per repository
-// and kind, retries for transport failures, hourly buckets, credits that
-// unused fetch slices earn, and a cap on concurrent operations per host.
+// and kind that a first clone skips, retries for transport failures, hourly
+// buckets, credits that unused fetch slices earn, and a cap on concurrent
+// operations per host.
 package gitgate
 
 import (
@@ -16,10 +17,13 @@ import (
 type Kind string
 
 const (
-	// Fetch covers fetch, pull, clone and ls-remote.
+	// Fetch covers fetch, pull and ls-remote.
 	Fetch Kind = "fetch"
 	// Push covers a push plus the fetch and merge a rejected push needs.
 	Push Kind = "push"
+	// Clone is a clone where none exists. It counts, records and takes credits
+	// as a Fetch, but no cooldown or retry wait holds it: no clone is fresh.
+	Clone Kind = "clone"
 )
 
 type Protocol string

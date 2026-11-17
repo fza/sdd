@@ -44,7 +44,7 @@ type CloneLocker interface {
 // GraphClones owns the sdd-owned clone of every graph and connected
 // repository this machine reads or writes, one per repository id under
 // <DataRoot>/repos/<repo-id>/. A clone passes
-// the gate as a fetch, a publish as a push.
+// the gate as a gitgate.Clone, a publish as a push.
 type GraphClones struct {
 	dataRoot string
 	git      GraphCloneGit
@@ -325,7 +325,7 @@ func (g *GraphClones) Target(ctx context.Context, repoID model.RepoID, cloneURL 
 // clone makes the clone of repoID at dir from source, its target the remote
 // tried first.
 func (g *GraphClones) clone(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string) error {
-	return g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.sourceURL(ctx, repoID, source) }, func(ctx context.Context) error {
+	return g.run(ctx, gitgate.Clone, func(ctx context.Context) (string, error) { return g.sourceURL(ctx, repoID, source) }, func(ctx context.Context) error {
 		err := g.git.CloneGraph(ctx, repoID, source, dir, model.GraphCloneCone(""))
 		if err != nil {
 			return err

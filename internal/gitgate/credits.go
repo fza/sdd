@@ -25,6 +25,9 @@ func WithCredits(ctx context.Context, kinds ...Kind) context.Context {
 }
 
 func creditsFor(ctx context.Context, kind Kind) bool {
+	if kind == Clone {
+		kind = Fetch
+	}
 	kinds, _ := ctx.Value(creditsKey{}).([]Kind)
 	return slices.Contains(kinds, kind)
 }
@@ -113,7 +116,7 @@ func (l *ledger) cooldown(repo *repoRecord, target Target, kind Kind, limits Lim
 // due then too.
 func setNext(record *kindRecord, kind Kind, next time.Time) {
 	record.Next = next.UTC()
-	if kind == Fetch {
+	if kind != Push {
 		record.Slice = record.Next
 	}
 }
