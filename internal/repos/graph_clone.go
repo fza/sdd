@@ -259,6 +259,14 @@ func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir s
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if g.locker == nil {
+		return fmt.Errorf("widening the clone of %s: no clone locker", repoID)
+	}
+	release, err := g.locker.LockClone(ctx, dir, graphDir)
+	if err != nil {
+		return fmt.Errorf("locking the clone of %s: %w", repoID, err)
+	}
+	defer release()
 	cone, changed, err := g.coneChange(ctx, dir, graphDir)
 	if err != nil || !changed {
 		return err

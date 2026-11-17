@@ -215,3 +215,38 @@ func TestGraphClonesWidenWaitsForAKeep(t *testing.T) {
 		t.Errorf("the cone should hold the widened graph directory after the keep, got %v", cone)
 	}
 }
+
+// Widen changes the cone only under the clone's sync and graph locks, never
+// beside a sync round or a writer.
+func TestGraphClonesWidenWaitsForASyncRound(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\n", ".sdd/graph/2026/11/07-120000-s-tac-abc.md": "---\ntype: signal\n---\nx\n"})
+	locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
+	held := &heldKeep{started: make(chan struct{}), release: make(chan struct{})}
+	limits := func(string) gitgate.Limits { return model.DefaultGitLimits() }
+	clones := repos.NewGraphClones(locations, held, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: limits}), syncstate.CloneLocks{})
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.widened.Store(false)
+	release, err := syncstate.CloneLocks{}.LockClone(t.Context(), dir, "decisions")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- clones.Widen(t.Context(), remote.RepoID, "decisions") }()
+	time.Sleep(300 * time.Millisecond)
+	widenedDuringSync := held.widened.Load()
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("Widen: %v", err)
+	}
+	if widenedDuringSync {
+		t.Error("Widen changed the cone while a sync round held the clone")
+	}
+	if !held.widened.Load() {
+		t.Error("Widen should change the cone once the sync round released the clone")
+	}
+}
