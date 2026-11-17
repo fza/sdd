@@ -222,6 +222,12 @@ func trackedDigests(ctx context.Context, tracker Tracker, gate *repoGate) ([]mod
 	if err != nil {
 		return nil, err
 	}
+	if len(tracked) == 0 {
+		err = refuseUntrackedScripts(gate.hooksDir)
+		if err != nil {
+			return nil, err
+		}
+	}
 	slices.Sort(tracked)
 	tracked = slices.Compact(tracked)
 	files := make([]model.HookFile, 0, len(tracked))
@@ -257,6 +263,38 @@ func trackedDigest(path string) (string, error) {
 	default:
 		return info.Mode().String(), nil
 	}
+}
+
+// refuseUntrackedScripts refuses a hooks folder holding files outside local/
+// while git tracks none of them, as in a project unpacked inside a
+// repository that does not track it: the allow would cover the declarations
+// alone, and the scripts could change without a new allow.
+func refuseUntrackedScripts(hooksDir string) error {
+	local := filepath.Join(hooksDir, model.HookLocalDir)
+	var found string
+	err := filepath.WalkDir(hooksDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == hooksDir && errors.Is(err, fs.ErrNotExist) {
+				return fs.SkipAll
+			}
+			return err
+		}
+		if d.IsDir() && path == local {
+			return fs.SkipDir
+		}
+		if !d.IsDir() {
+			found = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if found != "" {
+		return fmt.Errorf("git tracks none of the files in %s, so an allow could not notice a change to them; track them in the repository holding the project, or give the project a repository of its own", hooksDir)
+	}
+	return nil
 }
 
 func relativeTo(root, path string) string {
