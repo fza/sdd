@@ -215,7 +215,13 @@ func TestAssisted_AnUnansweredDraftParksAtTheGate(t *testing.T) {
 		}
 		serve := resumed.Decide(t, directive, "playback", "confirm", nil, "the draft holds")
 		if serve.Step != "agentLimit" || serve.Parked == nil {
-			t.Errorf("a draft past the agent limit should park at it in auto, got step %s parked %+v", serve.Step, serve.Parked)
+			t.Fatalf("a draft past the agent limit should park at it in auto, got step %s parked %+v", serve.Step, serve.Parked)
+		}
+		world.SetDialogue("guided")
+		_, served := world.Resume(t, session.ID, "person")
+		serve = servedInstance(served.Open, directive)
+		if serve == nil || !strings.Contains(serve.Instructions, "drafted this capture in assisted mode") || strings.Contains(serve.Instructions, "in auto mode") {
+			t.Errorf("the parked draft should be named as drafted in assisted mode, got %+v", serve)
 		}
 	})
 	t.Run("resumed in guided", func(t *testing.T) {
