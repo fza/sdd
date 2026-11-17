@@ -20,7 +20,7 @@ import (
 // writeEntryLine writes the entry line every listing shares, view entries and
 // search hits alike; a NaN score omits the score segment.
 //
-// Format: `<id> <layer> <kind>? <type> [confidence: <conf>]? [intent: guiding]? [decided-by: agent]? [run-by: <participant>]? (<participants>) {status: <status>}? {agent-reasoned via <root>, <n> steps}? {score: <score>}? <topics>? <summary>`
+// Format: `<id> <layer> <kind>? <type> [confidence: <conf>]? [intent: guiding]? [decided-by: agent]? [run-by: <participant>]? [approved-by: <participant>]? [reason-by: <who>]? (<participants>) {status: <status>}? {agent-reasoned via <root>, <n> steps}? {score: <score>}? <topics>? <summary>`
 // Kind renders as a qualifier alongside layer/type — it's identity, not an
 // attribute (d-cpt-omm's two-type redesign makes every entry carry a kind).
 // Square brackets denote stored attributes (confidence; intent, but only its
@@ -59,6 +59,7 @@ func writeEntryLine(w io.Writer, line types.ListedEntry, score float64) {
 	if line.RunBy != "" {
 		sb.WriteString(" [run-by: " + line.RunBy + "]")
 	}
+	writeApprovalMark(&sb, line)
 	sb.WriteString(" (")
 	sb.WriteString(strings.Join(line.Participants, ", "))
 	sb.WriteString(")")
@@ -87,6 +88,17 @@ func writeEntryLine(w io.Writer, line types.ListedEntry, score float64) {
 	fmt.Fprint(w, sb.String())
 }
 
+// writeApprovalMark writes who approved the entry and who gave its reason
+// (model.Entry.Approved).
+func writeApprovalMark(sb *strings.Builder, line types.ListedEntry) {
+	if line.ApprovedBy != "" {
+		sb.WriteString(" [approved-by: " + line.ApprovedBy + "]")
+	}
+	if line.ReasonBy != "" {
+		sb.WriteString(" [reason-by: " + line.ReasonBy + "]")
+	}
+}
+
 // briefTitleWidth bounds the listing title on the brief line — for an untitled
 // entry its first summary sentence. The remaining columns are fixed-width identity, so an
 // unbounded sentence is the only thing that can push a line past a terminal.
@@ -95,10 +107,10 @@ const briefTitleWidth = 110
 // writeEntryLineBrief writes the compact entry line the `brief` layout
 // modifier selects: identity qualifiers plus the listing title, with every
 // attribute segment (confidence, intent, participants, status, score,
-// topics) dropped but the agent's authorship. Built for injection surfaces
+// topics) dropped but the authorship marks. Built for injection surfaces
 // where full lines cost context without informing the decision at hand.
 //
-// Format: `<id> <layer> <kind>? <type> [decided-by: agent]? <title>`
+// Format: `<id> <layer> <kind>? <type> [decided-by: agent]? [approved-by: <participant>]? [reason-by: <who>]? <title>`
 func writeEntryLineBrief(w io.Writer, line types.ListedEntry) {
 	var sb strings.Builder
 	sb.WriteString("  ")
@@ -114,6 +126,7 @@ func writeEntryLineBrief(w io.Writer, line types.ListedEntry) {
 	if line.DecidedBy != "" {
 		sb.WriteString(" [decided-by: " + line.DecidedBy + "]")
 	}
+	writeApprovalMark(&sb, line)
 	sb.WriteString(" ")
 	sb.WriteString(model.ShortTitle(line.ListingTitle, briefTitleWidth))
 	sb.WriteString("\n")

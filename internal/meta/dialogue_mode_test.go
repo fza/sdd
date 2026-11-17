@@ -38,7 +38,7 @@ func TestReadConfigLayersRefusesAnUnknownDialogueMode(t *testing.T) {
 			if err == nil {
 				t.Fatal("an unknown dialogue mode should stop the load")
 			}
-			for _, part := range []string{path, tc.mode, "guided or auto"} {
+			for _, part := range []string{path, tc.mode, "guided, auto or assisted"} {
 				if !strings.Contains(err.Error(), part) {
 					t.Errorf("the refusal should name the file, the value and the valid values, missing %q: %v", part, err)
 				}

@@ -179,10 +179,13 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 			Selector: true,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "verifyBeforePlayback", Doc: "An autonomous capture with the verifier on: the verifier runs before playback, since no dialogue edits follow."},
+			Doc: engine.FuncDoc{Name: "verifyBeforePlayback", Doc: "An autonomous capture with the verifier on, or any assisted one: every check runs before playback, since no dialogue edits follow, and the person approves only a checked draft."},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				if !w.Autonomous() {
 					return false, nil
+				}
+				if w.assisted() {
+					return true, nil
 				}
 				mode, err := w.verifierMode(ctx)
 				return mode != model.VerifierOff, err

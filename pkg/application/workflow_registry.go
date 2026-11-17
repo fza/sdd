@@ -44,6 +44,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowTiming,
 		w.registerUserWords,
 		w.registerAuthorship,
+		w.registerBatch,
 		w.registerWorkflowDeep,
 		w.registerWorkflowRecheck,
 	} {
@@ -547,7 +548,7 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, staged); err != nil {
 		return err
 	}
-	if err := w.markAgentDraft(ctx.Instance, &draft); err != nil {
+	if err := w.markDraft(ctx, &draft, false); err != nil {
 		return err
 	}
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {

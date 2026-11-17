@@ -81,6 +81,9 @@ func (w *WorkflowSession) checkUserWordsQuoted(instanceID string, fields map[str
 	for _, field := range []string{fieldReasonWords, fieldIntentWords} {
 		words, _ := fields[field].(string)
 		held, _ := workflowStoreString(inst.Store, field)
+		if words != "" && model.OnlyApproval(words) {
+			return fmt.Errorf("%s %q is an approval, not a reason or intent: report %s only with the words the user gave for it", field, words, field)
+		}
 		if words == "" || words == held || model.QuotedFrom(words, userWords) {
 			continue
 		}

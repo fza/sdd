@@ -22,6 +22,26 @@ type agentAuthor struct {
 
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
+// approvalAuthor carries the person's own words for an approved draft's reason
+// and a directive's intent, each empty when they gave none.
+type approvalAuthor struct {
+	reasonWords, intentWords string
+}
+
+// markDraft marks whose a capture's draft is (model.Entry.Approved): the
+// person's once they approved it at an assisted session's gate, and so in the
+// checks an assisted session runs before that gate; otherwise the agent's
+// where the agent answers.
+func (w *WorkflowSession) markDraft(ctx *engine.Context, draft *EntryDraft, beforeGate bool) error {
+	if engine.Approved(ctx.Store) || beforeGate && w.assisted() {
+		reason, _ := workflowStoreString(ctx.Store, fieldReasonWords)
+		intent, _ := workflowStoreString(ctx.Store, fieldIntentWords)
+		draft.approval = &approvalAuthor{reasonWords: reason, intentWords: intent}
+		return nil
+	}
+	return w.markAgentDraft(ctx.Instance, draft)
+}
+
 // markAgentDraft marks the draft of an autonomous capture as the agent's, of
 // the client that started instance.
 func (w *WorkflowSession) markAgentDraft(instance string, draft *EntryDraft) error {
@@ -44,7 +64,7 @@ var errNamelessClient = errors.New("an unattended capture writes for the MCP cli
 // refuseNamelessCapture refuses starting an autonomous move that writes an
 // entry from a client that sent no name.
 func (w *WorkflowSession) refuseNamelessCapture(spec *engine.Spec, client string) error {
-	if w.Autonomous() && publishesEntry(spec) && strings.TrimSpace(client) == "" {
+	if w.Autonomous() && !w.assisted() && publishesEntry(spec) && strings.TrimSpace(client) == "" {
 		return errNamelessClient
 	}
 	return nil
@@ -101,7 +121,9 @@ func (w *WorkflowSession) startingClient(instance string) (string, error) {
 }
 
 // authorshipMissing lists what an autonomous draft's authorship fields owe: a
-// decision's own reason, no reason on a signal, no participants. A guided
+// decision's own reason, no reason on a signal, no participants. An assisted
+// draft owes the reason too, written when the person approves without one of
+// theirs, and may name participants, as the entry is the person's. A guided
 // draft owes none; its reason is the user's, in reasonWords, and sdd ignores
 // the reason field there.
 func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
@@ -114,20 +136,21 @@ func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	var missing []string
 	switch {
 	case decision && strings.TrimSpace(reason) == "":
-		missing = append(missing, "a decision in auto mode states your own reason for it in reason")
+		missing = append(missing, fmt.Sprintf("a decision in %s mode states your own reason for it in reason", w.session.DialogueMode))
 	case !decision && reason != "":
 		missing = append(missing, "a signal carries no reason")
 	}
-	if len(workflowStoreStrings(store, "participants")) > 0 {
+	if !w.assisted() && len(workflowStoreStrings(store, "participants")) > 0 {
 		missing = append(missing, agentParticipantsRule)
 	}
 	return missing
 }
 
 // agentLimitRule is the rule that parks the draft for a person in auto mode,
-// or "" when the agent may write it alone.
+// or "" when the agent may write it alone; an assisted draft is the person's
+// to approve, so none binds it.
 func (w *WorkflowSession) agentLimitRule(ctx *engine.Context) string {
-	if !w.Autonomous() || ctx.Graph == nil {
+	if !w.Autonomous() || w.assisted() || ctx.Graph == nil {
 		return ""
 	}
 	entry, findings := entryFromDraft(w.draftFromStore(ctx.Store), "", w.app.now())

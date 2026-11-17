@@ -120,7 +120,8 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
 	procedure := draftIsProcedure(store)
-	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode == model.DialogueAuto
+	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode.AgentAnswers()
+	approvalGate := step.Chooser == ChooserUser && mode == model.DialogueAssisted && step.ID == confirmingStep(s)
 	for _, o := range step.Options {
 		if unattended && o.Choice != step.Unattended.Answer {
 			continue
@@ -153,7 +154,19 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 	case unattended:
 		properties["reason"] = map[string]any{"type": "string", "description": "your one-line reason"}
 		required = append(required, "reason")
-	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAuto:
+	case approvalGate:
+		properties["userWords"] = map[string]any{
+			"type":        "string",
+			"description": "the person's own answer to the playback verbatim, never yours",
+		}
+		required = append(required, "userWords")
+		properties["batch"] = map[string]any{
+			"type":                 "object",
+			"propertyNames":        map[string]any{"enum": choices},
+			"additionalProperties": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"description":          "other sealed drafts this one answer settles, as choice to instance ids: each takes that choice",
+		}
+	case step.Chooser == ChooserUser && step.Delegable && mode.AgentAnswers():
 		properties["userWords"] = map[string]any{
 			"type":        "string",
 			"description": "the user's own message verbatim, never yours; else give reason",

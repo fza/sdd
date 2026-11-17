@@ -287,7 +287,16 @@ type DialogueMode string
 const (
 	DialogueGuided DialogueMode = "guided"
 	DialogueAuto   DialogueMode = "auto"
+	// DialogueAssisted is auto up to one final gate per entry: the person
+	// approves the checked draft, and the entry is written as theirs.
+	DialogueAssisted DialogueMode = "assisted"
 )
+
+// AgentAnswers reports whether the agent takes the choices procedures hand
+// over: in auto, and in assisted outside its approval gate.
+func (m DialogueMode) AgentAnswers() bool {
+	return m == DialogueAuto || m == DialogueAssisted
+}
 
 func (DialogueMode) AllowedValues() []string {
 	return closedValues(DialogueModes()...)
@@ -295,7 +304,7 @@ func (DialogueMode) AllowedValues() []string {
 
 // DialogueModes returns the values dialogue.mode takes.
 func DialogueModes() []DialogueMode {
-	return []DialogueMode{DialogueGuided, DialogueAuto}
+	return []DialogueMode{DialogueGuided, DialogueAuto, DialogueAssisted}
 }
 
 // ErrUnknownDialogueMode reports a dialogue.mode value sdd does not know.
@@ -1107,7 +1116,8 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# user-global config, under sync.default and sync.hosts.\n" +
 		"\n" +
 		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
-		"# choices an engine session otherwise puts to you.\n" +
+		"# choices an engine session otherwise puts to you; mode: assisted\n" +
+		"# does too, and plays each checked entry back for your approval.\n" +
 		"# dialogue:\n" +
 		"#   mode: " + string(DialogueGuided) + "\n"
 }
@@ -1143,8 +1153,8 @@ func parseDaysOrDuration(raw string) (time.Duration, error) {
 
 // ResolveDialogueMode returns the effective dialogue mode from cfg.
 func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
-	if cfg != nil && cfg.Dialogue.Mode == DialogueAuto {
-		return DialogueAuto
+	if cfg != nil && cfg.Dialogue.Mode.AgentAnswers() {
+		return cfg.Dialogue.Mode
 	}
 	return DialogueGuided
 }

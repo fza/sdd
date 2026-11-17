@@ -325,7 +325,7 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		}
 		// A guided session's header stays as it always was; an absent mode
 		// reads back as guided.
-		if s.DialogueMode == model.DialogueAuto {
+		if s.DialogueMode.AgentAnswers() {
 			meta["dialogue"] = string(s.DialogueMode)
 			meta["dialogueSource"] = s.DialogueSource
 		}
@@ -337,11 +337,15 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 // answerer judges who may answer step and returns who did, as the answer
 // event records it in an autonomous session; guided sessions record nothing
 // and keep today's answer form.
-func (s *Session) answerer(step *Step, userWords, reason string) (string, error) {
-	autonomous := s.DialogueMode == model.DialogueAuto
+func (s *Session) answerer(inst *Instance, step *Step, userWords, reason string) (string, error) {
+	autonomous := s.DialogueMode.AgentAnswers()
 	switch {
 	case reason != "" && userWords != "":
 		return "", fmt.Errorf("give either the user's words or your reason at %s, not both", step.ID)
+	case s.approvalGateAt(inst, step) && (reason != "" || userWords == ""):
+		return "", approvalGateRefusal(step)
+	case s.approvalGateAt(inst, step):
+		return "user", nil
 	case reason != "" && step.Chooser != ChooserUser:
 		return "", fmt.Errorf("a reason answers only a user chooser; %s is not one", step.ID)
 	case reason != "" && !autonomous:
@@ -900,7 +904,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkUnattended(inst, step, choice, userWords); err != nil {
 		return nil, err
 	}
-	answeredBy, err := s.answerer(step, userWords, reason)
+	answeredBy, err := s.answerer(inst, step, userWords, reason)
 	if err != nil {
 		return nil, err
 	}
@@ -1175,8 +1179,8 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
 			s.Participant = p
 		}
-		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode) == model.DialogueAuto {
-			s.DialogueMode = model.DialogueAuto
+		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode).AgentAnswers() {
+			s.DialogueMode = model.DialogueMode(mode)
 			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
 		}
 		if parent, ok := ev.Data["parent"].(map[string]any); ok {

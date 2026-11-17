@@ -285,12 +285,36 @@ func writeAgentMark(b *strings.Builder, graph *model.Graph, e *model.Entry) {
 	if e.AgentDecided() {
 		fmt.Fprintf(b, "Decided by: an agent alone, run by %s\n", e.RunBy)
 	}
+	writeApproval(b, e)
 	if mark := graph.AgentMark(e.ID); mark.Hops > 0 {
 		roots := make([]string, 0, len(mark.Roots))
 		for _, root := range mark.Roots {
 			roots = append(roots, model.ShortID(root))
 		}
 		fmt.Fprintf(b, "Agent-reasoned via %s, %d step(s) back: no person approved the agent reasoning it rests on\n", strings.Join(roots, " and "), mark.Hops)
+	}
+}
+
+// writeApproval states who approved e (model.Entry.Approved) and who stated
+// its reason and a directive's intent.
+func writeApproval(b *strings.Builder, e *model.Entry) {
+	if !e.Approved() {
+		return
+	}
+	fmt.Fprintf(b, "Approved by: %s, drafted by an agent\n", e.ApprovedBy)
+	if e.Reason != "" {
+		stated := "given by " + e.ReasonBy
+		if e.ReasonBy == model.DraftedByAgent {
+			stated = "drafted by the agent"
+		}
+		fmt.Fprintf(b, "Reason, %s: %s\n", stated, e.Reason)
+	}
+	if e.IntentBy != "" {
+		by := e.IntentBy
+		if by == model.DraftedByAgent {
+			by = "the agent"
+		}
+		fmt.Fprintf(b, "Intent set by: %s\n", by)
 	}
 }
 

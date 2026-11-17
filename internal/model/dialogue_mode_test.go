@@ -17,6 +17,7 @@ func TestDialogueModeAtConfigLoad(t *testing.T) {
 		{name: "unset", yaml: "participant: Ada\n", want: model.DialogueGuided},
 		{name: "guided", yaml: "dialogue:\n  mode: guided\n", want: model.DialogueGuided},
 		{name: "auto", yaml: "dialogue:\n  mode: auto\n", want: model.DialogueAuto},
+		{name: "assisted", yaml: "dialogue:\n  mode: assisted\n", want: model.DialogueAssisted},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -25,7 +26,7 @@ func TestDialogueModeAtConfigLoad(t *testing.T) {
 				t.Fatalf("a known mode should load: %v", err)
 			}
 			if got := model.ResolveDialogueMode(cfg); got != tc.want {
-				t.Errorf("only auto should hand choices to the agent, got %q", got)
+				t.Errorf("the configured mode should resolve as set, got %q", got)
 			}
 		})
 	}
@@ -40,6 +41,7 @@ func TestDialogueModeValidate(t *testing.T) {
 		{name: "unset"},
 		{name: "guided", mode: model.DialogueGuided},
 		{name: "auto", mode: model.DialogueAuto},
+		{name: "assisted", mode: model.DialogueAssisted},
 		{name: "former autonomous", mode: "autonomous", refused: true},
 		{name: "unknown value", mode: "free", refused: true},
 		{name: "wrong case", mode: "Auto", refused: true},
@@ -56,12 +58,22 @@ func TestDialogueModeValidate(t *testing.T) {
 			if !errors.Is(err, model.ErrUnknownDialogueMode) {
 				t.Fatalf("an unknown mode should be refused, got %v", err)
 			}
-			for _, part := range []string{string(tc.mode), "guided or auto"} {
+			for _, part := range []string{string(tc.mode), "guided, auto or assisted"} {
 				if !strings.Contains(err.Error(), part) {
 					t.Errorf("the refusal should name the value and the valid values, missing %q: %v", part, err)
 				}
 			}
 		})
+	}
+}
+
+// The agent takes the choices in auto and assisted alike; only guided puts
+// them to the person.
+func TestDialogueModeAgentAnswers(t *testing.T) {
+	for mode, want := range map[model.DialogueMode]bool{"": false, model.DialogueGuided: false, model.DialogueAuto: true, model.DialogueAssisted: true} {
+		if got := mode.AgentAnswers(); got != want {
+			t.Errorf("%q: AgentAnswers should be %v, got %v", mode, want, got)
+		}
 	}
 }
 

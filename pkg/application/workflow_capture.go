@@ -83,7 +83,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, w.staged); err != nil {
 		return err
 	}
-	if err := w.markAgentDraft(ctx.Instance, &draft); err != nil {
+	if err := w.markDraft(ctx, &draft, true); err != nil {
 		return err
 	}
 	deepJudges, err := w.deepJudgesPreflight(ctx)

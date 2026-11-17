@@ -37,8 +37,8 @@ func TestConfigSetJudgesTheDialogueModeValue(t *testing.T) {
 
 			err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: tc.target, Key: "dialogue.mode", Value: tc.value})
 			if tc.refused {
-				if err == nil || !strings.Contains(err.Error(), "dialogue.mode") || !strings.Contains(err.Error(), "guided or auto") {
-					t.Errorf("a value other than guided or auto should be refused naming the key and the allowed values, got %v", err)
+				if err == nil || !strings.Contains(err.Error(), "dialogue.mode") || !strings.Contains(err.Error(), "guided, auto or assisted") {
+					t.Errorf("a value other than guided, auto or assisted should be refused naming the key and the allowed values, got %v", err)
 				}
 				return
 			}

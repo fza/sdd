@@ -240,9 +240,14 @@ type Entry struct {
 	Participants []string
 	// DecidedBy, RunBy and Reason are the authorship mark sdd writes on an
 	// autonomous capture (see DecidedBy).
-	DecidedBy  DecidedBy
-	RunBy      string
-	Reason     string
+	DecidedBy DecidedBy
+	RunBy     string
+	Reason    string
+	// ApprovedBy, ReasonBy and IntentBy mark an entry a person approved in an
+	// assisted dialogue (see Entry.Approved).
+	ApprovedBy string
+	ReasonBy   string
+	IntentBy   string
 	Confidence string
 	// Intent is the lifecycle posture of a directive (pending|guiding|settled).
 	// Stored frontmatter, meaningful only on kind: directive decisions; empty on
@@ -615,6 +620,9 @@ type frontmatter struct {
 	Participants []string          `yaml:"participants,omitempty"`
 	DecidedBy    string            `yaml:"decided-by,omitempty"`
 	RunBy        string            `yaml:"run-by,omitempty"`
+	ApprovedBy   string            `yaml:"approved-by,omitempty"`
+	ReasonBy     string            `yaml:"reason-by,omitempty"`
+	IntentBy     string            `yaml:"intent-by,omitempty"`
 	Confidence   string            `yaml:"confidence,omitempty"`
 	Intent       string            `yaml:"intent,omitempty"`
 	Canonical    string            `yaml:"canonical,omitempty"`
@@ -717,6 +725,9 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Participants: fm.Participants,
 		DecidedBy:    DecidedBy(fm.DecidedBy),
 		RunBy:        fm.RunBy,
+		ApprovedBy:   fm.ApprovedBy,
+		ReasonBy:     fm.ReasonBy,
+		IntentBy:     fm.IntentBy,
 		Reason:       fm.Reason,
 		Confidence:   fm.Confidence,
 		Intent:       Intent(fm.Intent),
@@ -971,6 +982,9 @@ func FormatFrontmatter(e *Entry) string {
 		Participants: e.Participants,
 		DecidedBy:    string(e.DecidedBy),
 		RunBy:        e.RunBy,
+		ApprovedBy:   e.ApprovedBy,
+		ReasonBy:     e.ReasonBy,
+		IntentBy:     e.IntentBy,
 		Reason:       e.Reason,
 		Confidence:   e.Confidence,
 		Intent:       string(e.Intent),

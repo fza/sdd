@@ -84,6 +84,26 @@ approves:
 
 An approved entry loses its mark and stops the chain: an agent's entry built on it starts a chain of its own. A dismissal is a settled directive that closes the agent's entries; the catch-up then drops a chain whose start it closed. In `auto` both park for you.
 
+## Entries you approve
+
+Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
+
+Your approval binds to the draft you saw. Any change after it, such as an `adjust`, sends the draft back through the checks and plays it back again. The entry is then yours, without `decided-by`:
+
+```yaml
+approved-by: Ada         # the participant sdd runs as
+participants: [Ada]
+reason: The flaky step fails one run in ten.   # decisions only
+reason-by: agent         # or Ada, when your answer gave the reason
+intent-by: agent         # directives only; Ada when your answer gave it
+```
+
+A decision always carries a reason. When your answer states why, your words are the reason and `reason-by` names you. When you only approve, as with `ok`, the agent's drafted reason is kept and `reason-by: agent` says so; sdd refuses `ok` relayed as your reason. A directive's intent works the same way through `intent-by`. No agent limit applies, since you approve every entry. An approved entry is never marked as agent reasoning and stops a chain as a person's entry does.
+
+The agent may hold several sealed drafts and play them back together. One answer settles them all: the agent answers one draft's playback and names the others in `batch`, by the choice each takes. In "all except 3", the others take `confirm` and draft 3 takes `adjust`: it returns to the draft and waits there until the agent revises it, then is checked and played back again. Each approval still binds to its own draft.
+
+A sealed draft you never answer waits at its playback, parked. Nothing is written. `sdd sessions` lists it as parked at `playback`. Resume the session in `assisted` or `guided` to answer it yourself. Resumed in `auto`, the agent confirms it as its own, with `decided-by: agent`, and a draft past the agent limit parks at `agentLimit`.
+
 ## Wrap up sessions
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.

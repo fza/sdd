@@ -1980,14 +1980,26 @@ func promptProjectDir(cmd *cli.Command, defaultValue string) (string, error) {
 // engine session otherwise puts to them.
 func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
-		Reader: cmd.Reader,
-		Writer: cmd.Writer,
-		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
-		Options: []tui.SelectOption[model.DialogueMode]{
-			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
-			{Label: string(model.DialogueAuto), Hint: "your AI decides; a capture blocked twice waits for you", Value: model.DialogueAuto},
-		},
+		Reader:  cmd.Reader,
+		Writer:  cmd.Writer,
+		Header:  "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
+		Options: dialogueModeOptions(),
 	})
+}
+
+var dialogueModeHints = map[model.DialogueMode]string{
+	model.DialogueGuided:   "you confirm each step",
+	model.DialogueAuto:     "your AI decides; a capture blocked twice waits for you",
+	model.DialogueAssisted: "your AI decides; you approve each entry once it is checked",
+}
+
+// dialogueModeOptions offers every dialogue mode the model knows.
+func dialogueModeOptions() []tui.SelectOption[model.DialogueMode] {
+	options := make([]tui.SelectOption[model.DialogueMode], 0, len(model.DialogueModes()))
+	for _, mode := range model.DialogueModes() {
+		options = append(options, tui.SelectOption[model.DialogueMode]{Label: string(mode), Hint: dialogueModeHints[mode], Value: mode})
+	}
+	return options
 }
 
 // promptParticipant runs an interactive prompt for the local participant name.
@@ -2145,7 +2157,7 @@ func initCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "dialogue-mode",
-				Usage: "Your dialogue mode, guided or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+				Usage: "Your dialogue mode, guided, auto or assisted, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
 			&cli.StringFlag{
 				Name:  "verify-mode",

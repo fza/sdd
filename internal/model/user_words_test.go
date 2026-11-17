@@ -82,3 +82,25 @@ func TestQuotedFromMatchesWholeWords(t *testing.T) {
 		t.Error("whole words of the message should count as quoted")
 	}
 }
+
+// An approval says yes to the draft and gives no why of the person's.
+func TestOnlyApproval(t *testing.T) {
+	for _, tc := range []struct {
+		words string
+		want  bool
+	}{
+		{"ok", true},
+		{"OK!", true},
+		{"Yes, go ahead.", true},
+		{"lgtm", true},
+		{"approved, write it", true},
+		{"passt", true},
+		{"ok, a red build blocks the team", false},
+		{"because the team waits", false},
+		{"", false},
+	} {
+		if got := model.OnlyApproval(tc.words); got != tc.want {
+			t.Errorf("OnlyApproval(%q) should be %v", tc.words, tc.want)
+		}
+	}
+}

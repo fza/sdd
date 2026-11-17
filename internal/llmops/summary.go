@@ -441,7 +441,10 @@ func FormatEntryForPrompt(e *model.Entry) string {
 	if e.AgentDecided() {
 		fmt.Fprintf(&b, "Decided by: an agent alone, run by %s\n", e.RunBy)
 	}
-	if e.Reason != "" {
+	switch {
+	case e.Approved():
+		writeApproval(&b, e)
+	case e.Reason != "":
 		fmt.Fprintf(&b, "Agent's reason: %s\n", e.Reason)
 	}
 	if e.Confidence != "" {
