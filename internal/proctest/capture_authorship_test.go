@@ -324,7 +324,7 @@ func TestAuthorship_APersonApprovesAnAgentsEntry(t *testing.T) {
 }
 
 // A session turned autonomous after its draft passed assemble meets the agent
-// limit at the write gate: pre-flight refuses the draft, nothing is written.
+// limit once the agent confirms it: the draft parks there, nothing is written.
 func TestAuthorship_TheWriteGateHoldsTheAgentLimit(t *testing.T) {
 	world, session := authorshipWorld(t)
 	serve := session.Start(t, "capture", nil)
@@ -337,9 +337,12 @@ func TestAuthorship_TheWriteGateHoldsTheAgentLimit(t *testing.T) {
 	world.SetDialogue("auto")
 	session.Refresh(t)
 	serve = session.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if !strings.Contains(serve.Instructions, authorshipLimit) {
-		t.Errorf("pre-flight should refuse the draft naming the agent limit, got:\n%s", serve.Instructions)
+	proctest.RequireStep(t, serve, "agentLimit")
+	if serve.Parked == nil || !strings.HasPrefix(serve.Parked.Reason, authorshipLimit) {
+		t.Errorf("the draft should park naming the agent limit, got %+v", serve.Parked)
+	}
+	if got := world.LLM.Calls("preflight"); got != 0 {
+		t.Errorf("the parked draft should spend no pre-flight call, got %d", got)
 	}
 }
 

@@ -52,7 +52,10 @@ type EntryDraft struct {
 	Index      *FactIndex
 	// agent marks a draft an autonomous capture writes: sdd writes it as
 	// decided by the agent of that MCP client (model.DecidedBy).
-	agent             *agentAuthor
+	agent *agentAuthor
+	// approval marks a draft a person approved at an assisted session's gate:
+	// sdd writes it as theirs (model.Entry.Approved).
+	approval          *approvalAuthor
 	AttachmentHandles []string
 	Attachments       []StagedAttachment
 	// Canonical, Aliases and ActorKind carry a kind: actor signal's identity;

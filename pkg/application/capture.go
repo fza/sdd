@@ -346,6 +346,8 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 		if actor := snapshot.graph.ClientActor(draft.agent.client); actor != "" {
 			entry.Participants = []string{actor}
 		}
+	case draft.approval != nil:
+		markApproved(entry, participant, *draft.approval)
 	case len(entry.Participants) == 0 && participant != "":
 		entry.Participants = []string{participant}
 	}
@@ -390,6 +392,28 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 		return nil, nil, nil, err
 	}
 	return validated, snapshot, attachments, nil
+}
+
+// markApproved writes entry as approved by person: their own words stand as
+// the reason and set the intent where they gave them, else the agent's draft
+// does, marked as the agent's.
+func markApproved(entry *model.Entry, person string, approval approvalAuthor) {
+	entry.ApprovedBy = person
+	if len(entry.Participants) == 0 {
+		entry.Participants = []string{person}
+	}
+	if entry.Type == model.TypeDecision {
+		entry.ReasonBy = model.DraftedByAgent
+		if words := strings.TrimSpace(approval.reasonWords); words != "" {
+			entry.Reason, entry.ReasonBy = words, person
+		}
+	}
+	if entry.Kind == model.KindDirective {
+		entry.IntentBy = model.DraftedByAgent
+		if strings.TrimSpace(approval.intentWords) != "" {
+			entry.IntentBy = person
+		}
+	}
 }
 
 func captureValidationError(findings []model.Finding) error {

@@ -644,9 +644,15 @@ func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" 
 // which is the act that wrote the terminal record. A finished session is spent —
 // the door opens a new one rather than re-serving it, and no move may carry it on.
 // Autonomous reports whether the session is in the autonomous dialogue
-// mode, where the agent takes the choices procedures hand over.
+// mode, where the agent takes the choices procedures hand over: auto, and
+// assisted outside its approval gate.
 func (w *WorkflowSession) Autonomous() bool {
-	return w.session.DialogueMode == model.DialogueAuto
+	return w.session.DialogueMode.AgentAnswers()
+}
+
+// assisted reports whether the session runs in the assisted dialogue mode.
+func (w *WorkflowSession) assisted() bool {
+	return w.session.DialogueMode == model.DialogueAssisted
 }
 
 // Finished reports whether this dialogue is over: the shell has left running,

@@ -68,9 +68,21 @@ type DecidedBy string
 
 const DecidedByAgent DecidedBy = "agent"
 
-// AgentDecided reports whether an agent decided e alone.
+// AgentDecided reports whether an agent decided e alone; an entry a person
+// approved never reads as that, whatever else it carries.
 func (e *Entry) AgentDecided() bool {
-	return e.DecidedBy == DecidedByAgent
+	return e.DecidedBy == DecidedByAgent && !e.Approved()
+}
+
+// DraftedByAgent is the reason-by and intent-by value of what the agent drafted.
+const DraftedByAgent = "agent"
+
+// Approved reports whether a person approved e at an assisted dialogue's
+// final gate: the agent drafted it, and it is the person's. ApprovedBy names
+// them; ReasonBy and IntentBy name who stated its reason and a directive's
+// intent, the person or DraftedByAgent when they gave none.
+func (e *Entry) Approved() bool {
+	return e.ApprovedBy != ""
 }
 
 // ApprovalRule states what an approval is.

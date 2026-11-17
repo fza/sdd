@@ -29,6 +29,9 @@ type EntryConstruction struct {
 	DecidedBy    DecidedBy
 	RunBy        string
 	Reason       string
+	ApprovedBy   string
+	ReasonBy     string
+	IntentBy     string
 	Confidence   string
 	// Topics carries inline topic labels — valid on any non-annotation kind.
 	// Annotation topic assignments live on the Annotation block instead.
@@ -220,6 +223,9 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 		DecidedBy:    e.DecidedBy,
 		RunBy:        e.RunBy,
 		Reason:       e.Reason,
+		ApprovedBy:   e.ApprovedBy,
+		ReasonBy:     e.ReasonBy,
+		IntentBy:     e.IntentBy,
 		Confidence:   e.Confidence,
 		Topics:       e.Topics,
 		Body:         e.Content,
@@ -337,6 +343,9 @@ func (c *EntryConstruction) Entry() *Entry {
 		DecidedBy:    c.DecidedBy,
 		RunBy:        c.RunBy,
 		Reason:       c.Reason,
+		ApprovedBy:   c.ApprovedBy,
+		ReasonBy:     c.ReasonBy,
+		IntentBy:     c.IntentBy,
 		Confidence:   c.Confidence,
 		Topics:       c.Topics,
 		Content:      c.Body,
@@ -497,22 +506,46 @@ func (c *EntryConstruction) Validate(g *Graph) []Finding {
 }
 
 // validateAuthorship checks the authorship mark and approvals: a reason
-// belongs only to an agent-decided decision, which must state one, and only a
-// person's settled directive approves.
+// belongs only to a decision an agent decided or a person approved, which must
+// state one, the approved one naming who gave it and who set a directive's
+// intent, and only a person's settled directive approves.
 func (c *EntryConstruction) validateAuthorship() []Finding {
 	var findings []Finding
 	add := func(field, value, message string) {
 		findings = append(findings, Finding{Field: field, Value: value, Message: message})
 	}
+	owe := func(field, message string) {
+		findings = append(findings, Finding{Field: field, Message: message, WriteOnly: true})
+	}
 	agent := c.DecidedBy == DecidedByAgent
+	approved := c.ApprovedBy != ""
+	decision := c.Type == TypeDecision
+	directive := c.isKind(TypeDecision, KindDirective)
 	if c.DecidedBy != "" && !agent {
 		add("decided-by", string(c.DecidedBy), fmt.Sprintf("decided-by: only %q is defined; omit it on a person's entry", DecidedByAgent))
 	}
+	if approved && agent {
+		add("approved-by", c.ApprovedBy, "an approved entry is the person's: it carries no decided-by")
+	}
 	switch {
-	case c.Reason != "" && (!agent || c.Type != TypeDecision):
-		add("reason", "", "reason is only valid on a decision an agent decided")
-	case agent && c.Type == TypeDecision && strings.TrimSpace(c.Reason) == "":
-		findings = append(findings, Finding{Field: "reason", Message: "a decision an agent decided states the agent's own reason", WriteOnly: true})
+	case c.Reason != "" && (!agent && !approved || !decision):
+		add("reason", "", "reason is only valid on a decision an agent decided or a person approved")
+	case agent && decision && strings.TrimSpace(c.Reason) == "":
+		owe("reason", "a decision an agent decided states the agent's own reason")
+	case approved && decision && strings.TrimSpace(c.Reason) == "":
+		owe("reason", "an approved decision states its reason, the person's or the one the agent drafted")
+	}
+	switch {
+	case c.ReasonBy != "" && (!approved || c.Reason == ""):
+		add("reason-by", c.ReasonBy, "reason-by is only valid on the reason of an approved decision")
+	case approved && c.Reason != "" && c.ReasonBy == "":
+		owe("reason-by", fmt.Sprintf("an approved decision names who gave its reason in reason-by: the person, or %q", DraftedByAgent))
+	}
+	switch {
+	case c.IntentBy != "" && (!approved || !directive):
+		add("intent-by", c.IntentBy, "intent-by is only valid on an approved directive")
+	case approved && directive && c.IntentBy == "":
+		owe("intent-by", fmt.Sprintf("an approved directive names who set its intent in intent-by: the person, or %q", DraftedByAgent))
 	}
 	if len(c.Approves) > 0 {
 		settled := c.isKind(TypeDecision, KindDirective) && c.Directive != nil && c.Directive.Intent == IntentSettled

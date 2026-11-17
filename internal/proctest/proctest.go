@@ -232,6 +232,12 @@ func WithAutonomousDialogue() Option {
 	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "auto", Source: "config.local.yaml"} }
 }
 
+// WithAssistedDialogue opens every session of the world in the assisted
+// dialogue mode.
+func WithAssistedDialogue() Option {
+	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "assisted", Source: "config.local.yaml"} }
+}
+
 // WithGroundingEnforced turns grounding enforcement on for the world's project.
 func WithGroundingEnforced() Option {
 	return func(c *config) { c.grounding.Enforce = true }
