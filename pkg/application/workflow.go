@@ -32,6 +32,7 @@ const (
 	// sees, keyed by instance like the branch binding is keyed by session
 	// (d-cpt-yjc).
 	workflowInstanceProjectCode = "workflow_instance_project"
+	workflowInstanceClientCode  = "workflow_instance_client"
 	BranchBoundEventCode        = "branchBound"
 	BranchClearedEventCode      = "branchCleared"
 	DefaultShellCanonical       = "user-dialogue"
@@ -68,6 +69,9 @@ type WorkflowStartRequest struct {
 	// Project pins the project the new instance targets. Empty leaves it to
 	// the dispatching parent's project, else the home project.
 	Project ProjectID
+	// ClientName is the MCP client starting the move, the one an autonomous
+	// capture writes for (startingClient).
+	ClientName string
 }
 
 // WorkflowAdvanceRequest supplies one nonempty report or one exact retry/cancel reference.
@@ -264,6 +268,10 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
+	// instanceClients holds the client each instance was started through;
+	// startClient is the one the sink records with the start event.
+	instanceClients map[string]string
+	startClient     *string
 	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
 	cutRepeats bool
 	// parked is the framing block naming the project's parked moves, set on
@@ -341,7 +349,9 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if spec.Class != model.ProcedureClassShell {
 		return nil, nil, fmt.Errorf("%q is a move, not a session shell", canonical)
 	}
+	w.startClient = &request.ClientName
 	serve, err := w.session.Start(spec, nil, "")
+	w.startClient = nil
 	if err != nil {
 		return nil, nil, err
 	}
@@ -454,6 +464,9 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 	if err := w.restoreInstanceProjects(stored.Events); err != nil {
 		return nil, err
 	}
+	if err := w.restoreInstanceClients(stored.Events); err != nil {
+		return nil, err
+	}
 	events, err := decodeWorkflowEvents(stored.Events)
 	if err != nil {
 		return nil, err
@@ -546,7 +559,7 @@ func newAttachment(subject, clientName, clientVersion string, now time.Time) *At
 func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, branch string) (*WorkflowSession, error) {
 	w := &WorkflowSession{
 		app: a, project: project, identity: identity, ctx: ctx, binding: binding, branch: branch,
-		staged: map[string]string{}, stagedFrom: map[string]string{}, instanceProjects: map[string]ProjectID{},
+		staged: map[string]string{}, stagedFrom: map[string]string{}, instanceProjects: map[string]ProjectID{}, instanceClients: map[string]string{},
 	}
 	w.graphs = &workflowGraphs{workflow: w}
 	w.sink = &workflowSink{workflow: w}
@@ -705,9 +718,9 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 			return nil, err
 		}
 	}
-	w.startProject = project
+	w.startProject, w.startClient = project, &request.ClientName
 	serve, err := w.session.Start(spec, request.Params, parent)
-	w.startProject = ""
+	w.startProject, w.startClient = "", nil
 	if err != nil {
 		return w.operationOutcome(err)
 	}
@@ -1962,11 +1975,12 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	// The started instance's target lands in the same append as its start, so
 	// no instance ever exists without the project it was started in.
 	var project ProjectID
+	var client *string
 	if event.Event == engine.EventStarted {
-		project = w.startProject
-		w.startProject = ""
+		project, client = w.startProject, w.startClient
+		w.startProject, w.startClient = "", nil
 	}
-	events, err := sinkEvents(event, project)
+	events, err := sinkEvents(event, project, client)
 	if err != nil {
 		return 0, err
 	}
@@ -1974,7 +1988,7 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	if isSessionConflict(err) {
 		err = w.catchUp(&event)
 		if err == nil {
-			events, err = sinkEvents(event, project)
+			events, err = sinkEvents(event, project, client)
 		}
 		if err == nil {
 			err = w.appendStoredEventsOnce(events)
@@ -1989,23 +2003,33 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	if project != "" {
 		w.instanceProjects[event.Instance] = project
 	}
+	if client != nil {
+		w.instanceClients[event.Instance] = *client
+	}
 	return w.binding.Version - uint64(len(events)) + 1, nil
 }
 
-func sinkEvents(event engine.Event, project ProjectID) ([]StoredEvent, error) {
+func sinkEvents(event engine.Event, project ProjectID, client *string) ([]StoredEvent, error) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return nil, err
 	}
 	events := []StoredEvent{{CodecVersion: SessionCodecVersion, Code: WorkflowEventCode, Payload: payload}}
-	if project == "" {
-		return events, nil
+	if project != "" {
+		record, err := instanceProjectRecord(event.Instance, project)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, record)
 	}
-	record, err := instanceProjectRecord(event.Instance, project)
-	if err != nil {
-		return nil, err
+	if client != nil {
+		record, err := instanceClientRecord(event.Instance, *client)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, record)
 	}
-	return append(events, record), nil
+	return events, nil
 }
 
 func isSessionConflict(err error) bool {
@@ -2078,6 +2102,10 @@ func (w *WorkflowSession) catchUp(pending *engine.Event) error {
 		return err
 	}
 	err = w.restoreInstanceProjects(newer)
+	if err != nil {
+		return err
+	}
+	err = w.restoreInstanceClients(newer)
 	if err != nil {
 		return err
 	}

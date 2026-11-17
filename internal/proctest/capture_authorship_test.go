@@ -74,6 +74,24 @@ func TestAuthorship_AnAutonomousSignalCarriesTheAgentMark(t *testing.T) {
 	}
 }
 
+// The participant is the client that started the capture: the CLI joining the
+// session later to confirm it does not take its place.
+func TestAuthorship_TheStartingClientStaysTheParticipant(t *testing.T) {
+	world, session := authorshipWorld(t, proctest.WithAutonomousDialogue())
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+
+	cli, _ := world.Resume(t, session.ID, "sdd-cli")
+	entry := writeCapture(t, world, cli, instance, func() *sdd.WorkflowServe {
+		return cli.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
+	})
+	if !slices.Equal(entry.Participants, []string{"Claude"}) {
+		t.Errorf("the participant should be the actor of the client that started the capture, got %v", entry.Participants)
+	}
+}
+
 func TestAuthorship_AGuidedCaptureCarriesNoMark(t *testing.T) {
 	world, session := authorshipWorld(t)
 	serve := session.Start(t, "capture", nil)

@@ -2,6 +2,8 @@ package application
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -20,17 +22,67 @@ type agentAuthor struct {
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
 // markAgentDraft marks the draft of an autonomous capture as the agent's, of
-// the client the session last attached through.
-func (w *WorkflowSession) markAgentDraft(draft *EntryDraft) error {
+// the client that started instance.
+func (w *WorkflowSession) markAgentDraft(instance string, draft *EntryDraft) error {
 	if !w.Autonomous() {
 		return nil
 	}
-	client, err := w.attachedClient(w.ctx)
+	client, err := w.startingClient(instance)
 	if err != nil {
 		return err
 	}
 	draft.agent = &agentAuthor{client: client}
 	return nil
+}
+
+type instanceClientEvent struct {
+	Instance string `json:"instance"`
+	Client   string `json:"client"`
+}
+
+func instanceClientRecord(instance, client string) (StoredEvent, error) {
+	payload, err := json.Marshal(instanceClientEvent{Instance: instance, Client: client})
+	if err != nil {
+		return StoredEvent{}, err
+	}
+	return StoredEvent{CodecVersion: SessionCodecVersion, Code: workflowInstanceClientCode, Payload: payload}, nil
+}
+
+func (w *WorkflowSession) restoreInstanceClients(events []StoredEvent) error {
+	for _, stored := range events {
+		if stored.Code != workflowInstanceClientCode {
+			continue
+		}
+		if !SupportedSessionCodecVersion(stored.CodecVersion) {
+			return &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported instance client event codec", Version: stored.CodecVersion}
+		}
+		var event instanceClientEvent
+		if err := json.Unmarshal(stored.Payload, &event); err != nil {
+			return fmt.Errorf("decoding instance client event: %w", err)
+		}
+		if event.Instance == "" {
+			return fmt.Errorf("decoding instance client event: instance is required")
+		}
+		w.instanceClients[event.Instance] = event.Client
+	}
+	return nil
+}
+
+// startingClient is the MCP client that started instance, else the one that
+// started its nearest started ancestor; a later attach never changes it. A
+// session logged before these records falls back to its last attachment.
+func (w *WorkflowSession) startingClient(instance string) (string, error) {
+	for id := instance; id != ""; {
+		if client, ok := w.instanceClients[id]; ok {
+			return client, nil
+		}
+		inst, ok := w.session.Instance(id)
+		if !ok {
+			break
+		}
+		id = inst.Parent
+	}
+	return w.attachedClient(w.ctx)
 }
 
 // authorshipMissing lists what an autonomous draft's authorship fields owe: a

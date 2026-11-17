@@ -795,7 +795,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 	identity := s.requestIdentity(req)
 	serve, err := ss.root.Start(ctx, identity, sdd.WorkflowStartRequest{
 		Canonical: args.Canonical, Params: args.Params, Label: args.Label, Parent: args.Parent,
-		Project: sdd.ProjectID(strings.TrimSpace(args.Project)),
+		Project: sdd.ProjectID(strings.TrimSpace(args.Project)), ClientName: mcpClientName(req.Session),
 	})
 	if err != nil {
 		return nil, ServeResult{}, err

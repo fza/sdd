@@ -529,6 +529,9 @@ type Session struct {
 	World *World
 	WF    *sdd.WorkflowSession
 	ID    sdd.SessionID
+	// Client is the MCP client this wrapper attached as, which its starts
+	// name.
+	Client string
 }
 
 // Open opens a fresh workflow session; connID names the client for the
@@ -539,7 +542,7 @@ func (w *World) Open(t *testing.T, connID string) *Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Session{World: w, WF: workflow, ID: serve.Session}
+	return &Session{World: w, WF: workflow, ID: serve.Session, Client: connID}
 }
 
 // Resume loads a session by ID from another client, as a re-attached or
@@ -552,7 +555,7 @@ func (w *World) Resume(t *testing.T, sessionID sdd.SessionID, connID string) (*S
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := &Session{World: w, WF: workflow, ID: sessionID}
+	session := &Session{World: w, WF: workflow, ID: sessionID, Client: connID}
 	for i := range result.Open {
 		if _, err := session.deliver(t, &result.Open[i], nil); err != nil {
 			t.Fatal(err)
@@ -574,7 +577,7 @@ func (s *Session) Start(t *testing.T, canonical string, params map[string]any) *
 // StartErr is Start for tests asserting the failure.
 func (s *Session) StartErr(t *testing.T, canonical string, params map[string]any) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, ClientName: s.Client})
 	return s.deliver(t, serve, err)
 }
 
@@ -625,7 +628,7 @@ func (s *Session) StageItem(t *testing.T, item sdd.StageItem) (sdd.StagedFile, e
 // recorded on the parent's answered junction applies to the new instance.
 func (s *Session) StartChild(t *testing.T, canonical string, params map[string]any, parent string) *sdd.WorkflowServe {
 	t.Helper()
-	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent, ClientName: s.Client})
 	serve, err = s.deliver(t, serve, err)
 	if err != nil {
 		t.Fatal(err)
@@ -637,7 +640,7 @@ func (s *Session) StartChild(t *testing.T, canonical string, params map[string]a
 // error a refused start or launch gives.
 func (s *Session) StartChildErr(t *testing.T, canonical string, params map[string]any, parent string) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent, ClientName: s.Client})
 	return s.deliver(t, serve, err)
 }
 

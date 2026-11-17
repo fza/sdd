@@ -547,7 +547,7 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, staged); err != nil {
 		return err
 	}
-	if err := w.markAgentDraft(&draft); err != nil {
+	if err := w.markAgentDraft(ctx.Instance, &draft); err != nil {
 		return err
 	}
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
