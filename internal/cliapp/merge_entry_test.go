@@ -116,18 +116,21 @@ func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
 	tests := []struct {
 		name     string
 		graphDir func(repo string) string
+		// want names the check refusing it: one leading out of the project
+		// meets the project placement check before the pattern check.
+		want string
 	}{
-		{name: "a parent step", graphDir: func(string) string { return "../graph" }},
-		{name: "the parent itself", graphDir: func(string) string { return ".." }},
-		{name: "an absolute path", graphDir: func(repo string) string { return filepath.Join(repo, "graph") }},
+		{name: "a parent step", graphDir: func(string) string { return "../graph" }, want: "outside the project"},
+		{name: "the parent itself", graphDir: func(string) string { return ".." }, want: "outside the project"},
+		{name: "an absolute path", graphDir: func(repo string) string { return filepath.Join(repo, "graph") }, want: ".gitattributes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := canonicalTemp(t)
 			initRepo(t, repo)
 			output, err := runAppErr(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir(repo))
-			if err == nil || !strings.Contains(err.Error(), ".gitattributes") {
-				t.Errorf("init should refuse a graph directory no .gitattributes pattern can name, got %v\n%s", err, output)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("init should refuse the graph directory naming %q, got %v\n%s", tt.want, err, output)
 			}
 			if _, statErr := os.Stat(filepath.Join(repo, ".sdd")); !os.IsNotExist(statErr) {
 				t.Error("a refused graph directory should leave nothing written")
