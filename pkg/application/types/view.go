@@ -50,6 +50,9 @@ type ListedEntry struct {
 	Confidence    string
 	Intent        string
 	Participants  []string
+	DecidedBy     string
+	RunBy         string
+	AgentMark     *AgentMark
 	// Topics is the effective topic set: the entry's own topics merged with
 	// the topic annotations naming it.
 	Topics  []string

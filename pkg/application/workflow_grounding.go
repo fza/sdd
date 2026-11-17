@@ -22,7 +22,7 @@ var groundingVerdictFields = []string{"verdicts", "lateVerdicts"}
 // grounding enforcement: the assemble predicate, the write step's late-entries
 // check and the late-entries listing.
 func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) error {
-	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
+	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "approves", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
 	if err := registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name: "groundingRead",

@@ -43,6 +43,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowGrounding,
 		w.registerWorkflowTiming,
 		w.registerUserWords,
+		w.registerAuthorship,
 		w.registerWorkflowDeep,
 		w.registerWorkflowRecheck,
 	} {
@@ -364,7 +365,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "approves", "reason", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -469,7 +470,7 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft := EntryDraft{
 		Topics: workflowStoreStrings(store, "topics"),
-		Closes: workflowStoreStrings(store, "closes"), Supersedes: workflowStoreStrings(store, "supersedes"),
+		Closes: workflowStoreStrings(store, "closes"), Supersedes: workflowStoreStrings(store, "supersedes"), Approves: workflowStoreStrings(store, "approves"),
 		AttachmentHandles: workflowStoreStrings(store, "attachments"), Participants: workflowStoreStrings(store, "participants"),
 	}
 	draft.Kind, _ = workflowStoreString(store, "entryKind")
@@ -477,6 +478,9 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft.Body, _ = workflowStoreString(store, "body")
 	draft.Confidence, _ = workflowStoreString(store, "confidence")
 	draft.Intent, _ = workflowStoreString(store, "intent")
+	if w.Autonomous() {
+		draft.Reason, _ = workflowStoreString(store, fieldReason)
+	}
 	skip, _ := store.Get("skipGrounding")
 	draft.SkipGrounding, _ = skip.(bool)
 	draft.VerificationSkip = deepSkipCause(store)
@@ -541,6 +545,9 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 		return err
 	}
 	if err := captureAttachments(&draft, staged); err != nil {
+		return err
+	}
+	if err := w.markAgentDraft(&draft); err != nil {
 		return err
 	}
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {

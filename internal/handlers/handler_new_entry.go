@@ -94,13 +94,16 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	}
 	graph = h.fetchOnMiss(ctx, graph, entry.Refs)
 
-	// Resolve short-form IDs in refs/closes/supersedes against the graph so
+	// Resolve short-form IDs in refs/closes/supersedes/approves against the graph so
 	// validation and all downstream logic see full IDs.
 	if entry.Refs, err = graph.ResolveRefIDs(entry.Refs); err != nil {
 		return fmt.Errorf("resolving refs: %w", err)
 	}
 	if entry.Closes, err = graph.ResolveIDs(entry.Closes); err != nil {
 		return fmt.Errorf("resolving closes: %w", err)
+	}
+	if entry.Approves, err = graph.ResolveIDs(entry.Approves); err != nil {
+		return fmt.Errorf("resolving approves: %w", err)
 	}
 	if entry.Supersedes, err = graph.ResolveIDs(entry.Supersedes); err != nil {
 		return fmt.Errorf("resolving supersedes: %w", err)

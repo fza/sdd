@@ -710,8 +710,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		return sv, nil
 	}
 	if s.unattendedAt(step) != nil && inst.unattendedSpent(step) {
-		s.park(inst, step, sv)
-		return sv, nil
+		return sv, s.park(inst, step, sv)
 	}
 	switch {
 	case len(step.Await) == 0:

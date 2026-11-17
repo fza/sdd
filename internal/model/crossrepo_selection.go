@@ -102,9 +102,10 @@ func CitedAcross(local *Graph, scope []RepoID, hops int) (map[RepoID]map[string]
 	return selected, nil
 }
 
-// upstreamIDs lists the IDs an entry points at: refs, closes, supersedes.
+// upstreamIDs lists the IDs an entry points at: refs, closes, approves, supersedes.
 func upstreamIDs(e *Entry) []string {
 	ids := RefIDs(e.Refs)
 	ids = append(ids, e.Closes...)
+	ids = append(ids, e.Approves...)
 	return append(ids, e.Supersedes...)
 }

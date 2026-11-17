@@ -97,7 +97,9 @@ func TestCapture_AutonomousDecisionNeedsNoUserWords(t *testing.T) {
 	world := proctest.NewWorld(t, proctest.WithAutonomousDialogue())
 	session := world.Open(t, "reason-autonomous")
 	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, decisionDraft("directive"))
+	draft := decisionDraft("directive")
+	draft["reason"] = "Empty input hid upstream bugs twice."
+	serve = session.Report(t, serve.Instance, draft)
 	proctest.RequireStep(t, serve, "playback")
 	// An adjust passes the assemble gate again, now past the writing guide.
 	serve = session.Decide(t, serve.Instance, "playback", "adjust", map[string]any{"confidence": "medium"}, "the evidence is thinner")

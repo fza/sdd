@@ -117,9 +117,9 @@ func styleEnvelopeLine(line, section string) (string, string) {
 		}
 		return indent + marker + clrKey.Render(key) + clrFaint.Render(":") + styleEnvelopeValue(key, rest[i+1:], topLevel, section), section
 	}
-	// Bare scalar list item (value only): closes/supersedes are ids, the rest
+	// Bare scalar list item (value only): closes/supersedes/approves are ids, the rest
 	// (participants, topics, aliases, attachments) is body text.
-	if section == "closes" || section == "supersedes" {
+	if section == "closes" || section == "supersedes" || section == "approves" {
 		return indent + marker + clrID.Render(rest), section
 	}
 	return indent + marker + clrBody.Render(rest), section

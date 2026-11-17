@@ -46,6 +46,7 @@ func (gf *GraphFinder) Show(q query.ShowQuery) (*query.ShowResult, error) {
 			PrimaryStatus:        tree.PrimaryStatus,
 			PrimarySupersedePath: tree.PrimarySupersedePath,
 			PrimaryTopics:        tree.PrimaryTopics,
+			PrimaryMark:          gf.graph.AgentMark(tree.Primary.ID),
 			Upstream:             tree.Upstream,
 			Downstream:           tree.Downstream,
 			UpstreamTruncated:    tree.UpstreamTruncated,

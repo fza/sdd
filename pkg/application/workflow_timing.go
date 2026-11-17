@@ -44,7 +44,7 @@ type guideAdded struct {
 
 // guideDraftFields are the reported fields a delta check compares, the body
 // last.
-var guideDraftFields = []string{"entryKind", "layer", "refs", "closes", "supersedes", "topics", "participants", "index", "confidence", "intent", "attachments", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "body"}
+var guideDraftFields = []string{"entryKind", "layer", "refs", "closes", "supersedes", "approves", "topics", "participants", "index", "confidence", "intent", "attachments", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "body"}
 
 // draftText renders the draft as lines a delta check diffs: one line per
 // reported field, then the body.

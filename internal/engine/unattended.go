@@ -27,11 +27,34 @@ func (s *Session) unattendedAt(step *Step) *Unattended {
 
 func (inst *Instance) unattendedSpent(step *Step) bool {
 	u := step.Unattended
-	return u != nil && u.Limit > 0 && inst.unattended[step.ID] >= u.Limit
+	return u != nil && (u.Park != "" || u.Limit > 0 && inst.unattended[step.ID] >= u.Limit)
+}
+
+// parkReason is why an autonomous session parks inst at step: the park
+// predicate's failure message, or the spent limit.
+func (s *Session) parkReason(inst *Instance, step *Step) (string, error) {
+	u := step.Unattended
+	if u.Park == "" {
+		return fmt.Sprintf("blocked again after %s unattended %s", strconv.Itoa(u.Limit), u.Answer), nil
+	}
+	p, found := s.engine.Registry.Predicate(u.Park)
+	if !found {
+		return "", fmt.Errorf("step %s parks on unknown predicate %q", step.ID, u.Park)
+	}
+	ctx, err := s.funcContext(inst)
+	if err != nil {
+		return "", err
+	}
+	if p.FailDetail != nil {
+		if detail := p.FailDetail(ctx); detail != "" {
+			return detail, nil
+		}
+	}
+	return p.FailMessage, nil
 }
 
 // checkUnattended refuses the answers an unattended step forbids an
-// autonomous session: a spent step, user words, any choice but its answer.
+// autonomous session: a parked step, user words, any choice but its answer.
 func (s *Session) checkUnattended(inst *Instance, step *Step, choice, userWords string) error {
 	u := s.unattendedAt(step)
 	switch {
@@ -96,10 +119,12 @@ func (inst *Instance) countUnattended(step *Step, answeredBy, userWords string) 
 }
 
 // park parks inst at step for a person, logging it once per arrival.
-func (s *Session) park(inst *Instance, step *Step, sv *Serve) {
+func (s *Session) park(inst *Instance, step *Step, sv *Serve) error {
 	if inst.parking == nil || inst.parking.Step != step.ID {
-		u := step.Unattended
-		reason := fmt.Sprintf("blocked again after %s unattended %s", strconv.Itoa(u.Limit), u.Answer)
+		reason, err := s.parkReason(inst, step)
+		if err != nil {
+			return err
+		}
 		inst.parking = &Parking{Step: step.ID, Reason: reason, Since: s.now()}
 		s.appendEvent(inst.ID, EventParked, map[string]any{"step": step.ID, "reason": reason, "held": true})
 	}
@@ -108,6 +133,7 @@ func (s *Session) park(inst *Instance, step *Step, sv *Serve) {
 	sv.Goal = "end your turn; the move waits for a person"
 	sv.Instructions = fmt.Sprintf("Parked at %s: %s. Nothing is written. End your turn with: parked at %s: resume_session %s", step.ID, parked.Reason, step.ID, s.ID)
 	sv.Sizes = []PartSize{{Part: "parked", Bytes: len(sv.Instructions)}}
+	return nil
 }
 
 func (s *Session) replayParked(ev Event) error {

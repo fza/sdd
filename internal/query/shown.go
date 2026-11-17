@@ -42,7 +42,8 @@ func shownEntry(group ShowGroup) (types.ShownEntry, error) {
 		Canonical: entry.Canonical, Aliases: slices.Clone(entry.Aliases),
 		ActorKind: string(entry.ActorKind), Class: string(entry.Class), Actor: entry.Actor,
 		Topics: topicLabels(group.PrimaryTopics), Refs: shownRefs(entry.Refs),
-		Closes: slices.Clone(entry.Closes), Supersedes: slices.Clone(entry.Supersedes), Attachments: slices.Clone(entry.Attachments),
+		Closes: slices.Clone(entry.Closes), Supersedes: slices.Clone(entry.Supersedes), Approves: slices.Clone(entry.Approves), Attachments: slices.Clone(entry.Attachments),
+		DecidedBy: string(entry.DecidedBy), RunBy: entry.RunBy, Reason: entry.Reason, AgentMark: shownAgentMark(group.PrimaryMark),
 		Preflight: entry.Preflight, Grounding: entry.Grounding, Verification: entry.Verification,
 		DerivedStatus: derivedStatus(group.PrimaryStatus, group.PrimarySupersedePath), Time: entry.Time,
 	}

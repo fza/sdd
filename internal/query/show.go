@@ -41,6 +41,7 @@ type ShowGroup struct {
 	PrimaryStatus        model.Status
 	PrimarySupersedePath []string
 	PrimaryTopics        []model.TopicPath
+	PrimaryMark          model.AgentMark
 	Upstream             []model.ShowTreeItem
 	Downstream           []model.ShowTreeItem
 	// UpstreamTruncated and DownstreamTruncated carry the direction-level

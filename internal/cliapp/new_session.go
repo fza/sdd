@@ -88,7 +88,7 @@ func sessionDraft(ncmd *command.NewEntryCmd, widenReport string) (map[string]any
 		}
 		report["refs"] = refs
 	}
-	lists := map[string][]string{"supersedes": ncmd.Supersedes, "closes": ncmd.Closes, "topics": ncmd.TopicLabels, "participants": ncmd.Participants, "aliases": ncmd.Aliases}
+	lists := map[string][]string{"supersedes": ncmd.Supersedes, "closes": ncmd.Closes, "approves": ncmd.Approves, "topics": ncmd.TopicLabels, "participants": ncmd.Participants, "aliases": ncmd.Aliases}
 	for field, values := range lists {
 		if len(values) == 0 {
 			continue

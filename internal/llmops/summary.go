@@ -356,6 +356,7 @@ func forEachRelated(entry *model.Entry, graph *model.Graph, visit func(relation 
 	add(model.RefIDs(entry.Refs), "refs")
 	add(entry.Closes, "closes")
 	add(entry.Supersedes, "supersedes")
+	add(entry.Approves, "approves")
 }
 
 func entryTriple(e *model.Entry) string {
@@ -433,6 +434,15 @@ func FormatEntryForPrompt(e *model.Entry) string {
 	}
 	if len(e.Supersedes) > 0 {
 		fmt.Fprintf(&b, "Supersedes: %s\n", strings.Join(e.Supersedes, ", "))
+	}
+	if len(e.Approves) > 0 {
+		fmt.Fprintf(&b, "Approves: %s\n", strings.Join(e.Approves, ", "))
+	}
+	if e.AgentDecided() {
+		fmt.Fprintf(&b, "Decided by: an agent alone, run by %s\n", e.RunBy)
+	}
+	if e.Reason != "" {
+		fmt.Fprintf(&b, "Agent's reason: %s\n", e.Reason)
 	}
 	if e.Confidence != "" {
 		fmt.Fprintf(&b, "Confidence: %s\n", e.Confidence)

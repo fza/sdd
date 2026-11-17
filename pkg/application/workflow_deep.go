@@ -681,7 +681,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			targets = append(targets, id)
 		}
 	}
-	targets = append(append(targets, workflowStoreStrings(ctx.Store, "supersedes")...), workflowStoreStrings(ctx.Store, "closes")...)
+	targets = slices.Concat(targets, workflowStoreStrings(ctx.Store, "supersedes"), workflowStoreStrings(ctx.Store, "closes"), workflowStoreStrings(ctx.Store, "approves"))
 	for _, ids := range [][]string{targets, reading.full, reading.listed} {
 		for _, id := range ids {
 			if graph.ByID[id] != nil {

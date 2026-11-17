@@ -379,7 +379,7 @@ func hookDraft(store *engine.Store) map[string]any {
 		"type": string(entryType), "kind": kind, "layer": layer, "refs": refs,
 		"topics": workflowStoreStrings(store, "topics"), "body": body,
 		"attachments": workflowStoreStrings(store, "attachments"), "body_hash": hex.EncodeToString(hash[:]),
-		"supersedes": workflowStoreStrings(store, "supersedes"), "closes": workflowStoreStrings(store, "closes"),
+		"supersedes": workflowStoreStrings(store, "supersedes"), "closes": workflowStoreStrings(store, "closes"), "approves": workflowStoreStrings(store, "approves"),
 		"skip_grounding": skipGrounding == true,
 	}
 }
