@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -229,10 +230,34 @@ const (
 	PrefilterSystemOne    PrefilterProtocol = "systemone"
 	PrefilterCohereRerank PrefilterProtocol = "cohere-rerank"
 	PrefilterGenerate     PrefilterProtocol = "generate"
+	// PrefilterListwise has a chat model score a list of candidates against
+	// the draft in one call.
+	PrefilterListwise PrefilterProtocol = "listwise"
 )
 
 func (PrefilterProtocol) AllowedValues() []string {
-	return closedValues(PrefilterSystemOne, PrefilterCohereRerank, PrefilterGenerate)
+	return closedValues(PrefilterSystemOne, PrefilterCohereRerank, PrefilterGenerate, PrefilterListwise)
+}
+
+// The deep reading's ranking judge under a Claude host while llm_prefilter
+// is unset: Haiku listwise through the claude CLI, at the lowest effort it
+// takes, since its thinking cannot be switched off.
+const (
+	DefaultRankingModel  = "claude-haiku-5-5"
+	DefaultRankingEffort = "low"
+)
+
+// ClaudeHostRanking is the prefilter block the deep reading ranks with when
+// the MCP client is a Claude host (ClaudeClient), on the llm block's claude
+// CLI credentials. False once llm_prefilter sets any value: then the
+// configured prefilter ranks, whatever the host.
+func (b BaseConfig) ClaudeHostRanking() (LLMPrefilterConfig, bool) {
+	if !reflect.ValueOf(b.LLMPrefilter).IsZero() {
+		return LLMPrefilterConfig{}, false
+	}
+	return LLMPrefilterConfig{Protocol: PrefilterListwise, LLMConfig: LLMConfig{
+		Provider: DefaultLLMProvider, Model: DefaultRankingModel, Effort: DefaultRankingEffort, ClaudeCLI: b.LLM.ClaudeCLI,
+	}}, true
 }
 
 // LLMPrefilterConfig is the `llm_prefilter` block: the shape of `llm` plus

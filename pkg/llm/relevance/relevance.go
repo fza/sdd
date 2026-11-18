@@ -28,9 +28,12 @@ const (
 )
 
 // Candidate is one text to rate against the subject, named by the caller.
+// Line is its one-line form, kind, title and summary, which a listwise
+// scorer lists instead of Text.
 type Candidate struct {
 	ID   string
 	Text string
+	Line string
 }
 
 // Request asks for the relevance of every candidate to the subject.

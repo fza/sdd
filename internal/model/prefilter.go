@@ -341,6 +341,21 @@ func RelevanceText(kind string, topics []string, title, body string) string {
 	return b.String()
 }
 
+// EntryRankingLine is the one line a listwise judge reads of an entry:
+// [type/kind], then title and summary, the summary alone for an untitled
+// entry, the first sentence of the body for one without a summary.
+func EntryRankingLine(e *Entry) string {
+	summary := strings.Join(strings.Fields(e.Summary), " ")
+	if summary == "" {
+		summary = FirstSentence(e.Content)
+	}
+	text := summary
+	if e.Title != "" {
+		text = e.Title + ": " + summary
+	}
+	return "[" + string(e.Type) + "/" + string(e.Kind) + "] " + text
+}
+
 // EntryRelevanceText is RelevanceText of an entry with its effective topics.
 func EntryRelevanceText(g *Graph, e *Entry) string {
 	var topics []string

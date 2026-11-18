@@ -14,11 +14,13 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
-// Prefilter defaults: a call is bounded by the pass deadline, and a one-pair
-// protocol fans out up to the calls in flight.
+// Prefilter defaults: a call is bounded by the pass deadline, a one-pair
+// protocol fans out up to the calls in flight, and listwise holds fewer, each
+// carrying a whole batch.
 const (
 	defaultPrefilterTimeout     = 45 * time.Second
 	defaultPrefilterConcurrency = 16
+	defaultListwiseConcurrency  = 8
 	defaultPrefilterKeyProvider = "opper"
 )
 
@@ -82,6 +84,17 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		}
 		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
 		scorer = relevance.PerItem(bridge, concurrency)
+	case model.PrefilterListwise:
+		chat, err := New(cfg.LLMConfig)
+		if err != nil {
+			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
+		}
+		judge, err := llmops.NewListwiseJudge(chat)
+		if err != nil {
+			return Prefilter{}, err
+		}
+		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
+		scorer = relevance.Limited(relevance.RetriedOnce(judge), cmp.Or(cfg.Concurrency, defaultListwiseConcurrency))
 	case "":
 		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s)", strings.Join(cfg.Protocol.AllowedValues(), ", "))
 	default:

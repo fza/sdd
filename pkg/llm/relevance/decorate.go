@@ -104,6 +104,33 @@ func RetriedAfterDelay(s Scorer, maxWait time.Duration) Scorer {
 	}}
 }
 
+// RetriedOnce calls once more after any failure while ctx lives: a listwise
+// call that breaks its answer seldom breaks it twice.
+func RetriedOnce(s Scorer) Scorer {
+	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
+		result, err := s.Score(ctx, request)
+		if err == nil || ctx.Err() != nil {
+			return result, err
+		}
+		return s.Score(ctx, request)
+	}}
+}
+
+// Limited holds at most n calls in flight across every request, at least
+// one.
+func Limited(s Scorer, n int) Scorer {
+	slots := make(chan struct{}, max(n, 1))
+	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		}
+		defer func() { <-slots }()
+		return s.Score(ctx, request)
+	}}
+}
+
 // Observed hands one llm.CallStat per call to sink, as llm.Observed does;
 // Items is the number of candidates. A nil sink returns s unwrapped.
 func Observed(s Scorer, sink llm.StatsSink) Scorer {

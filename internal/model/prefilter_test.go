@@ -197,3 +197,16 @@ func TestReadingScores_AnswerTheDraftTheyScored(t *testing.T) {
 		t.Fatalf("the revised draft's scores should replace the earlier ones, got %v", scores)
 	}
 }
+
+// An entry's ranking line is its type, kind, title and summary on one line;
+// an untitled one carries its summary alone.
+func TestEntryRankingLine(t *testing.T) {
+	titled := &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Title: "Rank with a judge", Summary: "The deep reading ranks.\nThen it lists."}
+	if got := model.EntryRankingLine(titled); got != "[decision/directive] Rank with a judge: The deep reading ranks. Then it lists." {
+		t.Fatalf("line %q", got)
+	}
+	untitled := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Summary: "A gap. More."}
+	if got := model.EntryRankingLine(untitled); got != "[signal/gap] A gap. More." {
+		t.Fatalf("line %q", got)
+	}
+}

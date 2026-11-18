@@ -34,6 +34,13 @@ func TestNewPrefilter(t *testing.T) {
 	if generate.Judge != "generate:haiku" || generate.Scorer.MaxBatch() != 1 {
 		t.Fatalf("judge %q: the generate bridge should rate each pair in a call of its own", generate.Judge)
 	}
+	listwise, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "listwise", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "claude-haiku-5-5", Effort: "low"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listwise.Judge != "listwise:claude-haiku-5-5" || listwise.Scorer.MaxBatch() != 100 || listwise.Scorer.Direction() != relevance.Both {
+		t.Fatalf("judge %q: listwise should score up to 100 candidates a call", listwise.Judge)
+	}
 	for name, tc := range map[string]struct {
 		cfg  model.LLMPrefilterConfig
 		want string

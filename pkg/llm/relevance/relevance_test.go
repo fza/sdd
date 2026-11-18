@@ -296,3 +296,47 @@ func TestCheckResult(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Limited holds the calls in flight at its bound across every request and
+// keeps the inner scorer's limits.
+func TestLimited_HoldsTheCallsInFlight(t *testing.T) {
+	inner := &fixedScorer{maxBatch: 100, entered: make(chan struct{}, 8), release: make(chan struct{})}
+	scorer := relevance.Limited(inner, 2)
+	if scorer.MaxBatch() != 100 {
+		t.Fatal("Limited should keep the inner scorer's limits")
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			_, _ = scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a")})
+		})
+	}
+	<-inner.entered
+	<-inner.entered
+	select {
+	case <-inner.entered:
+		t.Error("a third call should wait for a slot")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(inner.release)
+	wg.Wait()
+}
+
+// RetriedOnce calls once more after any failure while its context lives,
+// and never a third time.
+func TestRetriedOnce(t *testing.T) {
+	once := &failingOnce{err: errors.New("malformed")}
+	if _, err := relevance.RetriedOnce(once).Score(t.Context(), relevance.Request{Candidates: candidates("a")}); err != nil || once.calls != 2 {
+		t.Fatalf("%d calls, error %v: a failed call should be retried once", once.calls, err)
+	}
+	down := &fixedScorer{err: errors.New("down")}
+	if _, err := relevance.RetriedOnce(down).Score(t.Context(), relevance.Request{Candidates: candidates("a")}); err == nil || len(down.requests) != 2 {
+		t.Fatalf("%d calls, error %v: a second failure should end the call", len(down.requests), err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ended := &failingOnce{err: errors.New("cancelled")}
+	if _, err := relevance.RetriedOnce(ended).Score(ctx, relevance.Request{Candidates: candidates("a")}); err == nil || ended.calls != 1 {
+		t.Fatalf("%d calls, error %v: an ended context should not be retried", ended.calls, err)
+	}
+}
