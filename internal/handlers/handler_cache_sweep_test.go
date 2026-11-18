@@ -85,6 +85,38 @@ func TestCacheHandlerPruneSweepsLeftoversAndRecords(t *testing.T) {
 	}
 }
 
+// A host folder under the cache root is where an sdd keeping its clones there
+// places them: the run leaves it, also when it holds no clone.
+func TestCacheHandlerPruneKeepsHostFoldersUnderTheCacheRoot(t *testing.T) {
+	f := newPruneFixture(t, "")
+	old := time.Now().Add(-model.CacheLeftoverAge - time.Hour)
+	host := filepath.Join(f.loc.CacheRoot, "gitlab.example.org")
+	lock := filepath.Join(host, "team", "graph", ".sdd", "graph", ".sdd-runtime", "graph.lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := filepath.WalkDir(host, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, old, old)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !exists(t, lock) {
+		t.Error("a host folder under the cache root should stay with what it holds")
+	}
+}
+
 // The run sweeps the state folder under the user-global sessions.retention
 // and cache.retention, and counts what that sweep removed.
 func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {

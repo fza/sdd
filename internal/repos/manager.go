@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/networkteam/slogutils"
@@ -39,8 +37,7 @@ func (m *Manager) Registry() *Registry {
 
 // Ensure makes the sdd-owned clone of repo when this machine holds none yet
 // and keeps it otherwise, reporting whether a clone ran. A clone the gate
-// defers returns its *gitgate.DeferredError. The read-only cache clone an
-// earlier sdd kept for repo goes once the clone stands.
+// defers returns its *gitgate.DeferredError.
 func (m *Manager) Ensure(ctx context.Context, repo ConnectedRepo) (dir string, cloned bool, err error) {
 	logger := slogutils.FromContext(ctx)
 	dir, err = m.clones.Dir(repo.RepoID)
@@ -57,10 +54,6 @@ func (m *Manager) Ensure(ctx context.Context, repo ConnectedRepo) (dir string, c
 	if cloned {
 		logger.Info("cloned connected repo", "repo", repo.RepoID, "url", repo.CloneURL)
 	}
-	err = m.dropCacheClone(repo)
-	if err != nil {
-		return "", false, err
-	}
 	return dir, cloned, nil
 }
 
@@ -72,11 +65,7 @@ func (m *Manager) Stage(ctx context.Context, cloneURL string) (staged string, re
 
 // Place moves a staged clone of repo to where its clone lives.
 func (m *Manager) Place(ctx context.Context, staged string, repo ConnectedRepo) (string, error) {
-	dir, err := m.clones.Place(ctx, staged, repo.RepoID)
-	if err != nil {
-		return "", err
-	}
-	return dir, m.dropCacheClone(repo)
+	return m.clones.Place(ctx, staged, repo.RepoID)
 }
 
 // FetchDue reports whether the gate admits a fetch of repo now and when it
@@ -136,41 +125,4 @@ func (m *Manager) Slots(ctx context.Context, repo ConnectedRepo) (host string, s
 	}
 	slots, err = m.clones.gate.Concurrency(target)
 	return target.Host, slots, err
-}
-
-// dropCacheClone removes the read-only cache clone an earlier sdd kept for
-// repo. A cache still holding a pre-store index stays until `sdd init`
-// migrates it; the index stores beside it stay.
-func (m *Manager) dropCacheClone(repo ConnectedRepo) error {
-	cache, err := m.reg.LegacyCacheDir(repo.RepoID)
-	if err != nil {
-		return err
-	}
-	if !IsCloned(cache) {
-		return nil
-	}
-	_, statErr := os.Stat(LegacyIndexDir(cache))
-	if statErr == nil {
-		return nil
-	}
-	err = removeWithin(m.reg.loc.CacheRoot, cache)
-	if err != nil {
-		return fmt.Errorf("removing the former cache clone of %s: %w", repo.RepoID, err)
-	}
-	return nil
-}
-
-// removeWithin removes dir through an os.Root over root, so a symlink planted
-// after LegacyCacheDir checked the path cannot carry the removal outside it.
-func removeWithin(root, dir string) error {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
-	}
-	opened, err := os.OpenRoot(root)
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", root, err)
-	}
-	defer func() { _ = opened.Close() }()
-	return opened.RemoveAll(rel)
 }

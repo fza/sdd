@@ -344,11 +344,6 @@ func (h *CacheHandler) sweepLeftovers(now time.Time, counts *model.CachePruneCou
 	if err != nil {
 		errs = append(errs, err)
 	}
-	hosts, err := h.registry.SweepLegacyHostDirs(now, model.CacheLeftoverAge)
-	counts.Leftovers += hosts
-	if err != nil {
-		errs = append(errs, err)
-	}
 	return errs
 }
 

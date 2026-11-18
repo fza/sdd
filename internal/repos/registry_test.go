@@ -51,12 +51,9 @@ func TestUnconnectedClones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []repos.UnconnectedClone{
-		{Dir: ownedDropped, RepoID: "gitlab.example.org/team/graph", Owned: true},
-		{Dir: dropped, RepoID: "gitlab.example.org/team/dropped"},
-	}
+	want := []repos.UnconnectedClone{{Dir: ownedDropped, RepoID: "gitlab.example.org/team/graph"}}
 	if !slices.Equal(stale, want) {
-		t.Errorf("only disconnected clones the repos list does not name should be listed, got %+v", stale)
+		t.Errorf("only disconnected sdd-owned clones the repos list does not name should be listed, none under the cache root, got %+v", stale)
 	}
 }
 
@@ -115,26 +112,35 @@ func TestRetireUnconnectedClone(t *testing.T) {
 	if err := os.WriteFile(loc.ConfigPath, []byte(keptRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cached := repos.UnconnectedClone{Dir: filepath.Join(loc.CacheRoot, "github.com", "acme", "readded"), RepoID: "github.com/acme/readded"}
-	owned := repos.UnconnectedClone{Dir: filepath.Join(loc.DataRoot, "repos", "github.com", "acme", "graph"), RepoID: "github.com/acme/graph", Owned: true}
-	for _, clone := range []repos.UnconnectedClone{cached, owned} {
+	cached := repos.UnconnectedClone{Dir: filepath.Join(loc.CacheRoot, "github.com", "acme", "cached"), RepoID: "github.com/acme/cached"}
+	readded := repos.UnconnectedClone{Dir: filepath.Join(loc.DataRoot, "repos", "github.com", "acme", "readded"), RepoID: "github.com/acme/readded"}
+	owned := repos.UnconnectedClone{Dir: filepath.Join(loc.DataRoot, "repos", "github.com", "acme", "graph"), RepoID: "github.com/acme/graph"}
+	registry := repos.NewRegistry(loc)
+	for _, clone := range []repos.UnconnectedClone{cached, readded, owned} {
 		if err := os.MkdirAll(filepath.Join(clone.Dir, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-	}
-	registry := repos.NewRegistry(loc)
-	for _, clone := range []repos.UnconnectedClone{cached, owned} {
 		if err := repos.NewManager(registry, nil).MarkDisconnected(clone.RepoID); err != nil {
 			t.Fatal(err)
 		}
 	}
+
+	t.Run("a clone under the cache root is refused and stays", func(t *testing.T) {
+		retired, err := registry.RetireUnconnectedClone(cached, letGo)
+		if err == nil {
+			t.Errorf("a clone outside the sdd-owned clones should be refused, retired to %q", retired)
+		}
+		if _, err := os.Stat(filepath.Join(cached.Dir, ".git")); err != nil {
+			t.Errorf("the clone under the cache root should stay in place, stat says %v", err)
+		}
+	})
 
 	t.Run("a clone connected since it was listed stays", func(t *testing.T) {
 		config := "repos:\n  - repo_id: github.com/acme/readded\n    clone_url: git@github.com:acme/readded.git\n"
 		if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		retired, err := registry.RetireUnconnectedClone(cached, letGo)
+		retired, err := registry.RetireUnconnectedClone(readded, letGo)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +157,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = registry.RetireUnconnectedClone(cached, letGo)
+		_, err = registry.RetireUnconnectedClone(readded, letGo)
 		if err := unlock(); err != nil {
 			t.Fatal(err)
 		}
@@ -186,19 +192,6 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		}
 		if !released || !heldWhileRenamed {
 			t.Errorf("the hold should be released after the clone left its place, released %v, renamed first %v", released, heldWhileRenamed)
-		}
-		if _, err := os.Stat(filepath.Join(retired, ".git")); err != nil {
-			t.Errorf("the retired clone should await deletion, stat says %v", err)
-		}
-	})
-
-	t.Run("an unconnected cache clone is moved out of the cache", func(t *testing.T) {
-		retired, err := registry.RetireUnconnectedClone(cached, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Stat(cached.Dir); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("the clone should be gone from its place, stat says %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(retired, ".git")); err != nil {
 			t.Errorf("the retired clone should await deletion, stat says %v", err)
