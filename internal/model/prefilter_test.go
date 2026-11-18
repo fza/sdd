@@ -68,16 +68,16 @@ func TestLabelWeight_FollowsTheReaderState(t *testing.T) {
 // quarter weight need four times as many labels to reach the recall bound,
 // and implicit negatives weigh a quarter against the relevant threshold.
 func TestCalibrate_CountsLabelsByWeight(t *testing.T) {
-	quarter := labelsWith(188*4, 0, 0)
+	quarter := labelsWith(34*4, 0, 0)
 	for i := range quarter {
 		quarter[i].Weight = model.WeightImplicit
 	}
 	if got := model.Calibrate(quarter, nil, "j"); got.Valid {
-		t.Fatalf("thresholds %+v: quarter-weight positives weighing 188 fall short of the bound", got)
+		t.Fatalf("thresholds %+v: quarter-weight positives weighing 34 fall short of the first stage", got)
 	}
 	quarter = append(quarter, labelsWith(1, 0, 0)...)
-	if got := model.Calibrate(quarter, nil, "j"); !got.Valid {
-		t.Fatalf("thresholds %+v: one whole positive more should reach the bound", got)
+	if got := model.Calibrate(quarter, nil, "j"); !got.Valid || got.Stage != 0.90 {
+		t.Fatalf("thresholds %+v: one whole positive more should reach the first stage", got)
 	}
 
 	judged := labelsWith(189, 0, 0)
@@ -90,8 +90,8 @@ func TestCalibrate_CountsLabelsByWeight(t *testing.T) {
 }
 
 func TestCalibrate(t *testing.T) {
-	if got := model.Calibrate(labelsWith(188, 500, 10), nil, "j"); got.Valid {
-		t.Fatalf("thresholds %+v: below the recall bound the prefilter should only sort", got)
+	if got := model.Calibrate(labelsWith(34, 500, 10), nil, "j"); got.Valid {
+		t.Fatalf("thresholds %+v: below the first recall stage the prefilter should only sort", got)
 	}
 	got := model.Calibrate(labelsWith(189, 500, 10), nil, "j")
 	if !got.Valid || got.SetAside != model.ScoreValue(200) {
@@ -103,6 +103,28 @@ func TestCalibrate(t *testing.T) {
 	stepped := model.Calibrate(labelsWith(189, 500, 10), []model.DriftStep{{Judge: "j", SetAside: 50}, {Judge: "other", SetAside: 1}}, "j")
 	if stepped.SetAside != model.ScoreValue(50) {
 		t.Fatalf("thresholds %+v: the judge's drift step should cap the set-aside threshold", stepped)
+	}
+}
+
+// The highest recall stage the positive labels hold sets the threshold: 35
+// missless positives hold 0.90, 73 hold 0.95, 189 hold 0.98.
+func TestCalibrate_TakesTheHighestStageItsLabelsHold(t *testing.T) {
+	for _, tc := range []struct {
+		positives int
+		stage     float64
+	}{{34, 0}, {35, 0.90}, {72, 0.90}, {73, 0.95}, {188, 0.95}, {189, 0.98}} {
+		got := model.Calibrate(labelsWith(tc.positives, 0, 0), nil, "j")
+		if got.Valid != (tc.stage > 0) || got.Stage != tc.stage {
+			t.Errorf("%d positives: thresholds %+v, want stage %.2f", tc.positives, got, tc.stage)
+		}
+	}
+	labels := labelsWith(100, 0, 0)
+	for i := range 3 {
+		labels[i].Score = uint8(10 + i)
+	}
+	got := model.Calibrate(labels, nil, "j")
+	if got.Stage != 0.95 || got.SetAside != model.ScoreValue(10) {
+		t.Fatalf("thresholds %+v: at stage 0.95 a hundred positives tolerate no miss, so the threshold sits at the lowest", got)
 	}
 }
 
@@ -142,7 +164,7 @@ func TestPlacePrefiltered(t *testing.T) {
 	candidates := []model.GatherCandidate{entry("low"), entry("mid"), entry("high"), entry("unscored")}
 	scores := map[string]uint8{"low": 5, "mid": 100, "high": 250}
 
-	sorted := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9})
+	sorted := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9}, false)
 	if len(sorted.Relevant) != 0 || len(sorted.SetAside) != 0 || len(sorted.ToJudge) != 4 {
 		t.Fatalf("placed %+v: uncalibrated scores should set nothing aside and serve nothing", sorted)
 	}
@@ -150,7 +172,7 @@ func TestPlacePrefiltered(t *testing.T) {
 		t.Fatalf("to judge %v should run by falling score, unscored last", ids(sorted.ToJudge))
 	}
 
-	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9})
+	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, false)
 	if len(calibrated.Relevant) != 1 || calibrated.Relevant[0].Entry.ID != "high" {
 		t.Fatalf("relevant %v should hold the high score", ids(calibrated.Relevant))
 	}
@@ -159,6 +181,47 @@ func TestPlacePrefiltered(t *testing.T) {
 	}
 	if got := ids(calibrated.ToJudge); len(got) != 2 || got[0] != "mid" || got[1] != "unscored" {
 		t.Fatalf("to judge %v should keep the band and the unscored", got)
+	}
+}
+
+// Below the first stage the scored candidates split into tiers by falling
+// score: the first GatherJudgeRanked stay to judge, the next
+// GatherTitleListed are listed by title, the rest counted. An unscored
+// candidate has no rank and stays to judge; a weak judge doubles the lines
+// to judge; once calibrated the threshold draws the line instead.
+func TestPlacePrefiltered_TiersAnUncalibratedRanking(t *testing.T) {
+	var candidates []model.GatherCandidate
+	scores := map[string]uint8{}
+	for i := range 450 {
+		id := fmt.Sprintf("c%04d", i)
+		candidates = append(candidates, model.GatherCandidate{Entry: &model.Entry{ID: id}})
+		scores[id] = uint8(250 - i/2)
+	}
+	candidates = append(candidates, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-a"}}, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-b"}})
+
+	placed := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, false)
+	if model.GatherJudgeRanked != 100 || model.GatherTitleListed != 300 {
+		t.Fatalf("tiers %d and %d, want 100 to judge and 300 by title", model.GatherJudgeRanked, model.GatherTitleListed)
+	}
+	judged := ids(placed.ToJudge)
+	if len(judged) != 102 || judged[0] != "c0000" || judged[99] != "c0099" || judged[100] != "unscored-a" || judged[101] != "unscored-b" {
+		t.Fatalf("%d to judge (%v ...): the top 100 by score and every unscored one", len(judged), judged[:3])
+	}
+	if listed := ids(placed.Listed); len(listed) != 300 || listed[0] != "c0100" || listed[299] != "c0399" {
+		t.Fatalf("%d listed: the next 300 by score go by title", len(listed))
+	}
+	if len(placed.Counted) != 50 || placed.Counted[0] != "c0400" {
+		t.Fatalf("%d counted: the rest past the title ceiling", len(placed.Counted))
+	}
+
+	widened := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, true)
+	if len(widened.ToJudge) != 202 || len(widened.Listed) != 250 || len(widened.Counted) != 0 {
+		t.Fatalf("%d to judge, %d listed, %d counted: a weak judge doubles the lines to judge", len(widened.ToJudge), len(widened.Listed), len(widened.Counted))
+	}
+
+	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, Stage: 0.90, SetAside: 0, Relevant: 2}, false)
+	if len(calibrated.ToJudge) != 452 || len(calibrated.Listed) != 0 || len(calibrated.Counted) != 0 {
+		t.Fatalf("%d to judge, %d listed: a calibrated judge's threshold draws the line, not the tiers", len(calibrated.ToJudge), len(calibrated.Listed))
 	}
 }
 

@@ -3,16 +3,26 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
 
+// GroundingAuto is the background calibration a status names: On while
+// verify.auto_calibrate is on, Run the run `sdd serve` records, nil while
+// none runs.
+type GroundingAuto struct {
+	On  bool
+	Run *model.CalibrationRun
+}
+
 // RenderGroundingSummary writes `sdd grounding status`: the labels people's
 // choices gave, the audit and drift rules over the ranking judge's labels,
-// and that judge's calibration. origin says where the judge comes from.
-func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.CalibrationReport, origin string) {
+// that judge's calibration and its background calibration. origin says
+// where the judge comes from.
+func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.CalibrationReport, origin string, auto GroundingAuto) {
 	const indent = "         "
 	fmt.Fprintf(w, "labels:  %s pairs scored by people's choices\n", thousands(tally.Labelled))
 	fmt.Fprintf(w, "%s%s referenced · %s dismissed implicitly (%s later flipped to bearing) · %s set aside with a code\n",
@@ -36,19 +46,60 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 		state = append(state, thousands(report.Unscored)+" pairs unscored")
 	}
 	if report.Thresholds.Valid {
-		state = append(state, fmt.Sprintf("recall bound %.2f of the %.2f needed", report.RecallBound, model.RecallFloor),
-			fmt.Sprintf("sets aside below %.3f, serves in full from %.3f", report.Thresholds.SetAside, report.Thresholds.Relevant))
+		state = append(state, fmt.Sprintf("stage %.2f of %s (bound %.2f)", report.Thresholds.Stage, stageList(), report.RecallBound))
 	} else {
-		state = append(state, fmt.Sprintf("recall bound %.2f of the %.2f needed (~%.0f referenced pairs)", report.RecallBound, model.RecallFloor, model.RecallFloorPositives()),
-			"no threshold yet")
+		state = append(state, fmt.Sprintf("no recall stage yet (bound %.2f)", report.RecallBound))
+	}
+	if next, needed := report.NextStage(); next > 0 {
+		state = append(state, fmt.Sprintf("stage %.2f needs ~%.0f more referenced pairs", next, math.Ceil(needed)))
+	} else {
+		state = append(state, "top stage")
+	}
+	if report.Thresholds.Valid {
+		state = append(state, fmt.Sprintf("sets aside below %.3f, serves in full from %.3f", report.Thresholds.SetAside, report.Thresholds.Relevant))
+	} else {
+		state = append(state, "no threshold yet")
 	}
 	fmt.Fprintf(w, "%s%s\n", indent, strings.Join(state, " · "))
+	fmt.Fprintf(w, "auto:    %s\n", autoCalibrationLine(auto))
+	if auto.Run != nil {
+		return
+	}
 	switch {
 	case !report.Thresholds.Valid:
 		fmt.Fprintf(w, "%suncalibrated: run `sdd grounding update`\n", indent)
 	case report.Unscored > 0:
 		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding update`\n", indent)
 	}
+}
+
+// stageList names the recall stages, rising.
+func stageList() string {
+	var stages []string
+	for _, stage := range model.RecallStages() {
+		stages = append(stages, fmt.Sprintf("%.2f", stage))
+	}
+	return strings.Join(stages, ", ")
+}
+
+// autoCalibrationLine says whether the background calibration runs, and
+// how far it came.
+func autoCalibrationLine(auto GroundingAuto) string {
+	if run := auto.Run; run != nil {
+		held := "no stage held yet"
+		if run.Stage > 0 {
+			held = fmt.Sprintf("stage %.2f held", run.Stage)
+		}
+		line := fmt.Sprintf("running in `sdd serve` since %s: %s pairs scored, %s", run.Started.UTC().Format("2006-01-02 15:04 UTC"), thousands(run.Scored), held)
+		if run.Waiting {
+			line += ", paused until the server is idle"
+		}
+		return line
+	}
+	if !auto.On {
+		return "off (verify.auto_calibrate)"
+	}
+	return "on (verify.auto_calibrate): `sdd serve` scores unscored labelled pairs in the background until the top stage holds"
 }
 
 // thousands writes n with a comma between each group of three digits.

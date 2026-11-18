@@ -120,6 +120,20 @@ func TestDriftStepDue(t *testing.T) {
 	}
 }
 
+// The drift rule acts at every stage: a judge at the first stage steps
+// down as one at the top does.
+func TestDriftStepDue_ActsAtTheFirstStage(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	labels := driftLabels(100, 3)[189-40:]
+	if got := model.Calibrate(labels, nil, "j"); got.Stage != 0.90 {
+		t.Fatalf("thresholds %+v: forty positives and three audit misses should hold the first stage alone", got)
+	}
+	step, due := model.DriftStepDue(labels, nil, "j", now)
+	if !due || model.ScoreValue(step.SetAside) >= model.Calibrate(labels, nil, "j").SetAside {
+		t.Fatalf("step %+v, due %v: the drift rule should step down at the first stage", step, due)
+	}
+}
+
 // Entry IDs carry the writer's wall clock, so the step mark is read in the
 // clock's zone: east of UTC captures before a step stay answered, west of it
 // captures after a step count.
@@ -194,11 +208,11 @@ func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 	}
 	ledger := model.NewRelevanceLedger(batch)
 	both := ledger.Calibration("j", false)
-	if !both.Thresholds.Valid || both.Positive != 210 || both.Live != 150 || both.Replay != 60 || both.ReplayExcluded {
+	if both.Thresholds.Stage != model.RecallFloor || both.Positive != 210 || both.Live != 150 || both.Replay != 60 || both.ReplayExcluded {
 		t.Fatalf("report %+v should calibrate on both sources and count each", both)
 	}
 	live := ledger.Calibration("j", true)
-	if live.Thresholds.Valid || live.Positive != 150 || live.Live != 150 || live.Replay != 60 || !live.ReplayExcluded {
+	if live.Thresholds.Stage != 0.95 || live.Positive != 150 || live.Live != 150 || live.Replay != 60 || !live.ReplayExcluded {
 		t.Fatalf("report %+v should read the live labels alone and still count the replayed ones", live)
 	}
 	if got := model.Calibrate(ledger.Labels("j"), nil, "j"); got != both.Thresholds {

@@ -122,7 +122,7 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
 		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
-		RecheckResponsible: recheck.Responsible,
+		AutoCalibrate: policy.AutoCalibrate, RecheckResponsible: recheck.Responsible,
 	}
 }
 

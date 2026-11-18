@@ -34,10 +34,3 @@ func (l *RelevanceLedger) Tally(excludeReplay bool) LabelTally {
 	}
 	return tally
 }
-
-// RecallFloorPositives is the weight of positive labels at which a judge
-// that misses none reaches RecallFloor: the Wilson bound of n successes of n
-// is n/(n+z²).
-func RecallFloorPositives() float64 {
-	return RecallFloor / (1 - RecallFloor) * wilsonZ * wilsonZ
-}

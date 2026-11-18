@@ -19,12 +19,13 @@ func effective(values []model.ConfigValue) map[string]model.ConfigValue {
 func TestEffectiveConfigValues_ShowVerifyAndEffortDefaults(t *testing.T) {
 	values := effective(model.EffectiveConfigValues(model.BaseConfig{}, nil, nil))
 	for key, want := range map[string]string{
-		"verify.mode":          "prose",
-		"verify.prefilter":     "true",
-		"verify.runner":        "subagent",
-		"verify.claude.model":  "sonnet",
-		"verify.claude.effort": "medium",
-		"llm.effort":           "medium",
+		"verify.mode":           "prose",
+		"verify.prefilter":      "true",
+		"verify.auto_calibrate": "true",
+		"verify.runner":         "subagent",
+		"verify.claude.model":   "sonnet",
+		"verify.claude.effort":  "medium",
+		"llm.effort":            "medium",
 	} {
 		if got := values[key]; got.Value != want || got.Source != model.ConfigSourceDefault {
 			t.Errorf("%s = %+v, want the default %s", key, got, want)
@@ -67,6 +68,23 @@ func TestGroundingPolicy_PrefilterOnByDefault(t *testing.T) {
 	off := false
 	if (model.VerifyConfig{Prefilter: &off}).GroundingPolicy().Prefilter {
 		t.Fatal("verify.prefilter false should switch it off")
+	}
+}
+
+// verify.auto_calibrate is on unless a layer switches it off, and the
+// machine-local layer wins.
+func TestGroundingPolicy_AutoCalibrateOnByDefault(t *testing.T) {
+	if !(model.VerifyConfig{}).GroundingPolicy().AutoCalibrate {
+		t.Fatal("an unset verify.auto_calibrate should be on")
+	}
+	off, on := false, true
+	project := &model.PerRepoConfig{}
+	project.Verify.AutoCalibrate = &on
+	local := &model.PerRepoConfig{}
+	local.Verify.AutoCalibrate = &off
+	got := effective(model.EffectiveConfigValues(model.BaseConfig{}, project, local))["verify.auto_calibrate"]
+	if got.Value != "false" || got.Source != model.ConfigSourceLocal {
+		t.Fatalf("verify.auto_calibrate = %+v: the local layer should switch it off", got)
 	}
 }
 

@@ -11,8 +11,7 @@ import (
 
 // Prefilter constants.
 const (
-	// RecallFloor is the Wilson lower bound (95%) of recall a judge reaches
-	// before it sets any entry aside.
+	// RecallFloor is the top recall stage (RecallStages).
 	RecallFloor = 0.98
 	// RelevantPrecision is the Wilson lower bound (95%) of the referenced
 	// share above which a scored candidate is served in full.
@@ -226,14 +225,51 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	return pairs
 }
 
+// RecallStages are the Wilson lower bounds (95%) of weighted recall a
+// judge's thresholds rest on, rising. Below the first a judge sets nothing
+// aside.
+func RecallStages() []float64 {
+	return []float64{0.90, 0.95, RecallFloor}
+}
+
+// StagePositives is the weight of positive labels at which a judge that
+// misses none reaches stage: the Wilson bound of n successes of n is
+// n/(n+z²).
+func StagePositives(stage float64) float64 {
+	return stage / (1 - stage) * wilsonZ * wilsonZ
+}
+
+// StageHeld is the highest recall stage positive labels weighing positives
+// hold with no miss, 0 below the first.
+func StageHeld(positives float64) float64 {
+	held := 0.0
+	for _, stage := range RecallStages() {
+		if WilsonLowerWeighted(positives, positives) >= stage {
+			held = stage
+		}
+	}
+	return held
+}
+
+// NextStage is the lowest recall stage above stage, 0 above the top.
+func NextStage(stage float64) float64 {
+	for _, next := range RecallStages() {
+		if next > stage {
+			return next
+		}
+	}
+	return 0
+}
+
 // Calibrate computes a judge's thresholds from its labels, each counted by
-// its weight (WilsonLowerWeighted): the set-aside threshold is the highest
+// its weight (WilsonLowerWeighted), at the highest recall stage the
+// positive labels hold (StageHeld): the set-aside threshold is the highest
 // score that keeps the lower bound of weighted recall over the positive
-// labels at RecallFloor; the relevant threshold the lowest score at and
+// labels at that stage; the relevant threshold the lowest score at and
 // above which the weighted positive share's lower bound reaches
-// RelevantPrecision. Until the recall bound holds, the thresholds are
-// invalid and decide nothing. Drift steps cap the set-aside threshold; it
-// never rises above a step.
+// RelevantPrecision. Below the first stage the thresholds are invalid and
+// decide nothing. Drift steps cap the set-aside threshold; it never rises
+// above a step.
 func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
 	var positives []RelevanceLabel
 	total := 0.0
@@ -243,11 +279,15 @@ func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) Relevan
 			total += label.Weight
 		}
 	}
+	stage := StageHeld(total)
+	if stage == 0 {
+		return RelevanceThresholds{}
+	}
 	slices.SortStableFunc(positives, func(a, b RelevanceLabel) int { return cmp.Compare(a.Score, b.Score) })
 	setAside := -1
 	missed := 0.0
 	for i, positive := range positives {
-		if WilsonLowerWeighted(total-missed, total) < RecallFloor {
+		if WilsonLowerWeighted(total-missed, total) < stage {
 			break
 		}
 		missed += positive.Weight
@@ -264,7 +304,7 @@ func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) Relevan
 			setAside = int(step.SetAside)
 		}
 	}
-	return RelevanceThresholds{Valid: true, SetAside: ScoreValue(uint8(setAside)), Relevant: relevantThreshold(labels)}
+	return RelevanceThresholds{Valid: true, Stage: stage, SetAside: ScoreValue(uint8(setAside)), Relevant: relevantThreshold(labels)}
 }
 
 func relevantThreshold(labels []RelevanceLabel) float64 {
@@ -289,10 +329,21 @@ func relevantThreshold(labels []RelevanceLabel) float64 {
 	return relevant
 }
 
-// Prefiltered is where a scored reading places its candidates.
+// The tiers of a capture's reading while its judge holds no recall stage.
+// They match the deep reading's summary and title tiers, so drafter and
+// verifier read the same cut of one ranking.
+const (
+	GatherJudgeRanked = DeepSummaryRanked
+	GatherTitleListed = DeepTitleListed
+)
+
+// Prefiltered is where a scored reading places its candidates: Listed go by
+// title below the lines to judge, Counted past the title ceiling.
 type Prefiltered struct {
 	Relevant []GatherCandidate
 	ToJudge  []GatherCandidate
+	Listed   []GatherCandidate
+	Counted  []string
 	SetAside []string
 }
 
@@ -300,8 +351,11 @@ type Prefiltered struct {
 // score at or above Relevant is served in full and one below SetAside set
 // aside; every other candidate, scored or not, stays to judge, scored ones
 // first by falling score. Without valid thresholds nothing is set aside or
-// served: the prefilter only sorts.
-func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds) Prefiltered {
+// served, and the scored candidates past the first GatherJudgeRanked,
+// doubled when widened for a weak judge, are listed by title up to
+// GatherTitleListed and counted past it. An unscored candidate has no rank
+// and stays to judge.
+func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds, widened bool) Prefiltered {
 	var placed Prefiltered
 	for _, candidate := range candidates {
 		score, ok := scores[candidate.Entry.ID]
@@ -332,6 +386,28 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thr
 	slices.SortStableFunc(placed.ToJudge, byScore)
 	slices.SortStableFunc(placed.Relevant, byScore)
 	slices.Sort(placed.SetAside)
+	if !thresholds.Valid {
+		limit := GatherJudgeRanked
+		if widened {
+			limit *= 2
+		}
+		var kept []GatherCandidate
+		ranked := 0
+		for _, candidate := range placed.ToJudge {
+			switch {
+			case candidate.Score == nil || ranked < limit:
+				kept = append(kept, candidate)
+				if candidate.Score != nil {
+					ranked++
+				}
+			case len(placed.Listed) < GatherTitleListed:
+				placed.Listed = append(placed.Listed, candidate)
+			default:
+				placed.Counted = append(placed.Counted, candidate.Entry.ID)
+			}
+		}
+		placed.ToJudge = kept
+	}
 	return placed
 }
 

@@ -138,19 +138,27 @@ func TestCLIGroundingStatusNamesTheUpdateWhileUncalibrated(t *testing.T) {
 	assertContainsOutput(t, "stdout", result.stdout, "uncalibrated: run `sdd grounding update`")
 }
 
-// serve logs once at its start that the prefilter is uncalibrated, naming
-// the command that updates it; without a judge it logs nothing of it.
+// serve logs once at its start that the prefilter holds no recall stage:
+// that it scores the labelled pairs in the background, or, with
+// verify.auto_calibrate off, the command that updates it; without a judge it
+// logs nothing of it.
 func TestServeLogsAnUncalibratedPrefilterOnce(t *testing.T) {
+	const warning = "holds no recall stage yet"
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: false\n")
-	if stderr := f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {}); strings.Contains(stderr, "uncalibrated") {
+	if stderr := f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {}); strings.Contains(stderr, warning) {
 		t.Fatalf("serve without a prefilter judge should not warn of its calibration:\n%s", stderr)
 	}
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm_prefilter:\n  protocol: systemone\n  api_keys:\n    opper: test-key\n")
 	stderr := f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {})
-	if strings.Count(stderr, "uncalibrated") != 1 || !strings.Contains(stderr, "sdd grounding update") {
-		t.Fatalf("serve should warn once of the uncalibrated prefilter and name the update:\n%s", stderr)
+	if strings.Count(stderr, warning) != 1 || !strings.Contains(stderr, "scores the labelled pairs in the background") {
+		t.Fatalf("serve should warn once of the uncalibrated prefilter and name its background calibration:\n%s", stderr)
+	}
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n  auto_calibrate: false\n")
+	stderr = f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {})
+	if strings.Count(stderr, warning) != 1 || !strings.Contains(stderr, "sdd grounding update") {
+		t.Fatalf("serve without background calibration should warn once and name the update:\n%s", stderr)
 	}
 }
 

@@ -128,6 +128,16 @@ func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now 
 	return DriftStep{Judge: judge, At: now.UTC(), SetAside: ScoreByte(thresholds.SetAside) / 2}, true
 }
 
+// CalibrationRun is a background calibration run a status names
+// (application.CalibrationRun).
+type CalibrationRun struct {
+	Judge   string
+	Started time.Time
+	Stage   float64
+	Scored  int
+	Waiting bool
+}
+
 // CodePrecision is how the pairs a judge would serve in full were answered,
 // for one reason code.
 type CodePrecision struct {
@@ -154,9 +164,11 @@ type CalibrationReport struct {
 	// those a later entry flipped to bearing.
 	Implicit, Flipped int
 	// Misses are the positives scoring below the set-aside threshold;
-	// RecallBound the Wilson lower bound of recall at it.
-	Misses      int
-	RecallBound float64
+	// RecallBound the Wilson lower bound of recall at it; PositiveWeight the
+	// weight of the positive labels, which decides the stage (StageHeld).
+	Misses         int
+	RecallBound    float64
+	PositiveWeight float64
 	// AuditMisses of AuditCounted are the referenced audit samples in the
 	// drift window.
 	AuditMisses, AuditCounted int
@@ -209,6 +221,16 @@ func JudgeRankingHealth(labels []RelevanceLabel) RankingHealth {
 	}
 	health.Measured = health.Positives >= RankingRecallMinimum
 	return health
+}
+
+// NextStage is the recall stage above the one the report's positive labels
+// hold, and the positive weight it still needs; 0 for both at the top.
+func (r CalibrationReport) NextStage() (stage, needed float64) {
+	stage = NextStage(StageHeld(r.PositiveWeight))
+	if stage == 0 {
+		return 0, 0
+	}
+	return stage, StagePositives(stage) - r.PositiveWeight
 }
 
 // Precision is the referenced share of the pairs passed in full.
@@ -296,6 +318,7 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 		}
 	}
 	report.RecallBound = WilsonLowerWeighted(total-missed, total)
+	report.PositiveWeight = total
 	report.AuditMisses, report.AuditCounted = DriftWindowMisses(labels)
 	for code, count := range byCode {
 		report.SetAside = append(report.SetAside, CodePrecision{Code: code, Count: count})

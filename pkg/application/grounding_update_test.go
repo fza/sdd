@@ -90,6 +90,43 @@ func TestUpdateGrounding_StopsWhenCancelled(t *testing.T) {
 	}
 }
 
+// A cancelled pass keeps every score a finished request returned, so the
+// next update sends only the pairs still unscored.
+func TestUpdateGrounding_KeepsTheScoresOfFinishedRequestsWhenCancelled(t *testing.T) {
+	prefilter := &scriptedScorer{maxBatch: 1, slow: map[string]bool{updateRef(0, 0): true}}
+	application, store := updateFixture(t, prefilter, &scriptedScorer{}, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		for prefilter.calls() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	if _, err := application.UpdateGrounding(ctx, updateIdentity, gatherProject, sdd.GroundingUpdateRequest{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("update = %v: a cancelled pass should stop with its cause", err)
+	}
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledger.Score(model.NewRelevancePair(updateFirst, updateRef(0, 1)), updateFirst, gatherJudge); !ok {
+		t.Fatal("the finished request's score should be stored though the pass was cancelled")
+	}
+	prefilter.slow = nil
+	again, err := application.UpdateGrounding(t.Context(), updateIdentity, gatherProject, sdd.GroundingUpdateRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Scored.Scored != 3 {
+		t.Fatalf("result %+v: the next update should send only the three pairs left", again.Scored)
+	}
+}
+
 // The ranking judge of a reading without a client scores alone: the Claude
 // host's while its claude CLI is installed, else the prefilter's.
 func TestUpdateGrounding_ScoresWithTheRankingJudge(t *testing.T) {

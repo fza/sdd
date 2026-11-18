@@ -21,6 +21,11 @@ type GatherResult struct {
 	Full     *ShowResult
 	Overflow []*model.Entry
 	ToJudge  []model.GatherCandidate
+	// Listed are the candidates an uncalibrated judge ranked below the lines
+	// to judge, listed by title and never shown (model.PlacePrefiltered);
+	// Counted counts those past the title ceiling.
+	Listed   []model.GatherCandidate
+	Counted  int
 	SetAside []model.GatherSetAside
 	// Held reports whether the consumer already holds an entry in full that
 	// the serve did not open by ID: it prints as a pointer with the brief and

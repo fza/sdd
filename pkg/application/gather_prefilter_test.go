@@ -161,6 +161,37 @@ func TestGather_PrefilterOnlySortsUntilTheRecallBoundHolds(t *testing.T) {
 	}
 }
 
+func rankedID(i int) string { return fmt.Sprintf("20260102-%02d%02d00-s-tac-rnk", i/60, i%60) }
+
+// Below the first recall stage the scored candidates past the top
+// GatherJudgeRanked are listed by title: listed, so a verdict may answer
+// them, but not shown, so publish records no implicit dismissal for them.
+func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
+	scorer := &scriptedScorer{scores: map[string]float64{}}
+	f := prefilterFixture(t, scorer)
+	for i := range model.GatherJudgeRanked + 20 {
+		id := rankedID(i)
+		f.write(t, id, "gap", fmt.Sprintf("Ranked gap %d.", i), "title: Ranked gap "+fmt.Sprint(i)+"\n")
+		scorer.scores[id] = 0.99 - float64(i)/1000
+	}
+	application := f.app(t, prefilterPolicy(1), nil)
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about ranked gaps."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := rankedID(model.GatherJudgeRanked + 19)
+	top := rankedID(0)
+	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.GatherJudgeRanked {
+		t.Fatalf("%d shown: the top %d scored should stay to judge and the rest go unshown:\n%s", len(result.SummaryIDs), model.GatherJudgeRanked, result.Text)
+	}
+	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text, "\n- "+last+" — Ranked gap 119\n") {
+		t.Fatalf("the lower ranks should be listed by ID and title:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "so the top 100 scored stay to judge, ") {
+		t.Fatalf("the header should name the tiers:\n%s", result.Text)
+	}
+}
+
 func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)

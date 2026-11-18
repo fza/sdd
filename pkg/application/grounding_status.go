@@ -4,14 +4,9 @@ import (
 	"bytes"
 	"context"
 	"strings"
-	"sync"
-
-	"github.com/networkteam/slogutils"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
-	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // GroundingStatus is the rendered calibration of a project's prefilter judge.
@@ -21,12 +16,14 @@ type GroundingStatus struct {
 }
 
 // PrefilterState is a project's prefilter judge, empty while the prefilter
-// is off, whether its recall bound holds, so its thresholds decide, and the
-// judges whose ranking health is weak (model.RankingHealth).
+// is off, whether it holds a recall stage, so its thresholds decide, whether
+// a server calibrates it in the background, and the judges whose ranking
+// health is weak (model.RankingHealth).
 type PrefilterState struct {
-	Judge      string
-	Calibrated bool
-	Weak       []WeakJudge
+	Judge         string
+	Calibrated    bool
+	AutoCalibrate bool
+	Weak          []WeakJudge
 }
 
 // WeakJudge is a judge whose ranking recall over Positives referenced labels
@@ -49,7 +46,7 @@ func (a *Application) PrefilterState(ctx context.Context, identity RequestIdenti
 	if err != nil {
 		return PrefilterState{}, err
 	}
-	state := PrefilterState{Judge: judge, Calibrated: thresholds.Valid}
+	state := PrefilterState{Judge: judge, Calibrated: thresholds.Valid, AutoCalibrate: runtime.options.Grounding.AutoCalibrate && runtime.options.CalibrationRuns != nil}
 	for _, judge := range runtime.judges() {
 		if health := model.JudgeRankingHealth(ledger.Labels(judge.Judge)); health.Weak() {
 			state.Weak = append(state.Weak, WeakJudge{Judge: judge.Judge, Recall: health.Recall, Positives: health.Positives})
@@ -66,11 +63,11 @@ type GroundingStatusRequest struct {
 	Verbose       bool
 }
 
-// GroundingStatus reports the labels, the audit and drift state and the
-// calibration of the ranking judge of a reading without a client
-// (presenters.RenderGroundingSummary). Verbose reports that judge's labels,
-// recall bound, ranking recall, thresholds, audit and drift state, and the
-// precision per reason code.
+// GroundingStatus reports the labels, the audit and drift state, the
+// calibration of the ranking judge of a reading without a client and its
+// background calibration (presenters.RenderGroundingSummary). Verbose
+// reports that judge's labels, recall bound and stage, ranking recall,
+// thresholds, audit and drift state, and the precision per reason code.
 func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
@@ -84,11 +81,22 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 	if err != nil {
 		return GroundingStatus{}, err
 	}
+	auto := presenters.GroundingAuto{On: runtime.options.Grounding.AutoCalibrate && runtime.options.CalibrationRuns != nil}
+	if runs := runtime.options.CalibrationRuns; runs != nil {
+		run, running, err := runs.Running(ctx)
+		if err != nil {
+			return GroundingStatus{}, err
+		}
+		if running {
+			shown := model.CalibrationRun(run)
+			auto.Run = &shown
+		}
+	}
 	var rendered bytes.Buffer
 	if request.Verbose {
-		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay))
+		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay), auto)
 	} else {
-		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judge.Judge, request.ExcludeReplay), judgeOrigin(runtime, judge))
+		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judge.Judge, request.ExcludeReplay), judgeOrigin(runtime, judge), auto)
 	}
 	return GroundingStatus{Judge: judge.Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
 }
@@ -157,9 +165,10 @@ type GroundingUpdate struct {
 // has not scored, every labelled pair with request.Force, so the judge's
 // recall bound and ranking health are computed from the labels at once.
 // Each pair is scored from its later entry, the one whose reading judged the
-// other. A subject whose requests fail lands in Failures and the pass goes
-// on; the error is what stops it: no judge, a cancelled ctx, a ledger that
-// cannot be read or written.
+// other, and each request's scores are stored as soon as it returns, so a
+// cancelled pass keeps what it paid for. A subject whose requests fail lands
+// in Failures and the pass goes on; the error is what stops it: no judge, a
+// cancelled ctx, a ledger that cannot be read or written.
 func (a *Application) UpdateGrounding(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingUpdateRequest) (result GroundingUpdate, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
@@ -200,111 +209,9 @@ func (a *Application) UpdateGrounding(ctx context.Context, identity RequestIdent
 	if request.Force {
 		pairs = ledger.Scorable()
 	}
-	scored, batch, err := rescoreJudge(ctx, graph, pairs, judge, request.OnProgress)
+	result.Scored, err = rescoreJudge(ctx, graph, pairs, judge, request.OnProgress, save)
 	if err != nil {
 		return GroundingUpdate{}, err
 	}
-	if err := save(ctx, batch); err != nil {
-		return GroundingUpdate{}, err
-	}
-	result.Scored = scored
 	return result, nil
-}
-
-// rescoreJudge has prefilter score pairs, reporting its progress to
-// onProgress, and returns the scores to store.
-func rescoreJudge(ctx context.Context, graph *model.Graph, pairs []model.RelevancePair, prefilter Prefilter, onProgress func(RescoreProgress)) (RescoreResult, model.RelevanceBatch, error) {
-	result := RescoreResult{Judge: prefilter.Judge}
-	progress := RescoreProgress{Judge: prefilter.Judge}
-	var progressMu sync.Mutex
-	advance := func(done int, failed bool) {
-		if onProgress == nil {
-			return
-		}
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		progress.Done += done
-		if failed {
-			progress.Failed += done
-		}
-		onProgress(progress)
-	}
-	bySubject := map[string][]string{}
-	var subjects []string
-	for _, pair := range pairs {
-		if graph.ByID[pair.A] == nil || graph.ByID[pair.B] == nil {
-			result.Missing++
-			continue
-		}
-		if _, ok := bySubject[pair.B]; !ok {
-			subjects = append(subjects, pair.B)
-		}
-		bySubject[pair.B] = append(bySubject[pair.B], pair.A)
-		progress.Total++
-	}
-	advance(0, false)
-	forward := prefilter.Scorer.Direction() == relevance.Forward
-	var batch model.RelevanceBatch
-	for _, subjectID := range subjects {
-		subject := graph.ByID[subjectID]
-		var candidates []relevance.Candidate
-		for _, id := range bySubject[subjectID] {
-			candidates = append(candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id]), Line: model.EntryRankingLine(graph.ByID[id])})
-		}
-		batches, oversize := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
-		result.Unanswered += len(oversize)
-		result.Requests += len(batches)
-		if len(oversize) > 0 {
-			advance(len(oversize), false)
-		}
-		requests := make([]relevance.Request, len(batches))
-		answers := make([]relevance.Result, len(batches))
-		failures := make([]error, len(batches))
-		var group errgroup.Group
-		group.SetLimit(prefilterInFlight)
-		for b, indexes := range batches {
-			requests[b].Subject = model.EntryRelevanceText(graph, subject)
-			for _, index := range indexes {
-				requests[b].Candidates = append(requests[b].Candidates, candidates[index])
-			}
-			group.Go(func() error {
-				scored, err := prefilter.Scorer.Score(ctx, requests[b])
-				if err == nil {
-					err = relevance.CheckResult(requests[b], scored)
-				}
-				answers[b], failures[b] = scored, err
-				advance(len(requests[b].Candidates), err != nil)
-				return nil
-			})
-		}
-		_ = group.Wait()
-		if err := ctx.Err(); err != nil {
-			return RescoreResult{}, model.RelevanceBatch{}, err
-		}
-		var failure error
-		for b, request := range requests {
-			if failures[b] != nil {
-				if failure == nil {
-					failure = failures[b]
-				}
-				result.Failed += len(request.Candidates)
-				continue
-			}
-			scored := answers[b]
-			for i, candidate := range request.Candidates {
-				pair := model.NewRelevancePair(subjectID, candidate.ID)
-				direction := model.DirectionBoth
-				if forward {
-					direction = model.DirectionFrom(pair, subjectID)
-				}
-				batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: prefilter.Judge, Direction: direction, Score: model.ScoreByte(scored.Scores[i])}})
-			}
-		}
-		if failure != nil {
-			slogutils.FromContext(ctx).Info("scoring failed, going on with the next subject", "judge", prefilter.Judge, "subject", subjectID, "err", failure)
-			result.Failures = append(result.Failures, RescoreFailure{Subject: subjectID, Err: failure})
-		}
-	}
-	result.Scored = len(batch.Scores)
-	return result, batch, nil
 }

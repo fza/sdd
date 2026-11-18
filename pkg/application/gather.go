@@ -27,6 +27,9 @@ type GroundingPolicy struct {
 	PrefilterFrom int
 	// Prefilter switches the prefilter on where the runtime has one.
 	Prefilter bool
+	// AutoCalibrate lets a server score the ranking judge's unscored
+	// labelled pairs in the background (Application.AutoCalibrate).
+	AutoCalibrate bool
 	// RecheckResponsible names the participants catch-up shows the recheck
 	// list to; empty shows it to everyone.
 	RecheckResponsible []string
@@ -216,7 +219,10 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if err != nil {
 		return GatherResult{}, err
 	}
-	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds)
+	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds, model.JudgeRankingHealth(ledger.Labels(judge)).Weak())
+	if len(placed.Listed)+len(placed.Counted) > 0 {
+		pass.note += fmt.Sprintf("; below its first recall stage, so the top %d scored stay to judge, %d more go by title and %d are counted", len(placed.ToJudge)-unscored(placed.ToJudge), len(placed.Listed), len(placed.Counted))
+	}
 	seed := model.NewCorpusMark(liveIDs).Hash
 	if request.since != nil {
 		seed = request.since.Hash
@@ -234,7 +240,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
-		ToJudge: candidates, SetAside: setAside,
+		ToJudge: candidates, Listed: placed.Listed, Counted: len(placed.Counted), SetAside: setAside,
 	}
 	if request.Held != nil {
 		served.Held, served.Anchor = request.Held, request.Anchor
@@ -355,6 +361,16 @@ func checkEmbedder(ctx context.Context, runtime *ProjectRuntime) error {
 		return fmt.Errorf("sdd: gather: the embedding model does not answer: %w", err)
 	}
 	return nil
+}
+
+func unscored(candidates []model.GatherCandidate) int {
+	n := 0
+	for _, candidate := range candidates {
+		if candidate.Score == nil {
+			n++
+		}
+	}
+	return n
 }
 
 func uniqueIDs(ids []string) []string {

@@ -15,6 +15,7 @@ const (
 	DefaultGroundingBriefAllBelow = 100
 	DefaultGroundingPrefilterFrom = 30
 	DefaultGroundingPrefilter     = true
+	DefaultGroundingAutoCalibrate = true
 )
 
 // GroundingDepthConfig is the grounding depth: how far up and down a
@@ -32,6 +33,7 @@ type GroundingPolicy struct {
 	BriefAllBelow int
 	PrefilterFrom int
 	Prefilter     bool
+	AutoCalibrate bool
 }
 
 // GroundingPolicy resolves the block's grounding keys against the defaults;
@@ -45,6 +47,7 @@ func (c VerifyConfig) GroundingPolicy() GroundingPolicy {
 		BriefAllBelow: intOr(c.BriefAllBelow, DefaultGroundingBriefAllBelow),
 		PrefilterFrom: intOr(c.PrefilterFrom, DefaultGroundingPrefilterFrom),
 		Prefilter:     boolOr(c.Prefilter, DefaultGroundingPrefilter),
+		AutoCalibrate: boolOr(c.AutoCalibrate, DefaultGroundingAutoCalibrate),
 	}
 }
 

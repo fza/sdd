@@ -40,13 +40,37 @@ func TestRelevanceLedger_TallyCountsLabelsWithoutAJudge(t *testing.T) {
 	}
 }
 
-// A judge that misses nothing reaches the recall floor from about 188
-// referenced pairs.
-func TestRecallFloorPositives(t *testing.T) {
-	if got := model.RecallFloorPositives(); math.Round(got) != 188 {
-		t.Fatalf("RecallFloorPositives = %v, want about 188", got)
+// A judge that misses nothing reaches each recall stage from the positive
+// weight StagePositives names: about 35, 73 and 188.
+func TestStagePositives(t *testing.T) {
+	for _, tc := range []struct {
+		stage float64
+		held  float64
+	}{{0.90, 35}, {0.95, 73}, {0.98, 189}} {
+		if got := model.StagePositives(tc.stage); math.Ceil(got) != tc.held {
+			t.Errorf("StagePositives(%.2f) = %v, want just below %v", tc.stage, got, tc.held)
+		}
+		if model.WilsonLowerWeighted(tc.held-1, tc.held-1) >= tc.stage || model.WilsonLowerWeighted(tc.held, tc.held) < tc.stage {
+			t.Errorf("stage %.2f should hold from the %vth missless positive on", tc.stage, tc.held)
+		}
 	}
-	if model.WilsonLowerWeighted(188, 188) >= model.RecallFloor || model.WilsonLowerWeighted(189, 189) < model.RecallFloor {
-		t.Fatal("the floor should hold from the 189th missless positive on")
+	if got := model.RecallStages(); len(got) != 3 || got[0] != 0.90 || got[1] != 0.95 || got[2] != model.RecallFloor {
+		t.Fatalf("RecallStages = %v, want 0.90, 0.95 and the floor", got)
+	}
+}
+
+// The report names the next stage and the positive weight it still needs;
+// the top stage has no next.
+func TestCalibrationReport_NextStage(t *testing.T) {
+	for _, tc := range []struct {
+		positives float64
+		next      float64
+		needed    float64
+	}{{0, 0.90, 35}, {35, 0.95, 38}, {80, 0.98, 109}, {189, 0, 0}} {
+		report := model.CalibrationReport{PositiveWeight: tc.positives}
+		next, needed := report.NextStage()
+		if next != tc.next || math.Ceil(needed) != tc.needed {
+			t.Errorf("%v positives: next stage %.2f needing %v, want %.2f needing %v", tc.positives, next, needed, tc.next, tc.needed)
+		}
 	}
 }

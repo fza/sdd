@@ -3,14 +3,16 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// RenderCalibration writes `sdd grounding status`: the judge's labels, recall
-// bound, thresholds, audit and drift state, and how the pairs it would serve
-// in full were answered, per reason code.
-func RenderCalibration(w io.Writer, report model.CalibrationReport) {
+// RenderCalibration writes `sdd grounding status --verbose`: the judge's
+// labels, recall bound and stage, thresholds, background calibration, audit
+// and drift state, and how the pairs it would serve in full were answered,
+// per reason code.
+func RenderCalibration(w io.Writer, report model.CalibrationReport, auto GroundingAuto) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
 	sources := fmt.Sprintf("sources: %d live labels, %d replayed from past captures", report.Live, report.Replay)
 	if report.ReplayExcluded {
@@ -23,11 +25,22 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	if report.Unscored > 0 {
 		fmt.Fprintf(w, "unscored: %d labelled pairs the judge has not scored; run `sdd grounding update`\n", report.Unscored)
 	}
-	fmt.Fprintf(w, "recall bound: %.4f at %d misses of %d referenced (floor %.2f)\n", report.RecallBound, report.Misses, report.Positive, model.RecallFloor)
+	fmt.Fprintf(w, "recall bound: %.4f at %d misses of %d referenced, positive weight %.2f\n", report.RecallBound, report.Misses, report.Positive, report.PositiveWeight)
+	stage := "none held yet"
+	if report.Thresholds.Valid {
+		stage = fmt.Sprintf("%.2f held", report.Thresholds.Stage)
+	}
+	if next, needed := report.NextStage(); next > 0 {
+		stage += fmt.Sprintf(", %.2f needs ~%.0f more referenced pairs", next, math.Ceil(needed))
+	}
+	fmt.Fprintf(w, "recall stages %s: %s\n", stageList(), stage)
 	if report.Thresholds.Valid {
 		fmt.Fprintf(w, "thresholds: set aside below %.3f, serve in full from %.3f\n", report.Thresholds.SetAside, report.Thresholds.Relevant)
 	} else {
-		fmt.Fprintln(w, "thresholds: none yet, the recall bound does not hold: the prefilter sorts and sets nothing aside")
+		fmt.Fprintln(w, "thresholds: none yet, below the first recall stage: the prefilter ranks and sets nothing aside")
+	}
+	fmt.Fprintf(w, "auto: %s\n", autoCalibrationLine(auto))
+	if !report.Thresholds.Valid && auto.Run == nil {
 		fmt.Fprintln(w, "uncalibrated: run `sdd grounding update` to label the graph's own references and score them")
 	}
 	ranking := report.Ranking

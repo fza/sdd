@@ -60,6 +60,9 @@ type ProjectRuntimeOptions struct {
 	Ranking Ranking
 	// Relevance is the relevance verdict ledger; nil stores no verdicts.
 	Relevance RelevanceStore
+	// CalibrationRuns admits one background calibration of the project at
+	// a time and shares its state with other processes; nil runs none.
+	CalibrationRuns CalibrationRuns
 	// HandEdits finds hand edits of committed entries for the recheck list;
 	// nil finds none.
 	HandEdits HandEditScanner

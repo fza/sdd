@@ -434,10 +434,11 @@ const (
 
 // RelevanceThresholds are a judge's calibrated limits: a candidate scoring
 // below SetAside is set aside, one scoring at or above Relevant is served in
-// full. Valid is false until the recall bound holds, and an invalid set
-// decides nothing.
+// full. Stage is the recall stage they rest on (RecallStages); Valid is
+// false below the first, and an invalid set decides nothing.
 type RelevanceThresholds struct {
 	Valid    bool
+	Stage    float64
 	SetAside float64
 	Relevant float64
 }

@@ -180,6 +180,9 @@ type VerifyConfig struct {
 	PrefilterFrom  *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
+	// AutoCalibrate lets `sdd serve` score the ranking judge's unscored
+	// labelled pairs in the background; on by default.
+	AutoCalibrate *bool `yaml:"auto_calibrate,omitempty"`
 	// Kinds sets the mode per entry kind; see ModeFor.
 	Kinds map[Kind]VerifyMode `yaml:"kinds,omitempty"`
 }
@@ -447,6 +450,9 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	if overlay.Prefilter != nil {
 		out.Prefilter = overlay.Prefilter
+	}
+	if overlay.AutoCalibrate != nil {
+		out.AutoCalibrate = overlay.AutoCalibrate
 	}
 	if overlay.PrefilterFrom != nil {
 		out.PrefilterFrom = overlay.PrefilterFrom

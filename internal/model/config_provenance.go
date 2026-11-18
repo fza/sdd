@@ -49,6 +49,7 @@ var configDefaults = map[string]string{
 	"verify.skip":            string(VerifierSkipFailure),
 	"verify.runner":          string(VerifierRunnerSubagent),
 	"verify.prefilter":       strconv.FormatBool(DefaultGroundingPrefilter),
+	"verify.auto_calibrate":  strconv.FormatBool(DefaultGroundingAutoCalibrate),
 	"verify.ranking_timeout": DefaultRankingTimeout.String(),
 	"verify.claude.model":    DefaultVerifierClaude.Model,
 	"verify.claude.effort":   DefaultVerifierClaude.Effort,

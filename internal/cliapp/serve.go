@@ -83,11 +83,19 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 					slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: timer: %v", err))
 				}
 			}()
+			activity := newCallActivity()
+			calibrationDone := make(chan struct{})
+			go func() {
+				defer close(calibrationDone)
+				runServedCalibration(timerCtx, application, identity, watch.served().access.project, activity)
+			}()
 			// A round in flight finishes before serve returns, so no merge
-			// outlives the process that held the sync lock.
+			// outlives the process that held the sync lock, and no scoring
+			// call outlives the server.
 			defer func() {
 				stopTimer()
 				<-timerDone
+				<-calibrationDone
 			}()
 			var cacheNotice func(context.Context) string
 			if launchCachePrune != nil {
@@ -98,7 +106,10 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				Application:   application,
 				LocalIdentity: identity,
 				CacheNotice:   cacheNotice,
-				BeforeCall:    watch.admit,
+				BeforeCall: func(ctx context.Context) (context.Context, string, error) {
+					activity.touch()
+					return watch.admit(ctx)
+				},
 			})
 		})),
 	}
@@ -600,8 +611,12 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
-	if state.Judge != "" && !state.Calibrated {
-		slogutils.FromContext(ctx).Warn("the grounding prefilter is uncalibrated, so it hides nothing: run `sdd grounding update` to label the graph's own references and score them", "judge", state.Judge)
+	switch {
+	case state.Judge == "" || state.Calibrated:
+	case state.AutoCalibrate:
+		slogutils.FromContext(ctx).Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: this server scores the labelled pairs in the background, which spends model calls (verify.auto_calibrate)", "judge", state.Judge)
+	default:
+		slogutils.FromContext(ctx).Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: run `sdd grounding update` to label the graph's own references and score them", "judge", state.Judge)
 	}
 	for _, weak := range state.Weak {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("the ranking judge's recall is below the bar %.2f, so the deep reading doubles the entries it serves in full and lists with their summary; see `sdd grounding status`", model.RankingRecallBar), "judge", weak.Judge, "recall", weak.Recall, "referenced labels", weak.Positives)
@@ -729,6 +744,10 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
+	calibrationRuns, err := localadapter.NewFilesystemCalibrationRuns(relevanceLedgerDir(locations.StateRoot, baseRepoKey))
+	if err != nil {
+		return nil, err
+	}
 	events, err := projectEventStore(sddDir, graphDir, cfg)
 	if err != nil {
 		return nil, err
@@ -745,7 +764,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 		Events:    events,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
-		Relevance: verdicts,
+		Relevance: verdicts, CalibrationRuns: calibrationRuns,
 		Prefilter: prefilter,
 		Ranking:   ranking,
 	})

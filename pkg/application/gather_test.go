@@ -60,6 +60,7 @@ type gatherFixture struct {
 	ranking   sdd.Ranking
 	events    sdd.EventStore
 	handEdits sdd.HandEditScanner
+	runs      sdd.CalibrationRuns
 }
 
 func newGatherFixture(t *testing.T) *gatherFixture {
@@ -99,7 +100,7 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 	}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Prefilter: f.prefilter, Ranking: f.ranking,
-		Events: f.events, HandEdits: f.handEdits,
+		Events: f.events, HandEdits: f.handEdits, CalibrationRuns: f.runs,
 	}
 	if embeddings != nil {
 		options.Embedder, options.RuneCap = embeddings, testRuneCap

@@ -37,7 +37,7 @@ func TestGroundingStatus_ExcludesReplayedLabelsOnRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"sources: 94 live labels, 95 replayed from past captures\n", "labels: 189 referenced", "thresholds: set aside below"} {
+	for _, want := range []string{"sources: 94 live labels, 95 replayed from past captures\n", "labels: 189 referenced", "recall stages 0.90, 0.95, 0.98: 0.98 held"} {
 		if !strings.Contains(both.Text, want) {
 			t.Errorf("status over both sources lacks %q:\n%s", want, both.Text)
 		}
@@ -46,7 +46,7 @@ func TestGroundingStatus_ExcludesReplayedLabelsOnRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"95 replayed from past captures; the report below reads the live labels alone", "labels: 94 referenced", "thresholds: none yet"} {
+	for _, want := range []string{"95 replayed from past captures; the report below reads the live labels alone", "labels: 94 referenced", "recall stages 0.90, 0.95, 0.98: 0.95 held, 0.98 needs ~95 more"} {
 		if !strings.Contains(live.Text, want) {
 			t.Errorf("status over live labels lacks %q:\n%s", want, live.Text)
 		}

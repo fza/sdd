@@ -84,6 +84,19 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 		repeats.WriteWayBack(w)
 	}
 
+	if len(result.Listed) > 0 || result.Counted > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "# listed by title (%d)\n", len(result.Listed))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "The prefilter's judge, below its first recall stage, ranks these under the lines to judge. They are listed, not shown: none gets a state at publish unless you reference it, give it a verdict or open it with gather ids.")
+		for _, candidate := range result.Listed {
+			fmt.Fprintf(w, "- %s — %s\n", candidate.Entry.ID, candidate.Entry.ListingTitle())
+		}
+		if result.Counted > 0 {
+			fmt.Fprintf(w, "+%d more ranked lower, not listed\n", result.Counted)
+		}
+	}
+
 	if len(result.SetAside) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# set aside")
