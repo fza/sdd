@@ -88,3 +88,26 @@ func TestCaptureRelevance_GivesEveryShownEntryOneState(t *testing.T) {
 		t.Fatalf("records %+v\nwant %+v", batch.Readers, want)
 	}
 }
+
+func TestRefPairs_PairsEachEntryWithWhatItAnswers(t *testing.T) {
+	const (
+		old    = "20260101-000000-d-tac-old"
+		gap    = "20260101-000001-s-tac-gap"
+		actor  = "20260101-000002-d-ops-act"
+		newer  = "20260102-000000-d-tac-new"
+		closer = "20260103-000000-s-tac-don"
+	)
+	g := model.NewGraph([]*model.Entry{
+		{ID: old, Type: model.TypeDecision, Kind: model.KindDirective},
+		{ID: gap, Type: model.TypeSignal, Kind: model.KindGap},
+		{ID: actor, Type: model.TypeDecision, Kind: model.KindActor},
+		{ID: newer, Type: model.TypeDecision, Kind: model.KindDirective, Refs: []model.Ref{{ID: gap}, {ID: actor}, {ID: "20250101-000000-s-tac-gon"}}, Supersedes: []string{old}},
+		{ID: closer, Type: model.TypeSignal, Kind: model.KindDone, Refs: []model.Ref{{ID: gap}}, Closes: []string{newer, gap}},
+		{ID: "20260104-000000-s-prc-bas", Type: model.TypeSignal, Kind: model.KindInsight, Embedded: true, Refs: []model.Ref{{ID: gap}}},
+		{ID: "20260105-000000-s-tac-emb", Type: model.TypeSignal, Kind: model.KindGap, Refs: []model.Ref{{ID: "20260104-000000-s-prc-bas"}}},
+	})
+	want := []model.RelevancePair{model.NewRelevancePair(old, newer), model.NewRelevancePair(gap, newer), model.NewRelevancePair(gap, closer), model.NewRelevancePair(newer, closer)}
+	if got := model.RefPairs(g); !slices.Equal(got, want) {
+		t.Fatalf("pairs %v, want %v: each answered entry the graph holds once, no actor and no entry the binary ships", got, want)
+	}
+}

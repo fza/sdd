@@ -171,8 +171,9 @@ func (f *appFixture) serveWith(t *testing.T, options *mcp.ClientOptions, check f
 	f.serveArgs(t, nil, options, check)
 }
 
-// serveArgs is serveWith with extra serve flags.
-func (f *appFixture) serveArgs(t *testing.T, flags []string, options *mcp.ClientOptions, check func(*mcp.ClientSession)) {
+// serveArgs is serveWith with extra serve flags; it returns what serve
+// wrote to stderr.
+func (f *appFixture) serveArgs(t *testing.T, flags []string, options *mcp.ClientOptions, check func(*mcp.ClientSession)) string {
 	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
@@ -231,4 +232,5 @@ func (f *appFixture) serveArgs(t *testing.T, flags []string, options *mcp.Client
 	case <-time.After(10 * time.Second):
 		t.Fatal("CLI Run did not return after MCP disconnect")
 	}
+	return stderr.String()
 }

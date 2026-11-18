@@ -28,17 +28,7 @@ type seedLine struct {
 // ID>"} in either order, as one segment. A pair the ledger already labels,
 // live or replayed, is skipped, so a second pass over one file adds nothing.
 func SeedReplayLabels(ctx context.Context, store RelevanceStore, r io.Reader) (SeedResult, error) {
-	segments, err := store.Segments(ctx)
-	if err != nil {
-		return SeedResult{}, err
-	}
-	ledger, err := relevance.Fold(segments)
-	if err != nil {
-		return SeedResult{}, err
-	}
-	var batch model.RelevanceBatch
-	var result SeedResult
-	seen := map[model.RelevancePair]bool{}
+	var pairs []model.RelevancePair
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	line := 0
@@ -62,16 +52,35 @@ func SeedReplayLabels(ctx context.Context, store RelevanceStore, r io.Reader) (S
 		if record.A == record.B {
 			return SeedResult{}, fmt.Errorf("line %d: a pair needs two entries, %s twice", line, record.A)
 		}
-		pair := model.NewRelevancePair(record.A, record.B)
+		pairs = append(pairs, model.NewRelevancePair(record.A, record.B))
+	}
+	if err := scanner.Err(); err != nil {
+		return SeedResult{}, err
+	}
+	return seedReplay(ctx, store, pairs)
+}
+
+// seedReplay appends a referenced reader record of source replay for each
+// pair as one segment, skipping a pair the ledger or an earlier pair labels.
+func seedReplay(ctx context.Context, store RelevanceStore, pairs []model.RelevancePair) (SeedResult, error) {
+	segments, err := store.Segments(ctx)
+	if err != nil {
+		return SeedResult{}, err
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		return SeedResult{}, err
+	}
+	var batch model.RelevanceBatch
+	var result SeedResult
+	seen := map[model.RelevancePair]bool{}
+	for _, pair := range pairs {
 		if _, labelled := ledger.Reader(pair); labelled || seen[pair] {
 			result.Skipped++
 			continue
 		}
 		seen[pair] = true
 		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay}})
-	}
-	if err := scanner.Err(); err != nil {
-		return SeedResult{}, err
 	}
 	if batch.Empty() {
 		return result, nil
@@ -81,4 +90,28 @@ func SeedReplayLabels(ctx context.Context, store RelevanceStore, r io.Reader) (S
 	}
 	result.Added = len(batch.Readers)
 	return result, nil
+}
+
+// SeedRefLabels appends a replayed reference label for each pair of the
+// graph's own references (model.RefPairs), skipping pairs already labelled,
+// so a judge can calibrate before live captures label enough pairs. It needs
+// a prefilter judge: the labels count toward its calibration only once
+// RescoreRelevance scores them.
+func (a *Application) SeedRefLabels(ctx context.Context, identity RequestIdentity, project ProjectID) (result SeedResult, err error) {
+	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
+	if err != nil {
+		return SeedResult{}, err
+	}
+	if runtime.options.Prefilter.Scorer == nil {
+		return SeedResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
+	}
+	if runtime.options.Relevance == nil {
+		return SeedResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: the project keeps no relevance ledger"}
+	}
+	selected, err := acquireSnapshotForSearch(ctx, runtime, "", "")
+	if err != nil {
+		return SeedResult{}, err
+	}
+	defer selected.releaseInto(&err)
+	return seedReplay(ctx, runtime.options.Relevance, model.RefPairs(selected.snapshot.graph))
 }

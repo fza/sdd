@@ -19,6 +19,26 @@ type GroundingStatus struct {
 	Text  string
 }
 
+// PrefilterState is a project's prefilter judge, empty while the prefilter
+// is off, and whether its recall bound holds, so its thresholds decide.
+type PrefilterState struct {
+	Judge      string
+	Calibrated bool
+}
+
+// PrefilterState reports the project's prefilter judge and its calibration.
+func (a *Application) PrefilterState(ctx context.Context, identity RequestIdentity, project ProjectID) (PrefilterState, error) {
+	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
+	if err != nil {
+		return PrefilterState{}, err
+	}
+	_, thresholds, err := runtime.prefilterCalibration(ctx)
+	if err != nil {
+		return PrefilterState{}, err
+	}
+	return PrefilterState{Judge: runtime.options.Prefilter.Judge, Calibrated: thresholds.Valid}, nil
+}
+
 // GroundingStatusRequest selects what GroundingStatus reads: ExcludeReplay
 // calibrates on the live labels alone, leaving out those seeded from
 // replayed captures.
@@ -52,6 +72,8 @@ type RescoreResult struct {
 	// Scored pairs got a score; Missing pairs name an entry the graph no
 	// longer holds; Unanswered pairs the judge did not answer.
 	Scored, Missing, Unanswered int
+	// Requests counts the scoring requests sent, what a reranker bills by.
+	Requests int
 }
 
 // RescoreRelevance has the current judge score every labelled pair it has not
@@ -100,6 +122,7 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 		}
 		batches, oversize := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
 		result.Unanswered += len(oversize)
+		result.Requests += len(batches)
 		requests := make([]relevance.Request, len(batches))
 		answers := make([]relevance.Result, len(batches))
 		group, groupCtx := errgroup.WithContext(ctx)

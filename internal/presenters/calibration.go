@@ -28,6 +28,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 		fmt.Fprintf(w, "thresholds: set aside below %.3f, serve in full from %.3f\n", report.Thresholds.SetAside, report.Thresholds.Relevant)
 	} else {
 		fmt.Fprintln(w, "thresholds: none yet, the recall bound does not hold: the prefilter sorts and sets nothing aside")
+		fmt.Fprintln(w, "uncalibrated: run `sdd grounding seed --from-refs` to label the graph's own references and score them")
 	}
 	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
 		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)

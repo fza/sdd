@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -81,5 +82,65 @@ func TestSeedReplayLabels_RefusesAMalformedLine(t *testing.T) {
 		if segments, _ := store.Segments(t.Context()); len(segments) != 0 {
 			t.Fatalf("%s: a refused file should append nothing", line)
 		}
+	}
+}
+
+// Seeding from the graph's refs labels each referenced pair once, and one
+// rescore pass, a request per referencing entry, gives the judge the scores
+// its calibration needs.
+func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
+	f := newGatherFixture(t)
+	subject := "20260201-000000-d-tac-sub"
+	var refs strings.Builder
+	refs.WriteString("intent: pending\nrefs:\n")
+	for i := range 189 {
+		id := fmt.Sprintf("20260101-%02d%02d00-s-tac-ref", i/60, i%60)
+		f.write(t, id, "gap", fmt.Sprintf("Referenced gap %d.", i), "")
+		fmt.Fprintf(&refs, "    - id: %s\n      kind: grounded-in\n      desc: a referenced gap\n", id)
+	}
+	f.write(t, subject, "directive", "The subject decision.", refs.String())
+	f.relevance = localadapter.NewMemoryRelevanceStore()
+	scorer := &scriptedScorer{scores: map[string]float64{}}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge}
+	application := f.app(t, prefilterPolicy(1), nil)
+	identity := sdd.RequestIdentity{Subject: "tester"}
+
+	seeded, err := application.SeedRefLabels(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seeded.Added != 189 || seeded.Skipped != 0 {
+		t.Fatalf("seed %+v: each referenced pair should be labelled once", seeded)
+	}
+	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scored.Scored != 189 || scored.Requests != 1 || scorer.calls() != 1 {
+		t.Fatalf("rescore %+v after %d calls: one request should score the referencing entry's pairs", scored, scorer.calls())
+	}
+	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Calibrated || state.Judge != gatherJudge {
+		t.Fatalf("state %+v: the seeded and scored labels should calibrate the judge", state)
+	}
+	again, err := application.SeedRefLabels(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Added != 0 || again.Skipped != 189 {
+		t.Fatalf("seed %+v: a second pass should add nothing", again)
+	}
+}
+
+func TestSeedRefLabels_NeedsAJudge(t *testing.T) {
+	f := newGatherFixture(t)
+	f.relevance = localadapter.NewMemoryRelevanceStore()
+	application := f.app(t, prefilterPolicy(1), nil)
+	_, err := application.SeedRefLabels(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	if err == nil || !strings.Contains(err.Error(), "no prefilter judge") {
+		t.Fatalf("seeding without a judge = %v, should be refused: its labels could never be scored", err)
 	}
 }

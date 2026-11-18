@@ -53,11 +53,18 @@ func groundingCmd() *cli.Command {
 			},
 			{
 				Name:  "seed",
-				Usage: "Append a replayed reference label for each pair a JSON Lines file names as {\"a\": ID, \"b\": ID}, skipping pairs already labelled",
+				Usage: "Append a replayed reference label for each pair a JSON Lines file names as {\"a\": ID, \"b\": ID}, or for each pair of the graph's own references, skipping pairs already labelled",
 				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "from", Usage: "the JSON Lines file, or - for standard input", Required: true},
+					&cli.StringFlag{Name: "from", Usage: "the JSON Lines file, or - for standard input"},
+					&cli.BoolFlag{Name: "from-refs", Usage: "Label each entry with every entry it refs, closes or supersedes, then have the judge score the unscored labelled pairs, one request per referencing entry"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if cmd.IsSet("from") == cmd.Bool("from-refs") {
+						return fmt.Errorf("pass --from or --from-refs, exactly one")
+					}
+					if cmd.Bool("from-refs") {
+						return seedFromRefs(ctx, cmd)
+					}
 					store, err := workingRelevanceStore()
 					if err != nil {
 						return err
@@ -81,6 +88,29 @@ func groundingCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+// seedFromRefs seeds the graph's own references and scores every labelled
+// pair the judge has not scored, so the seed moves the calibration at once.
+func seedFromRefs(ctx context.Context, cmd *cli.Command) error {
+	application, project, identity, err := workingApplication(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	seeded, err := application.SeedRefLabels(ctx, identity, project)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.Writer, "Seeded %d replayed reference labels from the graph's references; %d pairs already labelled\n", seeded.Added, seeded.Skipped)
+	if err != nil {
+		return err
+	}
+	scored, err := application.RescoreRelevance(ctx, identity, project)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered)
+	return err
 }
 
 // workingApplication builds the application over the project the working

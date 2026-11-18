@@ -596,6 +596,13 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
+	state, err := application.PrefilterState(ctx, identity, watch.served().access.project)
+	if err != nil {
+		return nil, sdd.RequestIdentity{}, err
+	}
+	if state.Judge != "" && !state.Calibrated {
+		slogutils.FromContext(ctx).Warn("the grounding prefilter is uncalibrated, so it hides nothing: run `sdd grounding seed --from-refs` to label the graph's own references and score them", "judge", state.Judge)
+	}
 	return application, identity, nil
 }
 

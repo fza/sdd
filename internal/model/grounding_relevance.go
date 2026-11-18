@@ -153,3 +153,28 @@ func PairFlips(ledger *RelevanceLedger, answered []string) []ReaderRecord {
 	}
 	return flips
 }
+
+// RefPairs returns the graph's own reference pairs, each once and sorted:
+// every entry with each entry it refs, closes or supersedes that the graph
+// holds, leaving out actors and roles, which are never candidates, and the
+// entries the binary ships.
+func RefPairs(g *Graph) []RelevancePair {
+	seen := map[RelevancePair]bool{}
+	for _, e := range g.Entries {
+		if e.Embedded || GroundingExemptKind(e.Kind) {
+			continue
+		}
+		answered := slices.Concat(e.Closes, e.Supersedes)
+		for _, ref := range e.Refs {
+			answered = append(answered, ref.ID)
+		}
+		for _, id := range answered {
+			other := g.ByID[id]
+			if other == nil || id == e.ID || other.Embedded || GroundingExemptKind(other.Kind) {
+				continue
+			}
+			seen[NewRelevancePair(e.ID, id)] = true
+		}
+	}
+	return sortedPairs(slices.Collect(maps.Keys(seen)))
+}
