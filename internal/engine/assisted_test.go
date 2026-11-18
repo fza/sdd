@@ -326,25 +326,6 @@ steps:
 	}
 }
 
-// Approving tells a person's approval at the gate from every other answer.
-func TestAssistedApprovingNamesThePersonsApproval(t *testing.T) {
-	session, sv := assistedSession(t, nopSink{}, assisted())
-	if session.Approving(sv.Instance, "pick", "go") {
-		t.Error("a choice before the gate should not approve")
-	}
-	sv = toGate(t, session, sv.Instance)
-	if !session.Approving(sv.Instance, "gate", "confirm") {
-		t.Error("the confirm at the gate should be the person's approval")
-	}
-	if session.Approving(sv.Instance, "gate", "adjust") || session.Approving("nope", "gate", "confirm") {
-		t.Error("only the confirming option of a known draft should approve")
-	}
-	session.SetDialogue(model.DialogueGuided, "")
-	if session.Approving(sv.Instance, "gate", "confirm") {
-		t.Error("outside an assisted session no confirm is an approval")
-	}
-}
-
 // A park at the gate is told apart from every other park.
 func TestAssistedGateParkIsMarked(t *testing.T) {
 	sink := &recordingSink{}
@@ -412,9 +393,9 @@ steps:
 	}
 }
 
-// A batch lists a draft by its id, or with the confirming option's fields
-// for that draft alone.
-func TestAssistedBatchItemCarriesTheConfirmingFields(t *testing.T) {
+// A batch lists a draft by its id alone: every listed draft takes the
+// answer's own fields.
+func TestAssistedBatchItemIsAnInstanceID(t *testing.T) {
 	spec := mustParseLanes(t, strings.Replace(assistedMachine, "{choice: confirm, call: confirmPlayback", `{choice: confirm, collect: ["body?"], call: confirmPlayback`, 1), assistedBody)
 	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
 	session := eng.NewSession("s_assisted", "tester", nopSink{}, assisted())
@@ -427,16 +408,7 @@ func TestAssistedBatchItemCarriesTheConfirmingFields(t *testing.T) {
 	batch, _ := props["batch"].(map[string]any)
 	lists, _ := batch["additionalProperties"].(map[string]any)
 	items, _ := lists["items"].(map[string]any)
-	forms, _ := items["anyOf"].([]any)
-	if len(forms) != 2 {
-		t.Fatalf("a batch item should be an id or an object, got %v", items)
-	}
-	object, _ := forms[1].(map[string]any)
-	fields, _ := object["properties"].(map[string]any)
-	if _, ok := fields["instance"]; !ok {
-		t.Errorf("an item object should name its instance, got %v", fields)
-	}
-	if _, ok := fields["body"]; !ok {
-		t.Errorf("an item object should carry the confirming option's fields, got %v", fields)
+	if len(items) != 1 || items["type"] != "string" {
+		t.Errorf("a batch item should be an instance id, got %v", items)
 	}
 }

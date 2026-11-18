@@ -507,8 +507,9 @@ func (c *EntryConstruction) Validate(g *Graph) []Finding {
 
 // validateAuthorship checks the authorship mark and approvals: a reason
 // belongs only to a decision an agent decided or a person approved, which must
-// state one, the approved one naming who gave it and who set a directive's
-// intent, and only a person's settled directive approves.
+// state one where its kind owes it (UserWordsOwed), the approved one naming
+// who gave it and who set a directive's intent, and only a person's settled
+// directive approves.
 func (c *EntryConstruction) validateAuthorship() []Finding {
 	var findings []Finding
 	add := func(field, value, message string) {
@@ -521,6 +522,7 @@ func (c *EntryConstruction) validateAuthorship() []Finding {
 	approved := c.ApprovedBy != ""
 	decision := c.Type == TypeDecision
 	directive := c.isKind(TypeDecision, KindDirective)
+	owed, _ := UserWordsOwed(c.Kind)
 	if c.DecidedBy != "" && !agent {
 		add("decided-by", string(c.DecidedBy), fmt.Sprintf("decided-by: only %q is defined; omit it on a person's entry", DecidedByAgent))
 	}
@@ -530,10 +532,10 @@ func (c *EntryConstruction) validateAuthorship() []Finding {
 	switch {
 	case c.Reason != "" && (!agent && !approved || !decision):
 		add("reason", "", "reason is only valid on a decision an agent decided or a person approved")
-	case agent && decision && strings.TrimSpace(c.Reason) == "":
-		owe("reason", "a decision an agent decided states the agent's own reason")
-	case approved && decision && strings.TrimSpace(c.Reason) == "":
-		owe("reason", "an approved decision states its reason, the person's or the one the agent drafted")
+	case agent && owed && strings.TrimSpace(c.Reason) == "":
+		owe("reason", fmt.Sprintf("a %s an agent decided states the agent's own reason", c.Kind))
+	case approved && owed && strings.TrimSpace(c.Reason) == "":
+		owe("reason", fmt.Sprintf("an approved %s states its reason", c.Kind))
 	}
 	switch {
 	case c.ReasonBy != "" && (!approved || c.Reason == ""):

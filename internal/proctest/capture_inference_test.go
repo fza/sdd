@@ -9,17 +9,17 @@ import (
 )
 
 // A capture never supplies the why or a directive's intent: assemble takes
-// them from the user's own words, and playback marks every other sentence the
-// user did not say as the agent's inference.
+// them from the user's own words or a proposal they picked, and playback
+// marks every other sentence the user did not say as the agent's inference.
 func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 	_, session := newCaptureWorld(t, "capture-no-supplied-why")
 	serve := session.Start(t, "capture", nil)
 	proctest.RequireStep(t, serve, "assemble")
 	assemble := test.Untagged(serve.Instructions)
 	for _, want := range []string{
-		"The dialogue holds none of these words? Ask the user, end your turn, and draft after the answer. Never supply them.",
-		"A decision's reason states what the user said in `reasonWords`; never supply one.",
-		"It follows what the user said in `intentWords`; never supply one.",
+		"Never write words they did not pick or give.",
+		"A decision's reason states what the user said or picked in `reasonWords`; never write one they did not.",
+		"It follows what the user said or picked in `intentWords`; never write one they did not.",
 	} {
 		if !strings.Contains(assemble, want) {
 			t.Errorf("assemble should carry %q:\n%s", want, assemble)

@@ -298,7 +298,9 @@ func WithQuestionTool(how string) SessionOption {
 	return func(s *Session) { s.QuestionTool = how }
 }
 
-func (s *Session) questionTool() string {
+// HowToAsk says how the agent puts a choice to its person, the neutral wording
+// when no QuestionTool is set.
+func (s *Session) HowToAsk() string {
 	if s.QuestionTool == "" {
 		return model.QuestionTool("")
 	}

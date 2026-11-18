@@ -297,6 +297,21 @@ func TestAuthorshipMarkConstruction(t *testing.T) {
 			e.DecidedBy = model.DecidedByAgent
 			return e
 		}, "reason"},
+		{"an agent's plan without a reason", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindPlan)
+			e.DecidedBy = model.DecidedByAgent
+			return e
+		}, "reason"},
+		{"an agent's activity without a reason", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindActivity)
+			e.DecidedBy = model.DecidedByAgent
+			return e
+		}, ""},
+		{"an agent's activity with a reason", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindActivity)
+			e.DecidedBy, e.Reason = model.DecidedByAgent, "The release needs it."
+			return e
+		}, ""},
 		{"an agent's signal with a reason", func() *model.Entry {
 			e := base(model.TypeSignal, model.KindGap)
 			e.DecidedBy, e.Reason = model.DecidedByAgent, "Why."

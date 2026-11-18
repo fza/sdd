@@ -13,7 +13,7 @@ import (
 // its reason, and a directive's for its intent: assemble holds until they
 // are reported and tells the agent to ask the user for them.
 
-const userReasonAsk = "ask the user for the decision's reason"
+const userReasonAsk = "with two options: your proposal, shown in full"
 
 func decisionDraft(kind string) map[string]any {
 	draft := map[string]any{
@@ -74,15 +74,15 @@ func TestCapture_DirectiveWithTheUsersWordsAdvances(t *testing.T) {
 	}
 }
 
-func TestCapture_ActivityNeedsTheUsersReasonOnly(t *testing.T) {
+func TestCapture_PlanNeedsTheUsersReasonOnly(t *testing.T) {
 	world := proctest.NewWorld(t)
-	session := world.Open(t, "reason-activity")
+	session := world.Open(t, "reason-plan")
 	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, decisionDraft("activity"))
+	serve = session.Report(t, serve.Instance, planDraft())
 	requireUserWordsHeld(t, serve, "reasonWords")
 	serve = session.Report(t, serve.Instance, map[string]any{"reasonWords": "the release needs it"})
 	if serve.Step == "assemble" {
-		t.Fatalf("an activity with the user's reason should advance without intent words, held with %v", serve.Diagnostics)
+		t.Fatalf("a plan with the user's reason should advance without intent words, held with %v", serve.Diagnostics)
 	}
 }
 
@@ -115,8 +115,8 @@ func TestCapture_ReasonRepeatingTheIntentIsHeld(t *testing.T) {
 	draft["intentWords"] = "the parser module should reject empty input with a clear error"
 	serve = session.Report(t, serve.Instance, draft)
 	proctest.RequireStep(t, serve, "assemble")
-	if !hasDiagnostic(serve, "reasonWords repeats intentWords") || !hasDiagnostic(serve, "ask the user why") {
-		t.Fatalf("a reason restating the decision should hold assemble and send the agent to ask why, got %v", serve.Diagnostics)
+	if !hasDiagnostic(serve, "reasonWords repeats intentWords") || !hasDiagnostic(serve, "infer why the user decided it") {
+		t.Fatalf("a reason restating the decision should hold assemble and send the agent to propose why, got %v", serve.Diagnostics)
 	}
 	serve = session.Report(t, serve.Instance, map[string]any{"reasonWords": "empty input hid upstream bugs twice"})
 	proctest.RequireStep(t, serve, "playback")
@@ -126,7 +126,7 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "reason-why-not-what")
 	serve := session.Start(t, "capture", nil)
-	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The user's words give no why? Ask openly, offering no reason of your own, not even as an option."
+	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The dialogue holds none of these words, or the user's give no why? Infer them from the dialogue and the graph"
 	if !strings.Contains(test.Untagged(serve.Instructions), want) {
 		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
 	}
