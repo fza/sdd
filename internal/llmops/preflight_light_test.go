@@ -165,14 +165,27 @@ func TestDeepReadingBlock(t *testing.T) {
 	}
 }
 
-func TestDeepCompactBlock_MarksOnlyImplicitDismissals(t *testing.T) {
-	shown := readingEntry("20261101-090000-s-tac-shn", "Shown and left unanswered.", "Body.", "capture/attachments")
-	listed := readingEntry("20261101-100000-s-tac-lst", "Listed only.", "Body.", "capture/attachments")
-	block := llmops.DeepCompactBlock([]*model.Entry{shown, listed}, func(id string) bool { return id == shown.ID })
-	_, lines, _ := strings.Cut(block.Text, "Open one with show when its title bears on the draft.\n\n")
-	want := shown.ID + "  Shown and left unanswered.  (implicitly dismissed)\n" + listed.ID + "  Listed only."
-	if block.ID != llmops.DeepCompactID || lines != want {
-		t.Errorf("each entry should keep one line, only the implicit one marked, got:\n%s", block.Text)
+// The closing block lists the next-ranked by title and first summary
+// sentence, the rest by title, and marks the implicit dismissals and the
+// entries below the prefilter's threshold.
+func TestDeepListedBlock_ListsTwoTiersAndMarks(t *testing.T) {
+	summary := readingEntry("20261101-090000-s-tac-sum", "Shown and left unanswered. More words after.", "Body.", "capture/attachments")
+	summary.Title = "Unanswered entry"
+	titled := readingEntry("20261101-100000-s-tac-ttl", "Listed by title. Never this sentence.", "Body.", "capture/attachments")
+	titled.Title = "Title only"
+	hidden := readingEntry("20261101-110000-s-tac-hid", "Below the threshold.", "Body.", "capture/attachments")
+	block := llmops.DeepListedBlock([]llmops.DeepListedLine{
+		{Entry: summary, Summary: true, Implicit: true},
+		{Entry: titled},
+		{Entry: hidden, Hidden: true},
+	}, 7)
+	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
+	want := summary.ID + "  Unanswered entry: Shown and left unanswered.  (implicitly dismissed)\n" +
+		titled.ID + "  Title only\n" +
+		hidden.ID + "  Below the threshold.  (below the prefilter's threshold)\n" +
+		"7 more listed, open with search or show"
+	if block.ID != llmops.DeepListedID || lines != want || !strings.Contains(block.Text, "## Listed, not served (3)") {
+		t.Errorf("each entry should keep one line of its tier, marked where it is, got:\n%s", block.Text)
 	}
 }
 

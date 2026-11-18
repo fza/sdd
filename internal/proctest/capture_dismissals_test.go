@@ -162,7 +162,7 @@ func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
 	}
 }
 
-// The deep reading's one-line lane marks an entry the drafter was shown and
+// The deep reading's closing block marks an entry the drafter was shown and
 // left unanswered, keeping one line per entry.
 func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
@@ -170,7 +170,7 @@ func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 		proctest.WithRelevance(laneLedger(t, true)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	_, lane, ok := strings.Cut(reading, "## Listed below the prefilter's threshold (")
+	_, lane, ok := strings.Cut(reading, "## Listed, not served (")
 	if !ok {
 		t.Fatalf("the calibrated reading should serve the one-line lane:\n%s", reading)
 	}
@@ -180,7 +180,7 @@ func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 		if !isEntry || !strings.HasPrefix(id, "20260603-") {
 			continue
 		}
-		if !strings.HasPrefix(title, "Low directive ") || !strings.HasSuffix(title, ".  (implicitly dismissed)") {
+		if !strings.HasPrefix(title, "Low directive ") || !strings.Contains(title, ".  (implicitly dismissed)") {
 			t.Fatalf("a lane entry shown and left unanswered should carry the implicit mark on its line, got %q", line)
 		}
 		marked++

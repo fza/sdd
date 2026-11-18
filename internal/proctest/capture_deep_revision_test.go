@@ -145,11 +145,13 @@ func TestCaptureDeep_ARevisionCanBeReadWhole(t *testing.T) {
 }
 
 // A delivery over a revision is refused until every page of the revision was
-// served, as one over the first reading is.
+// served, as one over the first reading is. The entry is done, so the first
+// reading lists it by a line and only the drafter's later read serves it in
+// full.
 func TestCaptureDeep_ARevisionIsJudgedOnlyOnceServed(t *testing.T) {
 	read := &model.Entry{
-		ID: "20260602-120000-s-tac-big", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
-		Summary: "A gap whose text fills a page.", Content: strings.Repeat("A sentence of the gap read in full after the verdict.\n", 1000),
+		ID: "20260602-120000-s-tac-big", Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical,
+		Summary: "A done whose text fills a page.", Content: strings.Repeat("A sentence of the gap read in full after the verdict.\n", 1000),
 	}
 	world, session := newDeepWorld(t, "deep-revision-served", sdd.VerifierPolicy{}, proctest.WithEntries(read))
 	x := startDeep(t, world, session, captureDraft())

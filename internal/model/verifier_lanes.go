@@ -1,97 +1,249 @@
 package model
 
-import "slices"
+import (
+	"cmp"
+	"slices"
+)
 
-// VerifierDraft is what the deep verifier's lane split reads of a draft: its
-// kind, its topics and the entries it declares as refs, supersedes and closes.
+// VerifierDraft is what the deep verifier's reading order reads of a draft:
+// the entries it declares as refs, supersedes, closes and approves.
 type VerifierDraft struct {
-	Kind    Kind
-	Topics  []TopicPath
 	Targets []string
 }
 
-// VerifierStructural returns the entries the verifier inspects in full
-// blocks whatever they score: the declared targets, the entries read in
-// full, the entries the drafter gave a verdict, every entry one ref, close
-// or supersede away from a target in either direction, and the listed
-// entries of the draft's kind on its narrowest topics.
-func VerifierStructural(g *Graph, draft VerifierDraft, listed, full, verdicts []string) map[string]bool {
-	structural := map[string]bool{}
-	for _, ids := range [][]string{draft.Targets, full, verdicts} {
-		for _, id := range ids {
-			structural[id] = true
+// The cut points of the deep verifier's reading. Of the ranked entries the
+// first DeepTopRanked are served in full; until the prefilter is calibrated
+// the next DeepSummaryRanked are listed by title and first summary sentence
+// and the rest by title alone, after it the set-aside threshold draws that
+// line. At most DeepHopListed entries one ref from a target and
+// DeepTitleListed entries by title are listed, by rank; the rest are counted.
+const (
+	DeepTopRanked     = 5
+	DeepSummaryRanked = 100
+	DeepHopListed     = 50
+	DeepTitleListed   = 300
+)
+
+// VerifierRole is why the deep verifier's reading holds an entry.
+type VerifierRole string
+
+const (
+	VerifierRoleTarget VerifierRole = "declared target"
+	VerifierRoleRead   VerifierRole = "read in full"
+	// VerifierRoleLifecycle is an entry closing or superseding a target, or
+	// one a target closes or supersedes.
+	VerifierRoleLifecycle VerifierRole = "lifecycle neighbour of a target"
+	VerifierRoleHop       VerifierRole = "one ref from a target"
+	VerifierRoleVerdict   VerifierRole = "given a verdict"
+	VerifierRoleRanked    VerifierRole = "top-ranked"
+)
+
+// VerifierPlace is how the deep verifier's reading serves an entry.
+type VerifierPlace int
+
+const (
+	// VerifierPlaceFull serves the entry's block with its body.
+	VerifierPlaceFull VerifierPlace = iota
+	// VerifierPlaceBrief serves the entry's block with its brief.
+	VerifierPlaceBrief
+	// VerifierPlaceSummary lists the entry by title and first summary
+	// sentence.
+	VerifierPlaceSummary
+	// VerifierPlaceTitle lists the entry by title alone.
+	VerifierPlaceTitle
+	// VerifierPlaceCounted only counts the entry, past a listing ceiling.
+	VerifierPlaceCounted
+)
+
+// VerifierSlot is one entry of the deep verifier's reading, in reading
+// order. Hidden marks an entry the calibrated prefilter scored below its
+// set-aside threshold.
+type VerifierSlot struct {
+	ID     string
+	Role   VerifierRole
+	Place  VerifierPlace
+	Hidden bool
+}
+
+// VerifierReading is the grounding reading the deep verifier's order is
+// drawn from: the entries listed, read in full and given a verdict, the
+// prefilter's scores against the draft, its calibration, and the seed the
+// audit sample is drawn by.
+type VerifierReading struct {
+	Listed, Full, Verdicts []string
+	Scores                 map[string]uint8
+	Thresholds             RelevanceThresholds
+	Seed                   string
+}
+
+// PlaceVerifierReading orders the deep verifier's reading and places each
+// entry. Served in full, however many: the declared targets, the entries
+// the drafter read in full, and every listed lifecycle neighbour of a target
+// (verifierNeighbours). Then the entries given a verdict, as briefs, and the
+// listed entries one ref from a target by title and first summary sentence,
+// up to DeepHopListed by rank. Rank is falling score, unscored entries after
+// the scored in listed order, done entries below all others. The rest of the
+// listed entries go by rank: the first DeepTopRanked that are not done are
+// served in full, the next ones up to DeepSummaryRanked listed by title and
+// first summary sentence, the rest by title, up to DeepTitleListed. Once
+// calibrated, every ranked entry past the top is listed with its summary
+// sentence, but one scoring below the set-aside threshold is hidden, listed
+// by title after every other; the AuditSample of them ranks blind among the
+// others instead. What passes a ceiling is counted.
+func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading) []VerifierSlot {
+	var slots []VerifierSlot
+	placed := map[string]bool{}
+	place := func(id string, role VerifierRole, at VerifierPlace) {
+		if placed[id] || g.ByID[id] == nil {
+			return
 		}
+		placed[id] = true
+		slots = append(slots, VerifierSlot{ID: id, Role: role, Place: at})
 	}
 	for _, id := range draft.Targets {
-		if target := g.ByID[id]; target != nil {
-			for _, ref := range target.Refs {
-				structural[ref.ID] = true
-			}
-			for _, other := range append(slices.Clone(target.Closes), target.Supersedes...) {
-				structural[other] = true
-			}
-		}
-		for _, inbound := range [][]string{g.RefsTo[id], g.ClosedBy[id], g.SupersededBy[id]} {
-			for _, other := range inbound {
-				structural[other] = true
-			}
+		place(id, VerifierRoleTarget, VerifierPlaceFull)
+	}
+	for _, id := range reading.Full {
+		place(id, VerifierRoleRead, VerifierPlaceFull)
+	}
+	lifecycle, refs := verifierNeighbours(g, draft.Targets)
+	for _, id := range reading.Listed {
+		if lifecycle[id] {
+			place(id, VerifierRoleLifecycle, VerifierPlaceFull)
 		}
 	}
-	narrowest := 0
-	for _, topic := range draft.Topics {
-		narrowest = max(narrowest, len(topic.Components))
+	for _, id := range reading.Listed {
+		if slices.Contains(reading.Verdicts, id) {
+			place(id, VerifierRoleVerdict, VerifierPlaceBrief)
+		}
 	}
-	for _, id := range listed {
-		e := g.ByID[id]
-		if e == nil || e.Kind != draft.Kind || draft.Kind == "" {
+	done := func(id string) bool { return g.ByID[id].Kind == KindDone }
+	byRank := func(a, b string) int {
+		if c := cmp.Compare(rankLast(done(a)), rankLast(done(b))); c != 0 {
+			return c
+		}
+		scoreA, scoredA := reading.Scores[a]
+		scoreB, scoredB := reading.Scores[b]
+		if c := cmp.Compare(rankLast(!scoredA), rankLast(!scoredB)); c != 0 {
+			return c
+		}
+		return cmp.Compare(scoreB, scoreA)
+	}
+	var hops []string
+	for _, id := range reading.Listed {
+		if refs[id] && !placed[id] && g.ByID[id] != nil && !slices.Contains(hops, id) {
+			hops = append(hops, id)
+		}
+	}
+	slices.SortStableFunc(hops, byRank)
+	for i, id := range hops {
+		at := VerifierPlaceSummary
+		if i >= DeepHopListed {
+			at = VerifierPlaceCounted
+		}
+		place(id, VerifierRoleHop, at)
+	}
+	titles := 0
+	title := func() VerifierPlace {
+		titles++
+		if titles > DeepTitleListed {
+			return VerifierPlaceCounted
+		}
+		return VerifierPlaceTitle
+	}
+	var ranked, below []string
+	queued := map[string]bool{}
+	for _, id := range reading.Listed {
+		if placed[id] || queued[id] || g.ByID[id] == nil {
 			continue
 		}
-		for _, topic := range draft.Topics {
-			if len(topic.Components) == narrowest && slices.ContainsFunc(g.EffectiveTopics(e), func(t TopicPath) bool { return t.HasPrefix(topic) }) {
-				structural[id] = true
-				break
-			}
-		}
-	}
-	return structural
-}
-
-// VerifierLanes is the verifier's reading split in two: Inspect served as
-// blocks, in listed order with the audit samples placed blind among them;
-// Hidden served one line each, in listed order. Audit names the samples.
-type VerifierLanes struct {
-	Inspect []string
-	Hidden  []string
-	Audit   []string
-}
-
-// SplitVerifierLanes splits the listed entries by the prefilter's scores.
-// While the thresholds are invalid every entry is inspected, as before any
-// calibration. Once valid, an entry is hidden only when it is not
-// structural, holds a score, and scores below threshold; AuditSample of the
-// hidden ones return to the inspect lane blind.
-func SplitVerifierLanes(listed []string, structural map[string]bool, scores map[string]uint8, thresholds RelevanceThresholds, threshold float64, seed string) VerifierLanes {
-	if !thresholds.Valid {
-		return VerifierLanes{Inspect: slices.Clone(listed)}
-	}
-	var inspect, below []string
-	for _, id := range listed {
-		score, scored := scores[id]
-		if structural[id] || !scored || ScoreValue(score) >= threshold {
-			inspect = append(inspect, id)
-		} else {
+		queued[id] = true
+		score, scored := reading.Scores[id]
+		if reading.Thresholds.Valid && scored && ScoreValue(score) < reading.Thresholds.SetAside {
 			below = append(below, id)
+		} else {
+			ranked = append(ranked, id)
 		}
 	}
-	audit, _ := AuditSample(below, seed)
-	lanes := VerifierLanes{Inspect: inspect, Audit: audit}
+	audit, _ := AuditSample(below, reading.Seed)
+	slices.SortStableFunc(ranked, byRank)
+	for _, id := range audit {
+		ranked = slices.Insert(ranked, blindPosition(reading.Seed, id, len(ranked)), id)
+	}
+	for i, id := range ranked {
+		switch {
+		case i < DeepTopRanked && !done(id):
+			place(id, VerifierRoleRanked, VerifierPlaceFull)
+		case reading.Thresholds.Valid || i < DeepTopRanked+DeepSummaryRanked:
+			place(id, VerifierRoleRanked, VerifierPlaceSummary)
+		default:
+			place(id, VerifierRoleRanked, title())
+		}
+	}
 	for _, id := range below {
 		if !slices.Contains(audit, id) {
-			lanes.Hidden = append(lanes.Hidden, id)
+			place(id, VerifierRoleRanked, title())
+			slots[len(slots)-1].Hidden = true
 		}
 	}
-	for _, id := range audit {
-		lanes.Inspect = slices.Insert(lanes.Inspect, blindPosition(seed, id, len(lanes.Inspect)), id)
+	return slots
+}
+
+func rankLast(last bool) int {
+	if last {
+		return 1
 	}
-	return lanes
+	return 0
+}
+
+// verifierNeighbours returns the entries one hop from a target: lifecycle
+// closes or supersedes a target or is closed or superseded by one; refs
+// references a target or is referenced by one.
+func verifierNeighbours(g *Graph, targets []string) (lifecycle, refs map[string]bool) {
+	lifecycle, refs = map[string]bool{}, map[string]bool{}
+	for _, id := range targets {
+		if target := g.ByID[id]; target != nil {
+			for _, ref := range target.Refs {
+				refs[ref.ID] = true
+			}
+			for _, other := range slices.Concat(target.Closes, target.Supersedes) {
+				lifecycle[other] = true
+			}
+		}
+		for _, other := range slices.Concat(g.ClosedBy[id], g.SupersededBy[id]) {
+			lifecycle[other] = true
+		}
+		for _, other := range g.RefsTo[id] {
+			refs[other] = true
+		}
+	}
+	return lifecycle, refs
+}
+
+// VerifierUnscored returns the entries of slots that hold no score where
+// their rank decides how they are served: the ranked ones once calibrated,
+// since the threshold hides by score, else only when more are ranked than
+// DeepTopRanked serves in full; the ref neighbours when more are listed than
+// DeepHopListed.
+func VerifierUnscored(slots []VerifierSlot, scores map[string]uint8, calibrated bool) []string {
+	var ranked, hops []string
+	for _, slot := range slots {
+		switch slot.Role {
+		case VerifierRoleRanked:
+			ranked = append(ranked, slot.ID)
+		case VerifierRoleHop:
+			hops = append(hops, slot.ID)
+		}
+	}
+	var decides []string
+	if calibrated || len(ranked) > DeepTopRanked {
+		decides = ranked
+	}
+	if len(hops) > DeepHopListed {
+		decides = append(decides, hops...)
+	}
+	return slices.DeleteFunc(decides, func(id string) bool {
+		_, scored := scores[id]
+		return scored
+	})
 }

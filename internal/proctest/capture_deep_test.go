@@ -1005,9 +1005,9 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 }
 
 // The reading pages hold what they serve in full once the no-repeat rule is
-// on, as the MCP surface serves them: page 1 hands on the declared target it
-// serves in full, the brief page hands on nothing; with the rule off nothing
-// is handed on.
+// on, as the MCP surface serves them: page 1 hands on the declared target and
+// the top-ranked entry it serves in full, a later page only what it serves
+// in full; with the rule off nothing is handed on.
 func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1035,8 +1035,8 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 			}
 			count := readingPages(t, resumed.Open[0].Instructions)
 			held := workflow.TakeStepFullIDs()
-			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) {
-				t.Fatalf("page 1 should hand on the declared target it serves in full, and only with cuts on, got %v", held)
+			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) != tc.cut {
+				t.Fatalf("page 1 should hand on the declared target and the top-ranked entry it serves in full, and only with cuts on, got %v", held)
 			}
 			delegate := &proctest.Session{World: world, WF: workflow, ID: x.dispatch.Session}
 			for page := 2; page <= count; page++ {
@@ -1044,8 +1044,8 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 				if want := fmt.Sprintf("Page %d of %d.", page, count); !strings.Contains(serve.Instructions, want) {
 					t.Fatalf("the next serve should be %q:\n%s", want, serve.Instructions)
 				}
-				if held := workflow.TakeStepFullIDs(); len(held) != 0 {
-					t.Fatalf("the rules page and the brief page should hand on nothing, got %v", held)
+				if held := workflow.TakeStepFullIDs(); slices.Contains(held, captureRefID) || (!tc.cut && len(held) != 0) {
+					t.Fatalf("a later page should hand on only the entries it serves in full, and only with cuts on, got %v", held)
 				}
 			}
 		})

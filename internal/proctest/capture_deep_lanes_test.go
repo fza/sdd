@@ -3,6 +3,7 @@ package proctest_test
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -84,10 +85,11 @@ func verifierReading(t *testing.T, x *deepExchange) string {
 	return reading.String()
 }
 
-// Once the prefilter's calibration holds, the verifier inspects the
-// structural entries and those scoring at or above the threshold as blocks
-// and gets every other listed entry as one line, the audit share back as
-// blocks. Each pair is scored once: publish writes the scores to the ledger.
+// Once the prefilter's calibration holds, the verifier gets the declared
+// target and the top-ranked entries as blocks and every entry scoring below
+// the threshold as one marked line in the closing block, the audit share
+// back among the ranked ones. Each pair is scored once: publish writes the
+// scores to the ledger.
 func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	store := laneLedger(t, true)
@@ -101,14 +103,14 @@ func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testi
 			t.Errorf("the declared target and the relevant entry should be served as blocks, lacking %q:\n%s", want, reading)
 		}
 	}
-	if !strings.Contains(reading, "## Listed below the prefilter's threshold (") {
-		t.Fatalf("the reading should list the hidden entries in a compact block with their count:\n%s", reading)
+	if !strings.Contains(reading, "## Listed, not served (") {
+		t.Fatalf("the reading should list the hidden entries in its closing block with their count:\n%s", reading)
 	}
 	var hidden, audited []string
 	for i := range 40 {
 		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
 		switch {
-		case strings.Contains(reading, "\n"+id+"  Low directive"):
+		case strings.Contains(reading, "\n"+id+"  Low directive "+strconv.Itoa(i)+".  (implicitly dismissed)  (below the prefilter's threshold)"):
 			hidden = append(hidden, id)
 		case strings.Contains(reading, "ID: "+id):
 			audited = append(audited, id)
@@ -145,19 +147,42 @@ func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testi
 	}
 }
 
-// Until the calibration holds the verifier's reading is served as before:
-// every listed entry as a block, and no scorer call.
-func TestCaptureDeep_AnUncalibratedReadingServesEveryEntryAsABlock(t *testing.T) {
-	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
-	world, session := newDeepWorld(t, "deep-lanes-off", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+// Until the calibration holds the judge still ranks the reading: the top
+// entries are served in full, the rest listed one line each in one closing
+// block, nothing marked below a threshold, and a done entry listed whatever
+// its score.
+func TestCaptureDeep_AnUncalibratedReadingRanksByTheJudge(t *testing.T) {
+	const done = "20260602-130000-s-tac-don"
+	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9, done: 0.95}}
+	entries := append(laneEntries(), &model.Entry{
+		ID: done, Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical,
+		Summary: "A done the scorer rates highest.", Content: "A done the scorer rates highest.", Topics: proctest.MustTopics("misc"),
+	})
+	world, session := newDeepWorld(t, "deep-lanes-off", sdd.VerifierPolicy{}, proctest.WithEntries(entries...),
 		proctest.WithRelevance(laneLedger(t, false)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	if strings.Contains(reading, "## Listed below the prefilter's threshold") || !strings.Contains(reading, "ID: 20260603-120000-d-tac-l00") {
-		t.Fatalf("an uncalibrated reading should hide nothing:\n%s", reading)
+	if !strings.Contains(reading, "ID: "+laneRelevant) || len(scorer.Scored()) == 0 {
+		t.Fatalf("the judge should rank the reading and its top entry be served in full:\n%s", reading)
 	}
-	if len(scorer.Scored()) != 0 {
-		t.Fatal("an uncalibrated reading should pay for no score")
+	if strings.Count(reading, "## Listed, not served (") != 1 || strings.Contains(reading, "  (below the prefilter's threshold)") {
+		t.Fatalf("an uncalibrated reading should list the rest in one closing block, none below a threshold:\n%s", reading)
+	}
+	if strings.Contains(reading, "ID: "+done) || !strings.Contains(reading, "\n"+done+"  A done the scorer rates highest.") {
+		t.Fatalf("a done entry should be listed by its line, not served in full:\n%s", reading)
+	}
+	blocks := 0
+	for i := range 40 {
+		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
+		switch {
+		case strings.Contains(reading, "ID: "+id):
+			blocks++
+		case !strings.Contains(reading, "\n"+id+"  Low directive "):
+			t.Fatalf("listed entry %s should be served, as a line or a block:\n%s", id, reading)
+		}
+	}
+	if blocks >= model.DeepTopRanked {
+		t.Fatalf("%d low entries served in full: only the top %d ranked, the relevant one among them, should be", blocks, model.DeepTopRanked)
 	}
 }
 
@@ -184,7 +209,7 @@ func TestCaptureDeep_TheReadingsScoresAreNotPaidAgain(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepDispatch")
 	x := dispatchDeep(t, world, session, instance)
 	reading := verifierReading(t, x)
-	if !strings.Contains(reading, "## Listed below the prefilter's threshold (") {
+	if !strings.Contains(reading, "## Listed, not served (") || !strings.Contains(reading, "  (below the prefilter's threshold)") {
 		t.Fatalf("the reading's scores should hide the low entries:\n%s", reading)
 	}
 	if extra := scorer.Scored()[paid:]; len(extra) != 0 {

@@ -503,21 +503,43 @@ func joinInts(values []int) string {
 	return strings.Join(parts, ", ")
 }
 
-// DeepCompactID names the deep reading's compact block, which lists the
-// entries the verifier's lane split hides.
-const DeepCompactID = "the entries listed below the prefilter's threshold"
+// DeepListedID names the deep reading's closing block, which lists the
+// entries the reading does not serve.
+const DeepListedID = "the entries the reading lists without serving them"
 
-// DeepCompactBlock lists entries one line each, ID and brief, an entry
-// implicit holds marked with that role, with the count and the call that
-// opens one.
-func DeepCompactBlock(entries []*model.Entry, implicit func(id string) bool) model.DeepReadingBlock {
+// DeepListedLine is one entry of the deep reading's closing block: Summary
+// lists it by title and first summary sentence, else by title; Hidden marks
+// it scored below the prefilter's threshold, Implicit dismissed implicitly.
+type DeepListedLine struct {
+	Entry    *model.Entry
+	Summary  bool
+	Hidden   bool
+	Implicit bool
+}
+
+// DeepListedBlock lists the entries the reading does not serve, one line
+// each in reading order, with the count and the call that opens one, and
+// the count of those past a listing ceiling. Every listed and counted line
+// of the reading is rendered here.
+func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\n\n## Listed below the prefilter's threshold (%d)\n\nThe prefilter's calibrated judge scored these below the threshold its recall bound holds at: one line each, ID and title. Open one with show when its title bears on the draft.\n", len(entries))
-	for _, e := range entries {
-		fmt.Fprintf(&b, "\n%s  %s", e.ID, model.EntryBrief(e))
-		if implicit(e.ID) {
+	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the first ones with the first sentence of their summary. An entry marked below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
+	for _, line := range lines {
+		e := line.Entry
+		text := model.EntryBrief(e)
+		if sentence := e.FirstSummarySentence(); line.Summary && e.Title != "" && sentence != "" {
+			text = e.Title + ": " + sentence
+		}
+		fmt.Fprintf(&b, "\n%s  %s", e.ID, text)
+		if line.Implicit {
 			fmt.Fprintf(&b, "  (%s)", model.LightRoleImplicit)
 		}
+		if line.Hidden {
+			b.WriteString("  (below the prefilter's threshold)")
+		}
 	}
-	return model.DeepReadingBlock{ID: DeepCompactID, Text: b.String()}
+	if counted > 0 {
+		fmt.Fprintf(&b, "\n%d more listed, open with search or show", counted)
+	}
+	return model.DeepReadingBlock{ID: DeepListedID, Text: b.String()}
 }
