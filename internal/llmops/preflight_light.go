@@ -125,7 +125,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 				return parseLightResult(output, allowed)
 			})
 			if errs[i] == nil {
-				results[i].Findings = flagUnlocated(results[i].Findings, req.Combined())
+				results[i].Findings = flagKindFitUnnamed(flagUnlocated(results[i].Findings, req.Combined()), kindFit)
 			}
 		}()
 	}
