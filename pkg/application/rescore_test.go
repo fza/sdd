@@ -46,13 +46,13 @@ func rescoreRef(s, i int) string {
 	return fmt.Sprintf("20260101-0000%d%d-s-tac-ref", s, i)
 }
 
-func rescoreResult(results []sdd.RescoreResult, judge string) (sdd.RescoreResult, bool) {
+func rescoreResult(results []sdd.RescoreResult, judge string) sdd.RescoreResult {
 	for _, result := range results {
 		if result.Judge == judge {
-			return result, true
+			return result
 		}
 	}
-	return sdd.RescoreResult{}, false
+	return sdd.RescoreResult{}
 }
 
 // A subject whose requests fail is recorded and the pass goes on: the other
@@ -71,11 +71,11 @@ func TestRescoreRelevance_GoesOnPastAFailingSubject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rescore = %v: a failing subject should not end the pass", err)
 	}
-	gathers, _ := rescoreResult(results, gatherJudge)
+	gathers := rescoreResult(results, gatherJudge)
 	if gathers.Scored != 2 || gathers.Failed != 2 || len(gathers.Failures) != 1 || gathers.Failures[0].Subject != rescoreFirst || gathers.Failures[0].Err == nil {
 		t.Fatalf("gather's judge %+v: the failing subject should be recorded with its cause and the other scored", gathers)
 	}
-	if hosts, _ := rescoreResult(results, rescoreHost); hosts.Scored != 4 || len(hosts.Failures) != 0 {
+	if hosts := rescoreResult(results, rescoreHost); hosts.Scored != 4 || len(hosts.Failures) != 0 {
 		t.Fatalf("host judge %+v: the other judge should score every pair", hosts)
 	}
 
@@ -84,7 +84,7 @@ func TestRescoreRelevance_GoesOnPastAFailingSubject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gathers, _ := rescoreResult(again, gatherJudge); gathers.Scored != 2 || gathers.Failed != 0 {
+	if gathers := rescoreResult(again, gatherJudge); gathers.Scored != 2 || gathers.Failed != 0 {
 		t.Fatalf("gather's judge %+v: the next rescore should score the pairs the failure left", gathers)
 	}
 }
