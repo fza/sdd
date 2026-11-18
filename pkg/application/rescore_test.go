@@ -186,7 +186,7 @@ func TestRescoreRelevance_ReportsProgressInPairs(t *testing.T) {
 	}{
 		{name: "all scored", scorer: &scriptedScorer{}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
 		{name: "a subject failing", scorer: &scriptedScorer{fail: map[string]bool{rescoreRef(0, 0): true}}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4, Failed: 2}},
-		{name: "requests halved", scorer: llmrelevance.Halving(halvedScorer{&scriptedScorer{maxBatch: 10}},&llmrelevance.MemoryBatchSizes{}, gatherJudge), want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
+		{name: "requests halved", scorer: llmrelevance.Halving(halvedScorer{&scriptedScorer{maxBatch: 10}}, &llmrelevance.MemoryBatchSizes{}, gatherJudge), want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
 		{name: "pairs too long", scorer: tooLongScorer{&scriptedScorer{}}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

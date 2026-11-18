@@ -217,7 +217,7 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 		progress.Total++
 	}
 	advance(0, false)
-	forward :=prefilter.Scorer.Direction() == relevance.Forward
+	forward := prefilter.Scorer.Direction() == relevance.Forward
 	var batch model.RelevanceBatch
 	for _, subjectID := range subjects {
 		subject := graph.ByID[subjectID]
