@@ -11,7 +11,7 @@ sdd reads its settings from three YAML files and merges them. `sdd config` shows
 | --- | --- | --- |
 | User-global | `~/.config/sdd/config.yaml`, or `$XDG_CONFIG_HOME/sdd/config.yaml` when that variable is set | You, in every project on this machine |
 | Project | `.sdd/config.yaml` | Everyone on the project. Committed to git. |
-| Local | `.sdd/config.local.yaml` | You, in this checkout only. `sdd init` adds it to `.gitignore`. |
+| Local | `.sdd/config.local.yaml` | You, in this checkout only. `sdd init` adds it to `.sdd/.gitignore` and leaves the `.gitignore` at the repository root as it is. |
 
 A later row overrides an earlier one: local wins over project, project wins over user-global, and user-global wins over the built-in default. A file sets only the keys it names and inherits the rest. Maps merge entry by entry, so `llm.api_keys.openai` in the local file keeps `llm.api_keys.anthropic` from the user-global file. A list replaces the whole list below it. Command-line flags such as `--model` or `--embedding-provider` override every file for that one command.
 
