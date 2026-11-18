@@ -16,8 +16,17 @@ const (
 	PhaseSummarizing Phase = "summarizing" // summary and title generation is running
 )
 
+// ScoringPhase is the phase of judge scoring labelled pairs, named as
+// grounding status prints the judge.
+func ScoringPhase(judge string) Phase { return Phase(judge) }
+
 // Counted reports whether the phase works through a known number of units, so
-// the footer shows a determinate bar for it rather than the spinner alone.
+// the footer shows a determinate bar for it rather than the spinner alone:
+// every phase but those reaching a repository.
 func (p Phase) Counted() bool {
-	return p == PhaseIndexing || p == PhaseSummarizing
+	switch p {
+	case "", PhaseConnecting, PhaseCloning, PhaseSyncing:
+		return false
+	}
+	return true
 }

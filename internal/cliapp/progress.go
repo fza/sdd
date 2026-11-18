@@ -1,13 +1,18 @@
 package cliapp
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
+
+	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/cliout"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
 // embedProgress bridges the embedding and cache-freshening command callbacks
@@ -109,6 +114,42 @@ func (p *embedProgress) connected(force bool) *command.BuildConnectedIndexesCmd 
 		OnEntryIndexed: p.onEntryIndexed,
 		OnPhase:        p.onPhase,
 	}
+}
+
+// newRescoreProgress puts request's progress on a footer reporter: a bar
+// named for the judge once there are pairs to score, the failed ones in the
+// note.
+func newRescoreProgress(request *sdd.RescoreRequest) *cliout.Reporter {
+	reporter := cliout.NewReporter()
+	reporter.SetUnit("pairs")
+	var done int
+	request.OnProgress = func(progress sdd.RescoreProgress) {
+		if progress.Total == 0 {
+			return
+		}
+		reporter.SetPhase(model.ScoringPhase(progress.Judge))
+		reporter.SetTotal(progress.Total)
+		reporter.Add(progress.Done - done)
+		done = progress.Done
+		if progress.Failed > 0 {
+			reporter.SetNote(fmt.Sprintf("%d failed", progress.Failed))
+		}
+	}
+	return reporter
+}
+
+// loggerViewPolicy shows in the view the log lines the context's logger
+// writes, so the view leaves -v and -vv as they are without it.
+func loggerViewPolicy(ctx context.Context) cliout.Policy {
+	logger := slogutils.FromContext(ctx)
+	level := slog.LevelError
+	for _, candidate := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn} {
+		if logger.Enabled(ctx, candidate) {
+			level = candidate
+			break
+		}
+	}
+	return cliout.Policy{Display: level, KeepAtOrAbove: level}
 }
 
 // fillProgressInterval paces plain progress lines: a fill shorter than one

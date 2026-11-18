@@ -173,6 +173,7 @@ func TestModel_SummarizingShowsTheBar(t *testing.T) {
 		wantBar bool
 	}{
 		{phase: sddmodel.PhaseSummarizing, wantBar: true},
+		{phase: sddmodel.ScoringPhase("chat:test-judge"), wantBar: true},
 		{phase: sddmodel.PhaseSyncing, wantBar: false},
 	}
 	for _, tc := range cases {

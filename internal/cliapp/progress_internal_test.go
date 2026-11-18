@@ -1,13 +1,54 @@
 package cliapp
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
 )
+
+// A rescore with no pair to score shows no bar; one with pairs counts them
+// under a phase named for its judge, and its failed pairs in the note.
+func TestRescoreProgressCountsPairs(t *testing.T) {
+	request := &sdd.RescoreRequest{}
+	reporter := newRescoreProgress(request)
+	request.OnProgress(sdd.RescoreProgress{Judge: "chat:m"})
+	if snap, ok := reporter.Recv(); !ok || snap.Phase != "" {
+		t.Fatalf("a pass with no pair to score should declare no phase, got %+v", snap)
+	}
+	request.OnProgress(sdd.RescoreProgress{Judge: "chat:m", Total: 6})
+	request.OnProgress(sdd.RescoreProgress{Judge: "chat:m", Done: 2, Total: 6})
+	request.OnProgress(sdd.RescoreProgress{Judge: "chat:m", Done: 5, Total: 6, Failed: 2})
+	snap, ok := reporter.Recv()
+	if !ok || snap.Phase != model.ScoringPhase("chat:m") || snap.Done != 5 || snap.Total != 6 || snap.Unit != "pairs" {
+		t.Fatalf("each snapshot should set the judge's bar to its pairs, got %+v", snap)
+	}
+	if snap.Note != "2 failed" {
+		t.Errorf("the note should count the failed pairs, got %q", snap.Note)
+	}
+}
+
+// The view shows the log lines the command's logger writes, so -v and -vv
+// show what they show without the view.
+func TestLoggerViewPolicyFollowsTheLogger(t *testing.T) {
+	for _, level := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn} {
+		t.Run(level.String(), func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: level}))
+			policy := loggerViewPolicy(slogutils.WithLogger(context.Background(), logger))
+			if !policy.ShowInDisplay(level) || policy.ShowInDisplay(level-1) {
+				t.Errorf("the view should show %s and above, nothing below", level)
+			}
+		})
+	}
+}
 
 // The shared wiring helper maps every command's callbacks onto one reporter: a
 // zero-entry (warm) plan reports no phase, real embedding work reports indexing,

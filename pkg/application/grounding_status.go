@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/networkteam/slogutils"
 	"golang.org/x/sync/errgroup"
@@ -140,9 +141,20 @@ type RescoreFailure struct {
 
 // RescoreRequest selects the judge RescoreRelevance scores with: Judge
 // names one as GroundingStatus prints it; empty selects the ranking judge of
-// a reading without a client.
+// a reading without a client. OnProgress, when set, receives the pass's
+// progress, one call at a time.
 type RescoreRequest struct {
-	Judge string
+	Judge      string
+	OnProgress func(RescoreProgress)
+}
+
+// RescoreProgress is how far a rescore pass has come: Done of the Total
+// pairs it scores, counted in pairs so a request split in halves counts
+// once. Done counts the pairs scored, failed or too long to score; Failed
+// counts the failed ones.
+type RescoreProgress struct {
+	Judge               string
+	Done, Total, Failed int
 }
 
 // RescoreRelevance has the judge request selects score every labelled pair
@@ -170,13 +182,27 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 		return RescoreResult{}, err
 	}
 	defer selected.releaseInto(&err)
-	return rescoreJudge(ctx, runtime, ledger, selected.snapshot.graph, judge)
+	return rescoreJudge(ctx, runtime, ledger, selected.snapshot.graph, judge, request.OnProgress)
 }
 
 // rescoreJudge has prefilter score the labelled pairs of ledger it has not
-// scored and stores the scores.
-func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.RelevanceLedger, graph *model.Graph, prefilter Prefilter) (RescoreResult, error) {
+// scored and stores the scores, reporting its progress to onProgress.
+func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.RelevanceLedger, graph *model.Graph, prefilter Prefilter, onProgress func(RescoreProgress)) (RescoreResult, error) {
 	result := RescoreResult{Judge: prefilter.Judge}
+	progress := RescoreProgress{Judge: prefilter.Judge}
+	var progressMu sync.Mutex
+	advance := func(pairs int, failed bool) {
+		if onProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		progress.Done += pairs
+		if failed {
+			progress.Failed += pairs
+		}
+		onProgress(progress)
+	}
 	bySubject := map[string][]string{}
 	var subjects []string
 	for _, pair := range ledger.Unscored(prefilter.Judge) {
@@ -188,8 +214,10 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 			subjects = append(subjects, pair.B)
 		}
 		bySubject[pair.B] = append(bySubject[pair.B], pair.A)
+		progress.Total++
 	}
-	forward := prefilter.Scorer.Direction() == relevance.Forward
+	advance(0, false)
+	forward :=prefilter.Scorer.Direction() == relevance.Forward
 	var batch model.RelevanceBatch
 	for _, subjectID := range subjects {
 		subject := graph.ByID[subjectID]
@@ -200,6 +228,9 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 		batches, oversize := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
 		result.Unanswered += len(oversize)
 		result.Requests += len(batches)
+		if len(oversize) > 0 {
+			advance(len(oversize), false)
+		}
 		requests := make([]relevance.Request, len(batches))
 		answers := make([]relevance.Result, len(batches))
 		failures := make([]error, len(batches))
@@ -216,6 +247,7 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 					err = relevance.CheckResult(requests[b], scored)
 				}
 				answers[b], failures[b] = scored, err
+				advance(len(requests[b].Candidates), err != nil)
 				return nil
 			})
 		}

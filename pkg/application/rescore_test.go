@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
+	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -21,7 +22,7 @@ const (
 // rescoreFixture is a graph of two referencing entries, two references each,
 // seeded as labels for gather's judge prefilter and the Claude host's judge
 // host to score; claudeCLI reports the host judge's claude CLI installed.
-func rescoreFixture(t *testing.T, prefilter, host *scriptedScorer, claudeCLI bool) (*sdd.Application, *localadapter.MemoryRelevanceStore) {
+func rescoreFixture(t *testing.T, prefilter, host llmrelevance.Scorer, claudeCLI bool) (*sdd.Application, *localadapter.MemoryRelevanceStore) {
 	t.Helper()
 	f := newGatherFixture(t)
 	for s, subject := range []string{rescoreFirst, rescoreSecond} {
@@ -151,6 +152,64 @@ func TestRescoreRelevance_RefusesAnUnknownJudge(t *testing.T) {
 			}
 			if segments, _ := store.Segments(t.Context()); len(segments) != 0 || prefilter.calls()+host.calls() != 0 {
 				t.Fatalf("%d segments, %d calls: a refused judge should seed and score nothing", len(segments), prefilter.calls()+host.calls())
+			}
+		})
+	}
+}
+
+// halvedScorer answers a request of more than one candidate one score
+// short, so a Halving judge splits it down to single candidates.
+type halvedScorer struct{ *scriptedScorer }
+
+func (s halvedScorer) Score(ctx context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	result, err := s.scriptedScorer.Score(ctx, request)
+	if err == nil && len(request.Candidates) > 1 {
+		result.Scores = result.Scores[1:]
+	}
+	return result, err
+}
+
+// tooLongScorer takes no pair: every one is too long to score.
+type tooLongScorer struct{ *scriptedScorer }
+
+func (tooLongScorer) MaxPairTokens() int { return 1 }
+
+// The pass reports its progress in pairs: the total before the first
+// request, then each finished request, its failed pairs and those too long
+// to score included, so the count ends at the total however the judge
+// splits its requests.
+func TestRescoreRelevance_ReportsProgressInPairs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scorer llmrelevance.Scorer
+		want   sdd.RescoreProgress
+	}{
+		{name: "all scored", scorer: &scriptedScorer{}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
+		{name: "a subject failing", scorer: &scriptedScorer{fail: map[string]bool{rescoreRef(0, 0): true}}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4, Failed: 2}},
+		{name: "requests halved", scorer: llmrelevance.Halving(halvedScorer{&scriptedScorer{maxBatch: 10}},&llmrelevance.MemoryBatchSizes{}, gatherJudge), want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
+		{name: "pairs too long", scorer: tooLongScorer{&scriptedScorer{}}, want: sdd.RescoreProgress{Judge: gatherJudge, Done: 4, Total: 4}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			application, _ := rescoreFixture(t, tc.scorer, &scriptedScorer{}, false)
+			identity := sdd.RequestIdentity{Subject: "tester"}
+			if _, err := application.SeedRefLabels(t.Context(), identity, gatherProject, sdd.RescoreRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			var snapshots []sdd.RescoreProgress
+			request := sdd.RescoreRequest{OnProgress: func(progress sdd.RescoreProgress) { snapshots = append(snapshots, progress) }}
+			if _, err := application.RescoreRelevance(t.Context(), identity, gatherProject, request); err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshots) < 2 || snapshots[0] != (sdd.RescoreProgress{Judge: gatherJudge, Total: 4}) {
+				t.Fatalf("snapshots %+v: the total should come before any pair is done", snapshots)
+			}
+			for i := 1; i < len(snapshots); i++ {
+				if snapshots[i].Done < snapshots[i-1].Done || snapshots[i].Done > snapshots[i].Total {
+					t.Fatalf("snapshots %+v: the count should only rise, up to the total", snapshots)
+				}
+			}
+			if last := snapshots[len(snapshots)-1]; last != tc.want {
+				t.Fatalf("last snapshot %+v, want %+v: every pair should count, the failed ones counted apart", last, tc.want)
 			}
 		})
 	}

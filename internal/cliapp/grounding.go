@@ -8,6 +8,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/networkteam/sdd/internal/cliout"
+	clitui "github.com/networkteam/sdd/internal/cliout/tui"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -118,7 +120,19 @@ func judgeFlag() cli.Flag {
 // A failed subject does not stop the others: the failures are listed once
 // the judge is done, and fail the command.
 func rescore(ctx context.Context, cmd *cli.Command, application *sdd.Application, project sdd.ProjectID, identity sdd.RequestIdentity) error {
-	scored, err := application.RescoreRelevance(ctx, identity, project, sdd.RescoreRequest{Judge: cmd.String("judge")})
+	request := sdd.RescoreRequest{Judge: cmd.String("judge")}
+	work := func(ctx context.Context) (sdd.RescoreResult, error) {
+		return application.RescoreRelevance(ctx, identity, project, request)
+	}
+	var scored sdd.RescoreResult
+	var err error
+	if cliout.IsInteractive(cmd.ErrWriter) {
+		progress := newRescoreProgress(&request)
+		scored, err = clitui.Interactive(ctx, loggerViewPolicy(ctx),
+			clitui.View{Reader: cmd.Reader, Writer: cmd.ErrWriter, Progress: progress, StreamLogs: true}, work)
+	} else {
+		scored, err = work(ctx)
+	}
 	if err != nil {
 		return err
 	}
