@@ -95,15 +95,15 @@ func seedReplay(ctx context.Context, store RelevanceStore, pairs []model.Relevan
 // SeedRefLabels appends a replayed reference label for each pair of the
 // graph's own references (model.RefPairs), skipping pairs already labelled,
 // so a judge can calibrate before live captures label enough pairs. It needs
-// a prefilter judge: the labels count toward its calibration only once
+// the judges request selects: the labels count toward a calibration only once
 // RescoreRelevance scores them.
-func (a *Application) SeedRefLabels(ctx context.Context, identity RequestIdentity, project ProjectID) (result SeedResult, err error) {
+func (a *Application) SeedRefLabels(ctx context.Context, identity RequestIdentity, project ProjectID, request RescoreRequest) (result SeedResult, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return SeedResult{}, err
 	}
-	if runtime.options.Prefilter.Scorer == nil {
-		return SeedResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
+	if _, err := runtime.scoringJudges(request.Judge); err != nil {
+		return SeedResult{}, err
 	}
 	if runtime.options.Relevance == nil {
 		return SeedResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: the project keeps no relevance ledger"}

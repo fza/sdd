@@ -3,9 +3,9 @@ package application
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/networkteam/slogutils"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -101,21 +101,41 @@ type RescoreResult struct {
 	Scored, Missing, Unanswered int
 	// Requests counts the scoring requests sent, what a reranker bills by.
 	Requests int
+	// Failed counts the pairs Failures left unscored.
+	Failed   int
+	Failures []RescoreFailure
 }
 
-// RescoreRelevance has each judge (gather's prefilter judge, then the Claude
-// host's ranking judge where it differs) score every labelled pair it has
-// not scored, so a new judge's recall bound and ranking health are computed
-// from the stored labels at once. Each pair is scored from its later entry,
-// the one whose reading judged the other.
-func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIdentity, project ProjectID) (results []RescoreResult, err error) {
+// RescoreFailure is a subject whose scoring requests failed; its pairs stay
+// unscored for the next rescore.
+type RescoreFailure struct {
+	Subject string
+	Err     error
+}
+
+// RescoreRequest selects the judges RescoreRelevance scores with: Judge
+// names one as GroundingStatus prints it, or by JudgeAliasPrefilter or
+// JudgeAliasRanking; empty selects every judge.
+type RescoreRequest struct {
+	Judge string
+}
+
+// RescoreRelevance has the judges request selects (gather's prefilter judge
+// and the Claude host's ranking judge where it differs) score every labelled
+// pair they have not scored, so a new judge's recall bound and ranking health
+// are computed from the stored labels at once. Each pair is scored from its
+// later entry, the one whose reading judged the other. A subject whose
+// requests fail lands in its judge's Failures and the pass goes on; the error
+// is what stops the pass: an unknown judge, a cancelled ctx, a ledger that
+// cannot be read or written.
+func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIdentity, project ProjectID, request RescoreRequest) (results []RescoreResult, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return nil, err
 	}
-	judges := runtime.judges()
-	if len(judges) == 0 {
-		return nil, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
+	judges, err := runtime.scoringJudges(request.Judge)
+	if err != nil {
+		return nil, err
 	}
 	ledger, err := runtime.relevanceLedger(ctx)
 	if err != nil {
@@ -165,7 +185,8 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 		result.Requests += len(batches)
 		requests := make([]relevance.Request, len(batches))
 		answers := make([]relevance.Result, len(batches))
-		group, groupCtx := errgroup.WithContext(ctx)
+		failures := make([]error, len(batches))
+		var group errgroup.Group
 		group.SetLimit(prefilterInFlight)
 		for b, indexes := range batches {
 			requests[b].Subject = model.EntryRelevanceText(graph, subject)
@@ -173,19 +194,27 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 				requests[b].Candidates = append(requests[b].Candidates, candidates[index])
 			}
 			group.Go(func() error {
-				scored, err := prefilter.Scorer.Score(groupCtx, requests[b])
+				scored, err := prefilter.Scorer.Score(ctx, requests[b])
 				if err == nil {
 					err = relevance.CheckResult(requests[b], scored)
 				}
-				answers[b] = scored
-				return err
+				answers[b], failures[b] = scored, err
+				return nil
 			})
 		}
-		err := group.Wait()
-		if err != nil {
-			return RescoreResult{}, fmt.Errorf("sdd: rescoring the labelled pairs of %s: %w", subjectID, err)
+		_ = group.Wait()
+		if err := ctx.Err(); err != nil {
+			return RescoreResult{}, err
 		}
+		var failure error
 		for b, request := range requests {
+			if failures[b] != nil {
+				if failure == nil {
+					failure = failures[b]
+				}
+				result.Failed += len(request.Candidates)
+				continue
+			}
 			scored := answers[b]
 			for i, candidate := range request.Candidates {
 				pair := model.NewRelevancePair(subjectID, candidate.ID)
@@ -195,6 +224,10 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 				}
 				batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: prefilter.Judge, Direction: direction, Score: model.ScoreByte(scored.Scores[i])}})
 			}
+		}
+		if failure != nil {
+			slogutils.FromContext(ctx).Info("scoring failed, going on with the next subject", "judge", prefilter.Judge, "subject", subjectID, "err", failure)
+			result.Failures = append(result.Failures, RescoreFailure{Subject: subjectID, Err: failure})
 		}
 	}
 	result.Scored = len(batch.Scores)

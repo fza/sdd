@@ -105,14 +105,14 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	application := f.app(t, prefilterPolicy(1), nil)
 	identity := sdd.RequestIdentity{Subject: "tester"}
 
-	seeded, err := application.SeedRefLabels(t.Context(), identity, gatherProject)
+	seeded, err := application.SeedRefLabels(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seeded.Added != 189 || seeded.Skipped != 0 {
 		t.Fatalf("seed %+v: each referenced pair should be labelled once", seeded)
 	}
-	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	if !state.Calibrated || state.Judge != gatherJudge {
 		t.Fatalf("state %+v: the seeded and scored labels should calibrate the judge", state)
 	}
-	again, err := application.SeedRefLabels(t.Context(), identity, gatherProject)
+	again, err := application.SeedRefLabels(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	application := f.app(t, prefilterPolicy(1), nil)
 	identity := sdd.RequestIdentity{Subject: "tester"}
 
-	if _, err := application.SeedRefLabels(t.Context(), identity, gatherProject); err != nil {
+	if _, err := application.SeedRefLabels(t.Context(), identity, gatherProject, sdd.RescoreRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestSeedRefLabels_NeedsAJudge(t *testing.T) {
 	f := newGatherFixture(t)
 	f.relevance = localadapter.NewMemoryRelevanceStore()
 	application := f.app(t, prefilterPolicy(1), nil)
-	_, err := application.SeedRefLabels(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	_, err := application.SeedRefLabels(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.RescoreRequest{})
 	if err == nil || !strings.Contains(err.Error(), "no prefilter judge") {
 		t.Fatalf("seeding without a judge = %v, should be refused: its labels could never be scored", err)
 	}

@@ -359,7 +359,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	if !strings.Contains(before.Text, "unscored: 189 labelled pairs") || !strings.Contains(before.Text, "thresholds: none yet") {
 		t.Fatalf("a new judge should start without thresholds and name the unscored pairs:\n%s", before.Text)
 	}
-	result, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	result, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
