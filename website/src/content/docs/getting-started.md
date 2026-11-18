@@ -156,7 +156,7 @@ Tell the agent something you noticed, in plain words, for example that a step in
 2. **Writing check.** A separate model reads the draft as a stranger would and points out what is unclear. The agent revises. Where something is missing, such as a reason, the check names the gap, never its content: the agent writes in only what you said, or asks you. The playback after a revision lists each sentence the revision added and each it removed.
 3. **Playback.** The agent shows you the exact entry. You confirm it, ask for changes, or drop it. Nothing is written before you confirm.
 4. **Pre-flight check.** Another check compares the entry with the graph, for example for contradictions with the entries it links to. A serious finding stops the write: you revise the entry, or override the check. Overriding is your call alone, never the agent's. Each finding quotes the passage it rests on; a finding whose quote matches nothing the check read is shown as unverified and never stops the write.
-5. **Write.** sdd generates a one-line summary, writes the entry as a markdown file under `.sdd/graph/`, and commits it as `sdd: capture <id>`. The agent compares the summary with the entry and corrects it if it drifted.
+5. **Write.** sdd generates a title and a one-line summary, writes the entry as a markdown file under `.sdd/graph/`, and commits it as `sdd: <type> <layer> <title>`. The commit message names the entry in an `Entry: <id>` line, so `git log --grep` finds the commit by the entry's ID. The agent compares the summary with the entry and corrects it if it drifted.
 
 If a model call fails, the step stops and the agent tells you. Nothing half-done is written.
 

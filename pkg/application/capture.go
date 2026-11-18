@@ -305,8 +305,8 @@ func entryPublicationBatch(key PublicationKey, publication EntryPublication) (Mu
 		return MutationBatch{}, err
 	}
 	// Built from the published document, so a publication replayed after a
-	// failed commit is committed under the same subject as a fresh one.
-	captured := model.Entry{Type: model.TypeFromAbbrev[parts.TypeCode], Layer: model.LayerFromAbbrev[parts.LayerCode], Content: publication.Document.Body}
+	// failed commit is committed under the same message as a fresh one.
+	captured := model.Entry{ID: id, Type: model.TypeFromAbbrev[parts.TypeCode], Layer: model.LayerFromAbbrev[parts.LayerCode], Content: publication.Document.Body}
 	captured.Title, _ = publication.Document.Frontmatter["title"].(string)
 	batch := MutationBatch{ID: key.String(), Message: captured.CaptureCommitMessage(), Changes: []DocumentChange{{LogicalPath: publication.Document.LogicalPath, Document: &publication.Document}}}
 	for _, name := range publication.Document.Attachments {
