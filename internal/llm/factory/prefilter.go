@@ -14,13 +14,11 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
-// Prefilter defaults: a call is bounded by the pass deadline, a one-pair
-// protocol fans out up to the calls in flight, and listwise holds fewer, each
-// carrying a whole batch.
+// Prefilter defaults: a call is bounded by the pass deadline, and chat holds
+// a few calls in flight, each carrying a whole batch.
 const (
 	defaultPrefilterTimeout     = 45 * time.Second
-	defaultPrefilterConcurrency = 16
-	defaultListwiseConcurrency  = 8
+	defaultChatConcurrency      = 8
 	defaultPrefilterKeyProvider = "opper"
 )
 
@@ -32,8 +30,10 @@ type Prefilter struct {
 }
 
 // NewPrefilter composes a resolved llm_prefilter block
-// (model.BaseConfig.ResolvedPrefilter) into a bounded, observed scorer.
-func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, error) {
+// (model.BaseConfig.ResolvedPrefilter) into a bounded, observed scorer. A
+// chat judge starts each request at the batch size sizes holds for it
+// (relevance.Halving); nil sizes keep it for the process alone.
+func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink, sizes relevance.BatchSizes) (Prefilter, error) {
 	timeout := defaultPrefilterTimeout
 	if cfg.Timeout != "" {
 		d, err := time.ParseDuration(cfg.Timeout)
@@ -43,10 +43,6 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		if d > 0 {
 			timeout = d
 		}
-	}
-	concurrency := cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = defaultPrefilterConcurrency
 	}
 	var scorer relevance.Scorer
 	var modelName string
@@ -62,7 +58,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
 		scorer = client
-	case model.PrefilterCohereRerank:
+	case model.PrefilterCohere:
 		modelName = cmp.Or(cfg.Model, cohere.DefaultModel)
 		provider, key, err := prefilterKey(cfg)
 		if err != nil {
@@ -73,28 +69,17 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
 		scorer = client
-	case model.PrefilterGenerate:
+	case model.PrefilterChat:
 		chat, err := New(cfg.LLMConfig)
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
-		bridge, err := llmops.NewRelevanceBridge(chat)
+		judge, err := llmops.NewChatJudge(chat)
 		if err != nil {
 			return Prefilter{}, err
 		}
 		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
-		scorer = relevance.PerItem(bridge, concurrency)
-	case model.PrefilterListwise:
-		chat, err := New(cfg.LLMConfig)
-		if err != nil {
-			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
-		}
-		judge, err := llmops.NewListwiseJudge(chat)
-		if err != nil {
-			return Prefilter{}, err
-		}
-		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
-		scorer = relevance.Limited(relevance.RetriedOnce(judge), cmp.Or(cfg.Concurrency, defaultListwiseConcurrency))
+		scorer = relevance.Limited(judge, cmp.Or(cfg.Concurrency, defaultChatConcurrency))
 	case "":
 		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s)", strings.Join(cfg.Protocol.AllowedValues(), ", "))
 	default:
@@ -103,8 +88,15 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 	if cfg.RateLimitRPS > 0 {
 		scorer = relevance.RateLimited(scorer, cfg.RateLimitRPS)
 	}
+	judge := string(cfg.Protocol) + ":" + modelName
 	scorer = relevance.Observed(relevance.Bounded(relevance.RetriedAfterDelay(scorer, timeout), timeout), sink)
-	return Prefilter{Scorer: scorer, Judge: string(cfg.Protocol) + ":" + modelName}, nil
+	if cfg.Protocol == model.PrefilterChat {
+		if sizes == nil {
+			sizes = &relevance.MemoryBatchSizes{}
+		}
+		scorer = relevance.Halving(scorer, sizes, judge)
+	}
+	return Prefilter{Scorer: scorer, Judge: judge}, nil
 }
 
 // prefilterKey returns the key provider a direct protocol authenticates with,

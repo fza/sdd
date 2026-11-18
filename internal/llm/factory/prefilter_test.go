@@ -13,33 +13,37 @@ import (
 )
 
 func TestNewPrefilter(t *testing.T) {
-	systemone, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "systemone", LLMConfig: model.LLMConfig{APIKeys: map[string]string{"opper": "k"}}}, nil)
+	systemone, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "systemone", LLMConfig: model.LLMConfig{APIKeys: map[string]string{"opper": "k"}}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if systemone.Judge != "systemone:jev-1.14.0" || systemone.Scorer.Direction() != relevance.Both {
 		t.Fatalf("judge %q: systemone should default to Jev", systemone.Judge)
 	}
-	rerank, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "cohere-rerank", LLMConfig: model.LLMConfig{APIKeys: map[string]string{"opper": "k"}}}, nil)
+	rerank, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "cohere", LLMConfig: model.LLMConfig{APIKeys: map[string]string{"opper": "k"}}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rerank.Judge != "cohere-rerank:aws/cohere/rerank-v3.5" || rerank.Scorer.Direction() != relevance.Forward || rerank.Scorer.MaxPairTokens() == 0 {
-		t.Fatalf("judge %q: cohere-rerank should default to rerank v3.5 through Opper, one direction, each pair in its window", rerank.Judge)
+	if rerank.Judge != "cohere:aws/cohere/rerank-v3.5" || rerank.Scorer.Direction() != relevance.Forward || rerank.Scorer.MaxPairTokens() == 0 {
+		t.Fatalf("judge %q: cohere should default to rerank v3.5 through Opper, one direction, each pair in its window", rerank.Judge)
 	}
-	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "generate", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "haiku"}}, nil)
+	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "chat", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "claude-haiku-5-5", Effort: "low"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:haiku" || generate.Scorer.MaxBatch() != 1 {
-		t.Fatalf("judge %q: the generate bridge should rate each pair in a call of its own", generate.Judge)
+	if chat.Judge != "chat:claude-haiku-5-5" || chat.Scorer.MaxBatch() != 100 || chat.Scorer.Direction() != relevance.Both {
+		t.Fatalf("judge %q: chat should start at 100 candidates a call", chat.Judge)
 	}
-	listwise, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "listwise", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "claude-haiku-5-5", Effort: "low"}}, nil)
+	sizes := &relevance.MemoryBatchSizes{}
+	if err := sizes.Lower("chat:claude-haiku-5-5", 25); err != nil {
+		t.Fatal(err)
+	}
+	remembered, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "chat", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "claude-haiku-5-5"}}, nil, sizes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listwise.Judge != "listwise:claude-haiku-5-5" || listwise.Scorer.MaxBatch() != 100 || listwise.Scorer.Direction() != relevance.Both {
-		t.Fatalf("judge %q: listwise should score up to 100 candidates a call", listwise.Judge)
+	if remembered.Scorer.MaxBatch() != 25 {
+		t.Fatalf("MaxBatch = %d: chat should start at the size remembered for its judge", remembered.Scorer.MaxBatch())
 	}
 	for name, tc := range map[string]struct {
 		cfg  model.LLMPrefilterConfig
@@ -48,11 +52,11 @@ func TestNewPrefilter(t *testing.T) {
 		"no protocol":      {model.LLMPrefilterConfig{}, "llm_prefilter.protocol is not set"},
 		"unknown protocol": {model.LLMPrefilterConfig{Protocol: "magic"}, "unknown llm_prefilter.protocol"},
 		"no key":           {model.LLMPrefilterConfig{Protocol: "systemone"}, "llm_prefilter.api_keys.opper"},
-		"no rerank key":    {model.LLMPrefilterConfig{Protocol: "cohere-rerank", LLMConfig: model.LLMConfig{Provider: "cohere"}}, "protocol cohere-rerank needs llm_prefilter.api_keys.cohere"},
+		"no rerank key":    {model.LLMPrefilterConfig{Protocol: "cohere", LLMConfig: model.LLMConfig{Provider: "cohere"}}, "protocol cohere needs llm_prefilter.api_keys.cohere"},
 		"bad timeout":      {model.LLMPrefilterConfig{Protocol: "systemone", LLMConfig: model.LLMConfig{Timeout: "soon"}}, "parsing timeout"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := factory.NewPrefilter(tc.cfg, nil)
+			_, err := factory.NewPrefilter(tc.cfg, nil, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("NewPrefilter = %v, should name the problem", err)
 			}
@@ -60,14 +64,14 @@ func TestNewPrefilter(t *testing.T) {
 	}
 }
 
-// A generate prefilter on codex's own default model judges as the provider.
-func TestNewPrefilter_GenerateOnCodexDefaultModel(t *testing.T) {
-	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "generate", LLMConfig: model.LLMConfig{Provider: "codex", Effort: "low"}}, nil)
+// A chat prefilter on codex's own default model judges as the provider.
+func TestNewPrefilter_ChatOnCodexDefaultModel(t *testing.T) {
+	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "chat", LLMConfig: model.LLMConfig{Provider: "codex", Effort: "low"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:codex" {
-		t.Fatalf("judge %q: an empty codex model should judge as the provider, never as a Claude model", generate.Judge)
+	if chat.Judge != "chat:codex" {
+		t.Fatalf("judge %q: an empty codex model should judge as the provider, never as a Claude model", chat.Judge)
 	}
 }
 
@@ -84,7 +88,7 @@ func TestNewPrefilter_RetriesAfterTheDelayA429AsksFor(t *testing.T) {
 		_, _ = io.WriteString(w, `{"results":[{"index":0,"relevance_score":0.5}]}`)
 	}))
 	t.Cleanup(server.Close)
-	prefilter, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: model.PrefilterCohereRerank, LLMConfig: model.LLMConfig{Endpoint: server.URL, APIKeys: map[string]string{"opper": "k"}}}, nil)
+	prefilter, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: model.PrefilterCohere, LLMConfig: model.LLMConfig{Endpoint: server.URL, APIKeys: map[string]string{"opper": "k"}}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

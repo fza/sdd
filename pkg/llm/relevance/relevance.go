@@ -28,7 +28,7 @@ const (
 )
 
 // Candidate is one text to rate against the subject, named by the caller.
-// Line is its one-line form, kind, title and summary, which a listwise
+// Line is its one-line form, kind, title and summary, which a chat
 // scorer lists instead of Text.
 type Candidate struct {
 	ID   string

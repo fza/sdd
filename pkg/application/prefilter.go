@@ -43,12 +43,11 @@ type prefilterPass struct {
 // they reach verify.prefilter_from. Every candidate a call left
 // unanswered (provider down, deadline, unreadable answer) stays to judge
 // unscored, and the pass names it.
-func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8) (prefilterPass, error) {
+func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8) (prefilterPass, error) {
 	pass := prefilterPass{status: model.PrefilterOff, scores: map[string]uint8{}, fresh: map[string]uint8{}}
 	for id, score := range held {
 		pass.scores[id] = score
 	}
-	prefilter := runtime.options.Prefilter
 	switch {
 	case !policy.Prefilter:
 		return pass, nil

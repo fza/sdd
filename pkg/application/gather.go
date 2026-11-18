@@ -80,6 +80,9 @@ type GatherRequest struct {
 	// reading is the capture's reading, whose prefilter scores a later gather
 	// reuses instead of scoring again.
 	reading *model.Reading
+	// client is the session's MCP client, which picks the ranking judge
+	// (rankingJudge); empty for a reading without one.
+	client string
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -192,11 +195,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	candidates, setAside := model.GatherCandidates(graph, live, reads, opened, request.Answered)
 	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
-	ledger, thresholds, err := runtime.prefilterCalibration(ctx)
+	prefilter := runtime.rankingJudge(request.client)
+	judge := prefilter.Judge
+	ledger, thresholds, err := runtime.judgeCalibration(ctx, judge)
 	if err != nil {
 		return GatherResult{}, err
 	}
-	judge := runtime.options.Prefilter.Judge
 	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
@@ -208,7 +212,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		held, _ = request.reading.Scores(judge, model.RelevanceSubjectHash(subject))
 	}
 
-	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, split.Undecided, held)
+	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held)
 	if err != nil {
 		return GatherResult{}, err
 	}
@@ -267,7 +271,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Audit: audit}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Audit: audit}
 	}
 	return result, nil
 }

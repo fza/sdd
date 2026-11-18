@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
+	pkgrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -65,9 +67,16 @@ func (s usedRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
 	return s.FilesystemRelevanceStore.Segments(ctx)
 }
 
+// chatBatchSizes opens the batch sizes chat judges start at: machine state
+// beside the relevance ledgers, one file for every project, since a size is
+// the model's.
+func chatBatchSizes(stateRoot string) (*localadapter.FilesystemBatchSizes, error) {
+	return localadapter.NewFilesystemBatchSizes(filepath.Join(stateRoot, model.RelevanceDirName, "chat-batch-sizes.json"))
+}
+
 // projectPrefilter composes the prefilter verify.prefilter switches on;
 // the zero value while it is off. Its calls are recorded into sink.
-func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Prefilter, error) {
+func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink, sizes pkgrelevance.BatchSizes) (sdd.Prefilter, error) {
 	var base model.BaseConfig
 	if cfg != nil {
 		base = cfg.BaseConfig
@@ -75,18 +84,18 @@ func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Pref
 	if !base.Verify.GroundingPolicy().Prefilter {
 		return sdd.Prefilter{}, nil
 	}
-	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), sink)
+	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), sink, sizes)
 	if err != nil {
 		return sdd.Prefilter{}, err
 	}
 	return sdd.Prefilter{Scorer: prefilter.Scorer, Judge: prefilter.Judge}, nil
 }
 
-// projectRanking composes the deep reading's ranking: the Claude host's
+// projectRanking composes the ranking both readings share: the Claude host's
 // judge while verify.prefilter is on and llm_prefilter is unset
-// (model.BaseConfig.ClaudeHostRanking), and verify.ranking_timeout. Its
-// calls are recorded into sink.
-func projectRanking(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Ranking, error) {
+// (model.BaseConfig.ClaudeHostRanking), whether its claude CLI is on PATH,
+// and verify.ranking_timeout. Its calls are recorded into sink.
+func projectRanking(cfg *model.PerRepoConfig, sink pkgllm.StatsSink, sizes pkgrelevance.BatchSizes) (sdd.Ranking, error) {
 	var base model.BaseConfig
 	if cfg != nil {
 		base = cfg.BaseConfig
@@ -96,10 +105,12 @@ func projectRanking(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Rankin
 	if !base.Verify.GroundingPolicy().Prefilter || !ok {
 		return ranking, nil
 	}
-	judge, err := factory.NewPrefilter(host, sink)
+	judge, err := factory.NewPrefilter(host, sink, sizes)
 	if err != nil {
 		return sdd.Ranking{}, err
 	}
 	ranking.ClaudeHost = sdd.Prefilter{Scorer: judge.Scorer, Judge: judge.Judge}
+	_, err = exec.LookPath("claude")
+	ranking.ClaudeCLI = err == nil
 	return ranking, nil
 }

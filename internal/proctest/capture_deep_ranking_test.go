@@ -107,10 +107,57 @@ func TestCaptureDeep_AClaudeHostRanksWithItsJudgeFromAssembleOn(t *testing.T) {
 	}
 }
 
-// Under any other host, with the Claude host's judge set in place of a
-// configured prefilter, the reading has no judge: it ranks by similarity to
-// the draft, read from the search index as a search filled it, and its
-// header says so.
+// On a Claude host one judge reads both: gather's prefilter scores with the
+// host's judge too, not the configured prefilter's.
+func TestCaptureDeep_AClaudeHostGathersWithItsRankingJudge(t *testing.T) {
+	host := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	gather := &test.ScriptedScorer{}
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: gather, Judge: gatherJudge}),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: hostJudge}}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
+	gathered := session.Gather(t, instance)
+	if !strings.Contains(gathered.Text, "judge "+hostJudge+" scored ") {
+		t.Fatalf("gather's prefilter should score with the Claude host's judge:\n%s", gathered.Text)
+	}
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	proctest.RequireStep(t, serve, "deepDispatch")
+	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
+	if !strings.Contains(reading, "judge "+hostJudge) {
+		t.Fatalf("the reading's header should name the host's judge:\n%s", reading)
+	}
+	if len(gather.Scored()) != 0 {
+		t.Fatalf("gather's configured judge scored %v on a Claude host", gather.Scored())
+	}
+}
+
+// Under any other host both readings rank with the prefilter judge, never
+// with the Claude host's.
+func TestCaptureDeep_AnotherHostRanksWithThePrefilterJudge(t *testing.T) {
+	host := &test.ScriptedScorer{}
+	gather := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "zed-agent", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: gather, Judge: gatherJudge}),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: hostJudge}}))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
+
+	if len(host.Scored()) != 0 {
+		t.Fatalf("the Claude host's judge scored %v under another host", host.Scored())
+	}
+	if !strings.Contains(reading, "Ranking source: judge "+gatherJudge+", ") || !strings.Contains(reading, "ID: "+laneRelevant) {
+		t.Fatalf("the prefilter judge should rank the reading:\n%s", reading)
+	}
+}
+
+// Under any other host without a prefilter judge the reading ranks by
+// similarity to the draft, read from the search index as a search filled
+// it, and its header says so.
 func TestCaptureDeep_AnotherHostRanksBySimilarityWithoutAJudge(t *testing.T) {
 	host := &test.ScriptedScorer{}
 	world, session := newDeepWorld(t, "zed-agent", sdd.VerifierPolicy{}, proctest.WithEntries(kappaEntries()...),

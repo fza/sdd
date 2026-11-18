@@ -713,11 +713,15 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(llmConfig), memberEmbedder, memberRuneCap, cacheRoot)
 		}}
-	prefilter, err := projectPrefilter(cfg, statsSinkIn(served.sddDirOf))
+	sizes, err := chatBatchSizes(locations.StateRoot)
 	if err != nil {
 		return nil, err
 	}
-	ranking, err := projectRanking(cfg, statsSinkIn(served.sddDirOf))
+	prefilter, err := projectPrefilter(cfg, statsSinkIn(served.sddDirOf), sizes)
+	if err != nil {
+		return nil, err
+	}
+	ranking, err := projectRanking(cfg, statsSinkIn(served.sddDirOf), sizes)
 	if err != nil {
 		return nil, err
 	}

@@ -116,7 +116,7 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scored) != 1 || scored[0].Scored != 189 || scored[0].Requests != 1 || scorer.calls() != 1 {
+	if scored.Scored != 189 || scored.Requests != 1 || scorer.calls() != 1 {
 		t.Fatalf("rescore %+v after %d calls: one request should score the referencing entry's pairs", scored, scorer.calls())
 	}
 	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
@@ -135,10 +135,9 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	}
 }
 
-// The seed's rescore scores with the Claude host's ranking judge too, so its
-// ranking health is measured: a judge scoring the graph's own references
-// below the line is reported weak, in the state serve warns from and in the
-// status beside gather's judge.
+// A rescore naming the Claude host's judge measures its ranking health: a
+// judge scoring the graph's own references below the line is reported weak,
+// in the state serve warns from and in the status beside the ranking judge.
 func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	f := newGatherFixture(t)
 	subject := "20260201-000000-d-tac-sub"
@@ -164,12 +163,17 @@ func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	if _, err := application.SeedRefLabels(t.Context(), identity, gatherProject, sdd.RescoreRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
-	if err != nil {
-		t.Fatal(err)
+	for _, judge := range []string{"", "test:host"} {
+		scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{Judge: judge})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scored.Scored != model.RankingRecallMinimum {
+			t.Fatalf("rescore %+v: the judge should score every labelled pair", scored)
+		}
 	}
-	if len(scored) != 2 || scored[0].Judge != gatherJudge || scored[1].Judge != "test:host" || scored[1].Scored != model.RankingRecallMinimum || host.calls() != 1 {
-		t.Fatalf("rescore %+v: gather's judge and the Claude host's judge should each score every labelled pair", scored)
+	if host.calls() != 1 {
+		t.Fatalf("%d host calls: the host's judge should score once, when named", host.calls())
 	}
 	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
 	if err != nil {
@@ -182,7 +186,7 @@ func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"judge: " + gatherJudge, "the deep reading's ranking judge under a Claude host:\njudge: test:host", "ranking recall: 1.00 of 20", "ranking recall: 0.00 of 20 referenced labels score at or above 0.5, below the bar 0.90"} {
+	for _, want := range []string{"judge: " + gatherJudge, "ranking on a Claude host:\njudge: test:host", "ranking recall: 1.00 of 20", "ranking recall: 0.00 of 20 referenced labels score at or above 0.5, below the bar 0.90"} {
 		if !strings.Contains(status.Text, want) {
 			t.Errorf("status lacks %q:\n%s", want, status.Text)
 		}

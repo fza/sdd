@@ -124,7 +124,7 @@ const DefaultVerifierRoundTimeout = 10 * time.Minute
 const DefaultVerifierIdleTimeout = 10 * time.Minute
 
 // DefaultRankingTimeout bounds the deep reading's ranking pass while
-// verify.ranking_timeout is unset: a listwise judge's slowest measured call
+// verify.ranking_timeout is unset: a chat judge's slowest measured call
 // and one retry of it fit.
 const DefaultRankingTimeout = 45 * time.Second
 

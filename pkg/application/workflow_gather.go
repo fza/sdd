@@ -29,6 +29,11 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 	if repeats := w.repeats(); repeats != nil {
 		gather.Held, gather.Anchor = repeats.Held, repeats.Anchor
 	}
+	client, err := w.attachedClient(ctx)
+	if err != nil {
+		return GatherResult{}, err
+	}
+	gather.client = client
 	project := w.project
 	gather.Branch, gather.BranchFromSession = w.branch, w.branch != ""
 	if request.Instance != "" {

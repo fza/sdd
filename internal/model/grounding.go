@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Grounding defaults.
@@ -227,43 +229,74 @@ func readTag(read GroundingRead) string {
 type PrefilterProtocol string
 
 const (
-	PrefilterSystemOne    PrefilterProtocol = "systemone"
-	PrefilterCohereRerank PrefilterProtocol = "cohere-rerank"
-	PrefilterGenerate     PrefilterProtocol = "generate"
-	// PrefilterListwise has a chat model score a list of candidates against
-	// the draft in one call.
-	PrefilterListwise PrefilterProtocol = "listwise"
+	PrefilterSystemOne PrefilterProtocol = "systemone"
+	PrefilterCohere    PrefilterProtocol = "cohere"
+	// PrefilterChat has a chat model score a batch of candidates against the
+	// draft per call, halving the batch where an answer breaks.
+	PrefilterChat PrefilterProtocol = "chat"
 )
 
 func (PrefilterProtocol) AllowedValues() []string {
-	return closedValues(PrefilterSystemOne, PrefilterCohereRerank, PrefilterGenerate, PrefilterListwise)
+	return closedValues(PrefilterSystemOne, PrefilterCohere, PrefilterChat)
 }
 
-// The deep reading's ranking judge under a Claude host while llm_prefilter
-// is unset: Haiku listwise through the claude CLI, at the lowest effort it
-// takes, since its thinking cannot be switched off.
+// legacyProtocols are the protocol names a former sdd wrote, by the one each
+// reads as now.
+var legacyProtocols = map[string]PrefilterProtocol{
+	"cohere-rerank": PrefilterCohere,
+	"generate":      PrefilterChat,
+	"listwise":      PrefilterChat,
+}
+
+// UnmarshalYAML reads a legacy protocol name as the protocol it became.
+func (p *PrefilterProtocol) UnmarshalYAML(node *yaml.Node) error {
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	*p = PrefilterProtocol(value)
+	if current, ok := legacyProtocols[value]; ok {
+		*p = current
+	}
+	return nil
+}
+
+// CanonicalJudge is the name a stored judge reads as: a judge named by a
+// legacy protocol is the same model under the protocol it became, so its
+// scores and drift steps keep counting.
+func CanonicalJudge(judge string) string {
+	protocol, model, ok := strings.Cut(judge, ":")
+	if current, legacy := legacyProtocols[protocol]; ok && legacy {
+		return string(current) + ":" + model
+	}
+	return judge
+}
+
+// The ranking judge on a Claude host while llm_prefilter is unset: Haiku
+// through the claude CLI, at the lowest effort it takes, since its thinking
+// cannot be switched off.
 const (
 	DefaultRankingModel  = "claude-haiku-5-5"
 	DefaultRankingEffort = "low"
 )
 
-// ClaudeHostRanking is the prefilter block the deep reading ranks with when
-// the MCP client is a Claude host (ClaudeClient), on the llm block's claude
-// CLI credentials. False once llm_prefilter sets any value: then the
-// configured prefilter ranks, whatever the host.
+// ClaudeHostRanking is the prefilter block both readings rank with on a
+// Claude host (ClaudeClient), on the llm block's claude CLI credentials.
+// False once llm_prefilter sets any value: then the configured prefilter
+// ranks, whatever the host.
 func (b BaseConfig) ClaudeHostRanking() (LLMPrefilterConfig, bool) {
 	if !reflect.ValueOf(b.LLMPrefilter).IsZero() {
 		return LLMPrefilterConfig{}, false
 	}
-	return LLMPrefilterConfig{Protocol: PrefilterListwise, LLMConfig: LLMConfig{
+	return LLMPrefilterConfig{Protocol: PrefilterChat, LLMConfig: LLMConfig{
 		Provider: DefaultLLMProvider, Model: DefaultRankingModel, Effort: DefaultRankingEffort, ClaudeCLI: b.LLM.ClaudeCLI,
 	}}, true
 }
 
 // LLMPrefilterConfig is the `llm_prefilter` block: the shape of `llm` plus
-// the protocol that rates relevance. For systemone and cohere-rerank,
-// Provider names the API key's entry in api_keys (default opper); for
-// generate, Provider and Model select the chat model as in `llm`.
+// the protocol that rates relevance. For systemone and cohere, Provider
+// names the API key's entry in api_keys (default opper); for chat, Provider
+// and Model select the chat model as in `llm`.
 type LLMPrefilterConfig struct {
 	Protocol  PrefilterProtocol `yaml:"protocol,omitempty"`
 	LLMConfig `yaml:",inline"`
@@ -274,15 +307,15 @@ type LLMPrefilterConfig struct {
 const DefaultPrefilterEffort = "low"
 
 // ResolvedPrefilter is the prefilter block as it runs: without a protocol,
-// generate; under generate, the llm block's provider, model and connection at
+// chat; under chat, the llm block's provider, model and connection at
 // DefaultPrefilterEffort, each value llm_prefilter sets winning. The other
 // protocols take the block as set.
 func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
 	out := b.LLMPrefilter
 	if out.Protocol == "" {
-		out.Protocol = PrefilterGenerate
+		out.Protocol = PrefilterChat
 	}
-	if out.Protocol != PrefilterGenerate {
+	if out.Protocol != PrefilterChat {
 		return out
 	}
 	base := LLMConfig{

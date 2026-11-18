@@ -13,27 +13,27 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// Ranking configures the deep verifier's ranking judge. ClaudeHost, when
-// set, ranks the reading of a session whose MCP client is a Claude host
-// (model.ClaudeClient) in place of Prefilter, and leaves any other host's
-// reading without a judge. Timeout bounds a ranking pass from its start;
-// zero means model.DefaultRankingTimeout.
+// Ranking configures the one ranking judge both readings of a capture use:
+// gather's prefilter and the deep verifier's reading. ClaudeHost, when set,
+// ranks in place of Prefilter for a session whose MCP client is a Claude host
+// (model.ClaudeClient), and, while ClaudeCLI reports its claude CLI
+// installed, for a reading without a client. Timeout bounds a deep ranking
+// pass from its start; zero means model.DefaultRankingTimeout.
 type Ranking struct {
 	ClaudeHost Prefilter
+	ClaudeCLI  bool
 	Timeout    time.Duration
 }
 
-// rankingJudge is the judge the deep reading of a session under the MCP
-// client clientName ranks with; a nil Scorer for none.
+// rankingJudge is the judge both readings of a session under the MCP client
+// clientName rank with, the empty name for a reading without a client; a nil
+// Scorer for none.
 func (r *ProjectRuntime) rankingJudge(clientName string) Prefilter {
 	host := r.options.Ranking.ClaudeHost
-	if host.Scorer == nil {
-		return r.options.Prefilter
-	}
-	if model.ClaudeClient(clientName) {
+	if host.Scorer != nil && (model.ClaudeClient(clientName) || clientName == "" && r.options.Ranking.ClaudeCLI) {
 		return host
 	}
-	return Prefilter{}
+	return r.options.Prefilter
 }
 
 func (r *ProjectRuntime) rankingTimeout() time.Duration {

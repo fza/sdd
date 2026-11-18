@@ -95,57 +95,6 @@ func TestPlan(t *testing.T) {
 	}
 }
 
-func TestPerItem_FansABatchOutOneCandidatePerCall(t *testing.T) {
-	inner := &fixedScorer{maxBatch: 1, maxPair: 5}
-	scorer := relevance.PerItem(inner, 4)
-	if scorer.MaxBatch() != 1 || scorer.MaxPairTokens() != 5 {
-		t.Fatal("a per-item scorer should plan each candidate into a call of its own and keep the pair window")
-	}
-	result, err := scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a", "bb", "ccc")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(inner.requests) != 3 {
-		t.Fatalf("%d inner calls: each candidate should get its own", len(inner.requests))
-	}
-	for _, request := range inner.requests {
-		if len(request.Candidates) != 1 || request.Subject != "s" {
-			t.Fatalf("inner request %+v should hold the subject and one candidate", request)
-		}
-	}
-	if !reflect.DeepEqual(result.Scores, []float64{0.01, 0.02, 0.03}) {
-		t.Fatalf("scores %v should keep request order", result.Scores)
-	}
-	if result.Usage.InputTokens != 30 || result.Usage.CostUSD != 1.5 {
-		t.Fatalf("usage %+v should sum every call", result.Usage)
-	}
-
-	failing := relevance.PerItem(&fixedScorer{err: errors.New("down")}, 2)
-	if _, err := failing.Score(t.Context(), relevance.Request{Candidates: candidates("a", "b")}); err == nil {
-		t.Fatal("a failed call should fail the batch")
-	}
-}
-
-func TestPerItem_HoldsItsConcurrencyAcrossCalls(t *testing.T) {
-	inner := &fixedScorer{maxBatch: 1, entered: make(chan struct{}, 8), release: make(chan struct{})}
-	scorer := relevance.PerItem(inner, 2)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			_, _ = scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a")})
-		})
-	}
-	<-inner.entered
-	<-inner.entered
-	select {
-	case <-inner.entered:
-		t.Error("calls of their own should share the per-item concurrency")
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(inner.release)
-	wg.Wait()
-}
-
 func TestBounded_EndsACallAtItsDeadline(t *testing.T) {
 	scorer := relevance.Bounded(&fixedScorer{block: true, maxBatch: 3, maxTokens: 9, maxPair: 5}, 10*time.Millisecond)
 	if scorer.MaxBatch() != 3 || scorer.MaxInputTokens() != 9 || scorer.MaxPairTokens() != 5 {
@@ -320,23 +269,4 @@ func TestLimited_HoldsTheCallsInFlight(t *testing.T) {
 	}
 	close(inner.release)
 	wg.Wait()
-}
-
-// RetriedOnce calls once more after any failure while its context lives,
-// and never a third time.
-func TestRetriedOnce(t *testing.T) {
-	once := &failingOnce{err: errors.New("malformed")}
-	if _, err := relevance.RetriedOnce(once).Score(t.Context(), relevance.Request{Candidates: candidates("a")}); err != nil || once.calls != 2 {
-		t.Fatalf("%d calls, error %v: a failed call should be retried once", once.calls, err)
-	}
-	down := &fixedScorer{err: errors.New("down")}
-	if _, err := relevance.RetriedOnce(down).Score(t.Context(), relevance.Request{Candidates: candidates("a")}); err == nil || len(down.requests) != 2 {
-		t.Fatalf("%d calls, error %v: a second failure should end the call", len(down.requests), err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	ended := &failingOnce{err: errors.New("cancelled")}
-	if _, err := relevance.RetriedOnce(ended).Score(ctx, relevance.Request{Candidates: candidates("a")}); err == nil || ended.calls != 1 {
-		t.Fatalf("%d calls, error %v: an ended context should not be retried", ended.calls, err)
-	}
 }

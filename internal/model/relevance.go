@@ -342,12 +342,13 @@ func (l *RelevanceLedger) Add(batch RelevanceBatch) {
 			byJudge = map[judgeDirection]uint8{}
 			l.scores[record.Pair] = byJudge
 		}
-		key := judgeDirection{record.Score.Judge, record.Score.Direction}
+		key := judgeDirection{CanonicalJudge(record.Score.Judge), record.Score.Direction}
 		if current, ok := byJudge[key]; !ok || record.Score.Score > current {
 			byJudge[key] = record.Score.Score
 		}
 	}
 	for _, step := range batch.Steps {
+		step.Judge = CanonicalJudge(step.Judge)
 		if !slices.ContainsFunc(l.steps, func(s DriftStep) bool { return compareDriftSteps(s, step) == 0 }) {
 			l.steps = append(l.steps, step)
 		}

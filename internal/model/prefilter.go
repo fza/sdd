@@ -73,10 +73,11 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	if r.scores == nil {
 		r.scores = map[string]*readingScores{}
 	}
-	held := r.scores[p.Judge]
+	judge := CanonicalJudge(p.Judge)
+	held := r.scores[judge]
 	if held == nil || held.subject != p.Subject {
 		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}}
-		r.scores[p.Judge] = held
+		r.scores[judge] = held
 	}
 	if r.audit == nil {
 		r.audit = map[string]bool{}
@@ -341,7 +342,7 @@ func RelevanceText(kind string, topics []string, title, body string) string {
 	return b.String()
 }
 
-// EntryRankingLine is the one line a listwise judge reads of an entry:
+// EntryRankingLine is the one line a chat judge reads of an entry:
 // [type/kind], then title and summary, the summary alone for an untitled
 // entry, the first sentence of the body for one without a summary.
 func EntryRankingLine(e *Entry) string {

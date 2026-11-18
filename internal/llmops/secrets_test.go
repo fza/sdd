@@ -59,11 +59,11 @@ func TestOperationsMarkTheDraftAsNew(t *testing.T) {
 			return err
 		}},
 		{name: "relevance", where: "the draft", run: func(r llm.Runner) error {
-			bridge, err := llmops.NewRelevanceBridge(r)
+			judge, err := llmops.NewChatJudge(r)
 			if err != nil {
 				return err
 			}
-			_, err = bridge.Score(t.Context(), relevance.Request{Subject: entry.Content, Candidates: []relevance.Candidate{{ID: "a", Text: "A stored entry."}}})
+			_, err = judge.Score(t.Context(), relevance.Request{Subject: entry.Content, Candidates: []relevance.Candidate{{ID: "a", Text: "A stored entry."}}})
 			return err
 		}},
 	}

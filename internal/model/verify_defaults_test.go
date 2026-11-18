@@ -87,21 +87,21 @@ func TestLLMConfig_ResolvedModel(t *testing.T) {
 	}
 }
 
-// Without an llm_prefilter block the prefilter runs generate on the llm
+// Without an llm_prefilter block the prefilter runs chat on the llm
 // provider and model at effort low; every value llm_prefilter sets wins.
 func TestResolvedPrefilter(t *testing.T) {
 	llm := model.LLMConfig{Provider: "codex", Model: "gpt-5.5", Effort: "high", Timeout: "5m", Concurrency: 2, APIKeys: map[string]string{"openai": "k"}}
 
 	derived := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
-	if derived.Protocol != model.PrefilterGenerate || derived.Provider != "codex" || derived.Model != "gpt-5.5" || derived.Effort != "low" {
-		t.Errorf("no block should derive generate on the llm provider and model at low, got %+v", derived)
+	if derived.Protocol != model.PrefilterChat || derived.Provider != "codex" || derived.Model != "gpt-5.5" || derived.Effort != "low" {
+		t.Errorf("no block should derive chat on the llm provider and model at low, got %+v", derived)
 	}
 	if derived.Timeout != "" || derived.Concurrency != 0 || derived.APIKeys["openai"] != "k" {
 		t.Errorf("the derived block should keep the prefilter's own bounds and the llm connection, got %+v", derived)
 	}
 
 	set := model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Model: "gpt-mini", Effort: "minimal"}}}.ResolvedPrefilter()
-	if set.Protocol != model.PrefilterGenerate || set.Provider != "codex" || set.Model != "gpt-mini" || set.Effort != "minimal" {
+	if set.Protocol != model.PrefilterChat || set.Provider != "codex" || set.Model != "gpt-mini" || set.Effort != "minimal" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
 	}
 
@@ -112,20 +112,20 @@ func TestResolvedPrefilter(t *testing.T) {
 }
 
 // Without an llm_prefilter block the deep reading under a Claude host ranks
-// with Haiku listwise through the claude CLI at effort low, on the llm
+// with Haiku chat through the claude CLI at effort low, on the llm
 // block's credentials; any llm_prefilter value leaves ranking to the
 // configured prefilter.
 func TestClaudeHostRanking(t *testing.T) {
 	llm := model.LLMConfig{Provider: "codex", Model: "gpt-5.5", ClaudeCLI: model.ClaudeCLIConfig{Credentials: model.ClaudeCLICredentialsEnv}}
 	ranking, ok := model.BaseConfig{LLM: llm}.ClaudeHostRanking()
-	if !ok || ranking.Protocol != model.PrefilterListwise || ranking.Provider != "claude-cli" || ranking.Model != "claude-haiku-5-5" || ranking.Effort != "low" {
-		t.Fatalf("no block should rank with Haiku listwise on the claude CLI at low, got %+v, %v", ranking, ok)
+	if !ok || ranking.Protocol != model.PrefilterChat || ranking.Provider != "claude-cli" || ranking.Model != "claude-haiku-5-5" || ranking.Effort != "low" {
+		t.Fatalf("no block should rank with Haiku chat on the claude CLI at low, got %+v, %v", ranking, ok)
 	}
 	if ranking.ClaudeCLI.Credentials != model.ClaudeCLICredentialsEnv {
 		t.Errorf("the ranking judge should take the llm block's claude CLI credentials, got %q", ranking.ClaudeCLI.Credentials)
 	}
 	for name, block := range map[string]model.LLMPrefilterConfig{
-		"protocol": {Protocol: model.PrefilterGenerate},
+		"protocol": {Protocol: model.PrefilterChat},
 		"model":    {LLMConfig: model.LLMConfig{Model: "haiku"}},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -214,10 +214,10 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 	}
 }
 
-// A one-pair scorer fanned out per candidate, as the generate protocol
-// composes it, rates each candidate in a call of its own: a failed or slow
+// A scorer taking one pair per call, as chat does at the end of its
+// halving, rates each candidate in a call of its own: a failed or slow
 // call costs only its candidate, under a deadline of its own.
-func TestGather_PerItemPrefilterLosesOnlyTheLostCall(t *testing.T) {
+func TestGather_OnePairCallsLoseOnlyTheLostCall(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		fail map[string]bool
@@ -230,7 +230,7 @@ func TestGather_PerItemPrefilterLosesOnlyTheLostCall(t *testing.T) {
 			inner := &scriptedScorer{fail: tc.fail, slow: tc.slow, maxBatch: 1, scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.0}}
 			f := newGatherFixture(t)
 			f.seed(t)
-			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(llmrelevance.PerItem(inner, 4), 200*time.Millisecond), Judge: gatherJudge}
+			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(inner, 200*time.Millisecond), Judge: gatherJudge}
 			f.relevance = calibratedLedger(t)
 			application := f.app(t, prefilterPolicy(1), nil)
 			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
@@ -363,7 +363,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 || result[0].Scored != 189 || scorer.calls() != 1 {
+	if result.Scored != 189 || scorer.calls() != 1 {
 		t.Fatalf("result %+v after %d calls: one pass should score every labelled pair", result, scorer.calls())
 	}
 	if !strings.Contains(scorer.requests[0].Subject, "The subject decision.") {

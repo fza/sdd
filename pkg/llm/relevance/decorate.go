@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
 	"github.com/networkteam/sdd/pkg/llm"
@@ -104,18 +103,6 @@ func RetriedAfterDelay(s Scorer, maxWait time.Duration) Scorer {
 	}}
 }
 
-// RetriedOnce calls once more after any failure while ctx lives: a listwise
-// call that breaks its answer seldom breaks it twice.
-func RetriedOnce(s Scorer) Scorer {
-	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
-		result, err := s.Score(ctx, request)
-		if err == nil || ctx.Err() != nil {
-			return result, err
-		}
-		return s.Score(ctx, request)
-	}}
-}
-
 // Limited holds at most n calls in flight across every request, at least
 // one.
 func Limited(s Scorer, n int) Scorer {
@@ -154,66 +141,4 @@ func Observed(s Scorer, sink llm.StatsSink) Scorer {
 		sink.RecordCall(ctx, stat)
 		return result, err
 	}}
-}
-
-// PerItem fans a one-pair scorer out: each candidate goes in its own call, at
-// most concurrency at once across every request. It keeps the inner
-// MaxBatch, so Plan gives each candidate its own call and the decorators
-// around PerItem act per call. A request of several candidates fails on the
-// first failed call; its usage sums every call's.
-func PerItem(s Scorer, concurrency int) Scorer {
-	concurrency = max(concurrency, 1)
-	return perItem{inner: s, concurrency: concurrency, slots: make(chan struct{}, concurrency)}
-}
-
-type perItem struct {
-	inner       Scorer
-	concurrency int
-	slots       chan struct{}
-}
-
-func (p perItem) Direction() Direction { return p.inner.Direction() }
-func (p perItem) MaxBatch() int        { return p.inner.MaxBatch() }
-func (p perItem) MaxInputTokens() int  { return p.inner.MaxInputTokens() }
-func (p perItem) MaxPairTokens() int   { return p.inner.MaxPairTokens() }
-
-func (p perItem) Score(ctx context.Context, request Request) (Result, error) {
-	results := make([]Result, len(request.Candidates))
-	group, ctx := errgroup.WithContext(ctx)
-	group.SetLimit(p.concurrency)
-	for i, candidate := range request.Candidates {
-		group.Go(func() error {
-			select {
-			case p.slots <- struct{}{}:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			defer func() { <-p.slots }()
-			one := Request{Subject: request.Subject, Candidates: []Candidate{candidate}}
-			result, err := p.inner.Score(ctx, one)
-			if err != nil {
-				return err
-			}
-			if err := CheckResult(one, result); err != nil {
-				return err
-			}
-			results[i] = result
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return Result{}, err
-	}
-	out := Result{Scores: make([]float64, len(results))}
-	for i, result := range results {
-		out.Scores[i] = result.Scores[0]
-		out.Identity = result.Identity
-		out.Usage.InputTokens += result.Usage.InputTokens
-		out.Usage.OutputTokens += result.Usage.OutputTokens
-		out.Usage.CacheReadTokens += result.Usage.CacheReadTokens
-		out.Usage.CacheCreateTokens += result.Usage.CacheCreateTokens
-		out.Usage.ReasoningTokens += result.Usage.ReasoningTokens
-		out.Usage.CostUSD += result.Usage.CostUSD
-	}
-	return out, nil
 }
