@@ -8,51 +8,93 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
+	"github.com/networkteam/sdd/pkg/local"
 )
 
-const relevanceLines = `{"type":"reader","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","code":"dismissed","reason":"term-clash"}
-{"type":"score","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","judge":"systemone:jev-1.14.0","direction":"both","score":17}
-`
+const (
+	relevanceCandidate = "20261101-120000-s-tac-aaa"
+	relevanceSubject   = "20261109-004506-d-cpt-udz"
+)
+
+// liveRelevance is a live reader verdict and a score of one pair.
+func liveRelevance() model.RelevanceBatch {
+	pair := model.NewRelevancePair(relevanceCandidate, relevanceSubject)
+	return model.RelevanceBatch{
+		Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}}},
+		Scores:  []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: "systemone:jev-1.14.0", Score: 17}}},
+	}
+}
+
+// appendLedger appends batches to the machine-state ledger of the fixture's
+// project, one segment each.
+func appendLedger(t *testing.T, f *appFixture, batches ...model.RelevanceBatch) string {
+	t.Helper()
+	dir := filepath.Join(f.root, "state", "sdd", "relevance", "example.test", "cli")
+	store, err := local.NewFilesystemRelevanceStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, batch := range batches {
+		if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
 
 func TestRelevance_LivesOnlyInMachineState(t *testing.T) {
 	cases := []struct {
-		name      string
-		config    string
-		committed string
-		state     string
+		name   string
+		config string
 	}{
-		{"without a relevance block", "", "", "ledger"},
-		{"with the retired relevance block", "relevance:\n  commit: true\n  content: reader\n", "", "ledger"},
+		{"without a relevance block", ""},
+		{"with the retired relevance block", "relevance:\n  commit: true\n  content: reader\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAppFixture(t)
 			f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n"+tc.config)
-			f.write(t, "in.jsonl", relevanceLines)
-			imported := f.run(t, "relevance", "import", "in.jsonl")
-			if imported.err != nil || !strings.Contains(imported.stdout, "Imported 2 records") {
-				t.Fatalf("import = %q, %v\n%s", imported.stdout, imported.err, imported.stderr)
-			}
-			committed := ledgerRecords(t, filepath.Join(f.root, ".sdd", "relevance"))
-			state := ledgerRecords(t, filepath.Join(f.root, "state", "sdd", "relevance", "example.test", "cli"))
-			if committed != tc.committed || state != tc.state {
-				t.Fatalf("committed holds %q, machine state %q", committed, state)
-			}
-			exported := f.run(t, "relevance", "export")
-			if exported.err != nil || exported.stdout != relevanceLines {
-				t.Fatalf("export = %q, %v: every layout should give back what it took", exported.stdout, exported.err)
-			}
+			live := liveRelevance()
+			state := appendLedger(t, f, model.RelevanceBatch{Readers: live.Readers}, model.RelevanceBatch{Scores: live.Scores})
 			compacted := f.run(t, "relevance", "compact")
 			if compacted.err != nil || !strings.Contains(compacted.stdout, "Compacted") {
 				t.Fatalf("compact = %q, %v", compacted.stdout, compacted.err)
+			}
+			committed := ledgerRecords(t, filepath.Join(f.root, ".sdd", "relevance"))
+			if committed != "" || ledgerRecords(t, state) != "ledger" || segmentCount(t, state) != 1 {
+				t.Fatalf("committed holds %q, machine state %q in %d segments: compact should merge the machine-state ledger alone", committed, ledgerRecords(t, state), segmentCount(t, state))
 			}
 		})
 	}
 }
 
+func segmentCount(t *testing.T, dir string) int {
+	t.Helper()
+	segments, err := filepath.Glob(filepath.Join(dir, "*.seg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(segments)
+}
+
 // ledgerRecords names what the segments under the glob dir hold: nothing,
 // reader verdicts, scores, or the whole ledger.
 func ledgerRecords(t *testing.T, dir string) string {
+	t.Helper()
+	batch := ledgerBatch(t, dir)
+	switch {
+	case len(batch.Readers) > 0 && len(batch.Scores) > 0:
+		return "ledger"
+	case len(batch.Readers) > 0:
+		return "reader"
+	case len(batch.Scores) > 0:
+		return "scores"
+	}
+	return ""
+}
+
+// ledgerBatch is every record the segments under dir hold.
+func ledgerBatch(t *testing.T, dir string) model.RelevanceBatch {
 	t.Helper()
 	segments, err := filepath.Glob(filepath.Join(dir, "*.seg"))
 	if err != nil {
@@ -71,54 +113,32 @@ func ledgerRecords(t *testing.T, dir string) string {
 		batch.Readers = append(batch.Readers, read.Readers...)
 		batch.Scores = append(batch.Scores, read.Scores...)
 	}
-	switch {
-	case len(batch.Readers) > 0 && len(batch.Scores) > 0:
-		return "ledger"
-	case len(batch.Readers) > 0:
-		return "reader"
-	case len(batch.Scores) > 0:
-		return "scores"
-	}
-	return ""
-}
-
-func TestGroundingSeed_AppendsReplayedLabelsOnce(t *testing.T) {
-	f := newAppFixture(t)
-	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
-	f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261101-120000-s-tac-aaa"}`+"\n")
-
-	first := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
-	if first.err != nil || !strings.Contains(first.stdout, "Seeded 1 replayed reference labels; 0 pairs already labelled") {
-		t.Fatalf("seed = %q, %v\n%s", first.stdout, first.err, first.stderr)
-	}
-	again := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
-	if again.err != nil || !strings.Contains(again.stdout, "Seeded 0 replayed reference labels; 1 pairs already labelled") {
-		t.Fatalf("second seed = %q, %v: a repeated file should add nothing", again.stdout, again.err)
-	}
-	exported := f.run(t, "relevance", "export")
-	want := `{"type":"reader","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","code":"referenced","source":"replay"}` + "\n"
-	if exported.err != nil || exported.stdout != want {
-		t.Fatalf("export = %q, %v: want one replayed reference", exported.stdout, exported.err)
-	}
+	return batch
 }
 
 func TestRelevanceCompact_DropsAReplaySeed(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
-	f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261102-120000-s-tac-bbb"}`+"\n")
-	f.write(t, "in.jsonl", relevanceLines)
-	for _, args := range [][]string{{"relevance", "import", "in.jsonl"}, {"grounding", "seed", "--from", "pairs.jsonl"}} {
-		if result := f.run(t, args...); result.err != nil {
-			t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
-		}
-	}
+	seed := model.RelevanceBatch{Readers: []model.ReaderRecord{{Pair: model.NewRelevancePair("20261102-120000-s-tac-bbb", relevanceSubject), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay}}}}
+	state := appendLedger(t, f, liveRelevance(), seed)
 	dropped := f.run(t, "relevance", "compact", "--drop-replay")
 	if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replayed labels") {
 		t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
 	}
-	exported := f.run(t, "relevance", "export")
-	if exported.err != nil || exported.stdout != relevanceLines {
-		t.Fatalf("export = %q, %v: the seed should be gone and the live records kept", exported.stdout, exported.err)
+	if got, want := ledgerBatch(t, state), liveRelevance(); len(got.Readers) != 1 || got.Readers[0] != want.Readers[0] || len(got.Scores) != 1 || got.Scores[0] != want.Scores[0] {
+		t.Fatalf("ledger %+v: the seed should be gone and the live records kept", got)
+	}
+}
+
+// The CLI neither imports nor exports labels: that stays a development
+// script's job.
+func TestRelevance_OffersNoLabelImportOrExport(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	for _, args := range [][]string{{"relevance", "export"}, {"relevance", "import", "-"}, {"grounding", "seed", "--from", "-"}, {"grounding", "rescore"}} {
+		if result := f.run(t, args...); result.err == nil {
+			t.Errorf("sdd %v should be unknown, got:\n%s", args, result.stdout)
+		}
 	}
 }
 

@@ -330,7 +330,7 @@ func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
 
 // A judge change computes its recall bound from the stored labelled pairs once
 // the new judge has scored them.
-func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
+func TestUpdateGrounding_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	f := newGatherFixture(t)
 	var batch model.RelevanceBatch
 	subject := "20260201-000000-d-tac-sub"
@@ -359,11 +359,11 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	if !strings.Contains(before.Text, "unscored: 189 labelled pairs") || !strings.Contains(before.Text, "thresholds: none yet") {
 		t.Fatalf("a new judge should start without thresholds and name the unscored pairs:\n%s", before.Text)
 	}
-	result, err := application.RescoreRelevance(t.Context(), identity, gatherProject, sdd.RescoreRequest{})
+	updated, err := application.UpdateGrounding(t.Context(), identity, gatherProject, sdd.GroundingUpdateRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Scored != 189 || scorer.calls() != 1 {
+	if result := updated.Scored; result.Scored != 189 || scorer.calls() != 1 {
 		t.Fatalf("result %+v after %d calls: one pass should score every labelled pair", result, scorer.calls())
 	}
 	if !strings.Contains(scorer.requests[0].Subject, "The subject decision.") {

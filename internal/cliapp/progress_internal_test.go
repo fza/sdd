@@ -18,7 +18,7 @@ import (
 // A rescore with no pair to score shows no bar; one with pairs counts them
 // under a phase named for its judge, and its failed pairs in the note.
 func TestRescoreProgressCountsPairs(t *testing.T) {
-	request := &sdd.RescoreRequest{}
+	request := &sdd.GroundingUpdateRequest{}
 	reporter := newRescoreProgress(request)
 	request.OnProgress(sdd.RescoreProgress{Judge: "chat:m"})
 	if snap, ok := reporter.Recv(); !ok || snap.Phase != "" {

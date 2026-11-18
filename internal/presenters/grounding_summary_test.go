@@ -25,7 +25,7 @@ func TestRenderGroundingSummary_Uncalibrated(t *testing.T) {
 		"drift:   none · lowers the threshold when audited entries keep turning out relevant (more than 2% of the window)\n" +
 		"judge:   chat:claude-haiku-5-5 (default on a Claude host; `llm_prefilter` would replace it)\n" +
 		"         2,412 pairs unscored · recall bound 0.00 of the 0.98 needed (~188 referenced pairs) · no threshold yet\n" +
-		"         uncalibrated: run `sdd grounding seed --from-refs`\n"
+		"         uncalibrated: run `sdd grounding update`\n"
 	if out.String() != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
 	}

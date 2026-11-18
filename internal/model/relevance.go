@@ -355,6 +355,17 @@ func (l *RelevanceLedger) Add(batch RelevanceBatch) {
 	}
 }
 
+// ReplaceScores joins batch's scores in place of those their judges hold
+// for the same pairs, in either direction, so a new score stands even below
+// the old one Add would keep.
+func (l *RelevanceLedger) ReplaceScores(batch RelevanceBatch) {
+	for _, record := range batch.Scores {
+		judge := CanonicalJudge(record.Score.Judge)
+		maps.DeleteFunc(l.scores[record.Pair], func(key judgeDirection, _ uint8) bool { return key.judge == judge })
+	}
+	l.Add(RelevanceBatch{Scores: batch.Scores})
+}
+
 // Reader returns the reader record of a pair.
 func (l *RelevanceLedger) Reader(pair RelevancePair) (ReaderVerdict, bool) {
 	v, ok := l.readers[pair]

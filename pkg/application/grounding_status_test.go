@@ -75,7 +75,7 @@ func TestGroundingStatus_ShowsTheFlipRate(t *testing.T) {
 }
 
 // The default status reports the one ranking judge of a command without a
-// client and where it comes from; --verbose reports every judge.
+// client and where it comes from; --verbose reports that judge alone.
 func TestGroundingStatus_ReportsTheRankingJudgeAndItsOrigin(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -83,7 +83,7 @@ func TestGroundingStatus_ReportsTheRankingJudgeAndItsOrigin(t *testing.T) {
 		claudeCLI bool
 		want      string
 	}{
-		{name: "Claude host default", host: true, claudeCLI: true, want: "judge:   " + rescoreHost + " (default on a Claude host; `llm_prefilter` would replace it)\n"},
+		{name: "Claude host default", host: true, claudeCLI: true, want: "judge:   " + updateHost + " (default on a Claude host; `llm_prefilter` would replace it)\n"},
 		{name: "llm provider default", host: true, want: "judge:   " + gatherJudge + " (default on the `llm` provider; `llm_prefilter` would replace it)\n"},
 		{name: "configured", want: "judge:   " + gatherJudge + " (set by `llm_prefilter`)\n"},
 	} {
@@ -91,7 +91,7 @@ func TestGroundingStatus_ReportsTheRankingJudgeAndItsOrigin(t *testing.T) {
 			f := prefilterFixture(t, &scriptedScorer{})
 			f.relevance = localadapter.NewMemoryRelevanceStore()
 			if tc.host {
-				f.ranking = sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: &scriptedScorer{}, Judge: rescoreHost}, ClaudeCLI: tc.claudeCLI}
+				f.ranking = sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: &scriptedScorer{}, Judge: updateHost}, ClaudeCLI: tc.claudeCLI}
 			}
 			application := f.app(t, prefilterPolicy(1), nil)
 			identity := sdd.RequestIdentity{Subject: "tester"}
@@ -107,8 +107,12 @@ func TestGroundingStatus_ReportsTheRankingJudgeAndItsOrigin(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(verbose.Text, "judge: "+rescoreHost+"\n") || !strings.Contains(verbose.Text, "judge: "+gatherJudge+"\n") {
-					t.Fatalf("--verbose should report every judge:\n%s", verbose.Text)
+				ranking, other := gatherJudge, updateHost
+				if tc.claudeCLI {
+					ranking, other = updateHost, gatherJudge
+				}
+				if !strings.Contains(verbose.Text, "judge: "+ranking+"\n") || strings.Contains(verbose.Text, other) {
+					t.Fatalf("--verbose should report the ranking judge %s alone:\n%s", ranking, verbose.Text)
 				}
 			}
 		})

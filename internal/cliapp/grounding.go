@@ -3,7 +3,6 @@ package cliapp
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -17,14 +16,14 @@ import (
 func groundingCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "grounding",
-		Usage: "Inspect the grounding prefilter's calibration",
+		Usage: "Inspect and update the grounding prefilter's calibration",
 		Commands: []*cli.Command{
 			{
 				Name:  "status",
 				Usage: "Show the labels, the audit and drift state and the ranking judge's calibration",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "exclude-replay", Usage: "Calibrate on the labels of live captures alone, leaving out those seeded from replayed ones"},
-					&cli.BoolFlag{Name: "verbose", Usage: "Show each judge's full calibration: label weights and kinds, thresholds, ranking recall, drift steps, opened hidden entries and precision per reason code"},
+					&cli.BoolFlag{Name: "verbose", Usage: "Show the ranking judge's full calibration: label weights and kinds, thresholds, ranking recall, drift steps, opened hidden entries and precision per reason code"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					application, project, identity, err := workingApplication(ctx, cmd)
@@ -40,99 +39,45 @@ func groundingCmd() *cli.Command {
 				},
 			},
 			{
-				Name:  "rescore",
-				Usage: "Have the ranking judge score each labelled pair it has not scored, after a judge change",
-				Flags: []cli.Flag{judgeFlag()},
+				Name:  "update",
+				Usage: "Label each entry with every entry it refs, closes or supersedes, then have the ranking judge score the labelled pairs it has not scored, one request per referencing entry",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "force", Usage: "Score every labelled pair again, replacing the ranking judge's scores"},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					application, project, identity, err := workingApplication(ctx, cmd)
 					if err != nil {
 						return err
 					}
-					return rescore(ctx, cmd, application, project, identity)
-				},
-			},
-			{
-				Name:  "seed",
-				Usage: "Append a replayed reference label for each pair a JSON Lines file names as {\"a\": ID, \"b\": ID}, or for each pair of the graph's own references, skipping pairs already labelled",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "from", Usage: "the JSON Lines file, or - for standard input"},
-					&cli.BoolFlag{Name: "from-refs", Usage: "Label each entry with every entry it refs, closes or supersedes, then have the ranking judge score the unscored labelled pairs, one request per referencing entry"},
-					judgeFlag(),
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.IsSet("from") == cmd.Bool("from-refs") {
-						return fmt.Errorf("pass --from or --from-refs, exactly one")
-					}
-					if cmd.IsSet("judge") && !cmd.Bool("from-refs") {
-						return fmt.Errorf("--judge takes --from-refs: --from scores nothing")
-					}
-					if cmd.Bool("from-refs") {
-						return seedFromRefs(ctx, cmd)
-					}
-					store, err := workingRelevanceStore()
-					if err != nil {
-						return err
-					}
-					input := cmd.Reader
-					if name := cmd.String("from"); name != "-" {
-						file, err := os.Open(name)
-						if err != nil {
-							return err
-						}
-						defer file.Close()
-						input = file
-					}
-					result, err := sdd.SeedReplayLabels(ctx, store, input)
-					if err != nil {
-						return err
-					}
-					_, err = fmt.Fprintf(cmd.Writer, "Seeded %d replayed reference labels; %d pairs already labelled\n", result.Added, result.Skipped)
-					return err
+					return update(ctx, cmd, application, project, identity)
 				},
 			},
 		},
 	}
 }
 
-// seedFromRefs seeds the graph's own references and scores every labelled
-// pair the judge has not scored, so the seed moves the calibration at once.
-func seedFromRefs(ctx context.Context, cmd *cli.Command) error {
-	application, project, identity, err := workingApplication(ctx, cmd)
-	if err != nil {
-		return err
+// update seeds the graph's own references and has the ranking judge score
+// the labelled pairs. A failed subject does not stop the others: the
+// failures are listed once the judge is done, and fail the command.
+func update(ctx context.Context, cmd *cli.Command, application *sdd.Application, project sdd.ProjectID, identity sdd.RequestIdentity) error {
+	request := sdd.GroundingUpdateRequest{Force: cmd.Bool("force")}
+	work := func(ctx context.Context) (sdd.GroundingUpdate, error) {
+		return application.UpdateGrounding(ctx, identity, project, request)
 	}
-	seeded, err := application.SeedRefLabels(ctx, identity, project, sdd.RescoreRequest{Judge: cmd.String("judge")})
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(cmd.Writer, "Seeded %d replayed reference labels from the graph's references; %d pairs already labelled\n", seeded.Added, seeded.Skipped)
-	if err != nil {
-		return err
-	}
-	return rescore(ctx, cmd, application, project, identity)
-}
-
-func judgeFlag() cli.Flag {
-	return &cli.StringFlag{Name: "judge", Usage: "Score with this judge instead of the ranking judge: its name as sdd grounding status prints it"}
-}
-
-// rescore has the judge --judge selects score the unscored labelled pairs.
-// A failed subject does not stop the others: the failures are listed once
-// the judge is done, and fail the command.
-func rescore(ctx context.Context, cmd *cli.Command, application *sdd.Application, project sdd.ProjectID, identity sdd.RequestIdentity) error {
-	request := sdd.RescoreRequest{Judge: cmd.String("judge")}
-	work := func(ctx context.Context) (sdd.RescoreResult, error) {
-		return application.RescoreRelevance(ctx, identity, project, request)
-	}
-	var scored sdd.RescoreResult
+	var updated sdd.GroundingUpdate
 	var err error
 	if cliout.IsInteractive(cmd.ErrWriter) {
 		progress := newRescoreProgress(&request)
-		scored, err = clitui.Interactive(ctx, loggerViewPolicy(ctx),
+		updated, err = clitui.Interactive(ctx, loggerViewPolicy(ctx),
 			clitui.View{Reader: cmd.Reader, Writer: cmd.ErrWriter, Progress: progress, StreamLogs: true}, work)
 	} else {
-		scored, err = work(ctx)
+		updated, err = work(ctx)
 	}
+	if err != nil {
+		return err
+	}
+	seeded, scored := updated.Seeded, updated.Scored
+	_, err = fmt.Fprintf(cmd.Writer, "Seeded %d replayed reference labels from the graph's references; %d pairs already labelled\n", seeded.Added, seeded.Skipped)
 	if err != nil {
 		return err
 	}
@@ -147,7 +92,7 @@ func rescore(ctx context.Context, cmd *cli.Command, application *sdd.Application
 	if len(failures) == 0 {
 		return nil
 	}
-	_, err = fmt.Fprintf(cmd.ErrWriter, "failed to score, their pairs stay unscored for the next rescore:\n%s", strings.Join(failures, ""))
+	_, err = fmt.Fprintf(cmd.ErrWriter, "failed to score, their pairs stay unscored for the next update:\n%s", strings.Join(failures, ""))
 	if err != nil {
 		return err
 	}

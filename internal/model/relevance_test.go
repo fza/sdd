@@ -238,3 +238,48 @@ func TestReaderVerdictJoin_AnOpeningLeavesTheReadersLabel(t *testing.T) {
 		t.Fatalf("join = %+v: an opening should keep the dismissal and add its flag", got)
 	}
 }
+
+// A replaced score stands even below the old one, in either direction; the
+// judge's other pairs and other judges keep theirs.
+func TestRelevanceLedger_ReplaceScoresReplacesTheJudgesScoresOfItsPairs(t *testing.T) {
+	const subject = "20260601-000000-d-tac-sub"
+	replaced := model.NewRelevancePair("20260101-000000-s-tac-one", subject)
+	kept := model.NewRelevancePair("20260101-000001-s-tac-two", subject)
+	ledger := model.NewRelevanceLedger(model.RelevanceBatch{Scores: []model.ScoreRecord{
+		{Pair: replaced, Score: model.FilterScore{Judge: "j", Direction: model.DirectionFrom(replaced, subject), Score: 200}},
+		{Pair: replaced, Score: model.FilterScore{Judge: "k", Score: 100}},
+		{Pair: kept, Score: model.FilterScore{Judge: "j", Score: 180}},
+	}})
+	ledger.ReplaceScores(model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: replaced, Score: model.FilterScore{Judge: "j", Score: 50}}}})
+	for _, tc := range []struct {
+		pair  model.RelevancePair
+		judge string
+		want  uint8
+	}{{replaced, "j", 50}, {replaced, "k", 100}, {kept, "j", 180}} {
+		if got, ok := ledger.Score(tc.pair, subject, tc.judge); !ok || got != tc.want {
+			t.Errorf("%s score of %v = %d, %v; want %d", tc.judge, tc.pair, got, ok, tc.want)
+		}
+	}
+	if got := len(ledger.Batch().Scores); got != 3 {
+		t.Errorf("%d scores: the judge's old one-way score should be gone", got)
+	}
+}
+
+// The scorable pairs are the labelled ones a score calibrates, scored or not.
+func TestRelevanceLedger_ScorableListsThePositiveAndNegativeLabels(t *testing.T) {
+	const subject = "20260601-000000-d-tac-sub"
+	positive := model.NewRelevancePair("20260101-000000-s-tac-one", subject)
+	negative := model.NewRelevancePair("20260101-000001-s-tac-two", subject)
+	covered := model.NewRelevancePair("20260101-000002-s-tac-thr", subject)
+	ledger := model.NewRelevanceLedger(model.RelevanceBatch{
+		Readers: []model.ReaderRecord{
+			{Pair: positive, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}},
+			{Pair: negative, Verdict: model.ReaderVerdict{Code: model.ReaderImplicit}},
+			{Pair: covered, Verdict: model.ReaderVerdict{Code: model.ReaderOpened}},
+		},
+		Scores: []model.ScoreRecord{{Pair: positive, Score: model.FilterScore{Judge: "j", Score: 200}}},
+	})
+	if got := ledger.Scorable(); !reflect.DeepEqual(got, []model.RelevancePair{positive, negative}) {
+		t.Errorf("scorable = %v, want the positive and the negative label", got)
+	}
+}

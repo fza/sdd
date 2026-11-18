@@ -90,9 +90,9 @@ func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 	}
 }
 
-// The status opens with the labels, and --verbose reports each judge's full
-// calibration, the other client's judge included.
-func TestCLIGroundingStatusVerboseReportsEveryJudge(t *testing.T) {
+// The status opens with the labels, and --verbose reports the ranking
+// judge's full calibration, no other judge's.
+func TestCLIGroundingStatusVerboseReportsTheRankingJudge(t *testing.T) {
 	f := newAppFixture(t)
 	claudeOnPath(t, f, false)
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm:\n  provider: codex\n  model: gpt-5.5\n")
@@ -104,7 +104,10 @@ func TestCLIGroundingStatusVerboseReportsEveryJudge(t *testing.T) {
 	if verbose.err != nil {
 		t.Fatalf("sdd grounding status --verbose: %v\n%s", verbose.err, verbose.stderr)
 	}
-	assertContainsOutput(t, "stdout", verbose.stdout, "judge: chat:gpt-5.5\n", "weights: referenced 1", "opened hidden: ", "ranking recall: ", "ranking on a Claude host:\njudge: chat:claude-haiku-5-5\n")
+	assertContainsOutput(t, "stdout", verbose.stdout, "judge: chat:gpt-5.5\n", "weights: referenced 1", "opened hidden: ", "ranking recall: ")
+	if strings.Contains(verbose.stdout, "claude-haiku-5-5") {
+		t.Fatalf("--verbose should report the ranking judge alone:\n%s", verbose.stdout)
+	}
 }
 
 // A configured llm_prefilter ranks the deep reading too: no Claude host
@@ -123,8 +126,8 @@ func TestCLIGroundingStatusLeavesRankingToAConfiguredPrefilter(t *testing.T) {
 }
 
 // While the recall bound does not hold, the status says the prefilter is
-// uncalibrated and names the command that seeds it.
-func TestCLIGroundingStatusNamesTheSeedWhileUncalibrated(t *testing.T) {
+// uncalibrated and names the command that updates it.
+func TestCLIGroundingStatusNamesTheUpdateWhileUncalibrated(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm_prefilter:\n  protocol: systemone\n  api_keys:\n    opper: test-key\n")
@@ -132,11 +135,11 @@ func TestCLIGroundingStatusNamesTheSeedWhileUncalibrated(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "uncalibrated:", "sdd grounding seed --from-refs")
+	assertContainsOutput(t, "stdout", result.stdout, "uncalibrated: run `sdd grounding update`")
 }
 
 // serve logs once at its start that the prefilter is uncalibrated, naming
-// the command that seeds it; without a judge it logs nothing of it.
+// the command that updates it; without a judge it logs nothing of it.
 func TestServeLogsAnUncalibratedPrefilterOnce(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: false\n")
@@ -146,27 +149,17 @@ func TestServeLogsAnUncalibratedPrefilterOnce(t *testing.T) {
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm_prefilter:\n  protocol: systemone\n  api_keys:\n    opper: test-key\n")
 	stderr := f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {})
-	if strings.Count(stderr, "uncalibrated") != 1 || !strings.Contains(stderr, "sdd grounding seed --from-refs") {
-		t.Fatalf("serve should warn once of the uncalibrated prefilter and name the seed:\n%s", stderr)
+	if strings.Count(stderr, "uncalibrated") != 1 || !strings.Contains(stderr, "sdd grounding update") {
+		t.Fatalf("serve should warn once of the uncalibrated prefilter and name the update:\n%s", stderr)
 	}
 }
 
-func TestCLIGroundingSeedTakesOneSource(t *testing.T) {
-	f := newAppFixture(t)
-	for _, args := range [][]string{{"grounding", "seed"}, {"grounding", "seed", "--from", "-", "--from-refs"}} {
-		result := f.run(t, args...)
-		if result.err == nil || !strings.Contains(result.err.Error(), "--from or --from-refs") {
-			t.Errorf("sdd %v = %v, should ask for exactly one of --from and --from-refs", args, result.err)
-		}
-	}
-}
-
-// rescoreProject is a graph of two decisions referencing the fixture's
-// signal, ranked by Haiku chat through a claude on PATH that fails every
-// call, and by chat on an ollama listener that refuses every call where
-// --judge names it. It returns how many calls reached the listener and
-// whether claude ran.
-func rescoreProject(t *testing.T) (*appFixture, func() int, func() bool) {
+// updateProject is a graph of two decisions referencing the fixture's
+// signal, ranked by chat on an ollama listener that refuses every call and,
+// with claude installed, by Haiku chat through a claude on PATH that fails
+// every call. It returns how many calls reached the listener and whether
+// claude ran.
+func updateProject(t *testing.T, claude bool) (*appFixture, func() int, func() bool) {
 	t.Helper()
 	f := newAppFixture(t)
 	var hits atomic.Int32
@@ -184,71 +177,54 @@ func rescoreProject(t *testing.T) (*appFixture, func() int, func() bool) {
 	for _, id := range []string{"15-020000-d-tac-one", "16-020000-d-tac-two"} {
 		f.write(t, "decisions/2026/09/"+id+".md", "---\ntype: decision\nkind: directive\nlayer: tactical\nconfidence: high\nparticipants: [Local Author]\nrefs:\n    - id: 20260914-020000-s-tac-cli\n      kind: grounded-in\n      desc: the gap\nsummary: A decision on the gap.\n---\n\nThe decision.\n")
 	}
-	ran := claudeOnPath(t, f, true)
+	ran := claudeOnPath(t, f, claude)
 	return f, func() int { return int(hits.Load()) }, ran
 }
 
-// An unknown judge is refused before anything runs, naming the judges
-// there are; the former aliases name none.
-func TestCLIGroundingRescoreRefusesAnUnknownJudge(t *testing.T) {
-	f, hits, claudeRan := rescoreProject(t)
-	for _, args := range [][]string{{"grounding", "rescore", "--judge", "nope"}, {"grounding", "seed", "--from-refs", "--judge", "nope"}, {"grounding", "rescore", "--judge", "ranking"}} {
-		result := f.run(t, args...)
-		if result.err == nil || !strings.Contains(result.err.Error(), "pass one of chat:claude-haiku-5-5, chat:m") {
-			t.Errorf("sdd %v = %v, should refuse the judge and list the available ones", args, result.err)
-		}
-	}
-	if hits() != 0 || claudeRan() {
-		t.Fatal("a refused judge should call no provider")
-	}
-	if result := f.run(t, "grounding", "seed", "--from", "-", "--judge", "chat:m"); result.err == nil || !strings.Contains(result.err.Error(), "--judge takes --from-refs") {
-		t.Errorf("sdd grounding seed --from --judge = %v, should refuse: --from scores nothing", result.err)
-	}
-}
-
-// Without --judge a CLI command scores with the ranking judge alone, the
-// Claude host's where it finds the claude CLI, never reaching the llm
-// provider; --judge names the llm provider's judge instead, which never
-// runs claude.
-func TestCLIGroundingRescoreScoresWithOneJudge(t *testing.T) {
-	f, hits, claudeRan := rescoreProject(t)
-	seeded := f.run(t, "grounding", "seed", "--from-refs", "--judge", "chat:m")
-	if hits() == 0 || claudeRan() {
-		t.Fatalf("%d listener calls, claude ran %v: the named judge alone should call the llm provider and not claude\n%s%s", hits(), claudeRan(), seeded.stdout, seeded.stderr)
-	}
-	before := hits()
-	ranked := f.run(t, "grounding", "rescore")
-	if hits() != before || !claudeRan() {
-		t.Fatalf("%d new listener calls, claude ran %v: the ranking judge alone should run claude and not the llm provider\n%s%s", hits()-before, claudeRan(), ranked.stdout, ranked.stderr)
-	}
-	if ranked.err == nil || strings.Contains(ranked.stdout, "chat:m") {
-		t.Fatalf("sdd grounding rescore = %v:\n%s", ranked.err, ranked.stdout)
+// An update labels the graph's references and scores them with the ranking
+// judge alone, the Claude host's where it finds the claude CLI, else chat on
+// the llm provider. A failing subject does not end the run: the judge
+// scores every subject, then the failures are listed and the run fails.
+func TestCLIGroundingUpdateScoresWithTheRankingJudgeThenFailsLoud(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		claude bool
+		judge  string
+	}{
+		{name: "with the claude CLI", claude: true, judge: "chat:claude-haiku-5-5"},
+		{name: "without the claude CLI", judge: "chat:m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, hits, claudeRan := updateProject(t, tc.claude)
+			result := f.run(t, "grounding", "update")
+			if (hits() > 0) == tc.claude || claudeRan() != tc.claude {
+				t.Fatalf("%d listener calls, claude ran %v: only %s should score\n%s%s", hits(), claudeRan(), tc.judge, result.stdout, result.stderr)
+			}
+			if result.err == nil || !strings.Contains(result.err.Error(), "2 subjects failed to score") {
+				t.Fatalf("sdd grounding update = %v, should fail naming the failed subjects\n%s%s", result.err, result.stdout, result.stderr)
+			}
+			assertContainsOutput(t, "stdout", result.stdout, "Seeded 2 replayed reference labels from the graph's references; 0 pairs already labelled\n", tc.judge+" scored 0 labelled pairs")
+			assertContainsOutput(t, "stderr", result.stderr, "failed to score, their pairs stay unscored for the next update:\n", tc.judge+" 20260915-020000-d-tac-one: ", tc.judge+" 20260916-020000-d-tac-two: ")
+		})
 	}
 }
 
-// A failing subject does not end the run: the judge scores every subject,
-// then the failures are listed and the run fails.
-func TestCLIGroundingRescoreFinishesThenFailsLoud(t *testing.T) {
-	f, _, _ := rescoreProject(t)
-	result := f.run(t, "grounding", "seed", "--from-refs")
-	if result.err == nil || !strings.Contains(result.err.Error(), "2 subjects failed to score") {
-		t.Fatalf("sdd grounding seed --from-refs = %v, should fail naming the failed subjects\n%s%s", result.err, result.stdout, result.stderr)
+// --force reaches the update; no flag picks another judge.
+func TestCLIGroundingUpdateTakesForceAndNoJudge(t *testing.T) {
+	f, _, _ := updateProject(t, false)
+	if result := f.run(t, "grounding", "update", "--force"); result.err == nil || !strings.Contains(result.err.Error(), "subjects failed to score") {
+		t.Fatalf("sdd grounding update --force = %v, should score and fail on the refusing provider", result.err)
 	}
-	if !strings.Contains(result.stdout, "chat:claude-haiku-5-5 scored 0 labelled pairs") {
-		t.Fatalf("the judge should report:\n%s", result.stdout)
-	}
-	for _, want := range []string{"chat:claude-haiku-5-5 20260915-020000-d-tac-one: ", "chat:claude-haiku-5-5 20260916-020000-d-tac-two: "} {
-		if !strings.Contains(result.stderr, want) {
-			t.Errorf("the failure summary lacks %q:\n%s", want, result.stderr)
-		}
+	if result := f.run(t, "grounding", "update", "--judge", "chat:m"); result.err == nil || !strings.Contains(result.err.Error(), "judge") {
+		t.Fatalf("sdd grounding update --judge = %v, should be refused as an unknown flag", result.err)
 	}
 }
 
-func TestCLIGroundingSeedFromRefsNeedsAJudge(t *testing.T) {
+func TestCLIGroundingUpdateNeedsAJudge(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: false\n")
-	result := f.run(t, "grounding", "seed", "--from-refs")
+	result := f.run(t, "grounding", "update")
 	if result.err == nil || !strings.Contains(result.err.Error(), "no prefilter judge") {
-		t.Fatalf("sdd grounding seed --from-refs without a prefilter = %v, should name the missing judge", result.err)
+		t.Fatalf("sdd grounding update without a prefilter = %v, should name the missing judge", result.err)
 	}
 }

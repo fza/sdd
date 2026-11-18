@@ -601,7 +601,7 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 		return nil, sdd.RequestIdentity{}, err
 	}
 	if state.Judge != "" && !state.Calibrated {
-		slogutils.FromContext(ctx).Warn("the grounding prefilter is uncalibrated, so it hides nothing: run `sdd grounding seed --from-refs` to label the graph's own references and score them", "judge", state.Judge)
+		slogutils.FromContext(ctx).Warn("the grounding prefilter is uncalibrated, so it hides nothing: run `sdd grounding update` to label the graph's own references and score them", "judge", state.Judge)
 	}
 	for _, weak := range state.Weak {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("the ranking judge's recall is below the bar %.2f, so the deep reading doubles the entries it serves in full and lists with their summary; see `sdd grounding status`", model.RankingRecallBar), "judge", weak.Judge, "recall", weak.Recall, "referenced labels", weak.Positives)

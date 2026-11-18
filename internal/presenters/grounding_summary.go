@@ -45,9 +45,9 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 	fmt.Fprintf(w, "%s%s\n", indent, strings.Join(state, " · "))
 	switch {
 	case !report.Thresholds.Valid:
-		fmt.Fprintf(w, "%suncalibrated: run `sdd grounding seed --from-refs`\n", indent)
+		fmt.Fprintf(w, "%suncalibrated: run `sdd grounding update`\n", indent)
 	case report.Unscored > 0:
-		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding rescore`\n", indent)
+		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding update`\n", indent)
 	}
 }
 

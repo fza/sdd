@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -19,6 +18,14 @@ import (
 type RelevanceStore interface {
 	Append(ctx context.Context, segment []byte) error
 	Segments(ctx context.Context) ([][]byte, error)
+}
+
+// RelevanceScoreReplacer is a RelevanceStore that can join a segment's
+// scores in place of those their judges hold for the same pairs
+// (model.RelevanceLedger.ReplaceScores): what a forced grounding update
+// stores, since appended scores fold to the highest.
+type RelevanceScoreReplacer interface {
+	ReplaceScores(ctx context.Context, segment []byte) error
 }
 
 // relevanceLedger loads the project's ledger, an empty one when the project
@@ -50,6 +57,18 @@ func (r *ProjectRuntime) appendRelevance(ctx context.Context, batch model.Releva
 	return nil
 }
 
+// replaceRelevance stores batch's scores through replacer, in place of
+// those their judges hold.
+func replaceRelevance(ctx context.Context, replacer RelevanceScoreReplacer, batch model.RelevanceBatch) error {
+	if batch.Empty() {
+		return nil
+	}
+	if err := replacer.ReplaceScores(ctx, relevance.Encode(batch)); err != nil {
+		return fmt.Errorf("storing relevance scores: %w", err)
+	}
+	return nil
+}
+
 // judgeCalibration loads the ledger and judge's calibrated thresholds:
 // invalid without a judge or while the recall bound does not hold.
 func (r *ProjectRuntime) judgeCalibration(ctx context.Context, judge string) (*model.RelevanceLedger, model.RelevanceThresholds, error) {
@@ -76,23 +95,12 @@ func (r *ProjectRuntime) judges() []Prefilter {
 	return judges
 }
 
-// scoringJudge is the judge a rescore of name scores with: for an empty name
-// the one a reading without a client ranks with, else the judge so named, a
-// legacy name (model.CanonicalJudge) included.
-func (r *ProjectRuntime) scoringJudge(name string) (Prefilter, error) {
+// commandJudge is the judge grounding status reads and an update scores
+// with: the one a reading without a client ranks with.
+func (r *ProjectRuntime) commandJudge() (Prefilter, error) {
 	judges := r.judges()
 	if len(judges) == 0 {
 		return Prefilter{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
 	}
-	if name == "" {
-		return judges[0], nil
-	}
-	var available []string
-	for _, judge := range judges {
-		if judge.Judge == model.CanonicalJudge(name) {
-			return judge, nil
-		}
-		available = append(available, judge.Judge)
-	}
-	return Prefilter{}, &ApplicationError{Code: ErrorInvalidArgument, Message: fmt.Sprintf("sdd: unknown judge %q: pass one of %s", name, strings.Join(available, ", "))}
+	return judges[0], nil
 }

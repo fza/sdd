@@ -120,3 +120,48 @@ func TestRelevanceSegments_LeftoverInTheRepositoryStaysOutOfTheCommit(t *testing
 		t.Fatalf("the leftover segments should stay for the user to commit:\n%s", status)
 	}
 }
+
+// A store replacing scores keeps the reader records and stands the new
+// score in place of a higher old one.
+func TestRelevanceStores_ReplaceScoresStandsTheNewScore(t *testing.T) {
+	type replacingStore interface {
+		sdd.RelevanceStore
+		sdd.RelevanceScoreReplacer
+	}
+	for name, open := range map[string]func(t *testing.T) replacingStore{
+		"filesystem": func(t *testing.T) replacingStore {
+			store, err := local.NewFilesystemRelevanceStore(filepath.Join(t.TempDir(), "relevance"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return store
+		},
+		"memory": func(*testing.T) replacingStore { return local.NewMemoryRelevanceStore() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := open(t)
+			held := readerBatch(200)
+			if err := store.Append(t.Context(), relevance.Encode(held)); err != nil {
+				t.Fatal(err)
+			}
+			pair := held.Readers[0].Pair
+			if err := store.ReplaceScores(t.Context(), relevance.Encode(model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 7}}}})); err != nil {
+				t.Fatal(err)
+			}
+			segments, err := store.Segments(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := relevance.Fold(segments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if score, ok := ledger.Score(pair, pair.B, "j"); !ok || score != 7 {
+				t.Errorf("score = %d, %v: the new score should stand below the old", score, ok)
+			}
+			if _, ok := ledger.Reader(pair); !ok {
+				t.Error("the reader record should stay")
+			}
+		})
+	}
+}

@@ -202,15 +202,23 @@ func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
 	return labels
 }
 
+// Scorable returns the labelled pairs a score calibrates: those labelled
+// positive or negative, sorted by pair.
+func (l *RelevanceLedger) Scorable() []RelevancePair {
+	var pairs []RelevancePair
+	for _, pair := range l.Pairs() {
+		if kind := LabelKind(l.readers[pair]); kind == LabelPositive || kind == LabelNegative {
+			pairs = append(pairs, pair)
+		}
+	}
+	return pairs
+}
+
 // Unscored returns the labelled pairs judge has no score for: what a judge
 // change re-scores before its bound is computed.
 func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	var pairs []RelevancePair
-	for _, pair := range l.Pairs() {
-		kind := LabelKind(l.readers[pair])
-		if kind != LabelPositive && kind != LabelNegative {
-			continue
-		}
+	for _, pair := range l.Scorable() {
 		if _, ok := l.Score(pair, pair.B, judge); !ok {
 			pairs = append(pairs, pair)
 		}

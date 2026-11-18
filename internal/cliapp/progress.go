@@ -119,7 +119,7 @@ func (p *embedProgress) connected(force bool) *command.BuildConnectedIndexesCmd 
 // newRescoreProgress puts request's progress on a footer reporter: a bar
 // named for the judge once there are pairs to score, the failed ones in the
 // note.
-func newRescoreProgress(request *sdd.RescoreRequest) *cliout.Reporter {
+func newRescoreProgress(request *sdd.GroundingUpdateRequest) *cliout.Reporter {
 	reporter := cliout.NewReporter()
 	reporter.SetUnit("pairs")
 	var done int

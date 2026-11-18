@@ -91,27 +91,3 @@ func seedReplay(ctx context.Context, store RelevanceStore, pairs []model.Relevan
 	result.Added = len(batch.Readers)
 	return result, nil
 }
-
-// SeedRefLabels appends a replayed reference label for each pair of the
-// graph's own references (model.RefPairs), skipping pairs already labelled,
-// so a judge can calibrate before live captures label enough pairs. It needs
-// the judge request selects: the labels count toward a calibration only once
-// RescoreRelevance scores them.
-func (a *Application) SeedRefLabels(ctx context.Context, identity RequestIdentity, project ProjectID, request RescoreRequest) (result SeedResult, err error) {
-	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
-	if err != nil {
-		return SeedResult{}, err
-	}
-	if _, err := runtime.scoringJudge(request.Judge); err != nil {
-		return SeedResult{}, err
-	}
-	if runtime.options.Relevance == nil {
-		return SeedResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: the project keeps no relevance ledger"}
-	}
-	selected, err := acquireSnapshotForSearch(ctx, runtime, "", "")
-	if err != nil {
-		return SeedResult{}, err
-	}
-	defer selected.releaseInto(&err)
-	return seedReplay(ctx, runtime.options.Relevance, model.RefPairs(selected.snapshot.graph))
-}

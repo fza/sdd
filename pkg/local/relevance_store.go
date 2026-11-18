@@ -106,6 +106,60 @@ func (s *MemoryRelevanceStore) Segments(_ context.Context) ([][]byte, error) {
 	return out, nil
 }
 
+// ReplaceScores rewrites the ledger as one segment with data's scores in
+// place of those their judges held for the same pairs.
+func (s *FilesystemRelevanceStore) ReplaceScores(ctx context.Context, data []byte) error {
+	replacement, err := relevance.Decode(data)
+	if err != nil {
+		return err
+	}
+	held, err := s.Segments(ctx)
+	if err != nil {
+		return err
+	}
+	if len(held) == 0 {
+		return s.Append(ctx, data)
+	}
+	return compactDir(ctx, s.dir, true, func(segments [][]byte) ([]byte, error) {
+		return replaceScores(segments, replacement)
+	})
+}
+
+// ReplaceScores rewrites the ledger as one segment with data's scores in
+// place of those their judges held for the same pairs.
+func (s *MemoryRelevanceStore) ReplaceScores(_ context.Context, data []byte) error {
+	replacement, err := relevance.Decode(data)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	merged, err := replaceScores(s.segments, replacement)
+	if err != nil {
+		return err
+	}
+	s.segments = nil
+	if merged != nil {
+		s.segments = [][]byte{merged}
+	}
+	return nil
+}
+
+// replaceScores folds segments and encodes them with replacement's scores in
+// place of those their judges held (model.RelevanceLedger.ReplaceScores).
+func replaceScores(segments [][]byte, replacement model.RelevanceBatch) ([]byte, error) {
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		return nil, err
+	}
+	ledger.ReplaceScores(replacement)
+	batch := ledger.Batch()
+	if batch.Empty() {
+		return nil, nil
+	}
+	return relevance.Encode(batch), nil
+}
+
 // DropReplay rewrites the ledger as one segment without the reader records
 // of source replay: the way a seed is taken back. A pair a live record also
 // labels is live and stays.

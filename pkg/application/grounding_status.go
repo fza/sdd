@@ -60,7 +60,7 @@ func (a *Application) PrefilterState(ctx context.Context, identity RequestIdenti
 
 // GroundingStatusRequest selects what GroundingStatus reads: ExcludeReplay
 // calibrates on the live labels alone, leaving out those seeded from
-// replayed captures; Verbose reports each judge's full calibration.
+// replayed captures; Verbose reports the judge's full calibration.
 type GroundingStatusRequest struct {
 	ExcludeReplay bool
 	Verbose       bool
@@ -68,34 +68,29 @@ type GroundingStatusRequest struct {
 
 // GroundingStatus reports the labels, the audit and drift state and the
 // calibration of the ranking judge of a reading without a client
-// (presenters.RenderGroundingSummary). Verbose reports each judge's labels,
+// (presenters.RenderGroundingSummary). Verbose reports that judge's labels,
 // recall bound, ranking recall, thresholds, audit and drift state, and the
-// precision per reason code, that judge first, then any other.
+// precision per reason code.
 func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return GroundingStatus{}, err
 	}
-	judges := runtime.judges()
-	if len(judges) == 0 {
-		return GroundingStatus{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
+	judge, err := runtime.commandJudge()
+	if err != nil {
+		return GroundingStatus{}, err
 	}
 	ledger, err := runtime.relevanceLedger(ctx)
 	if err != nil {
 		return GroundingStatus{}, err
 	}
 	var rendered bytes.Buffer
-	if !request.Verbose {
-		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judges[0].Judge, request.ExcludeReplay), judgeOrigin(runtime, judges[0]))
-		return GroundingStatus{Judge: judges[0].Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
-	}
-	for i, judge := range judges {
-		if i > 0 {
-			rendered.WriteString("\n" + judgeContext(runtime, judge) + ":\n")
-		}
+	if request.Verbose {
 		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay))
+	} else {
+		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judge.Judge, request.ExcludeReplay), judgeOrigin(runtime, judge))
 	}
-	return GroundingStatus{Judge: judges[0].Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
+	return GroundingStatus{Judge: judge.Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
 }
 
 // judgeOrigin says where judge, the ranking judge of a reading without a
@@ -109,14 +104,6 @@ func judgeOrigin(runtime *ProjectRuntime, judge Prefilter) string {
 		return "default on a Claude host; `llm_prefilter` would replace it"
 	}
 	return "default on the `llm` provider; `llm_prefilter` would replace it"
-}
-
-// judgeContext names where judge ranks.
-func judgeContext(runtime *ProjectRuntime, judge Prefilter) string {
-	if judge.Judge == runtime.options.Ranking.ClaudeHost.Judge {
-		return "ranking on a Claude host"
-	}
-	return "ranking without a Claude host"
 }
 
 // RescoreResult reports one re-scoring pass.
@@ -133,22 +120,22 @@ type RescoreResult struct {
 }
 
 // RescoreFailure is a subject whose scoring requests failed; its pairs stay
-// unscored for the next rescore.
+// unscored for the next update.
 type RescoreFailure struct {
 	Subject string
 	Err     error
 }
 
-// RescoreRequest selects the judge RescoreRelevance scores with: Judge
-// names one as GroundingStatus prints it; empty selects the ranking judge of
-// a reading without a client. OnProgress, when set, receives the pass's
-// progress, one call at a time.
-type RescoreRequest struct {
-	Judge      string
+// GroundingUpdateRequest shapes UpdateGrounding: Force scores every
+// labelled pair again, its scores replacing the judge's old ones;
+// OnProgress, when set, receives the scoring pass's progress, one call at a
+// time.
+type GroundingUpdateRequest struct {
+	Force      bool
 	OnProgress func(RescoreProgress)
 }
 
-// RescoreProgress is how far a rescore pass has come: Done of the Total
+// RescoreProgress is how far a scoring pass has come: Done of the Total
 // pairs it scores, counted in pairs so a request split in halves counts
 // once. Done counts the pairs scored, failed or too long to score; Failed
 // counts the failed ones.
@@ -157,55 +144,94 @@ type RescoreProgress struct {
 	Done, Total, Failed int
 }
 
-// RescoreRelevance has the judge request selects score every labelled pair
-// it has not scored, so a new judge's recall bound and ranking health are
-// computed from the stored labels at once. Each pair is scored from its
-// later entry, the one whose reading judged the other. A subject whose
-// requests fail lands in Failures and the pass goes on; the error is what
-// stops the pass: an unknown judge, a cancelled ctx, a ledger that cannot be
-// read or written.
-func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIdentity, project ProjectID, request RescoreRequest) (result RescoreResult, err error) {
+// GroundingUpdate reports one UpdateGrounding: the labels it seeded, then
+// its scoring pass.
+type GroundingUpdate struct {
+	Seeded SeedResult
+	Scored RescoreResult
+}
+
+// UpdateGrounding appends a replayed reference label for each pair of the
+// graph's own references (model.RefPairs) not yet labelled, then has the
+// ranking judge of a reading without a client score every labelled pair it
+// has not scored, every labelled pair with request.Force, so the judge's
+// recall bound and ranking health are computed from the labels at once.
+// Each pair is scored from its later entry, the one whose reading judged the
+// other. A subject whose requests fail lands in Failures and the pass goes
+// on; the error is what stops it: no judge, a cancelled ctx, a ledger that
+// cannot be read or written.
+func (a *Application) UpdateGrounding(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingUpdateRequest) (result GroundingUpdate, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
-		return RescoreResult{}, err
+		return GroundingUpdate{}, err
 	}
-	judge, err := runtime.scoringJudge(request.Judge)
+	judge, err := runtime.commandJudge()
 	if err != nil {
-		return RescoreResult{}, err
+		return GroundingUpdate{}, err
 	}
-	ledger, err := runtime.relevanceLedger(ctx)
-	if err != nil {
-		return RescoreResult{}, err
+	store := runtime.options.Relevance
+	if store == nil {
+		return GroundingUpdate{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: the project keeps no relevance ledger"}
+	}
+	save := runtime.appendRelevance
+	if request.Force {
+		replacer, ok := store.(RelevanceScoreReplacer)
+		if !ok {
+			return GroundingUpdate{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: the relevance store cannot replace scores, so a forced update would keep the old ones"}
+		}
+		save = func(ctx context.Context, batch model.RelevanceBatch) error {
+			return replaceRelevance(ctx, replacer, batch)
+		}
 	}
 	selected, err := acquireSnapshotForSearch(ctx, runtime, "", "")
 	if err != nil {
-		return RescoreResult{}, err
+		return GroundingUpdate{}, err
 	}
 	defer selected.releaseInto(&err)
-	return rescoreJudge(ctx, runtime, ledger, selected.snapshot.graph, judge, request.OnProgress)
+	graph := selected.snapshot.graph
+	if result.Seeded, err = seedReplay(ctx, store, model.RefPairs(graph)); err != nil {
+		return GroundingUpdate{}, err
+	}
+	ledger, err := runtime.relevanceLedger(ctx)
+	if err != nil {
+		return GroundingUpdate{}, err
+	}
+	pairs := ledger.Unscored(judge.Judge)
+	if request.Force {
+		pairs = ledger.Scorable()
+	}
+	scored, batch, err := rescoreJudge(ctx, graph, pairs, judge, request.OnProgress)
+	if err != nil {
+		return GroundingUpdate{}, err
+	}
+	if err := save(ctx, batch); err != nil {
+		return GroundingUpdate{}, err
+	}
+	result.Scored = scored
+	return result, nil
 }
 
-// rescoreJudge has prefilter score the labelled pairs of ledger it has not
-// scored and stores the scores, reporting its progress to onProgress.
-func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.RelevanceLedger, graph *model.Graph, prefilter Prefilter, onProgress func(RescoreProgress)) (RescoreResult, error) {
+// rescoreJudge has prefilter score pairs, reporting its progress to
+// onProgress, and returns the scores to store.
+func rescoreJudge(ctx context.Context, graph *model.Graph, pairs []model.RelevancePair, prefilter Prefilter, onProgress func(RescoreProgress)) (RescoreResult, model.RelevanceBatch, error) {
 	result := RescoreResult{Judge: prefilter.Judge}
 	progress := RescoreProgress{Judge: prefilter.Judge}
 	var progressMu sync.Mutex
-	advance := func(pairs int, failed bool) {
+	advance := func(done int, failed bool) {
 		if onProgress == nil {
 			return
 		}
 		progressMu.Lock()
 		defer progressMu.Unlock()
-		progress.Done += pairs
+		progress.Done += done
 		if failed {
-			progress.Failed += pairs
+			progress.Failed += done
 		}
 		onProgress(progress)
 	}
 	bySubject := map[string][]string{}
 	var subjects []string
-	for _, pair := range ledger.Unscored(prefilter.Judge) {
+	for _, pair := range pairs {
 		if graph.ByID[pair.A] == nil || graph.ByID[pair.B] == nil {
 			result.Missing++
 			continue
@@ -253,7 +279,7 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 		}
 		_ = group.Wait()
 		if err := ctx.Err(); err != nil {
-			return RescoreResult{}, err
+			return RescoreResult{}, model.RelevanceBatch{}, err
 		}
 		var failure error
 		for b, request := range requests {
@@ -280,8 +306,5 @@ func rescoreJudge(ctx context.Context, runtime *ProjectRuntime, ledger *model.Re
 		}
 	}
 	result.Scored = len(batch.Scores)
-	if err := runtime.appendRelevance(ctx, batch); err != nil {
-		return RescoreResult{}, err
-	}
-	return result, nil
+	return result, batch, nil
 }
