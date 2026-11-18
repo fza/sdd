@@ -171,9 +171,9 @@ func TestWithinDir(t *testing.T) {
 	}
 }
 
-// A .sdd/ above the repository holding the start folder belongs to another
-// project.
-func TestDiscoverRootStopsAtTheRepositoryRoot(t *testing.T) {
+// A repository without a .sdd/ of its own, nested in a project, belongs to
+// that project.
+func TestDiscoverRootWalksPastARepositoryRoot(t *testing.T) {
 	cases := []struct {
 		name    string
 		gitFile bool
@@ -203,8 +203,8 @@ func TestDiscoverRootStopsAtTheRepositoryRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if root := meta.DiscoverRoot(start); root != "" {
-				t.Errorf("discovery should stop at the repository root, found %s", root)
+			if root := meta.DiscoverRoot(start); root != outer {
+				t.Errorf("discovery should reach the enclosing project %s, found %q", outer, root)
 			}
 
 			err = os.Mkdir(filepath.Join(repo, ".sdd"), 0o755)

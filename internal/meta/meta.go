@@ -15,10 +15,8 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// DiscoverRoot walks up from startDir looking for a directory named ".sdd",
-// no further than the root of the repository holding startDir: a .sdd/ above
-// it belongs to another project. Returns the repo root (parent of .sdd/) or
-// empty string if not found.
+// DiscoverRoot walks up from startDir looking for a directory named ".sdd".
+// Returns the repo root (parent of .sdd/) or empty string if not found.
 func DiscoverRoot(startDir string) string {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -29,12 +27,6 @@ func DiscoverRoot(startDir string) string {
 		info, err := os.Stat(candidate)
 		if err == nil && info.IsDir() {
 			return dir
-		}
-		// .git is a folder in a repository's root, a file in a linked
-		// worktree's or a submodule's.
-		_, err = os.Lstat(filepath.Join(dir, ".git"))
-		if err == nil {
-			return ""
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
