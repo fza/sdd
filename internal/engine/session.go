@@ -261,8 +261,8 @@ type Session struct {
 	// last served under its name.
 	changed map[string]string
 	// deferred folds the deferral events: per instance whose lanes wait, the
-	// pieces its serve sent, each under its tag (FollowDeferral).
-	deferred map[string]map[Piece]string
+	// pieces its serve sent, each under its tag and step (FollowDeferral).
+	deferred map[string]map[Piece]sentPiece
 	// unproved folds, per piece name, its newest serve in full that no proof
 	// followed, numbered by servedSeq (Unproved).
 	unproved  map[string]unprovedServe

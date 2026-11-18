@@ -88,7 +88,7 @@ type pieceCall struct {
 	pending []pendingAnchor
 	// followed is what the deferral this call follows sent, still pointed at
 	// should the call leave lanes waiting again.
-	followed map[Piece]string
+	followed map[Piece]sentPiece
 	// since is the serve sequence the call began at; proved is what its
 	// proofs prove, provedTags the tags not yet recorded.
 	since      int
@@ -192,11 +192,11 @@ func (s *Session) holds(p Piece) (string, bool, bool) {
 			return proof.Tag, true, true
 		}
 	}
-	tag, ok := s.call.followed[p]
-	if !ok || s.call.reread[tag] || slices.ContainsFunc(s.call.held, func(proof model.Proof) bool { return proof.Tag == tag }) {
+	sent, ok := s.call.followed[p]
+	if !ok || s.call.reread[sent.tag] || slices.ContainsFunc(s.call.held, func(proof model.Proof) bool { return proof.Tag == sent.tag }) {
 		return "", false, false
 	}
-	return tag, false, true
+	return sent.tag, false, true
 }
 
 // FailedProof is a proof the call carries that holds no piece: Issued
@@ -520,6 +520,27 @@ func (s *Session) FollowDeferral(instance string) {
 	s.call.followed = s.deferred[instance]
 }
 
+// Resent reports the tag under which the deferral the call follows sent a
+// piece named as p at the instance's current step, when the call would serve
+// p in full all the same: it rereads p, proves its tag with a wrong word, or
+// p's content changed, as a lane carrying an entry served in full takes a
+// fresh tag in each serve.
+func (s *Session) Resent(instance string, p Piece) (string, bool) {
+	step := s.stepOf(instance)
+	if step == "" {
+		return "", false
+	}
+	if _, _, held := s.holds(p); held {
+		return "", false
+	}
+	for piece, sent := range s.call.followed {
+		if piece.Name == p.Name && sent.step == step {
+			return sent.tag, true
+		}
+	}
+	return "", false
+}
+
 // EndDeferral ends the instance's deferral. Every serve of the instance
 // settles it, so the one a call follows is always its last serve's.
 func (s *Session) EndDeferral(instance string) {
@@ -534,25 +555,41 @@ func (s *Session) EndDeferral(instance string) {
 // RecordDeferral records that the call's serve of the instance left lanes
 // waiting: every piece the call served in full whose tag the delivered
 // result carries, with those of a deferral it follows, serves as a pointer
-// in the call that follows. An entry composed into a lane that waits carries
-// no tag in the result, so it serves in full with that lane.
+// in the call that follows. A piece served in full replaces one of its name
+// sent before at the same step. An entry composed into a lane that waits
+// carries no tag in the result, so it serves in full with that lane.
 func (s *Session) RecordDeferral(instance, delivered string) {
+	step := s.stepOf(instance)
 	pieces := maps.Clone(s.call.followed)
 	if pieces == nil {
-		pieces = map[Piece]string{}
+		pieces = map[Piece]sentPiece{}
 	}
 	for _, p := range s.call.pending {
 		if p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)) {
-			pieces[p.piece] = p.tag
+			maps.DeleteFunc(pieces, func(piece Piece, sent sentPiece) bool { return piece.Name == p.piece.Name && sent.step == step })
+			pieces[p.piece] = sentPiece{tag: p.tag, step: step}
 		}
 	}
 	records := make([]any, 0, len(pieces))
-	for p, tag := range pieces {
-		records = append(records, map[string]any{"name": p.Name, "hash": p.Hash, "tag": tag})
+	for p, sent := range pieces {
+		records = append(records, map[string]any{"name": p.Name, "hash": p.Hash, "tag": sent.tag, "step": sent.step})
 	}
 	data := map[string]any{"sent": records}
 	s.foldDeferral(instance, data)
 	s.appendEvent(instance, EventDeferred, data)
+}
+
+// sentPiece is a piece a deferral sent: the tag it went under and the step
+// whose serve sent it.
+type sentPiece struct {
+	tag, step string
+}
+
+func (s *Session) stepOf(instance string) string {
+	if inst, ok := s.instances[instance]; ok {
+		return inst.Step
+	}
+	return ""
 }
 
 func (s *Session) foldDeferral(instance string, data map[string]any) {
@@ -560,17 +597,18 @@ func (s *Session) foldDeferral(instance string, data map[string]any) {
 		delete(s.deferred, instance)
 		return
 	}
-	pieces := map[Piece]string{}
+	pieces := map[Piece]sentPiece{}
 	sent, _ := data["sent"].([]any)
 	for _, record := range sent {
 		fields, _ := record.(map[string]any)
 		name, _ := fields["name"].(string)
 		hash, _ := fields["hash"].(string)
 		tag, _ := fields["tag"].(string)
-		pieces[Piece{Name: name, Hash: hash}] = tag
+		step, _ := fields["step"].(string)
+		pieces[Piece{Name: name, Hash: hash}] = sentPiece{tag: tag, step: step}
 	}
 	if s.deferred == nil {
-		s.deferred = map[string]map[Piece]string{}
+		s.deferred = map[string]map[Piece]sentPiece{}
 	}
 	s.deferred[instance] = pieces
 }

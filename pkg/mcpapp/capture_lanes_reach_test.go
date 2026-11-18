@@ -1,12 +1,15 @@
 package mcpapp_test
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 	"github.com/networkteam/sdd/test"
@@ -74,6 +77,74 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 				if !strings.Contains(text, phrase) {
 					t.Errorf("the lanes served should carry %q", phrase)
 				}
+			}
+		})
+	}
+}
+
+// Whatever an agent proves of the pieces served before, plain next calls
+// serve each waiting lane of the shipped capture's assemble step, one call
+// per waiting lane at most, and the step then takes a report.
+func TestWaitingCaptureLanesDrainWhateverTheAgentProves(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent func(args map[string]any, anchors []model.Proof)
+	}{
+		{"no proofs", func(map[string]any, []model.Proof) {}},
+		{"a wrong word for every tag", func(args map[string]any, anchors []model.Proof) {
+			held := make([]any, 0, len(anchors))
+			for _, anchor := range anchors {
+				held = append(held, model.Proof{Tag: anchor.Tag, Word: "misread"}.String())
+			}
+			args["held"] = held
+		}},
+		{"the last result's tags alone", func(args map[string]any, anchors []model.Proof) {
+			held := make([]any, 0, len(anchors))
+			for _, anchor := range anchors {
+				held = append(held, anchor.String())
+			}
+			args["held"] = held
+		}},
+		{"a reread of every tag", func(args map[string]any, anchors []model.Proof) {
+			reread := make([]any, 0, len(anchors))
+			for _, anchor := range anchors {
+				reread = append(reread, anchor.Tag)
+			}
+			args["reread"] = reread
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs, _ := boundedConnect(t, newTestServer(t, nil, writeYoungProjectGraph(t), "").srv, false)
+			session := openSession(t, cs).Session
+			var serve mcpserver.ServeResult
+			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture", "params": map[string]any{"kind": "directive"}}, &serve)
+			waiting := waitingLanes.FindStringSubmatch(serve.Instructions)
+			if waiting == nil {
+				t.Fatalf("the assemble serve should leave lanes waiting, got %.300q", serve.Instructions)
+			}
+			pending := strings.Split(waiting[1], ", ")
+			text := test.Untagged(serve.Instructions)
+			for calls := 1; waitingLanes.MatchString(serve.Instructions); calls++ {
+				if calls > len(pending) {
+					t.Fatalf("the %d waiting lanes should serve within as many calls, still waiting: %s", len(pending), waitingLanes.FindStringSubmatch(serve.Instructions)[1])
+				}
+				raw, err := json.Marshal(serve)
+				if err != nil {
+					t.Fatal(err)
+				}
+				args := map[string]any{"session": session, "instance": serve.Instance}
+				tc.agent(args, model.ReadAnchors(string(raw)))
+				call(t, cs, "next", args, &serve)
+				text += "\n\n" + test.Untagged(serve.Instructions)
+			}
+			for _, phrase := range []string{"**Topics** (`topics`)", "**Participants** (`participants`)", "**Intent** (`intent`)"} {
+				if !strings.Contains(text, phrase) {
+					t.Errorf("the lanes served should carry %q", phrase)
+				}
+			}
+			call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{"confidence": "high"}}, &serve)
+			if slices.Contains(serve.Missing, "confidence") {
+				t.Errorf("the step should take the reported confidence, still missing %v", serve.Missing)
 			}
 		})
 	}

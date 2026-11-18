@@ -69,16 +69,18 @@ func heldLine(names []string) string {
 }
 
 // composeInstructions serves the step's first keep lanes: a lane the call
-// holds becomes its pointer, the rest serve in full with their tags. A lane
+// holds becomes its pointer, the rest serve in full with their tags. With
+// resent, a lane the result before sent becomes its pointer even where the
+// call rereads it or proves it wrong, so lanes that wait take the room. A lane
 // carrying an entry of pageFull, those the verify reading page served whole,
 // holds that entry too. The lanes past keep wait, named with the call that
 // serves them. It returns how many lanes it served in full.
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (string, int) {
+func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, resent bool, pageFull []string) (string, int) {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
 		return serve.Instructions, 0
 	}
-	var fresh, held, waiting []string
+	var fresh, held, waiting, pointed []string
 	for i, lane := range lanes {
 		name := "lane " + lane.Name
 		if i >= keep {
@@ -89,6 +91,13 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 		if serve.PlaysBack && lane.Name == "draft" {
 			fresh = append(fresh, lane.Text)
 			continue
+		}
+		if resent {
+			if tag, ok := ss.root.Resent(serve.Instance, name, lane.Text); ok {
+				held = append(held, heldName(name, tag, ""))
+				pointed = append(pointed, name)
+				continue
+			}
 		}
 		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
@@ -104,6 +113,9 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 	text := strings.Join(fresh, "\n\n")
 	if len(held) > 0 {
 		text += "\n\n" + heldLine(held)
+	}
+	if len(pointed) > 0 {
+		text += fmt.Sprintf("\n\n(%s: sent in the result before, they serve as pointers so the lanes that waited fit, whatever this call proved or reread; once no lane waits, a reread has them in full)", strings.Join(pointed, ", "))
 	}
 	if len(waiting) > 0 {
 		text += fmt.Sprintf("\n\n(%d more lanes of these instructions wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
