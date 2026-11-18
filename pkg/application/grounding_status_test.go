@@ -33,7 +33,7 @@ func TestGroundingStatus_ExcludesReplayedLabelsOnRequest(t *testing.T) {
 	application := f.app(t, prefilterPolicy(1), nil)
 	identity := sdd.RequestIdentity{Subject: "tester"}
 
-	both, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
+	both, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestGroundingStatus_ExcludesReplayedLabelsOnRequest(t *testing.T) {
 			t.Errorf("status over both sources lacks %q:\n%s", want, both.Text)
 		}
 	}
-	live, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{ExcludeReplay: true})
+	live, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{ExcludeReplay: true, Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +65,52 @@ func TestGroundingStatus_ShowsTheFlipRate(t *testing.T) {
 	}
 	f := prefilterFixture(t, &scriptedScorer{})
 	f.relevance = store
-	status, err := f.app(t, prefilterPolicy(1), nil).GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{})
+	status, err := f.app(t, prefilterPolicy(1), nil).GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "implicit dismissals: 4 recorded, 1 flipped to bearing (flip rate 25.0%)\n"; !strings.Contains(status.Text+"\n", want) {
 		t.Fatalf("status should name the implicit dismissals recorded, those flipped and the flip rate:\n%s", status.Text)
+	}
+}
+
+// The default status reports the one ranking judge of a command without a
+// client and where it comes from; --verbose reports every judge.
+func TestGroundingStatus_ReportsTheRankingJudgeAndItsOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		host      bool
+		claudeCLI bool
+		want      string
+	}{
+		{name: "Claude host default", host: true, claudeCLI: true, want: "judge:   " + rescoreHost + " (default on a Claude host; `llm_prefilter` would replace it)\n"},
+		{name: "llm provider default", host: true, want: "judge:   " + gatherJudge + " (default on the `llm` provider; `llm_prefilter` would replace it)\n"},
+		{name: "configured", want: "judge:   " + gatherJudge + " (set by `llm_prefilter`)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := prefilterFixture(t, &scriptedScorer{})
+			f.relevance = localadapter.NewMemoryRelevanceStore()
+			if tc.host {
+				f.ranking = sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: &scriptedScorer{}, Judge: rescoreHost}, ClaudeCLI: tc.claudeCLI}
+			}
+			application := f.app(t, prefilterPolicy(1), nil)
+			identity := sdd.RequestIdentity{Subject: "tester"}
+			status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(status.Text, "labels:  0 pairs scored by people's choices\n") || !strings.Contains(status.Text+"\n", tc.want) {
+				t.Fatalf("status should name the judge as %q:\n%s", tc.want, status.Text)
+			}
+			if tc.host {
+				verbose, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(verbose.Text, "judge: "+rescoreHost+"\n") || !strings.Contains(verbose.Text, "judge: "+gatherJudge+"\n") {
+					t.Fatalf("--verbose should report every judge:\n%s", verbose.Text)
+				}
+			}
+		})
 	}
 }

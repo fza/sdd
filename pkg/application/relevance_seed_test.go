@@ -182,7 +182,7 @@ func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	if len(state.Weak) != 1 || state.Weak[0].Judge != "test:host" || state.Weak[0].Recall != 0 || state.Weak[0].Positives != model.RankingRecallMinimum {
 		t.Fatalf("state %+v: only the host's judge scores the references below the line", state)
 	}
-	status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
+	status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}

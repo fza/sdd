@@ -30,7 +30,7 @@ func TestCLIGroundingStatusReportsTheConfiguredJudge(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "judge: systemone:jev-1.14.0", "thresholds: none yet")
+	assertContainsOutput(t, "stdout", result.stdout, "judge:   systemone:jev-1.14.0 (set by `llm_prefilter`)", "no threshold yet")
 }
 
 // claudeOnPath leaves PATH holding git and, with installed, a claude that
@@ -72,8 +72,8 @@ func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 		installed bool
 		want      string
 	}{
-		{name: "with the claude CLI", installed: true, want: "judge: chat:claude-haiku-5-5"},
-		{name: "without the claude CLI", want: "judge: chat:gpt-5.5"},
+		{name: "with the claude CLI", installed: true, want: "judge:   chat:claude-haiku-5-5 (default on a Claude host; `llm_prefilter` would replace it)"},
+		{name: "without the claude CLI", want: "judge:   chat:gpt-5.5 (default on the `llm` provider; `llm_prefilter` would replace it)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAppFixture(t)
@@ -83,11 +83,28 @@ func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 			if result.err != nil {
 				t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 			}
-			if !strings.HasPrefix(result.stdout, tc.want+"\n") {
-				t.Fatalf("the status should open with %q:\n%s", tc.want, result.stdout)
+			if !strings.Contains(result.stdout, tc.want+"\n") {
+				t.Fatalf("the status should name the judge as %q:\n%s", tc.want, result.stdout)
 			}
 		})
 	}
+}
+
+// The status opens with the labels, and --verbose reports each judge's full
+// calibration, the other client's judge included.
+func TestCLIGroundingStatusVerboseReportsEveryJudge(t *testing.T) {
+	f := newAppFixture(t)
+	claudeOnPath(t, f, false)
+	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm:\n  provider: codex\n  model: gpt-5.5\n")
+	summary := f.run(t, "grounding", "status")
+	if summary.err != nil || !strings.HasPrefix(summary.stdout, "labels:  0 pairs scored by people's choices\n") || strings.Contains(summary.stdout, "weights:") {
+		t.Fatalf("sdd grounding status = %v, should open with the labels and leave the detail out:\n%s", summary.err, summary.stdout)
+	}
+	verbose := f.run(t, "grounding", "status", "--verbose")
+	if verbose.err != nil {
+		t.Fatalf("sdd grounding status --verbose: %v\n%s", verbose.err, verbose.stderr)
+	}
+	assertContainsOutput(t, "stdout", verbose.stdout, "judge: chat:gpt-5.5\n", "weights: referenced 1", "opened hidden: ", "ranking recall: ", "ranking on a Claude host:\njudge: chat:claude-haiku-5-5\n")
 }
 
 // A configured llm_prefilter ranks the deep reading too: no Claude host
@@ -99,7 +116,7 @@ func TestCLIGroundingStatusLeavesRankingToAConfiguredPrefilter(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "judge: chat:haiku")
+	assertContainsOutput(t, "stdout", result.stdout, "judge:   chat:haiku (set by `llm_prefilter`)")
 	if strings.Contains(result.stdout, "claude-haiku-5-5") {
 		t.Fatalf("a configured llm_prefilter should leave no Claude host judge:\n%s", result.stdout)
 	}

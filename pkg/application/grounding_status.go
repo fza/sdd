@@ -59,14 +59,17 @@ func (a *Application) PrefilterState(ctx context.Context, identity RequestIdenti
 
 // GroundingStatusRequest selects what GroundingStatus reads: ExcludeReplay
 // calibrates on the live labels alone, leaving out those seeded from
-// replayed captures.
+// replayed captures; Verbose reports each judge's full calibration.
 type GroundingStatusRequest struct {
 	ExcludeReplay bool
+	Verbose       bool
 }
 
-// GroundingStatus reports each judge's labels, recall bound, ranking recall,
-// thresholds, audit and drift state, and the precision per reason code: the
-// ranking judge of a reading without a client first, then any other.
+// GroundingStatus reports the labels, the audit and drift state and the
+// calibration of the ranking judge of a reading without a client
+// (presenters.RenderGroundingSummary). Verbose reports each judge's labels,
+// recall bound, ranking recall, thresholds, audit and drift state, and the
+// precision per reason code, that judge first, then any other.
 func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
@@ -81,16 +84,30 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 		return GroundingStatus{}, err
 	}
 	var rendered bytes.Buffer
+	if !request.Verbose {
+		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judges[0].Judge, request.ExcludeReplay), judgeOrigin(runtime, judges[0]))
+		return GroundingStatus{Judge: judges[0].Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
+	}
 	for i, judge := range judges {
 		if i > 0 {
-			rendered.WriteString("\n")
-		}
-		if i > 0 {
-			rendered.WriteString(judgeContext(runtime, judge) + ":\n")
+			rendered.WriteString("\n" + judgeContext(runtime, judge) + ":\n")
 		}
 		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay))
 	}
 	return GroundingStatus{Judge: judges[0].Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
+}
+
+// judgeOrigin says where judge, the ranking judge of a reading without a
+// client, comes from.
+func judgeOrigin(runtime *ProjectRuntime, judge Prefilter) string {
+	host := runtime.options.Ranking.ClaudeHost
+	switch {
+	case host.Scorer == nil:
+		return "set by `llm_prefilter`"
+	case judge.Judge == host.Judge:
+		return "default on a Claude host; `llm_prefilter` would replace it"
+	}
+	return "default on the `llm` provider; `llm_prefilter` would replace it"
 }
 
 // judgeContext names where judge ranks.
