@@ -69,8 +69,7 @@ func viewCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			f, settleFurther, err := furtherReadFinder(ctx, cmd.ErrWriter)
-			defer settleFurther()
+			f, err := newReadFinder()
 			if err != nil {
 				return err
 			}
@@ -130,7 +129,6 @@ func viewCmd() *cli.Command {
 				}
 				presenters.RenderView(cmd.Writer, mresult.ViewSections(repoID), nil)
 			}
-			warnUnavailableRefs(ctx, g)
 			return nil
 		},
 	}

@@ -365,41 +365,6 @@ func (d *connectedDependencies) resolveWritable(ctx context.Context, repoID sdd.
 	return runtime, nil
 }
 
-// ResolveFurther resolves an entry a direct dependency's ref names in a repo
-// beyond the served project's direct dependencies: from that repo's clone as
-// it stands, else through the handler's fetch on a miss
-// (handlers.Handler.ResolveFurtherRef).
-func (d *connectedDependencies) ResolveFurther(ctx context.Context, repoID sdd.RepoID, entryID string, fetched bool) (sdd.FurtherResolution, error) {
-	var resolution sdd.FurtherResolution
-	clone, connected, err := d.registry.Clone(repoID)
-	if err != nil {
-		return resolution, err
-	}
-	holds := false
-	if connected && clone.Cloned() {
-		holds, err = clone.Holds(entryID)
-		if err != nil {
-			return resolution, err
-		}
-	}
-	if !holds {
-		err = d.rounds.handler.ResolveFurtherRef(ctx, &command.ResolveFurtherRefCmd{
-			RepoID: repoID, EntryID: entryID, Fetched: fetched,
-			OnFetched:     func() { resolution.Fetched = true },
-			OnUnavailable: func(u model.UnavailableRef) { resolution.Unavailable = &u },
-		})
-		if err != nil || resolution.Unavailable != nil {
-			return resolution, err
-		}
-	}
-	resolution.Runtime, err = d.resolve(ctx, repoID)
-	if err != nil {
-		return resolution, err
-	}
-	resolution.CloneFetched, err = clone.Fetched()
-	return resolution, err
-}
-
 // connectedRounds runs the sync rounds of the connected repos the served
 // project reaches.
 type connectedRounds struct {
@@ -755,8 +720,8 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
-		Connected: rounds, Further: connectedDeps,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
+		Connected: rounds,
+		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Verifier:  verifierPolicy(cfg), Window: modelWindow(llmConfig), Checkout: os.DirFS(layout.WorkRoot),

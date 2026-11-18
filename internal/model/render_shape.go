@@ -1,10 +1,6 @@
 package model
 
-import (
-	"time"
-
-	"github.com/networkteam/sdd/pkg/application/types"
-)
+import "github.com/networkteam/sdd/pkg/application/types"
 
 // RenderShape is the data-shape contract between finders (which produce
 // per-section results) and presenters (which render them). Each concrete
@@ -81,9 +77,6 @@ type RefExpansion struct {
 	// is not available locally; the presenter renders it as
 	// `[unresolved: repo <id>]` in place of a status segment.
 	UnresolvedRepo RepoID
-	// Unavailable and CloneFetched are as on ShowTreeItem.
-	Unavailable  *UnavailableRef
-	CloneFetched time.Time
 }
 
 // Shape implements SectionData.

@@ -321,20 +321,20 @@ func truncationLine(item types.ShownChainItem) string {
 // node takes the bracketed unresolved marker in this slot instead.
 func treeQualifier(item types.ShownChainItem) string {
 	if item.UnresolvedRepo != "" {
-		return unavailableMarker(item.UnresolvedRepo, item.UnresolvedReason)
+		return "[unresolved: repo " + item.UnresolvedRepo + "]"
 	}
 	kind := item.KindLabel
 	status := formatStatusTrailValue(item.DerivedStatus)
-	var qual string
 	switch {
 	case kind != "" && status != "":
-		qual = "(" + kind + ", " + status + ")"
+		return "(" + kind + ", " + status + ")"
 	case kind != "":
-		qual = "(" + kind + ")"
+		return "(" + kind + ")"
 	case status != "":
-		qual = "(" + status + ")"
+		return "(" + status + ")"
+	default:
+		return ""
 	}
-	return strings.TrimSpace(qual + " " + cloneAge(item.CloneFetched))
 }
 
 // treeSentence is the trailing micro-summary for a node. Dedup markers take the

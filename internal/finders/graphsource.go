@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/repos"
 )
 
 // GraphSource is the read side's owner of "what the current graph is": a
@@ -47,10 +45,7 @@ func (f *Finder) NewGraphSource(dir string) *GraphSource {
 		if err != nil {
 			return nil, err
 		}
-		multi := model.NewMultiGraph(g, deps, f.memberGraphLoader(deps))
-		if f.further != nil {
-			multi.ResolveFurther(f.further)
-		}
+		model.NewMultiGraph(g, deps, f.memberGraphLoader(deps))
 		return g, nil
 	}}
 }
@@ -68,25 +63,6 @@ func (f *Finder) memberGraphLoader(deps []model.RepoID) func(repoID model.RepoID
 		}
 		return f.cloneGraph(repoID)
 	}
-}
-
-// FurtherClone loads the clone graph of repoID, a repo beyond the direct
-// dependencies, as it stands, with when the clone last fetched; nil when the
-// repo is not connected or not cloned.
-func (f *Finder) FurtherClone(repoID model.RepoID) (*model.Graph, time.Time, error) {
-	if f.repos == nil {
-		return nil, time.Time{}, nil
-	}
-	g, err := f.cloneGraph(repoID)
-	if err != nil || g == nil {
-		return nil, time.Time{}, err
-	}
-	dir, err := f.repos.CloneDir(repoID)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	fetched, err := repos.Clone{RepoID: repoID, Dir: dir}.Fetched()
-	return g, fetched, err
 }
 
 // cloneGraph loads the graph of repoID's sdd-owned clone; nil when the repo
