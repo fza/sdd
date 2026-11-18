@@ -18,8 +18,7 @@ import (
 // initGraphRepo sets up a code repository whose graph lives in the graph
 // repository cmd.GraphRepo: the graph is cloned
 // into sdd's own clone, set up or refreshed there and pushed; the code
-// repository receives graph_repo, the stock guard and the agent surfaces in
-// one commit.
+// repository receives graph_repo and the agent surfaces in one commit.
 func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the graph repository's minimum_version; run it where %s is checked out", cmd.GraphRepo)
@@ -148,12 +147,12 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 		}
 	} else {
 		updated := existing
-		settings := []struct{ key, value string }{{"graph_repo", string(cmd.GraphRepo)}, {"graph_dir", model.GraphElsewhereFile}}
+		settings := []struct{ key, value string }{{"graph_repo", string(cmd.GraphRepo)}}
 		if persistScope {
 			settings = append(settings, struct{ key, value string }{"skill_scope", string(scope)})
 		}
 		recorded, _ := model.ParseConfig(existing)
-		current := map[string]string{"graph_repo": string(recorded.GraphRepo), "graph_dir": recorded.GraphDir, "skill_scope": string(recorded.SkillScope)}
+		current := map[string]string{"graph_repo": string(recorded.GraphRepo), "skill_scope": string(recorded.SkillScope)}
 		for _, setting := range settings {
 			if current[setting.key] == setting.value {
 				continue
@@ -180,19 +179,6 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 	err = keepIgnoreFiles(cmd, "", []string{model.DefaultGraphDir}, &touched)
 	if err != nil {
 		return err
-	}
-	guardPath := filepath.Join(cmd.RepoRoot, filepath.FromSlash(model.GraphElsewhereFile))
-	guard := model.GraphElsewhereText(cmd.GraphRepo)
-	current, err := os.ReadFile(guardPath)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("reading %s: %w", guardPath, err)
-	}
-	if string(current) != guard {
-		err = os.WriteFile(guardPath, []byte(guard), 0o644)
-		if err != nil {
-			return fmt.Errorf("writing %s: %w", guardPath, err)
-		}
-		touched = append(touched, guardPath)
 	}
 	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted), changed)
 }

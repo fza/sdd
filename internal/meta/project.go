@@ -139,6 +139,20 @@ func resolveGraphRepo(read ReadFile, workRoot string, repoID model.RepoID, commi
 	return Project{Root: root, WorkRoot: workRoot, GraphRepo: repoID}, nil
 }
 
+// RefuseNestedGraphRepo refuses a graph repository whose own committed config
+// names a graph repository: project.Root then holds no graph to work on.
+func RefuseNestedGraphRepo(read ReadFile, project Project) error {
+	if project.GraphRepo == "" {
+		return nil
+	}
+	path := filepath.Join(SDDDir(project.Root), "config.yaml")
+	cfg, err := readConfigFile(read, path)
+	if err != nil || cfg == nil || cfg.GraphRepo == "" {
+		return err
+	}
+	return fmt.Errorf("graph repository %s sets graph_repo %s in %s; a graph repository holds its graph itself: remove the key there, or name %s as graph_repo", project.GraphRepo, cfg.GraphRepo, path, cfg.GraphRepo)
+}
+
 func requireOnlyKeys(read ReadFile, path string, allowed []string) error {
 	data, err := read(path)
 	if err != nil {

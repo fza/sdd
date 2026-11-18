@@ -42,8 +42,7 @@ func graphRepoCode(t *testing.T) (code string, remote *test.GraphRemote) {
 		t.Fatal(err)
 	}
 	initRepo(t, code)
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphCloneRepoID)+"\nproject_dir: ../nowhere\ngraph_dir: "+model.GraphElsewhereFile+"\nskill_scope: project\n")
-	writeFile(t, filepath.Join(code, model.GraphElsewhereFile), model.GraphElsewhereText(graphCloneRepoID))
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphCloneRepoID)+"\nproject_dir: ../nowhere\nskill_scope: project\n")
 	gitIn(t, code, "add", ".sdd")
 	gitIn(t, code, "commit", "-q", "-m", "point at the graph repository")
 	writeFile(t, filepath.Join(code, "xdg-config", "sdd", "config.yaml"), "participant: Ada\n")
@@ -154,10 +153,9 @@ func TestGraphRepoPullWaitsForTheCloneLocks(t *testing.T) {
 }
 
 // `sdd init --graph-repo` against an empty graph repository sets .sdd/ up in
-// sdd's clone and pushes it, then commits only the pointer, the guard and the
-// agent surfaces in the code repository. An sdd that knows no graph_repo then
-// reads the guard as graph_dir and fails every capture, writing nothing.
-func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
+// sdd's clone and pushes it, then commits only the pointer and the agent
+// surfaces in the code repository.
+func TestInitGraphRepoCommitsOnlyThePointer(t *testing.T) {
 	remote := test.NewGraphRemote(t, graphCloneRepoID)
 	code := filepath.Join(canonicalTemp(t), "code")
 	err := os.MkdirAll(code, 0o755)
@@ -173,40 +171,64 @@ func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
 		t.Fatalf("the graph repository should be set up and pushed:\n%s", committed)
 	}
 	pointer := readFile(t, filepath.Join(code, ".sdd", "config.yaml"))
-	if !strings.Contains(pointer, "graph_repo: "+string(graphCloneRepoID)) || !strings.Contains(pointer, "graph_dir: "+model.GraphElsewhereFile) {
-		t.Errorf("the code repository should point at the graph and carry the guard:\n%s", pointer)
+	if !strings.Contains(pointer, "graph_repo: "+string(graphCloneRepoID)) || strings.Contains(pointer, "graph_dir") {
+		t.Errorf("the code repository should point at the graph and name no graph_dir:\n%s", pointer)
 	}
 	if status := gitIn(t, code, "status", "--porcelain", "--untracked-files=all"); strings.TrimSpace(status) != "" {
 		t.Errorf("init should commit everything it wrote in the code repository:\n%s", status)
 	}
 	shipped := gitIn(t, code, "show", "--name-only", "--format=", "HEAD")
-	for _, path := range []string{".sdd/config.yaml", model.GraphElsewhereFile} {
-		if !strings.Contains(shipped, path) {
-			t.Errorf("the init commit should hold %s:\n%s", path, shipped)
-		}
+	if !strings.Contains(shipped, ".sdd/config.yaml") {
+		t.Errorf("the init commit should hold the pointer:\n%s", shipped)
 	}
 	if strings.Contains(shipped, ".sdd/graph/") {
 		t.Errorf("no graph should grow in the code repository:\n%s", shipped)
 	}
+	if names := sddDirContents(t, code); !slices.Equal(names, []string{".gitignore", "config.local.yaml", "config.yaml"}) {
+		t.Errorf("the code repository's .sdd should hold the pointer, its ignore file and the local layer, got %v", names)
+	}
 	if !strings.Contains(readFile(t, filepath.Join(code, ".sdd", "config.local.yaml")), "participant: Ada") {
 		t.Error("the participant should be recorded in the code repository's local layer")
 	}
+}
 
-	// An sdd without graph_repo support skips the key it does not know.
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), strings.Replace(pointer, "graph_repo: "+string(graphCloneRepoID)+"\n", "", 1))
-	gitIn(t, code, "commit", "-q", "-am", "read as stock sdd reads it")
-	head := headSubject(t, code)
-	out, err := runAppErr(t, code,
-		"new", "signal", "tactical", "A capture that must not land in the code repository.",
-		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--participants", "Ada", "--summary", "A stray capture.", "--title", "Stray capture")
-	if err == nil || !strings.Contains(err.Error()+out, "not a directory") {
-		t.Errorf("a capture should fail on the guard file, got %v:\n%s", err, out)
+// A graph_dir beside graph_repo is ignored, and init leaves it and the file it
+// names as they are.
+func TestGraphRepoIgnoresGraphDirInTheCodeRepository(t *testing.T) {
+	code, _ := graphRepoCode(t)
+	const named = ".sdd/GRAPH-ELSEWHERE.md"
+	pointer := "graph_repo: " + string(graphCloneRepoID) + "\ngraph_dir: " + named + "\nskill_scope: project\n"
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), pointer)
+	writeFile(t, filepath.Join(code, named), "kept\n")
+	gitIn(t, code, "add", ".sdd")
+	gitIn(t, code, "commit", "-q", "-m", "name a graph_dir beside graph_repo")
+
+	captureSignal(t, code)
+	runApp(t, code, "init")
+
+	if entries := graphEntries(t, filepath.Join(cloneDir(t), ".sdd", "graph")); len(entries) != 1 {
+		t.Errorf("the capture should land in the clone's graph, got %v", entries)
 	}
-	if headSubject(t, code) != head {
-		t.Error("the failed capture should commit nothing")
+	if got := readFile(t, filepath.Join(code, ".sdd", "config.yaml")); got != pointer {
+		t.Errorf("init should leave the pointer as it was:\n%s", got)
 	}
-	if status := gitIn(t, code, "status", "--porcelain", "--untracked-files=all"); strings.TrimSpace(status) != "" {
-		t.Errorf("the failed capture should write nothing:\n%s", status)
+	if got := readFile(t, filepath.Join(code, named)); got != "kept\n" {
+		t.Errorf("init should leave the file graph_dir names as it was:\n%s", got)
+	}
+}
+
+// A graph repository whose own config names a graph repository holds no
+// graph to work on.
+func TestGraphRepoRefusesAGraphRepositoryPointingOn(t *testing.T) {
+	code, remote := graphRepoCode(t)
+	remote.Commit(t, "point on", map[string]string{
+		".sdd/config.yaml": "graph_repo: example.test/acme/next-sdd\nskill_scope: project\n",
+	})
+
+	out, err := runAppErr(t, code, "show", "20261110-120000-s-tac-up1")
+
+	if err == nil || !strings.Contains(err.Error()+out, "graph_repo") || !strings.Contains(err.Error()+out, string(graphCloneRepoID)) {
+		t.Errorf("a graph repository setting graph_repo should be refused, naming it, got %v:\n%s", err, out)
 	}
 }
 

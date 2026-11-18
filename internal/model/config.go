@@ -216,8 +216,8 @@ var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "ho
 var LocalPointerKeys = []string{"project_dir", "hooks"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
-// graph_repo: the pointer keys, project_dir for older builds and graph_dir for
-// the guard against stock sdd.
+// graph_repo: the pointer keys, project_dir for older builds, and graph_dir,
+// which ParseConfig ignores there.
 var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents", "hooks"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
@@ -790,11 +790,15 @@ func (rc RetryConfig) Resolved() (maxAttempts int, baseDelay, maxDelay time.Dura
 }
 
 // ParseConfig unmarshals YAML bytes into a PerRepoConfig. Empty input is
-// valid and yields a zero-valued config.
+// valid and yields a zero-valued config. A config naming a graph_repo reads
+// without its graph_dir: the graph repository's own config names the folder.
 func ParseConfig(data []byte) (*PerRepoConfig, error) {
 	var cfg PerRepoConfig
 	if err := UnmarshalYAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if cfg.GraphRepo != "" {
+		cfg.GraphDir = ""
 	}
 	return &cfg, nil
 }
@@ -1177,8 +1181,8 @@ func FormatPointerConfig(cfg PerRepoConfig) string {
 }
 
 // FormatGraphRepoPointerConfig returns the config of a code repository whose
-// graph lives in the graph repository cfg.GraphRepo: the pointer, the stock
-// guard as graph_dir, and the agent keys.
+// graph lives in the graph repository cfg.GraphRepo: the pointer and the
+// agent keys.
 func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
 	return "# SDD configuration\n" +
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
@@ -1186,11 +1190,6 @@ func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
 		"# The repository holding this repository's graph. sdd reads and writes it\n" +
 		"# through a clone of its own; `sdd repo path " + string(cfg.GraphRepo) + "` prints where.\n" +
 		"graph_repo: " + string(cfg.GraphRepo) + "\n" +
-		"\n" +
-		"# Guard for sdd builds without graph_repo: graph_dir names a file, so their\n" +
-		"# captures fail here instead of starting a second graph. sdd with graph_repo\n" +
-		"# ignores it.\n" +
-		"graph_dir: " + GraphElsewhereFile + "\n" +
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +

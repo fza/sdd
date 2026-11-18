@@ -551,13 +551,6 @@ func (h *Handler) planConfigs(ctx context.Context, target graphHome, s, t, w *mo
 // graph directory's .gitattributes travels with the graph and is added when
 // a graph from an earlier build lacks it.
 func (h *Handler) planRepoFiles(source, target graphHome, s, t, w *moveRepo) error {
-	guard := filepath.FromSlash(model.GraphElsewhereFile)
-	switch {
-	case target.location.Kind == model.LocationGitRepo:
-		w.write(guard, []byte(model.GraphElsewhereText(target.clone)))
-	case source.location.Kind == model.LocationGitRepo:
-		w.remove(guard)
-	}
 	sddIgnore := filepath.Join(model.SDDDirName, ".gitignore")
 	if t != w && t != s {
 		current, err := readOptionalFile(filepath.Join(t.root, sddIgnore))

@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"path"
 	"slices"
 	"strconv"
@@ -27,9 +26,6 @@ const (
 	// ConfigMergeDriver is the merge driver `.sdd/config.yaml` is routed to
 	// in the clone.
 	ConfigMergeDriver = "sdd-config"
-	// GraphElsewhereFile is the stock guard a pointing code repository
-	// commits as its graph_dir: stock sdd cannot create a graph below a file.
-	GraphElsewhereFile = ".sdd/GRAPH-ELSEWHERE.md"
 	// ProtocolSSH / ProtocolHTTPS name the clone's two remotes.
 	ProtocolSSH   = "ssh"
 	ProtocolHTTPS = "https"
@@ -216,16 +212,6 @@ func ParseCloneCommits(content string) []string {
 		}
 	}
 	return hashes
-}
-
-// GraphElsewhereText is the stock guard's content.
-func GraphElsewhereText(repoID RepoID) string {
-	return fmt.Sprintf("# This project's graph lives elsewhere\n\n"+
-		"The sdd graph of this repository is kept in its own repository, %s.\n\n"+
-		"An sdd build that knows `graph_repo` reads and writes it there on its own. With\n"+
-		"any other sdd, clone %s and run sdd inside that clone.\n\n"+
-		"This file is `graph_dir` here so that an sdd without `graph_repo` support fails\n"+
-		"to capture instead of starting a second graph in this repository.\n", repoID, repoID)
 }
 
 // IsEntryPath reports whether a repository path names a graph entry file:

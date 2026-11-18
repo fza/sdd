@@ -1833,6 +1833,10 @@ func resolveProjectWith(read meta.ReadFile) (meta.Project, error) {
 		if err != nil {
 			return meta.Project{}, err
 		}
+		err = meta.RefuseNestedGraphRepo(read, project)
+		if err != nil {
+			return meta.Project{}, err
+		}
 	}
 	err = requireGraphInsideRepository(read, project)
 	if err != nil {
@@ -2128,7 +2132,7 @@ func initCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "graph-repo",
-				Usage: "Address of a remote repository holding this repository's graph; sdd clones it into a clone of its own, sets up .sdd/ there when it is empty and pushes, and this repository carries only graph_repo and a guard",
+				Usage: "Address of a remote repository holding this repository's graph; sdd clones it into a clone of its own, sets up .sdd/ there when it is empty and pushes, and this repository carries only graph_repo and the agent skills",
 			},
 			&cli.StringFlag{
 				Name:  "participant",

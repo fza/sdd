@@ -3,6 +3,7 @@ package cliapp_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -341,7 +342,7 @@ func TestMoveCarriesAStrayAcrossRepositories(t *testing.T) {
 }
 
 // A move out to a repository sdd clones itself publishes the graph there,
-// and the code repository keeps graph_repo and the stock guard.
+// and the code repository keeps only the graph_repo pointer.
 func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	repo := graphRepoToMove(t)
 	remote := test.NewGraphRemote(t, graphCloneRepoID)
@@ -363,8 +364,8 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	if pointer := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); pointer != model.FormatGraphRepoPointerConfig(model.PerRepoConfig{GraphRepo: graphCloneRepoID, SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}) {
 		t.Errorf("the code repository's config should be the graph_repo pointer init writes:\n%s", pointer)
 	}
-	if guard := readText(t, filepath.Join(repo, model.GraphElsewhereFile)); guard != model.GraphElsewhereText(graphCloneRepoID) {
-		t.Errorf("the code repository should carry the stock guard:\n%s", guard)
+	if names := sddDirContents(t, repo); !slices.Equal(names, []string{".gitignore", "config.local.yaml", "config.yaml"}) {
+		t.Errorf("the code repository's .sdd should hold the pointer, its ignore file and the local layer, got %v", names)
 	}
 	if ignore := readText(t, filepath.Join(repo, ".gitignore")); ignore != "xdg-*/\n" {
 		t.Errorf("the move should leave the root .gitignore alone:\n%s", ignore)
@@ -373,6 +374,11 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 		t.Errorf("a graph_repo layout reads the machine-local config in the code repository:\n%s", local)
 	}
 	runApp(t, repo, "show", movedFirst)
+
+	committedBeside := filepath.Join(repo, ".sdd", "GRAPH-ELSEWHERE.md")
+	writeFile(t, committedBeside, "kept\n")
+	gitIn(t, repo, "add", ".sdd/GRAPH-ELSEWHERE.md")
+	gitIn(t, repo, "commit", "-q", "-m", "add a file beside the pointer")
 
 	runApp(t, repo, "move", "--graph-dir", ".sdd/graph")
 	for _, id := range []string{movedFirst, movedSecond} {
@@ -383,7 +389,9 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 			t.Errorf("entry %s should leave the graph repository", id)
 		}
 	}
-	assertMissing(t, filepath.Join(repo, model.GraphElsewhereFile), "the guard goes with graph_repo")
+	if kept := readText(t, committedBeside); kept != "kept\n" {
+		t.Errorf("the move should leave a file beside the pointer as it was:\n%s", kept)
+	}
 	if config := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); strings.Contains(config, "graph_repo") || !strings.Contains(config, "graph_dir: .sdd/graph") {
 		t.Errorf("the code repository should hold the project's settings again:\n%s", config)
 	}

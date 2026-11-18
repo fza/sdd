@@ -261,8 +261,7 @@ func graphRepoHomeFixture(t *testing.T, localSettings string) (*appFixture, *tes
 		t.Fatal(err)
 	}
 	initRepo(t, code)
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(homeGraphRepoID)+"\ngraph_dir: "+model.GraphElsewhereFile+"\nskill_scope: project\n")
-	writeFile(t, filepath.Join(code, model.GraphElsewhereFile), model.GraphElsewhereText(homeGraphRepoID))
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(homeGraphRepoID)+"\nskill_scope: project\n")
 	writeFile(t, filepath.Join(code, ".gitignore"), ".sdd/config.local.yaml\nxdg-*/\n")
 	gitIn(t, code, "add", ".sdd", ".gitignore")
 	gitIn(t, code, "commit", "-q", "-m", "point at the home graph repository")
