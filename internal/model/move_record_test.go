@@ -118,26 +118,8 @@ func TestFormatULID(t *testing.T) {
 	}
 }
 
-func TestMoveMinimumVersion(t *testing.T) {
-	cases := []struct {
-		name, recorded, want string
-	}{
-		{name: "no floor", want: model.MoveRecordsMinimumVersion},
-		{name: "lower floor", recorded: "v0.10.0", want: model.MoveRecordsMinimumVersion},
-		{name: "stock base of the first move release", recorded: "v0.18.0-alpha.3", want: model.MoveRecordsMinimumVersion},
-		{name: "higher floor kept", recorded: "v9.0.0", want: "v9.0.0"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := model.MoveMinimumVersion(tc.recorded); got != tc.want {
-				t.Errorf("MoveMinimumVersion = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestMoveMinimumVersion_AdmitsOnlyBuildsReadingMoveRecords(t *testing.T) {
-	floor := model.MoveMinimumVersion("")
+func TestCheckCompatibility_AMinimumVersionWithABuildSuffix(t *testing.T) {
+	floor := "v0.18.0-alpha.3.fza.43"
 	meta := model.SchemaMeta{GraphSchemaVersion: model.CurrentGraphSchemaVersion, MinimumVersion: &floor}
 	cases := []struct {
 		binary string
@@ -152,7 +134,7 @@ func TestMoveMinimumVersion_AdmitsOnlyBuildsReadingMoveRecords(t *testing.T) {
 		t.Run(tc.binary, func(t *testing.T) {
 			got := model.CheckCompatibility(meta, tc.binary, model.CurrentGraphSchemaVersion)
 			if got.Compatible != tc.admit {
-				t.Errorf("binary %s against a moved graph: compatible = %v, reason %q", tc.binary, got.Compatible, got.Reason)
+				t.Errorf("binary %s against minimum_version %s: compatible = %v, reason %q", tc.binary, floor, got.Compatible, got.Reason)
 			}
 		})
 	}

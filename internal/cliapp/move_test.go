@@ -13,6 +13,7 @@ import (
 const (
 	movedFirst  = "20261101-100000-s-tac-one"
 	movedSecond = "20261102-100000-d-tac-two"
+	movedMeta   = "{\n  \"graph_schema_version\": 1\n}\n"
 )
 
 func movedEntry(summary string) string {
@@ -39,7 +40,7 @@ func graphRepoToMove(t *testing.T) string {
 	}
 	initRepo(t, repo)
 	writeFile(t, filepath.Join(repo, ".sdd", "config.yaml"), model.FormatConfig(model.PerRepoConfig{GraphDir: model.DefaultGraphDir, DefaultBranch: "main", SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}))
-	writeFile(t, filepath.Join(repo, ".sdd", "meta.json"), "{\n  \"graph_schema_version\": 1\n}\n")
+	writeFile(t, filepath.Join(repo, ".sdd", "meta.json"), movedMeta)
 	writeFile(t, filepath.Join(repo, ".sdd", ".gitignore"), strings.Join(model.SDDIgnoreLines, "\n")+"\n")
 	writeFile(t, filepath.Join(repo, ".gitignore"), "xdg-*/\n")
 	writeFile(t, filepath.Join(repo, ".sdd", "graph", ".gitattributes"), model.GraphAttributesLine+"\n")
@@ -82,7 +83,7 @@ func assertMissing(t *testing.T, path, why string) {
 
 // Inside one repository the graph moves as a rename: history follows it,
 // the config, attributes and ignore lines name the new folder, the move
-// commit carries the record, and the floor of minimum_version rises.
+// commit carries the record, and meta.json stays as it was.
 func TestMoveTheGraphInsideTheRepository(t *testing.T) {
 	repo := graphRepoToMove(t)
 	runApp(t, repo, "move", "--graph-dir", "graph")
@@ -102,8 +103,8 @@ func TestMoveTheGraphInsideTheRepository(t *testing.T) {
 	if ignore := readText(t, filepath.Join(repo, ".gitignore")); ignore != "xdg-*/\n" {
 		t.Errorf("the move should leave the root .gitignore alone:\n%s", ignore)
 	}
-	if meta := readText(t, filepath.Join(repo, ".sdd", "meta.json")); !strings.Contains(meta, `"minimum_version": "`+model.MoveRecordsMinimumVersion+`"`) {
-		t.Errorf("the move should raise minimum_version to the first build reading move records:\n%s", meta)
+	if meta := readText(t, filepath.Join(repo, ".sdd", "meta.json")); meta != movedMeta {
+		t.Errorf("the move should leave meta.json as it was:\n%s", meta)
 	}
 	record := headRecord(t, repo)
 	if record.From.String() != "git-dir:.sdd/graph" || record.To.String() != "git-dir:graph" || record.Entries != 2 {
@@ -355,6 +356,9 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 		if _, found := remote.Show(t, path); found {
 			t.Errorf("nobody works inside sdd's own clone, so it should get no agent surfaces, found %s", path)
 		}
+	}
+	if meta, _ := remote.Show(t, ".sdd/meta.json"); meta != movedMeta {
+		t.Errorf("meta.json should reach the graph repository as it was:\n%s", meta)
 	}
 	if pointer := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); pointer != model.FormatGraphRepoPointerConfig(model.PerRepoConfig{GraphRepo: graphCloneRepoID, SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}) {
 		t.Errorf("the code repository's config should be the graph_repo pointer init writes:\n%s", pointer)
