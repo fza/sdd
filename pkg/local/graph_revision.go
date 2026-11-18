@@ -47,6 +47,25 @@ func (c *revisionCache) currentAt(dir string, now time.Time) (string, error) {
 	return revision, nil
 }
 
+// unchanged returns the remembered revision when every file's stamp still
+// proves it, and false otherwise. It hashes nothing, so it is safe without
+// the graph lock: a writer's first change breaks the proof.
+func (c *revisionCache) unchanged(dir string) (string, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.revision == "" {
+		return "", false, nil
+	}
+	stamps, _, err := graphStamps(dir, time.Now())
+	if err != nil {
+		return "", false, err
+	}
+	if !maps.Equal(stamps, c.stamps) {
+		return "", false, nil
+	}
+	return c.revision, true, nil
+}
+
 // graphStamps stamps every file graphDirectoryRevision hashes. It reports
 // untrusted when any stamp cannot prove its file unchanged.
 func graphStamps(dir string, now time.Time) (map[string]filestamp.Stamp, bool, error) {
