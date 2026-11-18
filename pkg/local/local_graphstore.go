@@ -47,6 +47,7 @@ type FilesystemGraphStore struct {
 	dir            string
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
+	latest         *retainedSnapshot
 	publicationGit *GitFinalizer
 	metaPath       string
 	contribution   string
