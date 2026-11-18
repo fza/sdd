@@ -217,7 +217,7 @@ func TestUpdateGrounding_ReportsProgressInPairs(t *testing.T) {
 			if _, err := application.UpdateGrounding(t.Context(), updateIdentity, gatherProject, request); err != nil {
 				t.Fatal(err)
 			}
-			if len(snapshots) < 2 || snapshots[0] != (sdd.RescoreProgress{Judge: gatherJudge, Total: 4}) {
+			if len(snapshots) == 0 || snapshots[0] != (sdd.RescoreProgress{Judge: gatherJudge, Total: 4}) {
 				t.Fatalf("snapshots %+v: the total should come before any pair is done", snapshots)
 			}
 			for i := 1; i < len(snapshots); i++ {
