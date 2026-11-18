@@ -261,7 +261,8 @@ func (s *StateSwept) add(o StateSwept) {
 	s.Bytes += o.Bytes
 }
 
-// StateSweep removes the per-project state under StateRoot nothing needs:
+// StateSweep removes the per-project state under StateRoot nothing needs, of
+// the projects this sdd holds a record of using (projectKeys) and of no other:
 // ended sessions past their retention with their staged attachments, those
 // logged in a recorded checkout's .sdd/sessions (RecordCheckout) too, and the
 // relevance ledger and empty session folder of a project unused for longer
@@ -773,35 +774,37 @@ func removeEmptySessionFolder(dir string, stillUnused func() (bool, error)) (boo
 	return true, nil
 }
 
-// projectKeys lists the repository keys holding state in any category.
+// projectKeys lists the repository keys this sdd holds a record of using: a
+// relevance ledger, a use stamp or a checkout record. The session and
+// staged-attachment folders are shared with sdd builds that keep none of
+// these, so a project found there alone is not listed, and the sweep leaves
+// it untouched.
 func (s StateSweep) projectKeys() ([]string, error) {
 	seen := map[string]bool{}
-	for _, category := range []string{sessionsCategory, model.RelevanceDirName} {
-		root := filepath.Join(s.StateRoot, category)
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) && path == root {
-					return filepath.SkipAll
-				}
-				return err
-			}
-			if !d.IsDir() || path == root {
-				return nil
-			}
-			leaf, err := holdsState(path)
-			if err != nil || !leaf {
-				return err
-			}
-			key, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			seen[filepath.ToSlash(key)] = true
-			return filepath.SkipDir
-		})
+	ledgers := filepath.Join(s.StateRoot, model.RelevanceDirName)
+	err := filepath.WalkDir(ledgers, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, fmt.Errorf("listing %s: %w", root, err)
+			if errors.Is(err, fs.ErrNotExist) && path == ledgers {
+				return filepath.SkipAll
+			}
+			return err
 		}
+		if !d.IsDir() || path == ledgers {
+			return nil
+		}
+		leaf, err := holdsState(path)
+		if err != nil || !leaf {
+			return err
+		}
+		key, err := filepath.Rel(ledgers, path)
+		if err != nil {
+			return err
+		}
+		seen[filepath.ToSlash(key)] = true
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", ledgers, err)
 	}
 	for category, suffix := range map[string]string{usedCategory: usedStampSuffix, checkoutsCategory: checkoutsSuffix} {
 		root := filepath.Join(s.StateRoot, category)
