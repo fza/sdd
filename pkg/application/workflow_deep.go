@@ -13,15 +13,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/networkteam/slogutils"
-
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
-	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // The deep draft verifier: once the light pre-flight leaves no high finding
@@ -692,24 +688,19 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		}
 		return llmops.DeepReadingBlock(graph, e, role, codes[id], full, func(id string) bool { return inReading[id] }), true
 	}
-	var targets []string
-	for _, ref := range workflowStoreDocuments(ctx.Store, "refs") {
-		if id, _ := ref["id"].(string); id != "" {
-			targets = append(targets, id)
-		}
-	}
-	targets = slices.Concat(targets, workflowStoreStrings(ctx.Store, "supersedes"), workflowStoreStrings(ctx.Store, "closes"), workflowStoreStrings(ctx.Store, "approves"))
-	for _, ids := range [][]string{targets, reading.full, reading.listed} {
+	for _, ids := range [][]string{deepTargets(ctx.Store), reading.full, reading.listed} {
 		for _, id := range ids {
 			if graph.ByID[id] != nil {
 				inReading[id] = true
 			}
 		}
 	}
-	slots, err := w.verifierPlacement(ctx, reading, targets)
+	placed, err := w.verifierPlacement(ctx)
 	if err != nil {
 		return nil, deepHeld{}, err
 	}
+	slots := placed.slots
+	lead += llmops.DeepRankingNote(model.VerifierRankingSources(slots, placed.input), placed.judge, placed.input.Widened)
 	var lines []llmops.DeepListedLine
 	counted := 0
 	for _, slot := range slots {
@@ -753,76 +744,6 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		rest = append(rest, llmops.DeepListedBlock(lines, counted))
 	}
 	return model.DeepReadingPages(lead, rules, first, rest), served, nil
-}
-
-// verifierPlacement places the reading's entries for the deep verifier
-// (model.PlaceVerifierReading) by gather's prefilter judge and its shared
-// calibration, scoring only the pairs the reading holds no score for where
-// their rank decides how they are served, and recording each fresh score in
-// the reading, which publish writes to the ledger.
-func (w *WorkflowSession) verifierPlacement(ctx *engine.Context, reading *captureReading, targets []string) ([]model.VerifierSlot, error) {
-	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
-	if err != nil {
-		return nil, err
-	}
-	_, thresholds, err := runtime.prefilterCalibration(w.ctx)
-	if err != nil {
-		return nil, err
-	}
-	graph := ctx.Graph
-	draft := w.draftFromStore(ctx.Store)
-	prefilter := runtime.options.Prefilter
-	subject := model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
-	held, _ := ctx.Reading.Scores(prefilter.Judge, model.RelevanceSubjectHash(subject))
-	input := model.VerifierReading{Listed: reading.listed, Full: reading.full, Verdicts: storeVerdictIDs(ctx.Store), Scores: maps.Clone(held), Thresholds: thresholds}
-	if input.Scores == nil {
-		input.Scores = map[string]uint8{}
-	}
-	input.Seed = model.NewCorpusMark(reading.listed).Hash
-	if ctx.Reading != nil && ctx.Reading.Corpus != nil {
-		input.Seed = ctx.Reading.Corpus.Hash
-	}
-	verifierDraft := model.VerifierDraft{Targets: targets}
-	slots := model.PlaceVerifierReading(graph, verifierDraft, input)
-	unscored := model.VerifierUnscored(slots, input.Scores, thresholds.Valid)
-	if len(unscored) == 0 {
-		return slots, nil
-	}
-	fresh, err := w.verifierRanking(ctx, prefilter, subject, unscored)
-	if err != nil || len(fresh) == 0 {
-		return slots, err
-	}
-	maps.Copy(input.Scores, fresh)
-	return model.PlaceVerifierReading(graph, verifierDraft, input), nil
-}
-
-// verifierRanking is the deep verifier's ranking source: the prefilter
-// judge's scores of ids against the draft's subject, each recorded in the
-// reading. Without a judge it scores nothing, so the reading keeps its
-// listed order.
-func (w *WorkflowSession) verifierRanking(ctx *engine.Context, prefilter Prefilter, subject string, ids []string) (map[string]uint8, error) {
-	if prefilter.Scorer == nil {
-		return nil, nil
-	}
-	pending := make([]relevance.Candidate, 0, len(ids))
-	for _, id := range ids {
-		pending = append(pending, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(ctx.Graph, ctx.Graph.ByID[id])})
-	}
-	if err := secrets.CheckText("the draft", subject); err != nil {
-		return nil, err
-	}
-	scored := scoreCandidates(w.ctx, prefilter, subject, pending)
-	if scored.unanswered > 0 || scored.oversize > 0 {
-		slogutils.FromContext(w.ctx).Warn("the verifier's reading ranks the entries the prefilter left unscored after the scored ones", "unanswered", scored.unanswered, "oversize", scored.oversize, "failures", scored.failures)
-	}
-	if len(scored.fresh) == 0 {
-		return nil, nil
-	}
-	payload := &model.PrefilterPayload{Judge: prefilter.Judge, Forward: prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: scored.fresh}
-	if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: model.ReadPayload{Prefilter: payload}}); err != nil {
-		return nil, err
-	}
-	return scored.fresh, nil
 }
 
 func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {

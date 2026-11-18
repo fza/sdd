@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -48,17 +49,32 @@ func (r *ProjectRuntime) appendRelevance(ctx context.Context, batch model.Releva
 	return nil
 }
 
-// prefilterCalibration loads the ledger and the prefilter judge's calibrated
-// thresholds, which gather's prefilter and the deep verifier's lanes share:
-// invalid while no judge is configured or the recall bound does not hold.
+// prefilterCalibration is judgeCalibration of gather's prefilter judge.
 func (r *ProjectRuntime) prefilterCalibration(ctx context.Context) (*model.RelevanceLedger, model.RelevanceThresholds, error) {
+	return r.judgeCalibration(ctx, r.options.Prefilter.Judge)
+}
+
+// judgeCalibration loads the ledger and judge's calibrated thresholds:
+// invalid without a judge or while the recall bound does not hold.
+func (r *ProjectRuntime) judgeCalibration(ctx context.Context, judge string) (*model.RelevanceLedger, model.RelevanceThresholds, error) {
 	ledger, err := r.relevanceLedger(ctx)
 	if err != nil {
 		return nil, model.RelevanceThresholds{}, err
 	}
-	judge := r.options.Prefilter.Judge
 	if judge == "" {
 		return ledger, model.RelevanceThresholds{}, nil
 	}
 	return ledger, model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge), nil
+}
+
+// judges are the runtime's distinct prefilter judges: gather's and the
+// Claude host's ranking judge.
+func (r *ProjectRuntime) judges() []Prefilter {
+	var judges []Prefilter
+	for _, judge := range []Prefilter{r.options.Prefilter, r.options.Ranking.ClaudeHost} {
+		if judge.Scorer != nil && !slices.ContainsFunc(judges, func(held Prefilter) bool { return held.Judge == judge.Judge }) {
+			judges = append(judges, judge)
+		}
+	}
+	return judges
 }

@@ -255,3 +255,32 @@ func TestCalibration_ReportsTheFlipRate(t *testing.T) {
 		t.Fatal("no implicit dismissal should report a zero rate")
 	}
 }
+
+// A judge's ranking recall is the weighted share of the positive labels it
+// scores at or above RankingRecallLine. Measured from RankingRecallMinimum
+// positives on, a share below RankingRecallBar marks the judge weak.
+func TestRankingHealth(t *testing.T) {
+	labels := func(high, low int) []model.RelevanceLabel {
+		var out []model.RelevanceLabel
+		for i := range high + low {
+			score := uint8(250)
+			if i >= high {
+				score = 10
+			}
+			out = append(out, model.RelevanceLabel{Kind: model.LabelPositive, Score: score, Weight: model.WeightReferenced})
+		}
+		return append(out, model.RelevanceLabel{Kind: model.LabelNegative, Score: 250, Weight: model.WeightDismissed})
+	}
+	few := model.JudgeRankingHealth(labels(0, model.RankingRecallMinimum-1))
+	if few.Measured || few.Weak() {
+		t.Fatalf("health %+v: fewer positives than the minimum measure nothing", few)
+	}
+	weak := model.JudgeRankingHealth(labels(17, 3))
+	if !weak.Measured || weak.Positives != 20 || weak.Recall != 0.85 || !weak.Weak() {
+		t.Fatalf("health %+v: 17 of 20 positives at the line is below the bar", weak)
+	}
+	sound := model.JudgeRankingHealth(labels(19, 1))
+	if !sound.Measured || sound.Recall != 0.95 || sound.Weak() {
+		t.Fatalf("health %+v: 19 of 20 positives at the line clears the bar", sound)
+	}
+}

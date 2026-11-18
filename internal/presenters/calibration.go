@@ -30,6 +30,16 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 		fmt.Fprintln(w, "thresholds: none yet, the recall bound does not hold: the prefilter sorts and sets nothing aside")
 		fmt.Fprintln(w, "uncalibrated: run `sdd grounding seed --from-refs` to label the graph's own references and score them")
 	}
+	ranking := report.Ranking
+	switch {
+	case !ranking.Measured:
+		fmt.Fprintf(w, "ranking recall: not measured, %d referenced labels of the %d it takes; run `sdd grounding seed --from-refs`\n", ranking.Positives, model.RankingRecallMinimum)
+	case ranking.Weak():
+		fmt.Fprintf(w, "ranking recall: %.2f of %d referenced labels score at or above %.1f, below the bar %.2f: the judge ranks poorly, so the deep reading serves the top %d in full and lists the next %d with their summary\n",
+			ranking.Recall, ranking.Positives, model.RankingRecallLine, model.RankingRecallBar, 2*model.DeepTopRanked, 2*model.DeepSummaryRanked)
+	default:
+		fmt.Fprintf(w, "ranking recall: %.2f of %d referenced labels score at or above %.1f (bar %.2f)\n", ranking.Recall, ranking.Positives, model.RankingRecallLine, model.RankingRecallBar)
+	}
 	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
 		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
 	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no drift effect)\n", report.OpenedHidden)

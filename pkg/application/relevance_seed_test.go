@@ -116,7 +116,7 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scored.Scored != 189 || scored.Requests != 1 || scorer.calls() != 1 {
+	if len(scored) != 1 || scored[0].Scored != 189 || scored[0].Requests != 1 || scorer.calls() != 1 {
 		t.Fatalf("rescore %+v after %d calls: one request should score the referencing entry's pairs", scored, scorer.calls())
 	}
 	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
@@ -132,6 +132,60 @@ func TestSeedRefLabels_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) {
 	}
 	if again.Added != 0 || again.Skipped != 189 {
 		t.Fatalf("seed %+v: a second pass should add nothing", again)
+	}
+}
+
+// The seed's rescore scores with the Claude host's ranking judge too, so its
+// ranking health is measured: a judge scoring the graph's own references
+// below the line is reported weak, in the state serve warns from and in the
+// status beside gather's judge.
+func TestSeedRefLabels_MeasuresTheRankingJudgesHealth(t *testing.T) {
+	f := newGatherFixture(t)
+	subject := "20260201-000000-d-tac-sub"
+	var refs strings.Builder
+	refs.WriteString("intent: pending\nrefs:\n")
+	for i := range model.RankingRecallMinimum {
+		id := fmt.Sprintf("20260101-0000%02d-s-tac-ref", i)
+		f.write(t, id, "gap", fmt.Sprintf("Referenced gap %d.", i), "")
+		fmt.Fprintf(&refs, "    - id: %s\n      kind: grounded-in\n      desc: a referenced gap\n", id)
+	}
+	f.write(t, subject, "directive", "The subject decision.", refs.String())
+	f.relevance = localadapter.NewMemoryRelevanceStore()
+	f.prefilter = sdd.Prefilter{Scorer: &scriptedScorer{scores: map[string]float64{}}, Judge: gatherJudge}
+	weak := map[string]float64{}
+	for i := range model.RankingRecallMinimum {
+		weak[fmt.Sprintf("20260101-0000%02d-s-tac-ref", i)] = 0.1
+	}
+	host := &scriptedScorer{scores: weak}
+	f.ranking = sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: "test:host"}}
+	application := f.app(t, prefilterPolicy(1), nil)
+	identity := sdd.RequestIdentity{Subject: "tester"}
+
+	if _, err := application.SeedRefLabels(t.Context(), identity, gatherProject); err != nil {
+		t.Fatal(err)
+	}
+	scored, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scored) != 2 || scored[0].Judge != gatherJudge || scored[1].Judge != "test:host" || scored[1].Scored != model.RankingRecallMinimum || host.calls() != 1 {
+		t.Fatalf("rescore %+v: gather's judge and the Claude host's judge should each score every labelled pair", scored)
+	}
+	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Weak) != 1 || state.Weak[0].Judge != "test:host" || state.Weak[0].Recall != 0 || state.Weak[0].Positives != model.RankingRecallMinimum {
+		t.Fatalf("state %+v: only the host's judge scores the references below the line", state)
+	}
+	status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"judge: " + gatherJudge, "the deep reading's ranking judge under a Claude host:\njudge: test:host", "ranking recall: 1.00 of 20", "ranking recall: 0.00 of 20 referenced labels score at or above 0.5, below the bar 0.90"} {
+		if !strings.Contains(status.Text, want) {
+			t.Errorf("status lacks %q:\n%s", want, status.Text)
+		}
 	}
 }
 

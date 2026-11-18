@@ -207,6 +207,7 @@ type config struct {
 	hooks       sdd.HookCommands
 	relevance   sdd.RelevanceStore
 	prefilter   sdd.Prefilter
+	ranking     sdd.Ranking
 	events      sdd.EventStore
 	embedder    embed.Embedder
 }
@@ -296,6 +297,11 @@ func WithEmbedder(embedder embed.Embedder) Option {
 // WithPrefilter gives the world's project a relevance scorer.
 func WithPrefilter(prefilter sdd.Prefilter) Option {
 	return func(c *config) { c.prefilter = prefilter }
+}
+
+// WithRanking gives the world's project the deep reading's ranking.
+func WithRanking(ranking sdd.Ranking) Option {
+	return func(c *config) { c.ranking = ranking }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -470,7 +476,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
-		Hooks: cfg.hooks, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events,
+		Hooks: cfg.hooks, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Ranking: cfg.ranking, Events: cfg.events,
 	}
 	if cfg.window != nil {
 		window := *cfg.window

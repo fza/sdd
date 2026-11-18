@@ -123,6 +123,21 @@ const DefaultVerifierRoundTimeout = 10 * time.Minute
 // delegate that makes no call while verify.idle_timeout is unset.
 const DefaultVerifierIdleTimeout = 10 * time.Minute
 
+// DefaultRankingTimeout bounds the deep reading's ranking pass while
+// verify.ranking_timeout is unset: a listwise judge's slowest measured call
+// and one retry of it fit.
+const DefaultRankingTimeout = 45 * time.Second
+
+// ResolvedRankingTimeout is how long the deep reading waits for its ranking
+// judge, from the pass's start: verify.ranking_timeout, else
+// DefaultRankingTimeout.
+func (c VerifyConfig) ResolvedRankingTimeout() time.Duration {
+	if d, ok := c.RankingTimeout.Duration(); ok {
+		return d
+	}
+	return DefaultRankingTimeout
+}
+
 // ClaudeEffort is a level the claude CLI's --effort takes.
 type ClaudeEffort string
 
@@ -150,16 +165,19 @@ func (a ClaudeAgent) VerifierAgent() VerifierAgent {
 // only the user-global and machine-local layers set it. Pointers tell an
 // unset grounding key from one a layer sets.
 type VerifyConfig struct {
-	Mode          VerifyMode           `yaml:"mode,omitempty"`
-	Skip          VerifierSkip         `yaml:"skip,omitempty"`
-	Runner        VerifierRunner       `yaml:"runner,omitempty"`
-	Driver        VerifierDriver       `yaml:"driver,omitempty"`
-	Claude        ClaudeAgent          `yaml:"claude,omitempty"`
-	RoundTimeout  VerifyDuration       `yaml:"round_timeout,omitempty"`
-	IdleTimeout   VerifyDuration       `yaml:"idle_timeout,omitempty"`
-	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
-	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
-	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
+	Mode         VerifyMode     `yaml:"mode,omitempty"`
+	Skip         VerifierSkip   `yaml:"skip,omitempty"`
+	Runner       VerifierRunner `yaml:"runner,omitempty"`
+	Driver       VerifierDriver `yaml:"driver,omitempty"`
+	Claude       ClaudeAgent    `yaml:"claude,omitempty"`
+	RoundTimeout VerifyDuration `yaml:"round_timeout,omitempty"`
+	IdleTimeout  VerifyDuration `yaml:"idle_timeout,omitempty"`
+	// RankingTimeout bounds the deep reading's ranking pass
+	// (ResolvedRankingTimeout).
+	RankingTimeout VerifyDuration       `yaml:"ranking_timeout,omitempty"`
+	Depth          GroundingDepthConfig `yaml:"depth,omitempty"`
+	BriefAllBelow  *int                 `yaml:"brief_all_below,omitempty"`
+	PrefilterFrom  *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 	// Kinds sets the mode per entry kind; see ModeFor.
@@ -305,6 +323,9 @@ func (c VerifyConfig) KnownValues() VerifyConfig {
 	if !c.IdleTimeout.Known() {
 		c.IdleTimeout = ""
 	}
+	if !c.RankingTimeout.Known() {
+		c.RankingTimeout = ""
+	}
 	if len(c.Kinds) > 0 {
 		known := make(map[Kind]VerifyMode, len(c.Kinds))
 		for kind, mode := range c.Kinds {
@@ -324,8 +345,8 @@ func isClosedValue[S interface {
 	return slices.Contains(value.AllowedValues(), string(value))
 }
 
-// VerifyDuration is a verify.round_timeout or verify.idle_timeout value: a
-// duration such as 10m.
+// VerifyDuration is a verify.round_timeout, idle_timeout or ranking_timeout
+// value: a duration such as 10m.
 type VerifyDuration string
 
 func (VerifyDuration) FreeText() {}
@@ -362,6 +383,9 @@ func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
 	}
 	if !c.IdleTimeout.Known() {
 		ignored = append(ignored, IgnoredSetting{Key: "verify.idle_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 10m", c.IdleTimeout)})
+	}
+	if !c.RankingTimeout.Known() {
+		ignored = append(ignored, IgnoredSetting{Key: "verify.ranking_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 45s", c.RankingTimeout)})
 	}
 	for _, kind := range slices.Sorted(maps.Keys(c.Kinds)) {
 		mode, key := c.Kinds[kind], "verify.kinds."+string(kind)
@@ -401,6 +425,9 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	if overlay.IdleTimeout != "" {
 		out.IdleTimeout = overlay.IdleTimeout
+	}
+	if overlay.RankingTimeout != "" {
+		out.RankingTimeout = overlay.RankingTimeout
 	}
 	if len(overlay.Kinds) > 0 {
 		// KnownValues gave out a map of its own, so base stays unchanged.

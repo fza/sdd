@@ -363,7 +363,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Scored != 189 || scorer.calls() != 1 {
+	if len(result) != 1 || result[0].Scored != 189 || scorer.calls() != 1 {
 		t.Fatalf("result %+v after %d calls: one pass should score every labelled pair", result, scorer.calls())
 	}
 	if !strings.Contains(scorer.requests[0].Subject, "The subject decision.") {

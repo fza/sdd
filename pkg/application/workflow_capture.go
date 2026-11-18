@@ -376,14 +376,19 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 // verifier judges it: entries served in full, entries listed in the order
 // the reads listed them, and the drafter's verdicts.
 func instanceReading(ctx *engine.Context) *captureReading {
-	reading := &captureReading{setAside: storeVerdicts(ctx.Store)}
-	if ctx.Reading == nil {
+	return captureReadingOf(ctx.Store, ctx.Reading)
+}
+
+// captureReadingOf is instanceReading of an instance's store and reading.
+func captureReadingOf(store *engine.Store, credited *model.Reading) *captureReading {
+	reading := &captureReading{setAside: storeVerdicts(store)}
+	if credited == nil {
 		return reading
 	}
-	reading.full = ctx.Reading.Full()
-	reading.shown = ctx.Reading.Shown()
+	reading.full = credited.Full()
+	reading.shown = credited.Shown()
 	seen := map[string]bool{}
-	for _, read := range ctx.Reading.Reads {
+	for _, read := range credited.Reads {
 		for _, id := range read.IDs {
 			if id != "" && !seen[id] {
 				seen[id] = true

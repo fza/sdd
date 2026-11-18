@@ -43,12 +43,17 @@ func groundingCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					result, err := application.RescoreRelevance(ctx, identity, project)
+					results, err := application.RescoreRelevance(ctx, identity, project)
 					if err != nil {
 						return err
 					}
-					_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score\n", result.Judge, result.Scored, result.Missing, result.Unanswered)
-					return err
+					for _, result := range results {
+						_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score\n", result.Judge, result.Scored, result.Missing, result.Unanswered)
+						if err != nil {
+							return err
+						}
+					}
+					return nil
 				},
 			},
 			{
@@ -105,12 +110,17 @@ func seedFromRefs(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	scored, err := application.RescoreRelevance(ctx, identity, project)
+	results, err := application.RescoreRelevance(ctx, identity, project)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered)
-	return err
+	for _, scored := range results {
+		_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // workingApplication builds the application over the project the working

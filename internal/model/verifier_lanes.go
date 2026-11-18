@@ -67,13 +67,26 @@ type VerifierSlot struct {
 
 // VerifierReading is the grounding reading the deep verifier's order is
 // drawn from: the entries listed, read in full and given a verdict, the
-// prefilter's scores against the draft, its calibration, and the seed the
-// audit sample is drawn by.
+// ranking judge's scores against the draft, its calibration, the seed the
+// audit sample is drawn by, and the similarity to the draft of entries the
+// judge left unscored. Widened doubles DeepTopRanked and DeepSummaryRanked,
+// for a judge whose ranking health is weak (RankingHealth).
 type VerifierReading struct {
 	Listed, Full, Verdicts []string
 	Scores                 map[string]uint8
 	Thresholds             RelevanceThresholds
 	Seed                   string
+	Similarity             map[string]float64
+	Widened                bool
+}
+
+// tiers returns how many ranked entries the reading serves in full and how
+// many it lists with their summary after them.
+func (r VerifierReading) tiers() (top, summary int) {
+	if r.Widened {
+		return 2 * DeepTopRanked, 2 * DeepSummaryRanked
+	}
+	return DeepTopRanked, DeepSummaryRanked
 }
 
 // PlaceVerifierReading orders the deep verifier's reading and places each
@@ -82,7 +95,8 @@ type VerifierReading struct {
 // (verifierNeighbours). Then the entries given a verdict, as briefs, and the
 // listed entries one ref from a target by title and first summary sentence,
 // up to DeepHopListed by rank. Rank is falling score, unscored entries after
-// the scored in listed order, done entries below all others. The rest of the
+// the scored by falling similarity, then in listed order, done entries below
+// all others. The rest of the
 // listed entries go by rank: the first DeepTopRanked that are not done, and
 // scored unless every ranked entry fits them, are served in full, the next ones up to DeepSummaryRanked listed by title and
 // first summary sentence, the rest by title, up to DeepTitleListed. Once
@@ -127,7 +141,15 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 		if c := cmp.Compare(rankLast(!scoredA), rankLast(!scoredB)); c != 0 {
 			return c
 		}
-		return cmp.Compare(scoreB, scoreA)
+		if scoredA {
+			return cmp.Compare(scoreB, scoreA)
+		}
+		similarA, nearA := reading.Similarity[a]
+		similarB, nearB := reading.Similarity[b]
+		if c := cmp.Compare(rankLast(!nearA), rankLast(!nearB)); c != 0 {
+			return c
+		}
+		return cmp.Compare(similarB, similarA)
 	}
 	var hops []string
 	for _, id := range reading.Listed {
@@ -170,13 +192,14 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 	for _, id := range audit {
 		ranked = slices.Insert(ranked, blindPosition(reading.Seed, id, len(ranked)), id)
 	}
-	allFit := len(ranked) <= DeepTopRanked
+	top, summary := reading.tiers()
+	allFit := len(ranked) <= top
 	for i, id := range ranked {
 		_, scored := reading.Scores[id]
 		switch {
-		case i < DeepTopRanked && !done(id) && (scored || allFit):
+		case i < top && !done(id) && (scored || allFit):
 			place(id, VerifierRoleRanked, VerifierPlaceFull)
-		case reading.Thresholds.Valid || i < DeepTopRanked+DeepSummaryRanked:
+		case reading.Thresholds.Valid || i < top+summary:
 			place(id, VerifierRoleRanked, VerifierPlaceSummary)
 		default:
 			place(id, VerifierRoleRanked, title())
@@ -222,12 +245,12 @@ func verifierNeighbours(g *Graph, targets []string) (lifecycle, refs map[string]
 	return lifecycle, refs
 }
 
-// VerifierUnscored returns the entries of slots that hold no score where
-// their rank decides how they are served: the ranked ones once calibrated,
-// since the threshold hides by score, else only when more are ranked than
-// DeepTopRanked serves in full; the ref neighbours when more are listed than
-// DeepHopListed.
-func VerifierUnscored(slots []VerifierSlot, scores map[string]uint8, calibrated bool) []string {
+// VerifierUnscored returns the entries of slots that hold no score in
+// reading where their rank decides how they are served: the ranked ones once
+// calibrated, since the threshold hides by score, else only when more are
+// ranked than the top serves in full; the ref neighbours when more are
+// listed than DeepHopListed.
+func VerifierUnscored(slots []VerifierSlot, reading VerifierReading) []string {
 	var ranked, hops []string
 	for _, slot := range slots {
 		switch slot.Role {
@@ -237,15 +260,58 @@ func VerifierUnscored(slots []VerifierSlot, scores map[string]uint8, calibrated 
 			hops = append(hops, slot.ID)
 		}
 	}
+	top, _ := reading.tiers()
 	var decides []string
-	if calibrated || len(ranked) > DeepTopRanked {
+	if reading.Thresholds.Valid || len(ranked) > top {
 		decides = ranked
 	}
 	if len(hops) > DeepHopListed {
 		decides = append(decides, hops...)
 	}
 	return slices.DeleteFunc(decides, func(id string) bool {
-		_, scored := scores[id]
+		_, scored := reading.Scores[id]
 		return scored
 	})
+}
+
+// RankingSources counts the entries a reading's rank placed by what ranked
+// each: the judge's score, similarity to the draft, or listed order.
+type RankingSources struct {
+	Judged, Similar, Listed int
+}
+
+// Kind names the source: judge or similarity when one ranked every entry,
+// listed order when neither ranked any, mixed otherwise; empty when the rank
+// placed no entry.
+func (s RankingSources) Kind() string {
+	switch {
+	case s.Judged+s.Similar+s.Listed == 0:
+		return ""
+	case s.Judged > 0 && s.Similar == 0 && s.Listed == 0:
+		return "judge"
+	case s.Similar > 0 && s.Judged == 0 && s.Listed == 0:
+		return "similarity"
+	case s.Judged == 0 && s.Similar == 0:
+		return "listed order"
+	}
+	return "mixed"
+}
+
+// VerifierRankingSources counts the ranked entries and ref neighbours of
+// slots by what ranked them in reading.
+func VerifierRankingSources(slots []VerifierSlot, reading VerifierReading) RankingSources {
+	var sources RankingSources
+	for _, slot := range slots {
+		if slot.Role != VerifierRoleRanked && slot.Role != VerifierRoleHop {
+			continue
+		}
+		if _, scored := reading.Scores[slot.ID]; scored {
+			sources.Judged++
+		} else if _, near := reading.Similarity[slot.ID]; near {
+			sources.Similar++
+		} else {
+			sources.Listed++
+		}
+	}
+	return sources
 }

@@ -81,3 +81,25 @@ func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Pref
 	}
 	return sdd.Prefilter{Scorer: prefilter.Scorer, Judge: prefilter.Judge}, nil
 }
+
+// projectRanking composes the deep reading's ranking: the Claude host's
+// judge while verify.prefilter is on and llm_prefilter is unset
+// (model.BaseConfig.ClaudeHostRanking), and verify.ranking_timeout. Its
+// calls are recorded into sink.
+func projectRanking(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Ranking, error) {
+	var base model.BaseConfig
+	if cfg != nil {
+		base = cfg.BaseConfig
+	}
+	ranking := sdd.Ranking{Timeout: base.Verify.ResolvedRankingTimeout()}
+	host, ok := base.ClaudeHostRanking()
+	if !base.Verify.GroundingPolicy().Prefilter || !ok {
+		return ranking, nil
+	}
+	judge, err := factory.NewPrefilter(host, sink)
+	if err != nil {
+		return sdd.Ranking{}, err
+	}
+	ranking.ClaudeHost = sdd.Prefilter{Scorer: judge.Scorer, Judge: judge.Judge}
+	return ranking, nil
+}

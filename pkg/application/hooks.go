@@ -154,6 +154,13 @@ func (h *workflowHooks) resolve() error {
 }
 
 func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
+	// The step event the configured hooks see is where the capture's draft
+	// and listed set first stand together.
+	if point.Procedure == "capture" && point.Step == "assemble" && point.Phase == engine.HookDone {
+		if err := h.workflow.rankInBackground(point.Instance); err != nil {
+			return nil, fmt.Errorf("ranking the deep reading: %w", err)
+		}
+	}
 	if err := h.resolve(); err != nil {
 		return nil, err
 	}

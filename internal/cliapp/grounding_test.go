@@ -28,7 +28,8 @@ func TestCLIGroundingStatusReportsTheConfiguredJudge(t *testing.T) {
 }
 
 // Without an llm_prefilter block the prefilter is on and judges with generate
-// on the llm provider and model.
+// on the llm provider and model, and the deep reading under a Claude host
+// ranks with Haiku listwise, reported beside it.
 func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm:\n  provider: codex\n  model: gpt-5.5\n")
@@ -36,7 +37,22 @@ func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "judge: generate:gpt-5.5")
+	assertContainsOutput(t, "stdout", result.stdout, "judge: generate:gpt-5.5", "the deep reading's ranking judge under a Claude host:\njudge: listwise:claude-haiku-5-5")
+}
+
+// A configured llm_prefilter ranks the deep reading too: no Claude host
+// judge is reported.
+func TestCLIGroundingStatusLeavesRankingToAConfiguredPrefilter(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm_prefilter:\n  protocol: generate\n  model: haiku\n")
+	result := f.run(t, "grounding", "status")
+	if result.err != nil {
+		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
+	}
+	assertContainsOutput(t, "stdout", result.stdout, "judge: generate:haiku")
+	if strings.Contains(result.stdout, "listwise") {
+		t.Fatalf("a configured llm_prefilter should leave no Claude host judge:\n%s", result.stdout)
+	}
 }
 
 // While the recall bound does not hold, the status says the prefilter is

@@ -67,6 +67,9 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 	if err != nil {
 		return GatherResult{}, err
 	}
+	if err := w.rankInBackground(request.Instance); err != nil {
+		return GatherResult{}, err
+	}
 	return result, nil
 }
 

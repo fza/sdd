@@ -517,6 +517,41 @@ type DeepListedLine struct {
 	Implicit bool
 }
 
+// DeepRankingNote heads the verifier's reading with what ranked the entries
+// placed by rank, with counts, and the doubled tiers of a widened reading;
+// empty when the rank placed none.
+func DeepRankingNote(sources model.RankingSources, judge string, widened bool) string {
+	var b strings.Builder
+	b.WriteString("\n## Ranking\n\nRanking source: ")
+	switch sources.Kind() {
+	case "":
+		return ""
+	case "judge":
+		fmt.Fprintf(&b, "judge %s, %d entries.", judge, sources.Judged)
+	case "similarity":
+		fmt.Fprintf(&b, "similarity to the draft, %d entries: no judge scored them.", sources.Similar)
+	case "listed order":
+		fmt.Fprintf(&b, "listed order, %d entries: no judge scored them and no embedding ranked them.", sources.Listed)
+	default:
+		var parts []string
+		if sources.Judged > 0 {
+			parts = append(parts, fmt.Sprintf("%d by judge %s", sources.Judged, judge))
+		}
+		if sources.Similar > 0 {
+			parts = append(parts, fmt.Sprintf("%d by similarity to the draft", sources.Similar))
+		}
+		if sources.Listed > 0 {
+			parts = append(parts, fmt.Sprintf("%d in listed order", sources.Listed))
+		}
+		fmt.Fprintf(&b, "mixed, %s.", strings.Join(parts, ", "))
+	}
+	if widened {
+		fmt.Fprintf(&b, " The judge's ranking recall is below the bar, so the reading serves the top %d in full and lists the next %d with their summary.", 2*model.DeepTopRanked, 2*model.DeepSummaryRanked)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // DeepListedBlock lists the entries the reading does not serve, one line
 // each in reading order, with the count and the call that opens one, and
 // the count of those past a listing ceiling. Every listed and counted line

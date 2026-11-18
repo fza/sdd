@@ -68,11 +68,11 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 	var pending []relevance.Candidate
 	for _, candidate := range candidates {
 		if _, ok := held[candidate.Entry.ID]; !ok {
-			pending = append(pending, relevance.Candidate{ID: candidate.Entry.ID, Text: model.EntryRelevanceText(g, candidate.Entry)})
+			pending = append(pending, relevance.Candidate{ID: candidate.Entry.ID, Text: model.EntryRelevanceText(g, candidate.Entry), Line: model.EntryRankingLine(candidate.Entry)})
 		}
 	}
 	pass.status = model.PrefilterOK
-	scored := scoreCandidates(ctx, prefilter, subject, pending)
+	scored := scoreCandidates(ctx, prefilter, subject, pending, prefilterDeadline)
 	pass.fresh = scored.fresh
 	maps.Copy(pass.scores, scored.fresh)
 	var notes []string
@@ -93,22 +93,24 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 
 // scoredPairs is what one scoring of pending candidates got: a score byte
 // per answered candidate, how many were too long for one call, and how many
-// calls left unanswered with their distinct failures.
+// calls left unanswered with their distinct failures; late marks a ranking
+// collected before every pass ended.
 type scoredPairs struct {
 	fresh      map[string]uint8
 	oversize   int
 	unanswered int
 	failures   []string
+	late       bool
 }
 
 // scoreCandidates rates pending against subject in filled calls, at most
-// prefilterInFlight at once and within prefilterDeadline. A
-// failed call leaves its candidates unscored; the result names it.
-func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate) scoredPairs {
+// prefilterInFlight at once and within deadline. A failed call leaves its
+// candidates unscored; the result names it.
+func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate, deadline time.Duration) scoredPairs {
 	scored := scoredPairs{fresh: map[string]uint8{}}
 	batches, oversize := relevance.Plan(prefilter.Scorer, subject, pending)
 	scored.oversize = len(oversize)
-	ctx, cancel := context.WithTimeout(ctx, prefilterDeadline)
+	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	var mu sync.Mutex
 	group := errgroup.Group{}

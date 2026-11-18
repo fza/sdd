@@ -167,6 +167,48 @@ type CalibrationReport struct {
 	PassedInFull int
 	Referenced   int
 	SetAside     []CodePrecision
+	Ranking      RankingHealth
+}
+
+// The ranking health rule: a judge's ranking recall is the weighted share of
+// its positive labels it scores at or above RankingRecallLine. Measured from
+// RankingRecallMinimum positives on, a recall below RankingRecallBar makes
+// the judge weak, and the deep reading it ranks widens its tiers.
+const (
+	RankingRecallLine    = 0.5
+	RankingRecallBar     = 0.9
+	RankingRecallMinimum = 20
+)
+
+// RankingHealth is a judge's ranking recall over its positive labels.
+type RankingHealth struct {
+	Positives int
+	Recall    float64
+	Measured  bool
+}
+
+// Weak reports a measured recall below RankingRecallBar.
+func (h RankingHealth) Weak() bool { return h.Measured && h.Recall < RankingRecallBar }
+
+// JudgeRankingHealth applies the ranking health rule to a judge's labels.
+func JudgeRankingHealth(labels []RelevanceLabel) RankingHealth {
+	var health RankingHealth
+	total, above := 0.0, 0.0
+	for _, label := range labels {
+		if label.Kind != LabelPositive {
+			continue
+		}
+		health.Positives++
+		total += label.Weight
+		if ScoreValue(label.Score) >= RankingRecallLine {
+			above += label.Weight
+		}
+	}
+	if total > 0 {
+		health.Recall = above / total
+	}
+	health.Measured = health.Positives >= RankingRecallMinimum
+	return health
 }
 
 // Precision is the referenced share of the pairs passed in full.
@@ -204,7 +246,7 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 	if excludeReplay {
 		labels = live
 	}
-	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
+	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay, Ranking: JudgeRankingHealth(labels)}
 	for _, verdict := range l.readers {
 		if verdict.OpenedHidden && verdict.Code != ReaderReferenced {
 			report.OpenedHidden++

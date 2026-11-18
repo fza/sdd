@@ -110,3 +110,49 @@ func TestResolvedPrefilter(t *testing.T) {
 		t.Errorf("a rating protocol should take the block as set, got %+v", rate)
 	}
 }
+
+// Without an llm_prefilter block the deep reading under a Claude host ranks
+// with Haiku listwise through the claude CLI at effort low, on the llm
+// block's credentials; any llm_prefilter value leaves ranking to the
+// configured prefilter.
+func TestClaudeHostRanking(t *testing.T) {
+	llm := model.LLMConfig{Provider: "codex", Model: "gpt-5.5", ClaudeCLI: model.ClaudeCLIConfig{Credentials: model.ClaudeCLICredentialsEnv}}
+	ranking, ok := model.BaseConfig{LLM: llm}.ClaudeHostRanking()
+	if !ok || ranking.Protocol != model.PrefilterListwise || ranking.Provider != "claude-cli" || ranking.Model != "claude-haiku-5-5" || ranking.Effort != "low" {
+		t.Fatalf("no block should rank with Haiku listwise on the claude CLI at low, got %+v, %v", ranking, ok)
+	}
+	if ranking.ClaudeCLI.Credentials != model.ClaudeCLICredentialsEnv {
+		t.Errorf("the ranking judge should take the llm block's claude CLI credentials, got %q", ranking.ClaudeCLI.Credentials)
+	}
+	for name, block := range map[string]model.LLMPrefilterConfig{
+		"protocol": {Protocol: model.PrefilterGenerate},
+		"model":    {LLMConfig: model.LLMConfig{Model: "haiku"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := (model.BaseConfig{LLM: llm, LLMPrefilter: block}).ClaudeHostRanking(); ok {
+				t.Fatal("a configured llm_prefilter should win over the Claude host default")
+			}
+		})
+	}
+}
+
+// verify.ranking_timeout bounds the deep reading's ranking pass: 45s by
+// default, a set duration wins, and a value that is no duration is ignored.
+func TestVerifyConfig_RankingTimeout(t *testing.T) {
+	if got := (model.VerifyConfig{}).ResolvedRankingTimeout(); got != model.DefaultRankingTimeout || got.String() != "45s" {
+		t.Fatalf("default ranking timeout %s, want 45s", got)
+	}
+	if got := (model.VerifyConfig{RankingTimeout: "20s"}).ResolvedRankingTimeout(); got.String() != "20s" {
+		t.Fatalf("set ranking timeout %s, want 20s", got)
+	}
+	bad := model.VerifyConfig{RankingTimeout: "soon"}
+	if got := bad.ResolvedRankingTimeout(); got != model.DefaultRankingTimeout {
+		t.Fatalf("an unreadable ranking timeout %s should leave the default", got)
+	}
+	if bad.KnownValues().RankingTimeout != "" {
+		t.Fatal("KnownValues should clear an unreadable ranking timeout")
+	}
+	if got := effective(model.EffectiveConfigValues(model.BaseConfig{}, nil, nil))["verify.ranking_timeout"]; got.Value != "45s" || got.Source != model.ConfigSourceDefault {
+		t.Fatalf("verify.ranking_timeout = %+v, want the default 45s", got)
+	}
+}

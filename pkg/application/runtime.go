@@ -21,6 +21,8 @@ type ProjectRuntime struct {
 	connected *connectedFailures
 	// further holds the unresolved further-out refs its reads met.
 	further *furtherNotices
+	// rankings holds the deep reading's ranking passes, begun at gather.
+	rankings *rankingJobs
 }
 
 type ProjectRuntimeOptions struct {
@@ -53,6 +55,9 @@ type ProjectRuntimeOptions struct {
 	// Prefilter is the relevance scorer gather runs under
 	// verify.prefilter; the zero value leaves it off.
 	Prefilter Prefilter
+	// Ranking sets the deep verifier's ranking judge apart from Prefilter;
+	// the zero value ranks with Prefilter.
+	Ranking Ranking
 	// Relevance is the relevance verdict ledger; nil stores no verdicts.
 	Relevance RelevanceStore
 	// HandEdits finds hand edits of committed entries for the recheck list;
@@ -359,7 +364,7 @@ func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
 			Graph:  options.Graph, Finalizers: options.Finalizers,
 		}
 	}
-	return &ProjectRuntime{options: options, connected: &connectedFailures{}, further: &furtherNotices{}}, nil
+	return &ProjectRuntime{options: options, connected: &connectedFailures{}, further: &furtherNotices{}, rankings: &rankingJobs{}}, nil
 }
 
 func (r *ProjectRuntime) Project() ProjectRef {

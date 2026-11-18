@@ -243,24 +243,24 @@ func TestVerifierUnscored_AsksForScoresOnlyWhereTheRankDecides(t *testing.T) {
 		slots = append(slots, model.VerifierSlot{ID: fmt.Sprintf("r%d", i), Role: model.VerifierRoleRanked})
 	}
 	slots = append(slots, model.VerifierSlot{ID: "target", Role: model.VerifierRoleTarget})
-	if got := model.VerifierUnscored(slots, nil, false); len(got) != 0 {
+	if got := model.VerifierUnscored(slots, model.VerifierReading{}); len(got) != 0 {
 		t.Fatalf("unscored %v: ranked entries that all fit the top need no score", got)
 	}
-	if got := model.VerifierUnscored(slots, map[string]uint8{"r0": 1}, true); len(got) != model.DeepTopRanked-1 || slices.Contains(got, "r0") || slices.Contains(got, "target") {
+	if got := model.VerifierUnscored(slots, model.VerifierReading{Scores: map[string]uint8{"r0": 1}, Thresholds: model.RelevanceThresholds{Valid: true}}); len(got) != model.DeepTopRanked-1 || slices.Contains(got, "r0") || slices.Contains(got, "target") {
 		t.Fatalf("unscored %v: a calibration hides by score, so every unscored ranked entry needs one", got)
 	}
 	slots = append(slots, model.VerifierSlot{ID: "extra", Role: model.VerifierRoleRanked})
-	if got := model.VerifierUnscored(slots, nil, false); len(got) != model.DeepTopRanked+1 {
+	if got := model.VerifierUnscored(slots, model.VerifierReading{}); len(got) != model.DeepTopRanked+1 {
 		t.Fatalf("unscored %v: past the top cut the rank decides, so every ranked entry needs a score", got)
 	}
 	var hops []model.VerifierSlot
 	for i := range model.DeepHopListed + 1 {
 		hops = append(hops, model.VerifierSlot{ID: fmt.Sprintf("h%d", i), Role: model.VerifierRoleHop})
 	}
-	if got := model.VerifierUnscored(hops[:model.DeepHopListed], nil, true); len(got) != 0 {
+	if got := model.VerifierUnscored(hops[:model.DeepHopListed], model.VerifierReading{Thresholds: model.RelevanceThresholds{Valid: true}}); len(got) != 0 {
 		t.Fatalf("unscored %v: ref neighbours that all fit their ceiling need no score", got)
 	}
-	if got := model.VerifierUnscored(hops, nil, false); len(got) != model.DeepHopListed+1 {
+	if got := model.VerifierUnscored(hops, model.VerifierReading{}); len(got) != model.DeepHopListed+1 {
 		t.Fatalf("unscored %v: past their ceiling the rank decides which ref neighbours are listed", got)
 	}
 }
@@ -300,5 +300,96 @@ func TestPlaceVerifierReading_CountsWhatPassesTheCeilings(t *testing.T) {
 		if places[hops[i]].Place != model.VerifierPlaceCounted {
 			t.Fatalf("ref neighbour %s placed %+v: the lowest-scored past the ceiling should be counted", hops[i], places[hops[i]])
 		}
+	}
+}
+
+// Past the judge, unscored entries rank by their similarity to the draft,
+// the most similar first, then the rest in listed order; similarity alone
+// serves none in full.
+func TestPlaceVerifierReading_RanksUnscoredEntriesBySimilarity(t *testing.T) {
+	var entries []*model.Entry
+	var listed []string
+	for i := range model.DeepTopRanked + 3 {
+		id := fmt.Sprintf("20260101-%06d-s-tac-s%02d", i, i)
+		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
+		listed = append(listed, id)
+	}
+	scored, near, far := listed[4], listed[6], listed[1]
+	reading := model.VerifierReading{
+		Listed:     listed,
+		Scores:     map[string]uint8{scored: 10},
+		Similarity: map[string]float64{near: 0.9, far: 0.2},
+	}
+	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, reading)
+	want := []string{scored, near, far, listed[0], listed[2], listed[3], listed[5], listed[7]}
+	if !slices.Equal(slotIDs(slots), want) {
+		t.Fatalf("order %v, want %v: the scored first, then by falling similarity, then in listed order", slotIDs(slots), want)
+	}
+	for _, slot := range slots[1:] {
+		if slot.Place == model.VerifierPlaceFull {
+			t.Fatalf("slot %+v: similarity alone should serve no entry in full", slot)
+		}
+	}
+}
+
+// A widened reading doubles the top served in full and the summary lines.
+func TestPlaceVerifierReading_WidenedDoublesTheTiers(t *testing.T) {
+	count := 2*(model.DeepTopRanked+model.DeepSummaryRanked) + 5
+	var entries []*model.Entry
+	var listed []string
+	scores := map[string]uint8{}
+	for i := range count {
+		id := fmt.Sprintf("20260101-%06d-s-tac-w%03d", i, i)
+		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
+		listed = append(listed, id)
+		scores[id] = uint8(255 - i%200)
+	}
+	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: scores, Widened: true})
+	places := map[model.VerifierPlace]int{}
+	for _, slot := range slots {
+		places[slot.Place]++
+	}
+	if places[model.VerifierPlaceFull] != 2*model.DeepTopRanked || places[model.VerifierPlaceSummary] != 2*model.DeepSummaryRanked {
+		t.Fatalf("places %v: a widened reading serves %d in full and lists %d with their summary", places, 2*model.DeepTopRanked, 2*model.DeepSummaryRanked)
+	}
+	var top []model.VerifierSlot
+	for i := range 2 * model.DeepTopRanked {
+		top = append(top, model.VerifierSlot{ID: fmt.Sprintf("r%d", i), Role: model.VerifierRoleRanked})
+	}
+	if got := model.VerifierUnscored(top, model.VerifierReading{Widened: true}); len(got) != 0 {
+		t.Fatalf("unscored %v: ranked entries that all fit the widened top need no score", got)
+	}
+}
+
+// The ranking sources count the entries the rank places by what ranked
+// them: the judge's score, similarity to the draft, or listed order.
+func TestVerifierRankingSources_CountsWhatRankedEachEntry(t *testing.T) {
+	slots := []model.VerifierSlot{
+		{ID: "target", Role: model.VerifierRoleTarget},
+		{ID: "a", Role: model.VerifierRoleRanked},
+		{ID: "b", Role: model.VerifierRoleHop},
+		{ID: "c", Role: model.VerifierRoleRanked},
+		{ID: "d", Role: model.VerifierRoleRanked},
+	}
+	reading := model.VerifierReading{Scores: map[string]uint8{"a": 1, "target": 2}, Similarity: map[string]float64{"b": 0.5}}
+	got := model.VerifierRankingSources(slots, reading)
+	if got != (model.RankingSources{Judged: 1, Similar: 1, Listed: 2}) {
+		t.Fatalf("sources %+v: one judged, one by similarity, two in listed order; the target is not ranked", got)
+	}
+	for name, tc := range map[string]struct {
+		sources model.RankingSources
+		want    string
+	}{
+		"judge":      {model.RankingSources{Judged: 3}, "judge"},
+		"similarity": {model.RankingSources{Similar: 3}, "similarity"},
+		"mixed":      {model.RankingSources{Judged: 1, Listed: 1}, "mixed"},
+		"listed":     {model.RankingSources{Listed: 2}, "listed order"},
+		"none":       {model.RankingSources{}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.sources.Kind(); got != tc.want {
+				t.Fatalf("Kind = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
