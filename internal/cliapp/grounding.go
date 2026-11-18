@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -37,23 +38,14 @@ func groundingCmd() *cli.Command {
 			},
 			{
 				Name:  "rescore",
-				Usage: "Have the current judge score every labelled pair it has not scored, after a judge change",
+				Usage: "Have every judge score each labelled pair it has not scored, after a judge change",
+				Flags: []cli.Flag{judgeFlag()},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					application, project, identity, err := workingApplication(ctx, cmd)
 					if err != nil {
 						return err
 					}
-					results, err := application.RescoreRelevance(ctx, identity, project)
-					if err != nil {
-						return err
-					}
-					for _, result := range results {
-						_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score\n", result.Judge, result.Scored, result.Missing, result.Unanswered)
-						if err != nil {
-							return err
-						}
-					}
-					return nil
+					return rescore(ctx, cmd, application, project, identity)
 				},
 			},
 			{
@@ -61,11 +53,15 @@ func groundingCmd() *cli.Command {
 				Usage: "Append a replayed reference label for each pair a JSON Lines file names as {\"a\": ID, \"b\": ID}, or for each pair of the graph's own references, skipping pairs already labelled",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "from", Usage: "the JSON Lines file, or - for standard input"},
-					&cli.BoolFlag{Name: "from-refs", Usage: "Label each entry with every entry it refs, closes or supersedes, then have the judge score the unscored labelled pairs, one request per referencing entry"},
+					&cli.BoolFlag{Name: "from-refs", Usage: "Label each entry with every entry it refs, closes or supersedes, then have every judge score the unscored labelled pairs, one request per referencing entry"},
+					judgeFlag(),
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					if cmd.IsSet("from") == cmd.Bool("from-refs") {
 						return fmt.Errorf("pass --from or --from-refs, exactly one")
+					}
+					if cmd.IsSet("judge") && !cmd.Bool("from-refs") {
+						return fmt.Errorf("--judge takes --from-refs: --from scores nothing")
 					}
 					if cmd.Bool("from-refs") {
 						return seedFromRefs(ctx, cmd)
@@ -102,7 +98,7 @@ func seedFromRefs(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	seeded, err := application.SeedRefLabels(ctx, identity, project)
+	seeded, err := application.SeedRefLabels(ctx, identity, project, sdd.RescoreRequest{Judge: cmd.String("judge")})
 	if err != nil {
 		return err
 	}
@@ -110,17 +106,39 @@ func seedFromRefs(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	results, err := application.RescoreRelevance(ctx, identity, project)
+	return rescore(ctx, cmd, application, project, identity)
+}
+
+func judgeFlag() cli.Flag {
+	return &cli.StringFlag{Name: "judge", Usage: "Score with this judge alone: its name as sdd grounding status prints it, " + sdd.JudgeAliasRanking + " for the deep reading's judge under a Claude host, or " + sdd.JudgeAliasPrefilter + " for gather's judge (default: every judge, the listwise one first)"}
+}
+
+// rescore has the judges --judge selects score the unscored labelled pairs.
+// A failed subject does not stop the others: the failures are listed once
+// every judge is done, and fail the command.
+func rescore(ctx context.Context, cmd *cli.Command, application *sdd.Application, project sdd.ProjectID, identity sdd.RequestIdentity) error {
+	results, err := application.RescoreRelevance(ctx, identity, project, sdd.RescoreRequest{Judge: cmd.String("judge")})
 	if err != nil {
 		return err
 	}
+	var failures []string
 	for _, scored := range results {
-		_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered)
+		_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score; %d left unscored by a failed request\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered, scored.Failed)
 		if err != nil {
 			return err
 		}
+		for _, failure := range scored.Failures {
+			failures = append(failures, fmt.Sprintf("  %s %s: %v\n", scored.Judge, failure.Subject, failure.Err))
+		}
 	}
-	return nil
+	if len(failures) == 0 {
+		return nil
+	}
+	_, err = fmt.Fprintf(cmd.ErrWriter, "failed to score, their pairs stay unscored for the next rescore:\n%s", strings.Join(failures, ""))
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%d subjects failed to score", len(failures))
 }
 
 // workingApplication builds the application over the project the working

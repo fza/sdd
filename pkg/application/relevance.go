@@ -1,9 +1,11 @@
 package application
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -67,6 +69,13 @@ func (r *ProjectRuntime) judgeCalibration(ctx context.Context, judge string) (*m
 	return ledger, model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge), nil
 }
 
+// The aliases a RescoreRequest names a judge by: gather's prefilter judge,
+// and the deep reading's ranking judge under a Claude host.
+const (
+	JudgeAliasPrefilter = "prefilter"
+	JudgeAliasRanking   = "ranking"
+)
+
 // judges are the runtime's distinct prefilter judges: gather's and the
 // Claude host's ranking judge.
 func (r *ProjectRuntime) judges() []Prefilter {
@@ -77,4 +86,42 @@ func (r *ProjectRuntime) judges() []Prefilter {
 		}
 	}
 	return judges
+}
+
+// scoringJudges are the judges a rescore of name scores with: the one name
+// or its alias selects, or for an empty name every judge, the listwise one
+// first, so a slow per-pair judge never holds back the batched one.
+func (r *ProjectRuntime) scoringJudges(name string) ([]Prefilter, error) {
+	judges := r.judges()
+	if len(judges) == 0 {
+		return nil, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
+	}
+	if name == "" {
+		order := func(judge Prefilter) int {
+			if strings.HasPrefix(judge.Judge, string(model.PrefilterListwise)+":") {
+				return 0
+			}
+			return 1
+		}
+		slices.SortStableFunc(judges, func(a, b Prefilter) int { return cmp.Compare(order(a), order(b)) })
+		return judges, nil
+	}
+	aliases := map[string]Prefilter{JudgeAliasPrefilter: r.options.Prefilter, JudgeAliasRanking: r.options.Ranking.ClaudeHost}
+	if judge, ok := aliases[name]; ok && judge.Scorer != nil {
+		return []Prefilter{judge}, nil
+	}
+	var available []string
+	for _, judge := range judges {
+		if judge.Judge == name {
+			return []Prefilter{judge}, nil
+		}
+		var named []string
+		for _, alias := range []string{JudgeAliasPrefilter, JudgeAliasRanking} {
+			if aliases[alias].Scorer != nil && aliases[alias].Judge == judge.Judge {
+				named = append(named, alias)
+			}
+		}
+		available = append(available, fmt.Sprintf("%s (%s)", judge.Judge, strings.Join(named, ", ")))
+	}
+	return nil, &ApplicationError{Code: ErrorInvalidArgument, Message: fmt.Sprintf("sdd: unknown judge %q: pass one of %s", name, strings.Join(available, ", "))}
 }
