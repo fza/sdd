@@ -154,11 +154,8 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 		}
 		reading.WriteString(serve.Instructions)
 	}
-	if !strings.Contains(reading.String(), "ID: "+captureRef2ID) {
-		t.Fatalf("the reading should carry the briefs, in the room the pages before them leave:\n%s", reading.String())
-	}
-	if !strings.Contains(reading.String(), "ID: "+captureRef2ID+" | kind: gap | Status: open\n") || strings.Contains(reading.String(), "Role in the reading: brief") {
-		t.Fatalf("a brief's header should open with its compact line and name no role:\n%s", reading.String())
+	if !strings.Contains(reading.String(), "## Listed, not served (") || !strings.Contains(reading.String(), "\n"+captureRef2ID+"  A signal no fixture session has read in full.") {
+		t.Fatalf("the reading should list an entry no score ranks into the top in its closing block:\n%s", reading.String())
 	}
 }
 
@@ -1005,9 +1002,9 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 }
 
 // The reading pages hold what they serve in full once the no-repeat rule is
-// on, as the MCP surface serves them: page 1 hands on the declared target and
-// the top-ranked entry it serves in full, a later page only what it serves
-// in full; with the rule off nothing is handed on.
+// on, as the MCP surface serves them: page 1 hands on the declared target it
+// serves in full, the brief page hands on nothing; with the rule off nothing
+// is handed on.
 func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1035,8 +1032,8 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 			}
 			count := readingPages(t, resumed.Open[0].Instructions)
 			held := workflow.TakeStepFullIDs()
-			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) != tc.cut {
-				t.Fatalf("page 1 should hand on the declared target and the top-ranked entry it serves in full, and only with cuts on, got %v", held)
+			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) {
+				t.Fatalf("page 1 should hand on the declared target it serves in full, and only with cuts on, got %v", held)
 			}
 			delegate := &proctest.Session{World: world, WF: workflow, ID: x.dispatch.Session}
 			for page := 2; page <= count; page++ {
@@ -1044,8 +1041,8 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 				if want := fmt.Sprintf("Page %d of %d.", page, count); !strings.Contains(serve.Instructions, want) {
 					t.Fatalf("the next serve should be %q:\n%s", want, serve.Instructions)
 				}
-				if held := workflow.TakeStepFullIDs(); slices.Contains(held, captureRefID) || (!tc.cut && len(held) != 0) {
-					t.Fatalf("a later page should hand on only the entries it serves in full, and only with cuts on, got %v", held)
+				if held := workflow.TakeStepFullIDs(); len(held) != 0 {
+					t.Fatalf("the rules page and the brief page should hand on nothing, got %v", held)
 				}
 			}
 		})

@@ -83,8 +83,8 @@ type VerifierReading struct {
 // listed entries one ref from a target by title and first summary sentence,
 // up to DeepHopListed by rank. Rank is falling score, unscored entries after
 // the scored in listed order, done entries below all others. The rest of the
-// listed entries go by rank: the first DeepTopRanked that are not done are
-// served in full, the next ones up to DeepSummaryRanked listed by title and
+// listed entries go by rank: the first DeepTopRanked that are not done, and
+// scored unless every ranked entry fits them, are served in full, the next ones up to DeepSummaryRanked listed by title and
 // first summary sentence, the rest by title, up to DeepTitleListed. Once
 // calibrated, every ranked entry past the top is listed with its summary
 // sentence, but one scoring below the set-aside threshold is hidden, listed
@@ -170,9 +170,11 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 	for _, id := range audit {
 		ranked = slices.Insert(ranked, blindPosition(reading.Seed, id, len(ranked)), id)
 	}
+	allFit := len(ranked) <= DeepTopRanked
 	for i, id := range ranked {
+		_, scored := reading.Scores[id]
 		switch {
-		case i < DeepTopRanked && !done(id):
+		case i < DeepTopRanked && !done(id) && (scored || allFit):
 			place(id, VerifierRoleRanked, VerifierPlaceFull)
 		case reading.Thresholds.Valid || i < DeepTopRanked+DeepSummaryRanked:
 			place(id, VerifierRoleRanked, VerifierPlaceSummary)

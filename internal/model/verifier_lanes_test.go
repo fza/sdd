@@ -120,6 +120,30 @@ func TestPlaceVerifierReading_CutsTheRankedEntriesByScore(t *testing.T) {
 	}
 }
 
+// An unscored entry is served in full only while every ranked entry fits the
+// top: past it, only a score ranks an entry among the top.
+func TestPlaceVerifierReading_ServesUnscoredEntriesInFullOnlyWhenAllFit(t *testing.T) {
+	var entries []*model.Entry
+	var listed []string
+	for i := range model.DeepTopRanked + 1 {
+		id := fmt.Sprintf("20260101-%06d-s-tac-u%02d", i, i)
+		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
+		listed = append(listed, id)
+	}
+	g := model.NewGraph(entries)
+	for _, slot := range model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: listed[:model.DeepTopRanked]}) {
+		if slot.Place != model.VerifierPlaceFull {
+			t.Fatalf("slot %+v: ranked entries that all fit the top are served in full unscored", slot)
+		}
+	}
+	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: map[string]uint8{listed[3]: 1}})
+	for _, slot := range slots {
+		if want := slot.ID == listed[3]; (slot.Place == model.VerifierPlaceFull) != want {
+			t.Fatalf("slot %+v: past the top only a scored entry is served in full", slot)
+		}
+	}
+}
+
 // A done entry ranks below every other ranked entry, whatever its score,
 // and is never served in full.
 func TestPlaceVerifierReading_RanksDoneEntriesLastAndListsThem(t *testing.T) {

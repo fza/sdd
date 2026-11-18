@@ -123,14 +123,14 @@ func TestCaptureDismissals_PublishFlipsAPairTheEntryJoins(t *testing.T) {
 	}
 }
 
-// The deep verifier's reading marks a brief the drafter was shown and left
-// unanswered as implicitly dismissed, and leaves an answered one unmarked.
+// The deep verifier's reading marks an entry the drafter was shown and left
+// unanswered as implicitly dismissed.
 func TestCaptureDismissals_DeepReadingMarksImplicitDismissals(t *testing.T) {
 	world, session := newDeepWorld(t, "dismissals-deep", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	if !strings.Contains(reading, "ID: "+captureRef2ID+" | kind: gap | Status: open\nSummary: A signal no fixture session has read in full.\nRole in the reading: implicitly dismissed\n") {
-		t.Fatalf("the brief left unanswered should carry the implicit dismissal role:\n%s", reading)
+	if !strings.Contains(reading, "\n"+captureRef2ID+"  A signal no fixture session has read in full.  (implicitly dismissed)") {
+		t.Fatalf("the entry left unanswered should carry the implicit dismissal mark:\n%s", reading)
 	}
 	if !strings.Contains(reading, "implicitly dismissed (shown, left unanswered") {
 		t.Fatalf("the verifier's instructions should describe the implicit role:\n%s", reading)
