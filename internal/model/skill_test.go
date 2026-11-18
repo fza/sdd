@@ -60,7 +60,7 @@ Body content here.
 `)
 	embeddedHash := ComputeSkillHash(embedded)
 
-	stamped, err := RenderSkillFile(SkillBundleEntry{Content: embedded}, "v0.2.0", embeddedHash)
+	stamped, err := RenderSkillFile(SkillBundleEntry{Content: embedded}, AgentClaude, "v0.2.0", embeddedHash)
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestComputeSkillStatus_Current(t *testing.T) {
 	embedded := []byte("---\nname: a\n---\nbody\n")
 	entry := SkillBundleEntry{Content: embedded}
 	hash := ComputeSkillHash(embedded)
-	rendered, err := RenderSkillFile(entry, "v0.2.0", hash)
+	rendered, err := RenderSkillFile(entry, AgentClaude, "v0.2.0", hash)
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestComputeSkillStatus_Pristine(t *testing.T) {
 	// the embedded content has changed.
 	oldEmbedded := []byte("---\nname: a\n---\nold body\n")
 	oldHash := ComputeSkillHash(oldEmbedded)
-	installedBytes, err := RenderSkillFile(SkillBundleEntry{Content: oldEmbedded}, "v0.1.0", oldHash)
+	installedBytes, err := RenderSkillFile(SkillBundleEntry{Content: oldEmbedded}, AgentClaude, "v0.1.0", oldHash)
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestComputeSkillStatus_Modified(t *testing.T) {
 	embedded := []byte("---\nname: a\n---\nbody\n")
 	entry := SkillBundleEntry{Content: embedded}
 	hash := ComputeSkillHash(embedded)
-	rendered, err := RenderSkillFile(entry, "v0.1.0", hash)
+	rendered, err := RenderSkillFile(entry, AgentClaude, "v0.1.0", hash)
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSplitFrontmatter_NoFrontmatter(t *testing.T) {
 
 func TestRenderSkillFile_RoundTripsThroughParse(t *testing.T) {
 	embedded := []byte("---\nname: x\ndescription: d\n---\nbody\n")
-	rendered, err := RenderSkillFile(SkillBundleEntry{Content: embedded}, "v0.2.0", "deadbeef")
+	rendered, err := RenderSkillFile(SkillBundleEntry{Content: embedded}, AgentClaude, "v0.2.0", "deadbeef")
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
@@ -190,75 +190,91 @@ func TestRenderSkillFile_RoundTripsThroughParse(t *testing.T) {
 	}
 }
 
-// TestRenderSkillFile_NestsStampsUnderMetadata proves the render keeps stamps
-// out of the top-level frontmatter (which the Agent Skills standard rejects) by
-// nesting them under metadata:, merged into metadata the template authored,
-// while the read and hash paths still recognise them, so a fresh install
-// classifies as Current.
-func TestRenderSkillFile_NestsStampsUnderMetadata(t *testing.T) {
-	cases := map[string][]byte{
-		"no metadata":       []byte("---\nname: sdd\ndescription: d\n---\nbody\n"),
-		"authored metadata": []byte("---\nname: sdd\ndescription: d\nmetadata:\n  owner: team\n---\nbody\n"),
+// TestRenderSkillFile_StampPlacement proves where the render puts the stamps:
+// at the top level of a Claude skill file, under metadata: in a Codex skill
+// file and in an agent definition, merged into metadata the template authored.
+// The read and hash paths recognise both, so a fresh install classifies as
+// Current.
+func TestRenderSkillFile_StampPlacement(t *testing.T) {
+	plain := []byte("---\nname: sdd\ndescription: d\n---\nbody\n")
+	authored := []byte("---\nname: sdd\ndescription: d\nmetadata:\n  owner: team\n---\nbody\n")
+	cases := []struct {
+		name       string
+		target     AgentTarget
+		entry      SkillBundleEntry
+		wantNested bool
+	}{
+		{name: "claude skill", target: AgentClaude, entry: SkillBundleEntry{Content: plain}},
+		{name: "claude skill with authored metadata", target: AgentClaude, entry: SkillBundleEntry{Content: authored}},
+		{name: "codex skill", target: AgentCodex, entry: SkillBundleEntry{Content: plain}, wantNested: true},
+		{name: "codex skill with authored metadata", target: AgentCodex, entry: SkillBundleEntry{Content: authored}, wantNested: true},
+		{name: "claude agent definition", target: AgentClaude, entry: SkillBundleEntry{Content: plain, AgentDefinition: true}, wantNested: true},
 	}
-	for name, embedded := range cases {
-		t.Run(name, func(t *testing.T) {
-			hash := ComputeSkillHash(embedded)
-			rendered, err := RenderSkillFile(SkillBundleEntry{Content: embedded}, "v0.2.0", hash)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hash := ComputeSkillHash(tc.entry.Content)
+			rendered, err := RenderSkillFile(tc.entry, tc.target, "v0.2.0", hash)
 			if err != nil {
 				t.Fatalf("RenderSkillFile: %v", err)
 			}
 
 			fm, _ := splitFrontmatter(rendered)
+			meta, _ := asStringMap(fm["metadata"])
+			holder, other := fm, meta
+			if tc.wantNested {
+				holder, other = meta, fm
+			}
+			if holder[SkillStampVersion] != "v0.2.0" || holder[SkillStampHash] != hash {
+				t.Errorf("stamps not where they belong (nested=%v): %v", tc.wantNested, fm)
+			}
 			for _, key := range []string{SkillStampVersion, SkillStampHash} {
-				if _, top := fm[key]; top {
-					t.Errorf("render placed %s at the top level", key)
+				if _, misplaced := other[key]; misplaced {
+					t.Errorf("render placed %s in both places or the wrong one: %v", key, fm)
 				}
 			}
-			meta, ok := asStringMap(fm["metadata"])
-			if !ok {
-				t.Fatalf("render did not produce a metadata map: %v", fm)
-			}
-			if meta[SkillStampVersion] != "v0.2.0" || meta[SkillStampHash] != hash {
-				t.Errorf("stamps not nested under metadata: %v", meta)
-			}
-			if name == "authored metadata" && meta["owner"] != "team" {
+			authoredMeta, _ := splitFrontmatter(tc.entry.Content)
+			if _, had := authoredMeta["metadata"]; had && meta["owner"] != "team" {
 				t.Errorf("stamps replaced the authored metadata: %v", meta)
+			} else if !had && !tc.wantNested && meta != nil {
+				t.Errorf("a top-level render should add no metadata: %v", meta)
 			}
 
 			installed := ParseSkillFile("/tmp/sdd", rendered)
-			if installed.StoredVersion != "v0.2.0" || installed.StoredHash != hash || installed.StampsTopLevel {
-				t.Errorf("ParseSkillFile did not read nested stamps: version=%q hash=%q topLevel=%v", installed.StoredVersion, installed.StoredHash, installed.StampsTopLevel)
+			if installed.StoredVersion != "v0.2.0" || installed.StoredHash != hash {
+				t.Errorf("ParseSkillFile did not read the stamps: version=%q hash=%q", installed.StoredVersion, installed.StoredHash)
 			}
-			if got := ComputeSkillStatus(SkillBundleEntry{Content: embedded}, installed); got != SkillStatusCurrent {
+			if got := ComputeSkillStatus(tc.entry, installed); got != SkillStatusCurrent {
 				t.Errorf("rendered entry should classify Current, got %s", got)
 			}
 		})
 	}
 }
 
-// TestComputeSkillStatus_TopLevelStamps covers installs stamped with top-level
-// keys: an unedited one reads its stamps and classifies Pristine, so init
-// rewrites it with nested stamps without asking, while an edited one stays
-// Modified.
-func TestComputeSkillStatus_TopLevelStamps(t *testing.T) {
+// TestComputeSkillStatus_EitherStampPlacement covers installs stamped at the
+// top level or under metadata:, whatever target wrote them: an unedited one
+// reads its stamps and classifies Current, an edited one Modified.
+func TestComputeSkillStatus_EitherStampPlacement(t *testing.T) {
 	embedded := []byte("---\nname: sdd\ndescription: d\n---\nbody\n")
 	hash := ComputeSkillHash(embedded)
-	topLevel := []byte("---\ndescription: d\nname: sdd\nsdd-content-hash: " + hash + "\nsdd-version: v0.1.0\n---\nbody\n")
+	placements := map[string][]byte{
+		"top level":      []byte("---\ndescription: d\nname: sdd\nsdd-content-hash: " + hash + "\nsdd-version: v0.1.0\n---\nbody\n"),
+		"under metadata": []byte("---\ndescription: d\nmetadata:\n    sdd-content-hash: " + hash + "\n    sdd-version: v0.1.0\nname: sdd\n---\nbody\n"),
+	}
+	for name, stamped := range placements {
+		t.Run(name, func(t *testing.T) {
+			installed := ParseSkillFile("/tmp/sdd", stamped)
+			if installed.StoredVersion != "v0.1.0" || installed.StoredHash != hash {
+				t.Fatalf("ParseSkillFile did not read the stamps: version=%q hash=%q", installed.StoredVersion, installed.StoredHash)
+			}
+			if got := ComputeSkillStatus(SkillBundleEntry{Content: embedded}, installed); got != SkillStatusCurrent {
+				t.Errorf("unedited stamped file should classify Current, got %s", got)
+			}
 
-	installed := ParseSkillFile("/tmp/sdd", topLevel)
-	if installed.StoredVersion != "v0.1.0" || installed.StoredHash != hash {
-		t.Fatalf("ParseSkillFile did not read top-level stamps: version=%q hash=%q", installed.StoredVersion, installed.StoredHash)
-	}
-	if !installed.StampsTopLevel {
-		t.Error("top-level stamps should be reported as such")
-	}
-	if got := ComputeSkillStatus(SkillBundleEntry{Content: embedded}, installed); got != SkillStatusPristine {
-		t.Errorf("unedited top-level-stamped file should classify Pristine, got %s", got)
-	}
-
-	edited := ParseSkillFile("/tmp/sdd", append(bytes.Clone(topLevel), []byte("user edit\n")...))
-	if got := ComputeSkillStatus(SkillBundleEntry{Content: embedded}, edited); got != SkillStatusModified {
-		t.Errorf("edited top-level-stamped file should classify Modified, got %s", got)
+			edited := ParseSkillFile("/tmp/sdd", append(bytes.Clone(stamped), []byte("user edit\n")...))
+			if got := ComputeSkillStatus(SkillBundleEntry{Content: embedded}, edited); got != SkillStatusModified {
+				t.Errorf("edited stamped file should classify Modified, got %s", got)
+			}
+		})
 	}
 }
 
@@ -269,7 +285,7 @@ func TestComputeSkillStatus_TopLevelStamps(t *testing.T) {
 func TestRenderedEntryDriftStable(t *testing.T) {
 	host := SkillBundleEntry{Skill: "sdd", RelPath: "host.md", Content: []byte("---\nname: host\n---\nbefore\nbody\nafter\n")}
 	hash := ComputeSkillHash(host.Content)
-	rendered, err := RenderSkillFile(host, "v1", hash)
+	rendered, err := RenderSkillFile(host, AgentClaude, "v1", hash)
 	if err != nil {
 		t.Fatalf("RenderSkillFile: %v", err)
 	}
