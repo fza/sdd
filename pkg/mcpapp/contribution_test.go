@@ -140,3 +140,24 @@ func TestContributionModeOverMCP(t *testing.T) {
 		t.Errorf("the capture should land on feat/x, its tip is %q", subject)
 	}
 }
+
+// The session framing carries what the agent has to know of contribution
+// mode: its ref where it is on, how a fork turns it on where it is off.
+func TestFramingNamesContributionMode(t *testing.T) {
+	const howTo = "`sdd config set --local contribution <upstream ref>`"
+
+	on, _, _ := contributionServer(t)
+	framing := openSession(t, connect(t, on)).Framing
+	if !strings.Contains(framing, "Mode: contribution (origin/main)") {
+		t.Errorf("the framing should name the mode and its ref:\n%.400s", framing)
+	}
+	if strings.Contains(framing, howTo) {
+		t.Errorf("the framing should not say how to turn on a mode that is on:\n%.400s", framing)
+	}
+
+	off := newTestServer(t, nil, "", "")
+	framing = openSession(t, connect(t, off.srv)).Framing
+	if !strings.Contains(framing, "Contribution mode: off") || !strings.Contains(framing, howTo) {
+		t.Errorf("the framing should say the mode is off and how a fork turns it on:\n%.400s", framing)
+	}
+}

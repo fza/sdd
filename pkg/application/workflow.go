@@ -1297,12 +1297,16 @@ func (w *WorkflowSession) infoBlock() (string, error) {
 	if info.GraphSchema < info.BinarySchema {
 		fmt.Fprintf(&infoBlock, "\nGraph schema: %d, older than this binary's %d; entries written at schema %d", info.GraphSchema, info.BinarySchema, info.GraphSchema)
 	}
-	if info.Contribution != "" {
-		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries written only on a feature branch cut from it", info.Contribution)
-	}
 	base, err := w.baseLine()
 	if err != nil {
 		return "", err
+	}
+	switch {
+	case info.Contribution != "":
+		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries written only on a feature branch cut from it", info.Contribution)
+	case base != "":
+		// Contribution mode judges a write by its branch; a session without one has none to offer.
+		infoBlock.WriteString("\nContribution mode: off. Fork whose features go upstream as pull requests? `sdd config set --local contribution <upstream ref>` in the feature's worktree, then a session started there, keeps each feature's entries on that feature's branch.")
 	}
 	infoBlock.WriteString(base)
 	if w.branch != "" {
