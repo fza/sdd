@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/networkteam/slogutils"
 
@@ -120,6 +122,8 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}, nil
 }
 
+const waitDelay = 2 * time.Second
+
 // invoke runs one isolated claude -p call with prompt on stdin and the
 // runner's model, effort and credentials, and parses its JSON response.
 func (r *Runner) invoke(ctx context.Context, prompt string, extra ...string) (claudeResponse, error) {
@@ -141,6 +145,11 @@ func (r *Runner) invoke(ctx context.Context, prompt string, extra ...string) (cl
 		args = append(args, "--setting-sources", "")
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
+	// The CLI's own children may hold stdout open: a cancel kills its
+	// whole process group, and Wait gives up on the pipes after waitDelay.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = waitDelay
 	cmd.Dir = workDir
 	// Go sets PWD itself only for a nil Env.
 	cmd.Env = append(env, "PWD="+workDir)
