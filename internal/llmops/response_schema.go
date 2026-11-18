@@ -22,7 +22,6 @@ var (
 	summarySchema      = mustSchema("summary.json")
 	titleSchema        = mustSchema("title.json")
 	gatherQuerySchema  = mustSchema("gather_query.json")
-	relevanceSchema    = mustSchema("relevance.json")
 )
 
 // mustSchema loads an embedded response schema, compacted with its property
