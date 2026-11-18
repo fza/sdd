@@ -346,17 +346,18 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	}
 }
 
-// Init removes from the root .gitignore and .gitattributes exactly the
-// lines earlier builds derived for the graph_dir, keeps the lines added by
-// hand, drops a comment left heading none of them, and gives a runtime folder
-// an earlier build made its own .gitignore.
-func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
+// Init leaves the root .gitignore as it is, the .sdd/ lines another build's
+// init wrote into it included, so the two never undo each other. From the
+// root .gitattributes it removes exactly the routing line derived for the
+// graph_dir and keeps the lines added by hand, and it gives the runtime
+// folder its own .gitignore.
+func TestInit_KeepsTheRootGitignoreAndMovesTheRouting(t *testing.T) {
 	cases := []struct {
 		name, graphDir, handIgnore, heading, handAttributes, wantAttributes string
 	}{
 		{name: "lines added by hand stay", graphDir: "decisions", handIgnore: "node_modules/\n", handAttributes: "*.png binary\n", wantAttributes: "*.png binary\n"},
-		{name: "files left empty go", graphDir: "decisions"},
-		{name: "a heading over the derived lines goes with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
+		{name: "an attributes file left empty goes", graphDir: "decisions"},
+		{name: "a heading over the ignore lines stays with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
 		{name: "a graph at the root keeps its routing", graphDir: ".", handIgnore: "node_modules/\n", wantAttributes: model.GraphAttributesLine + "\n"},
 	}
 	for _, tc := range cases {
@@ -366,26 +367,38 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+tc.heading+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
+			runtimeLine := filepath.ToSlash(filepath.Join(tc.graphDir, model.GraphRuntimeDir)) + "/"
+			rootIgnore := tc.handIgnore + tc.heading + ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n" + runtimeLine + "\n"
+			rootIgnorePath := filepath.Join(tmp, ".gitignore")
+			writeTestFile(t, rootIgnorePath, rootIgnore)
 			writeTestFile(t, filepath.Join(tmp, ".gitattributes"), legacyAttribute+"\n"+tc.handAttributes)
 			writeTestFile(t, filepath.Join(tmp, tc.graphDir, model.GraphRuntimeDir, "graph.lock"), "")
 			h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
-			err = h.Init(context.Background(), &command.InitCmd{RepoRoot: tmp, GraphDir: tc.graphDir, BinaryVersion: "v0.2.0", Scope: model.ScopeProject})
+			var ignoreUpdates []string
+			err = h.Init(context.Background(), &command.InitCmd{
+				RepoRoot: tmp, GraphDir: tc.graphDir, BinaryVersion: "v0.2.0", Scope: model.ScopeProject,
+				OnGitignoreUpdated: func(path string) { ignoreUpdates = append(ignoreUpdates, path) },
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			for _, file := range []struct{ name, want string }{{".gitignore", tc.handIgnore}, {".gitattributes", tc.wantAttributes}} {
-				data, err := os.ReadFile(filepath.Join(tmp, file.name))
-				if file.want == "" {
-					if err == nil {
-						t.Errorf("the root %s should go once only derived lines left it, got:\n%s", file.name, data)
-					}
-					continue
+			if data := readFile(t, rootIgnorePath); string(data) != rootIgnore {
+				t.Errorf("the root .gitignore should stay byte for byte, got:\n%s", data)
+			}
+			if slices.Contains(ignoreUpdates, rootIgnorePath) {
+				t.Errorf("init should report no update of the root .gitignore, got %v", ignoreUpdates)
+			}
+			if data := readFile(t, filepath.Join(tmp, ".sdd", ".gitignore")); string(data) != strings.Join(model.SDDIgnoreLines, "\n")+"\n" {
+				t.Errorf(".sdd/.gitignore should hold the committed ignore lines, got:\n%s", data)
+			}
+			data, err := os.ReadFile(filepath.Join(tmp, ".gitattributes"))
+			if tc.wantAttributes == "" {
+				if err == nil {
+					t.Errorf("the root .gitattributes should go once only the derived line left it, got:\n%s", data)
 				}
-				if string(data) != file.want {
-					t.Errorf("the root %s should keep only the lines added by hand, got:\n%s", file.name, data)
-				}
+			} else if string(data) != tc.wantAttributes {
+				t.Errorf("the root .gitattributes should keep only the lines added by hand, got:\n%s", data)
 			}
 			if data, err := os.ReadFile(filepath.Join(tmp, tc.graphDir, ".gitattributes")); err != nil || !strings.Contains(string(data), model.GraphAttributesLine) {
 				t.Errorf("the graph's .gitattributes should route entries to the merge driver: %v\n%s", err, data)
@@ -397,9 +410,8 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 	}
 }
 
-// A root .gitignore holding no derived line stays byte for byte as it was,
-// a missing final newline included.
-func TestInit_LeavesARootGitignoreWithoutDerivedLinesAlone(t *testing.T) {
+// A root .gitignore without a final newline stays byte for byte as it was.
+func TestInit_LeavesARootGitignoreWithoutFinalNewlineAlone(t *testing.T) {
 	tmp := t.TempDir()
 	writeTestFile(t, filepath.Join(tmp, ".gitignore"), "node_modules/")
 	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})

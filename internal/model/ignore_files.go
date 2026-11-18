@@ -1,7 +1,5 @@
 package model
 
-import "path/filepath"
-
 // GraphRuntimeDir is the folder inside the graph directory holding the graph
 // store's locks, lineage and publication temp file.
 const GraphRuntimeDir = ".sdd-runtime"
@@ -21,14 +19,3 @@ var SDDIgnoreLines = []string{"tmp/", "config.local.yaml", "index/", "stats/", "
 // is relative to the graph directory, so it holds for every graph_dir and
 // travels with the graph.
 const GraphAttributesLine = EntryPathGlob + " merge=" + EntryMergeDriver
-
-// LegacyRootIgnoreLines are the lines earlier builds wrote into the
-// repository root .gitignore for a graph in graphDir; an empty graphDir
-// leaves out the runtime line. Init removes exactly these.
-func LegacyRootIgnoreLines(graphDir string) []string {
-	lines := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/index/", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/"}
-	if graphDir == "" {
-		return lines
-	}
-	return append(lines, filepath.ToSlash(filepath.Join(graphDir, GraphRuntimeDir))+"/")
-}

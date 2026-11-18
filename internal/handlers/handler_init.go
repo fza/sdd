@@ -949,15 +949,10 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 // what init writes, none of them depending on graph_dir: the committed
 // .sdd/.gitignore and, for a repository holding its graph in graphDir, the
 // graph directory's .gitattributes and its runtime folder's .gitignore. The
-// root .gitignore and .gitattributes lose exactly the lines earlier builds
-// derived for legacyGraphDirs; lines added by hand stay.
+// root .gitattributes loses exactly the lines earlier builds derived for
+// legacyGraphDirs; lines added by hand stay. The root .gitignore is never
+// touched: its .sdd/ lines are another build's to write.
 func keepIgnoreFiles(cmd *command.InitCmd, graphDir string, legacyGraphDirs []string, touched *[]string) error {
-	ignored := func(path string) {
-		*touched = append(*touched, path)
-		if cmd.OnGitignoreUpdated != nil {
-			cmd.OnGitignoreUpdated(path)
-		}
-	}
 	attributed := func(path string) {
 		*touched = append(*touched, path)
 		if cmd.OnGitattributesUpdated != nil {
@@ -970,27 +965,18 @@ func keepIgnoreFiles(cmd *command.InitCmd, graphDir string, legacyGraphDirs []st
 		return err
 	}
 	if changed {
-		ignored(sddIgnore)
+		*touched = append(*touched, sddIgnore)
+		if cmd.OnGitignoreUpdated != nil {
+			cmd.OnGitignoreUpdated(sddIgnore)
+		}
 	}
 
-	var legacyIgnore, legacyAttributes []string
-	if len(legacyGraphDirs) == 0 {
-		legacyIgnore = model.LegacyRootIgnoreLines("")
-	}
+	var legacyAttributes []string
 	for _, dir := range legacyGraphDirs {
-		legacyIgnore = append(legacyIgnore, model.LegacyRootIgnoreLines(dir)...)
 		line, err := model.EntryMergeAttributeLine(dir)
 		if err == nil {
 			legacyAttributes = append(legacyAttributes, line)
 		}
-	}
-	rootIgnore := filepath.Join(cmd.RepoRoot, ".gitignore")
-	changed, err = rewriteLines(rootIgnore, legacyIgnore, nil)
-	if err != nil {
-		return err
-	}
-	if changed {
-		ignored(rootIgnore)
 	}
 
 	rootAttributes := filepath.Join(cmd.RepoRoot, ".gitattributes")
