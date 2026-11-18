@@ -112,6 +112,8 @@ At a natural stop, the agent offers to wrap up and names every thread that is st
 
 `verify.mode: deep` has a second agent, run by Claude Code, check each draft. In Codex, a session under `deep`, or under a kind set to `deep` in `verify.kinds`, fails to start or resume and names the setting. For a project you work on in Codex, set it to `prose`, `grounding` or `off`. `verify.runner: codex` no longer exists.
 
+The verifier reads in full the draft's targets, the entries that close or supersede them or that they close or supersede, and the entries the prefilter's judge ranks highest; every other entry of the reading comes as one line it can open. On a new project the judge only ranks until its calibration holds: run `sdd grounding seed --from-refs` once to calibrate it from the graph's own references, and `sdd grounding status` to see where it stands. See [Verify](/sdd/reference/configuration/#verify).
+
 ## In the dialogue
 
 - **Read the playback.** Confirming writes exactly what the agent showed. Ask for changes until it says what you mean.
