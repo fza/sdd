@@ -246,7 +246,7 @@ func TestVerifierUnscored_AsksForScoresOnlyWhereTheRankDecides(t *testing.T) {
 func TestPlaceVerifierReading_CountsWhatPassesTheCeilings(t *testing.T) {
 	const target = "20260101-000000-d-tac-tgt"
 	entries := []*model.Entry{{ID: target, Type: model.TypeDecision, Kind: model.KindDirective}}
-	var listed, hops, ranked []string
+	var listed, hops []string
 	scores := map[string]uint8{}
 	for i := range model.DeepHopListed + 3 {
 		id := fmt.Sprintf("20260102-%06d-s-tac-hop", i)
@@ -258,7 +258,7 @@ func TestPlaceVerifierReading_CountsWhatPassesTheCeilings(t *testing.T) {
 	for i := range rankedCount {
 		id := fmt.Sprintf("20260103-%06d-s-tac-rnk", i)
 		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed, ranked = append(listed, id), append(ranked, id)
+		listed = append(listed, id)
 		scores[id] = uint8(i % 256)
 	}
 	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{Targets: []string{target}}, model.VerifierReading{Listed: listed, Scores: scores})
