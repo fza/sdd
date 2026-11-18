@@ -818,10 +818,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		if err := w.checkUserWordsQuoted(request.Instance, fields, words); err != nil {
 			return nil, err
 		}
-		if err := w.checkApprovalReason(request.Instance, chooser, choice, words, fields); err != nil {
-			return nil, err
-		}
-		batch, batchErr := w.readBatch(request.Instance, chooser, choice, words, fields, request.Report["batch"])
+		batch, batchErr := w.readBatch(request.Instance, chooser, request.Report["batch"])
 		if batchErr != nil {
 			return nil, batchErr
 		}

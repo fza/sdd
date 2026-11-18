@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -46,9 +47,9 @@ func (w *WorkflowSession) registerUserWords(registry *engine.Registry) error {
 	return registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name: "userWordsHeld",
-			Doc: "A decision drafted with a user present carries the user's own words for its reason, and a directive's for its intent " +
+			Doc: "A directive or a plan drafted with a user present carries the user's own words for its reason, and a directive's for its intent " +
 				"(model.UserWordsOwed), and a reason that only restates the intent (model.ReasonRepeatsIntent) counts as none; " +
-				"an autonomous session and a signal owe none.",
+				"an autonomous session, any other decision and a signal owe none.",
 			Reads: []string{"entryKind", fieldReasonWords, fieldIntentWords},
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {
@@ -59,38 +60,28 @@ func (w *WorkflowSession) registerUserWords(registry *engine.Registry) error {
 			missing := w.userWordsMissing(ctx.Store)
 			if len(missing) == 0 {
 				if w.reasonRepeatsIntent(ctx.Store) {
-					return "reasonWords repeats intentWords, the decision itself: ask the user why they decided it, end your turn," +
-						" and after the answer report their words verbatim; never supply them"
+					return "reasonWords repeats intentWords, the decision itself: " + w.proposeUserWords("why the user decided it")
 				}
 				return ""
 			}
-			return "missing " + strings.Join(missing, ", ") + ": ask the user for the decision's reason, offering none of your own" +
-				" (and whether a directive applies from now on or is work still to be done; never name the posture), end your turn, and after the answer report their words verbatim; never supply them"
+			var asked []string
+			if slices.Contains(missing, fieldReasonWords) {
+				asked = append(asked, "why the user decided it")
+			}
+			if slices.Contains(missing, fieldIntentWords) {
+				asked = append(asked, "whether the directive applies from now on or is work still to be done (never name the posture)")
+			}
+			return "missing " + strings.Join(missing, ", ") + ": " + w.proposeUserWords(strings.Join(asked, " and "))
 		},
 	})
 }
 
-// checkApprovalReason refuses the person's approval of a decision that
-// carries no reason of theirs, in fields or held by the draft: the agent's
-// drafted reason is written only once the person picks it. An answer without
-// the person's words is the engine's to refuse.
-func (w *WorkflowSession) checkApprovalReason(instanceID, chooser, choice, userWords string, fields map[string]any) error {
-	if userWords == "" || !w.session.Approving(instanceID, chooser, choice) {
-		return nil
-	}
-	inst, _ := w.session.Instance(instanceID)
-	kind, _ := workflowStoreString(inst.Store, "entryKind")
-	if owed, _ := model.UserWordsOwed(model.Kind(kind)); !owed {
-		return nil
-	}
-	words, _ := fields[fieldReasonWords].(string)
-	if strings.TrimSpace(words) == "" {
-		words, _ = workflowStoreString(inst.Store, fieldReasonWords)
-	}
-	if strings.TrimSpace(words) != "" {
-		return nil
-	}
-	return fmt.Errorf("%s approves a decision without the person's reason: put the reason question to them as the play-back says, then confirm with their answers as userWords and the reason they picked or wrote, verbatim, as %s", instanceID, fieldReasonWords)
+// proposeUserWords tells the agent to put its own inference of what to the
+// user as an option they may pick, never to write it unpicked.
+func (w *WorkflowSession) proposeUserWords(what string) string {
+	return fmt.Sprintf("infer %s from the dialogue and the graph, put it to the user through %s with two options: "+
+		`your proposal, shown in full, and "Other: you write your own", end your turn, and after the answer report the option they picked, its full text, or their own words, verbatim; `+
+		"never write words they did not pick or give", what, w.session.HowToAsk())
 }
 
 // checkUserWordsQuoted refuses an answer relaying the user's message that sets

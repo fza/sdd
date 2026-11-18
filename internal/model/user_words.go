@@ -6,14 +6,12 @@ import (
 	"unicode"
 )
 
-// UserWordsOwed reports which of the user's own words a draft of kind k
-// carries when a user takes part in its capture: every decision states the
-// user's reason, and a directive also the user's intent. Signals owe none.
+// UserWordsOwed reports which words a draft of kind k owes in every dialogue
+// mode, the user's or the agent's: a directive and a plan state a reason, and
+// a directive also its intent. Any other decision may state a reason; signals
+// carry none.
 func UserWordsOwed(k Kind) (reason, intent bool) {
-	if !decisionKinds[k] {
-		return false, false
-	}
-	return true, k == KindDirective
+	return k == KindDirective || k == KindPlan, k == KindDirective
 }
 
 // causeWords open a clause that states why, so a reason holding the intent

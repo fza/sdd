@@ -13,7 +13,12 @@ func TestUserWordsOwed(t *testing.T) {
 	}{
 		{model.KindDirective, true, true},
 		{model.KindPlan, true, false},
-		{model.KindRole, true, false},
+		{model.KindRole, false, false},
+		{model.KindFocus, false, false},
+		{model.KindProcedure, false, false},
+		{model.KindAspiration, false, false},
+		{model.KindActivity, false, false},
+		{model.KindContract, false, false},
 		{model.KindGap, false, false},
 		{model.KindDone, false, false},
 		{"", false, false},

@@ -843,11 +843,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
 		case s.approvalGateAt(inst, step):
-			sv.Goal = "play the checked draft back to the person and ask through " + s.questionTool() + "; relay their answer verbatim"
+			sv.Goal = "play the checked draft back to the person and ask through " + s.HowToAsk() + "; relay their answer verbatim"
 		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode.AgentAnswers():
 			sv.Goal = "decide yourself; answer with a one-line reason"
 		case step.Chooser == ChooserUser:
-			sv.Goal = "put the choice to the user through " + s.questionTool() + "; relay their answer verbatim"
+			sv.Goal = "put the choice to the user through " + s.HowToAsk() + "; relay their answer verbatim"
 		default:
 			sv.Goal = "judge the chooser; answer with the evidence its option collects"
 		}
@@ -1129,7 +1129,7 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 		}
 	}
 	ctx[dialogueModeValue] = string(s.dialogueMode())
-	ctx[questionToolValue] = s.questionTool()
+	ctx[questionToolValue] = s.HowToAsk()
 	ctx[heldForApprovalValue] = inst.sealed != "" && inst.sealed == inst.Store.StateSnapshot()
 	return ctx, nil
 }

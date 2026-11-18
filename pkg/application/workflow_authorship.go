@@ -22,11 +22,9 @@ type agentAuthor struct {
 
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
-// approvalAuthor marks a draft the person approves: given once they did, with
-// their words for a decision's reason.
+// approvalAuthor marks a draft the person approves: given once they did.
 type approvalAuthor struct {
-	given       bool
-	reasonWords string
+	given bool
 }
 
 // markDraft marks whose a capture's draft is (model.Entry.Approved): the
@@ -35,8 +33,7 @@ type approvalAuthor struct {
 // where the agent answers.
 func (w *WorkflowSession) markDraft(ctx *engine.Context, draft *EntryDraft, beforeGate bool) error {
 	if approved := engine.Approved(ctx.Store); approved || beforeGate && w.assisted() {
-		reason, _ := workflowStoreString(ctx.Store, fieldReasonWords)
-		draft.approval = &approvalAuthor{given: approved, reasonWords: reason}
+		draft.approval = &approvalAuthor{given: approved}
 		return nil
 	}
 	return w.markAgentDraft(ctx.Instance, draft)
@@ -150,12 +147,12 @@ func (w *WorkflowSession) startingClient(instance string) (string, error) {
 	return w.attachedClient(w.ctx)
 }
 
-// authorshipMissing lists what an autonomous draft's authorship fields owe: a
-// decision's own reason, no reason on a signal, no participants. An assisted
-// draft owes the reason too, written when the person approves without one of
-// theirs, and may name participants, as the entry is the person's. A guided
-// draft owes none; its reason is the user's, in reasonWords, and sdd ignores
-// the reason field there.
+// authorshipMissing lists what an autonomous draft's authorship fields owe:
+// the agent's own reason where the kind owes one (model.UserWordsOwed), no
+// reason on a signal, no participants. An assisted draft owes the same reason,
+// which the person's approval adopts, and may name participants, as the entry
+// is the person's. A guided draft owes none; its reason is the user's, in
+// reasonWords, and sdd ignores the reason field there.
 func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	if !w.Autonomous() {
 		return nil
@@ -163,10 +160,11 @@ func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	kind, _ := workflowStoreString(store, "entryKind")
 	reason, _ := workflowStoreString(store, fieldReason)
 	decision := kind != "" && model.IsValidKindForType(model.TypeDecision, model.Kind(kind))
+	owed, _ := model.UserWordsOwed(model.Kind(kind))
 	var missing []string
 	switch {
-	case decision && strings.TrimSpace(reason) == "":
-		missing = append(missing, fmt.Sprintf("a decision in %s mode states your own reason for it in reason", w.session.DialogueMode))
+	case owed && strings.TrimSpace(reason) == "":
+		missing = append(missing, fmt.Sprintf("a %s in %s mode states your own reason for it in reason, inferred from the dialogue and the graph", kind, w.session.DialogueMode))
 	case !decision && reason != "":
 		missing = append(missing, "a signal carries no reason")
 	}
@@ -215,7 +213,7 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 	err = registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name:  "authorshipHeld",
-			Doc:   "In auto mode a decision states the agent's own reason, a signal none, and no draft reports participants; a guided draft owes nothing here.",
+			Doc:   "In auto and assisted mode a decision whose kind owes a reason (model.UserWordsOwed) states the agent's own, a signal none, and an auto draft reports no participants; a guided draft owes nothing here.",
 			Reads: []string{"entryKind", fieldReason, "participants"},
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {
