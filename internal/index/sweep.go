@@ -106,12 +106,18 @@ func RemoveRetiredStore(indexDir string, now time.Time, minAge time.Duration) (r
 	if now.Sub(info.ModTime()) <= minAge {
 		return false, nil
 	}
+	// Taking the locks creates a missing lock file, so a directory is judged
+	// before they are taken and again under them.
+	retired, err := isRetiredStore(indexDir)
+	if err != nil || !retired {
+		return false, err
+	}
 	release, err := tryLockStore(indexDir)
 	if err != nil {
 		return false, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	retired, err := isRetiredStore(indexDir)
+	retired, err = isRetiredStore(indexDir)
 	if err != nil || !retired {
 		return false, err
 	}

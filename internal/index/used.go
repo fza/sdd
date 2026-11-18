@@ -90,6 +90,14 @@ func RuleLastUses(indexDir string) (map[string]time.Time, error) {
 	return uses, nil
 }
 
+// stamped reports whether a stamping binary used the store. The index tree is
+// shared with binaries that keep no stamps; a store without one is theirs,
+// and background pruning never touches it.
+func stamped(indexDir string) (bool, error) {
+	uses, err := RuleLastUses(indexDir)
+	return len(uses) > 0, err
+}
+
 // StoreLastUse is the latest sign that any binary used the store: its newest
 // stamp, or its manifest's last write when that is later or no binary stamped
 // it.

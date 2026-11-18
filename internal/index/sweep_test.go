@@ -144,6 +144,21 @@ func TestRemoveRetiredStore(t *testing.T) {
 		}
 	})
 
+	t.Run("a folder holding only the store lock stays as it is", func(t *testing.T) {
+		dir := retired(t, now.Add(-leftoverAge-time.Hour))
+		if err := os.Remove(filepath.Join(dir, ".fill.lock")); err != nil {
+			t.Fatal(err)
+		}
+		age(t, now.Add(-leftoverAge-time.Hour), dir)
+		if removed, err := index.RemoveRetiredStore(dir, now, leftoverAge); err != nil || removed {
+			t.Errorf("a folder no removal emptied under both locks should stay, got %v, %v", removed, err)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 || entries[0].Name() != ".lock" {
+			t.Errorf("the folder should keep its one lock file and gain nothing, got %v, %v", entries, err)
+		}
+	})
+
 	t.Run("a store whose lock is held stays", func(t *testing.T) {
 		dir := retired(t, now.Add(-leftoverAge-time.Hour))
 		held := flock.New(filepath.Join(dir, ".lock"))
