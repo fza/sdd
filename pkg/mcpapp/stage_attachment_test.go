@@ -94,8 +94,8 @@ func TestStageAttachmentStagesEveryFileInCallOrder(t *testing.T) {
 		{Handle: "from-path.md", SHA256: sha256Hex("read from a path\n")},
 		{Handle: "patched.md", SHA256: sha256Hex("alpha BETA\n")},
 	}
-	if fmt.Sprint(staged.Files) != fmt.Sprint(want) {
-		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.Files)
+	if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.StagedFiles())
 	}
 	snapshotResponse(t, res)
 }
@@ -184,8 +184,8 @@ func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
 				t.Errorf("a one-file call should answer its handle at the top level, got %q", staged.Handle)
 			}
 			want := []mcpserver.StagedFileResult{{Handle: name, SHA256: sha256Hex(tt.want)}}
-			if fmt.Sprint(staged.Files) != fmt.Sprint(want) {
-				t.Errorf("a one-file call should stage that one file, got %+v", staged.Files)
+			if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+				t.Errorf("a one-file call should stage that one file, got %+v", staged.StagedFiles())
 			}
 			var read mcpserver.ReadAttachmentResult
 			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": name}, &read)
@@ -199,6 +199,13 @@ func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
 // The one-file fields programs built on the upstream packages set; removing
 // one fails this file's compilation.
 var _ = mcpserver.StageAttachmentArgs{Session: "", Name: "", Content: "", Path: "", Patches: []mcpserver.SearchReplaceArg{}}
+
+// Map keys must be comparable, as the upstream types are.
+var (
+	_ map[mcpserver.AbandonArgs]bool
+	_ map[mcpserver.ParkArgs]bool
+	_ map[mcpserver.StageAttachmentResult]bool
+)
 
 func TestStageAttachmentArgsMarshalTheOneFileShape(t *testing.T) {
 	env := newTestServer(t, nil, "", "")

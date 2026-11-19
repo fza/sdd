@@ -112,7 +112,7 @@ func mechanicalFindings(finder *finders.Finder, graph *model.Graph, entry *model
 func publicFindings(findings []query.Finding) []Finding {
 	var out []Finding
 	for _, finding := range findings {
-		out = append(out, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
+		out = append(out, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: sliceRef(finding.Basis)})
 	}
 	return out
 }

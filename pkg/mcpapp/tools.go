@@ -318,8 +318,17 @@ type StageAttachmentResult struct {
 	ResultNotices
 	// Handle answers a call in the one-file shape (name with content, path
 	// or patches beside session), which the listing does not advertise.
-	Handle string             `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
-	Files  []StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+	Handle string `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
+	// Files is a pointer so the result stays comparable; StagedFiles reads it.
+	Files *[]StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+}
+
+// StagedFiles returns the per-file results Files points at.
+func (r StageAttachmentResult) StagedFiles() []StagedFileResult {
+	if r.Files == nil {
+		return nil
+	}
+	return *r.Files
 }
 
 // StagedFileResult is one staged file of a stage_attachment call.
@@ -706,7 +715,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
-	err := ss.root.BeginCall(proofs.Held, proofs.Reread)
+	err := ss.root.BeginCall(proofs.lists())
 	if err != nil {
 		ss.mu.Unlock()
 		return nil, err
@@ -1045,12 +1054,13 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
-	result := StageAttachmentResult{Files: make([]StagedFileResult, 0, len(staged))}
+	files := make([]StagedFileResult, 0, len(staged))
 	for _, file := range staged {
-		result.Files = append(result.Files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
+		files = append(files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
 	}
-	if oneFile && len(result.Files) == 1 {
-		result.Handle = result.Files[0].Handle
+	result := StageAttachmentResult{Files: &files}
+	if oneFile && len(files) == 1 {
+		result.Handle = files[0].Handle
 	}
 	return nil, result, nil
 }

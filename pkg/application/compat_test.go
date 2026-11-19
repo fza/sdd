@@ -20,6 +20,8 @@ var (
 	_ func(*sdd.WorkflowSession, context.Context, sdd.RequestIdentity, string, []byte) (string, error)  = (*sdd.WorkflowSession).StageAttachment
 	_ func(*sdd.WorkflowSession, context.Context, sdd.RequestIdentity, string, []types.PatchPair) error = (*sdd.WorkflowSession).EditStagedAttachment
 	_ sdd.StagedBlobStore                                                                               = stagingOnlyBlobStore{}
+	// A map key must be comparable, as upstream's Finding is.
+	_ map[sdd.Finding]bool
 )
 
 // stagingOnlyBlobStore implements StagedBlobStore without StagedBlobDeleter.

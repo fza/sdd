@@ -71,7 +71,7 @@ func stagePlaybackCapture(t *testing.T, cs *mcp.ClientSession, session string) s
 	call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "draft.md", "content": "A tactical gap drafted in a staged file.\n"}}}, &staged)
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "stagedplayback"}, &serve)
-	report := map[string]any{"bodyHandle": staged.Files[0].Handle}
+	report := map[string]any{"bodyHandle": staged.StagedFiles()[0].Handle}
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": report}, &serve)
 	if serve.Step != "playback" {
 		t.Fatalf("capture must stand at playback, got %s", serve.Step)

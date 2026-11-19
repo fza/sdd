@@ -123,7 +123,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))
 	for _, finding := range result.Findings {
-		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
+		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.BasisIDs()})
 	}
 	if err := ctx.Store.WriteEngine("findings", findings); err != nil {
 		return err
