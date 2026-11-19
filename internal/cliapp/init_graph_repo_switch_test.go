@@ -9,17 +9,17 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
-// One `sdd init --graph-repo` run switches a code repository that points at
-// its graph through project_dir, though its machine-local layer already holds
-// the settings a graph_repo project keeps there.
-func TestInitGraphRepoSwitchesAProjectDirRepository(t *testing.T) {
+// One `sdd init --graph-repo` run switches a code repository that names
+// another graph repository, keeping the settings its machine-local layer
+// holds.
+func TestInitGraphRepoSwitchesToAnotherGraphRepository(t *testing.T) {
+	const former = "example.test/acme/former-sdd"
 	remote := test.NewGraphRemote(t, graphCloneRepoID)
 	remote.Commit(t, "seed the graph", map[string]string{
 		".sdd/config.yaml": "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\nverify:\n  mode: off\n",
 		".sdd/graph/.keep": "",
 		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
 	})
-	checkout := remote.Clone(t)
 	code := filepath.Join(canonicalTemp(t), "code")
 	err := os.MkdirAll(code, 0o755)
 	if err != nil {
@@ -27,16 +27,16 @@ func TestInitGraphRepoSwitchesAProjectDirRepository(t *testing.T) {
 	}
 	initRepo(t, code)
 	writeFile(t, filepath.Join(code, ".gitignore"), ".sdd/config.local.yaml\nxdg-*/\n")
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "project_dir: "+checkout+"\nskill_scope: project\nsupported_agents: [claude]\n")
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+former+"\nskill_scope: project\nsupported_agents: [claude]\n")
 	gitIn(t, code, "add", ".gitignore", ".sdd")
-	gitIn(t, code, "commit", "-q", "-m", "point at the graph checkout")
+	gitIn(t, code, "commit", "-q", "-m", "name the former graph repository")
 	writeFile(t, filepath.Join(code, ".sdd", "config.local.yaml"), "participant: Ada\ndialogue:\n  mode: guided\n")
 
 	runApp(t, code, "init", "--graph-repo", "https://example.test/acme/app-sdd.git")
 
 	pointer := readFile(t, filepath.Join(code, ".sdd", "config.yaml"))
-	if !strings.Contains(pointer, "graph_repo: "+string(graphCloneRepoID)) || !strings.Contains(pointer, "project_dir: "+checkout) {
-		t.Errorf("the code repository should point through both pointers:\n%s", pointer)
+	if !strings.Contains(pointer, "graph_repo: "+string(graphCloneRepoID)) || strings.Contains(pointer, former) {
+		t.Errorf("the code repository should name the graph repository it switched to:\n%s", pointer)
 	}
 	local := readFile(t, filepath.Join(code, ".sdd", "config.local.yaml"))
 	if !strings.Contains(local, "participant: Ada") || !strings.Contains(local, "mode: guided") {

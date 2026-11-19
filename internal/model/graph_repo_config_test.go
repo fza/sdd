@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -26,6 +27,22 @@ func TestParseConfigIgnoresGraphDirBesideGraphRepo(t *testing.T) {
 				t.Errorf("graph_dir should read as %q, got %q", tc.want, cfg.GraphDir)
 			}
 		})
+	}
+}
+
+func TestProjectDirIsAnUnknownKey(t *testing.T) {
+	data := []byte("graph_dir: graph\nproject_dir: ../project\n")
+
+	unknown, err := model.UnknownYAMLKeys(data, reflect.TypeFor[model.PerRepoConfig]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(unknown, []string{"project_dir"}) {
+		t.Errorf("project_dir should be reported as unknown, got %v", unknown)
+	}
+	cfg, err := model.ParseConfig(data)
+	if err != nil || cfg.GraphDir != "graph" {
+		t.Errorf("a config naming project_dir should load past it: %+v, %v", cfg, err)
 	}
 }
 

@@ -152,19 +152,12 @@ func (h *Handler) sourceHome(project meta.Project) (graphHome, error) {
 		return graphHome{}, fmt.Errorf("graph_dir %s lies outside its repository; sdd move moves a graph inside one", graphDir)
 	}
 	home := graphHome{root: project.Root, graphDir: path(graphDir)}
-	switch {
-	case project.GraphRepo != "":
+	if project.GraphRepo != "" {
 		home.clone = project.GraphRepo
 		home.location = model.GitRepoLocation(project.GraphRepo, home.graphDir, committed.DefaultBranch)
-	case project.Pointed():
-		pointer, err := meta.ReadConfig(meta.SDDDir(project.WorkRoot), "")
-		if err != nil {
-			return graphHome{}, err
-		}
-		home.location = model.GitPathLocation(pointer.ProjectDir, home.graphDir)
-	default:
-		home.location = model.GitDirLocation(home.graphDir)
+		return home, nil
 	}
+	home.location = model.GitDirLocation(home.graphDir)
 	return home, nil
 }
 
@@ -177,7 +170,7 @@ func (h *Handler) targetHome(ctx context.Context, cmd *command.MoveGraphCmd) (gr
 	switch target.Kind {
 	case model.LocationGitDir:
 		graphDir = target.Address
-	case model.LocationGitPath, model.LocationGitRepo:
+	case model.LocationGitRepo:
 	default:
 		return graphHome{}, fmt.Errorf("sdd move cannot move a graph to a %s location", target.Kind)
 	}
@@ -193,23 +186,6 @@ func (h *Handler) targetHome(ctx context.Context, cmd *command.MoveGraphCmd) (gr
 	case model.LocationGitDir:
 		home.root = cmd.WorkRoot
 		home.location = model.GitDirLocation(home.graphDir)
-	case model.LocationGitPath:
-		root := target.Address
-		if !filepath.IsAbs(root) {
-			root = filepath.Join(cmd.WorkRoot, root)
-		}
-		home.root = filepath.Clean(root)
-		if meta.WithinDir(cmd.WorkRoot, home.root) || meta.WithinDir(home.root, cmd.WorkRoot) {
-			return graphHome{}, fmt.Errorf("--project-dir %s overlaps this repository; the graph needs a repository of its own beside it", target.Address)
-		}
-		repoRoot, err := h.projectRepos.RootOf(home.root)
-		if err != nil {
-			return graphHome{}, err
-		}
-		if repoRoot != "" && !meta.SameDir(repoRoot, home.root) {
-			return graphHome{}, fmt.Errorf("--project-dir %s lies inside the repository at %s; the graph needs a repository of its own", target.Address, repoRoot)
-		}
-		home.location = model.GitPathLocation(target.Address, home.graphDir)
 	case model.LocationGitRepo:
 		repo := model.RepoID(target.Address)
 		if h.graphClones == nil {
@@ -282,14 +258,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 		}
 	}
 	vacated := filepath.Clean(source.root) != filepath.Clean(cmd.WorkRoot) && !same
-	var vacate []model.MoveFile
-	if vacated {
-		vacate, err = h.vacatePlan(ctx, source.root)
-		if err != nil {
-			return false, err
-		}
-	}
-	err = h.prepareTarget(target, source, cmd)
+	err = prepareTarget(target, source, cmd)
 	if err != nil {
 		return false, err
 	}
@@ -347,14 +316,6 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	err = h.planRepoFiles(source, target, s, t, w)
 	if err != nil {
 		return false, err
-	}
-	s.plan.Files = append(s.plan.Files, vacate...)
-	if target.location.Kind == model.LocationGitPath && t != w {
-		install, err := h.workInstallPlan(ctx, w.root, t.root, cmd.BinaryVersion)
-		if err != nil {
-			return false, err
-		}
-		t.plan.Files = append(t.plan.Files, install...)
 	}
 
 	for _, repo := range order {
@@ -437,9 +398,8 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	return false, nil
 }
 
-// prepareTarget refuses a target already holding a graph, and creates and
-// initializes the checkout of a git-path target that does not exist yet.
-func (h *Handler) prepareTarget(target, source graphHome, cmd *command.MoveGraphCmd) error {
+// prepareTarget refuses a target already holding a graph.
+func prepareTarget(target, source graphHome, cmd *command.MoveGraphCmd) error {
 	if len(entryFilesIn(filepath.Join(target.root, target.graphDir))) > 0 {
 		return fmt.Errorf("%s holds graph entries already; sdd move moves a graph only to a place holding none", filepath.Join(target.root, target.graphDir))
 	}
@@ -451,21 +411,10 @@ func (h *Handler) prepareTarget(target, source graphHome, cmd *command.MoveGraph
 	if err == nil {
 		return fmt.Errorf("%s holds an sdd project already; sdd move moves a graph only to a repository holding none", target.root)
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if target.location.Kind != model.LocationGitPath {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	repoRoot, err := h.projectRepos.RootOf(target.root)
-	if err != nil || repoRoot != "" {
-		return err
-	}
-	err = os.MkdirAll(target.root, 0o755)
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", target.root, err)
-	}
-	return h.projectRepos.Init(target.root)
+	return err
 }
 
 func planMeta(s, t *moveRepo, same bool) error {
@@ -528,16 +477,8 @@ func (h *Handler) planConfigs(ctx context.Context, target graphHome, s, t, w *mo
 	}
 	t.write(configPath, projectConfig)
 	if t != w {
-		pointer := model.PerRepoConfig{SkillScope: agents.SkillScope, SupportedAgents: agents.SupportedAgents}
-		var formatted string
-		if target.clone != "" {
-			pointer.GraphRepo = target.clone
-			formatted = model.FormatGraphRepoPointerConfig(pointer)
-		} else {
-			pointer.ProjectDir = target.location.Address
-			formatted = model.FormatPointerConfig(pointer)
-		}
-		w.write(configPath, []byte(formatted))
+		pointer := model.PerRepoConfig{GraphRepo: target.clone, SkillScope: agents.SkillScope, SupportedAgents: agents.SupportedAgents}
+		w.write(configPath, []byte(model.FormatGraphRepoPointerConfig(pointer)))
 	}
 	if s != w && s != t {
 		s.remove(configPath)

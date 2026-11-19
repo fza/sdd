@@ -53,11 +53,9 @@ func ConfigChanges(before, after ConfigLayers) []ConfigChange {
 	for _, value := range effectiveConfigValues(after.Global, WorkConfigLayers{}, after.Project, after.Local, false) {
 		add(value.Key)
 	}
-	for _, key := range []string{"graph_repo", "project_dir"} {
-		was, now := pointerValue(before.Pointer, key), pointerValue(after.Pointer, key)
-		if was != now {
-			changes = append(changes, ConfigChange{Key: "pointer " + key, Old: was, New: now})
-		}
+	was, now := pointerValue(before.Pointer), pointerValue(after.Pointer)
+	if was != now {
+		changes = append(changes, ConfigChange{Key: "pointer graph_repo", Old: was, New: now})
 	}
 	return changes
 }
@@ -70,14 +68,11 @@ func effectiveByKey(layers ConfigLayers) map[string]ConfigValue {
 	return out
 }
 
-func pointerValue(cfg *PerRepoConfig, key string) string {
+func pointerValue(cfg *PerRepoConfig) string {
 	if cfg == nil {
 		return ""
 	}
-	if key == "graph_repo" {
-		return string(cfg.GraphRepo)
-	}
-	return cfg.ProjectDir
+	return string(cfg.GraphRepo)
 }
 
 // FormatConfigNotice renders changes as the one-time notice a serving process

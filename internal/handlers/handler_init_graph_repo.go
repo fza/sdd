@@ -38,7 +38,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 		if parseErr != nil {
 			return fmt.Errorf("parsing %s: %w", configPath, parseErr)
 		}
-		if recorded.GraphRepo == "" && recorded.ProjectDir == "" {
+		if recorded.GraphRepo == "" {
 			return fmt.Errorf("%s configures a project of its own; reduce it to the pointer keys before pointing it at %s", configPath, cmd.GraphRepo)
 		}
 	}

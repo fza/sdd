@@ -57,7 +57,7 @@ const (
 )
 
 // HookRepoWork and HookRepoProject name the two repositories of a
-// project_dir layout; a project of one repository leaves the repository
+// graph_repo layout; a project of one repository leaves the repository
 // unnamed.
 const (
 	HookRepoWork    = "work"

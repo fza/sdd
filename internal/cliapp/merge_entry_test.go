@@ -112,28 +112,32 @@ func TestMergeEntryCommand(t *testing.T) {
 	})
 }
 
-func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
+// A graph directory outside the repository is routed by its own
+// .gitattributes as one inside is; the repository's root file names none.
+func TestInitRoutesAGraphDirOutsideTheRepository(t *testing.T) {
 	tests := []struct {
 		name     string
-		graphDir func(repo string) string
-		// want names the check refusing it: one leading out of the project
-		// meets the project placement check before the pattern check.
-		want string
+		graphDir string
 	}{
-		{name: "a parent step", graphDir: func(string) string { return "../graph" }, want: "outside the project"},
-		{name: "the parent itself", graphDir: func(string) string { return ".." }, want: "outside the project"},
-		{name: "an absolute path", graphDir: func(repo string) string { return filepath.Join(repo, "graph") }, want: ".gitattributes"},
+		{name: "a parent step", graphDir: "../graph"},
+		{name: "the parent itself", graphDir: ".."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := canonicalTemp(t)
-			initRepo(t, repo)
-			output, err := runAppErr(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir(repo))
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("init should refuse the graph directory naming %q, got %v\n%s", tt.want, err, output)
+			repo := filepath.Join(canonicalTemp(t), "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
 			}
-			if _, statErr := os.Stat(filepath.Join(repo, ".sdd")); !os.IsNotExist(statErr) {
-				t.Error("a refused graph directory should leave nothing written")
+			initRepo(t, repo)
+			output, err := runAppErr(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir)
+			if err != nil {
+				t.Fatalf("init should set the graph directory up: %v\n%s", err, output)
+			}
+			if got := readFile(t, filepath.Join(repo, filepath.FromSlash(tt.graphDir), ".gitattributes")); got != model.GraphAttributesLine+"\n" {
+				t.Errorf("the graph directory's own .gitattributes should route its entries:\n%s", got)
+			}
+			if _, statErr := os.Stat(filepath.Join(repo, ".gitattributes")); !os.IsNotExist(statErr) {
+				t.Errorf("the repository's root .gitattributes should stay unwritten, stat err = %v", statErr)
 			}
 		})
 	}

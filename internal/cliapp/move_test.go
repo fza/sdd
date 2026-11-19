@@ -177,90 +177,19 @@ func TestMoveCarriesAStrayEntryOver(t *testing.T) {
 	}
 }
 
-// Out to a checkout of its own the graph keeps its history through a subtree
-// split; the code repository keeps only the pointer, and the move back
-// restores the layout.
-func TestMoveTheGraphOutToAProjectDirAndBack(t *testing.T) {
-	repo := graphRepoToMove(t)
-	project := filepath.Join(filepath.Dir(repo), "graph-home")
-	writeFile(t, filepath.Join(repo, ".sdd", "sessions", "s_kept.json"), "{}\n")
-	writeFile(t, filepath.Join(repo, ".sdd", "stats", "llm.jsonl"), "{}\n")
-	runApp(t, repo, "move", "--project-dir", "../graph-home")
-
-	for _, id := range []string{movedFirst, movedSecond} {
-		if _, err := os.Stat(entryPath(filepath.Join(project, "graph"), id)); err != nil {
-			t.Errorf("entry %s should be in the project's graph folder: %v", id, err)
-		}
-		assertMissing(t, entryPath(filepath.Join(repo, ".sdd", "graph"), id), "the code repository should hold no entry")
-	}
-	if log := gitIn(t, project, "log", "--format=%s"); !strings.Contains(log, "add the first entry") || !strings.Contains(log, "add the second entry") {
-		t.Errorf("the project should carry the graph's history:\n%s", log)
-	}
-	projectConfig := readText(t, filepath.Join(project, ".sdd", "config.yaml"))
-	if !strings.Contains(projectConfig, "graph_dir: graph\n") || !strings.Contains(projectConfig, "skill_scope: project") {
-		t.Errorf("the project's config should hold the graph's settings:\n%s", projectConfig)
-	}
-	if pointer := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); pointer != model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: "../graph-home", SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}) {
-		t.Errorf("the code repository's config should be the pointer config init writes:\n%s", pointer)
-	}
-	assertMissing(t, filepath.Join(repo, ".sdd", "meta.json"), "meta.json moves with the graph")
-	if _, err := os.Stat(filepath.Join(project, ".sdd", "meta.json")); err != nil {
-		t.Errorf("meta.json should move with the graph: %v", err)
-	}
-	if local := readText(t, filepath.Join(project, ".sdd", "config.local.yaml")); !strings.Contains(local, "participant: Ada") {
-		t.Errorf("the machine-local config should move to where the layout reads it:\n%s", local)
-	}
-	assertMissing(t, filepath.Join(repo, ".sdd", "config.local.yaml"), "the machine-local config moves")
-	if session := readText(t, filepath.Join(project, ".sdd", "sessions", "s_kept.json")); session != "{}\n" {
-		t.Errorf("the in-tree session store should move to the project, got %q", session)
-	}
-	if stats := readText(t, filepath.Join(project, ".sdd", "stats", "llm.jsonl")); stats != "{}\n" {
-		t.Errorf("the usage stats should move to the project, got %q", stats)
-	}
-	installed := gitIn(t, project, "show", "--name-only", "--format=", "HEAD")
-	for _, path := range []string{".sdd/.gitignore", "graph/.gitattributes", ".claude/skills/sdd/SKILL.md", ".mcp.json", ".claude/settings.json"} {
-		if !strings.Contains(installed, path+"\n") {
-			t.Errorf("the move commit should carry what a fresh init of the project writes, missing %s:\n%s", path, installed)
-		}
-	}
-	if status := strings.TrimSpace(gitIn(t, project, "status", "--porcelain")); status != "" {
-		t.Errorf("the move should leave the project clean:\n%s", status)
-	}
-	codeRecord, projectRecord := headRecord(t, repo), headRecord(t, project)
-	if codeRecord.ID != projectRecord.ID || codeRecord.To.String() != "git-path:../graph-home?dir=graph" {
-		t.Errorf("both repositories should carry the same record, got %+v and %+v", codeRecord, projectRecord)
-	}
-	runApp(t, repo, "show", movedSecond)
-
-	runApp(t, repo, "move", "--graph-dir", ".sdd/graph")
-	for _, id := range []string{movedFirst, movedSecond} {
-		if _, err := os.Stat(entryPath(filepath.Join(repo, ".sdd", "graph"), id)); err != nil {
-			t.Errorf("entry %s should be back in the code repository: %v", id, err)
-		}
-		assertMissing(t, entryPath(filepath.Join(project, "graph"), id), "the project should hold no entry after the move back")
-	}
-	config := readText(t, filepath.Join(repo, ".sdd", "config.yaml"))
-	if !strings.Contains(config, "graph_dir: .sdd/graph") || strings.Contains(config, "project_dir") || !strings.Contains(config, "default_branch: main") {
-		t.Errorf("the code repository should hold the project's settings again:\n%s", config)
-	}
-	for _, path := range []string{".sdd", ".claude", ".mcp.json"} {
-		assertMissing(t, filepath.Join(project, path), "the vacated checkout should keep no sdd file")
-	}
-	if status := strings.TrimSpace(gitIn(t, project, "status", "--porcelain")); status != "" {
-		t.Errorf("the move back should leave the vacated checkout clean:\n%s", status)
-	}
-	if local := readText(t, filepath.Join(repo, ".sdd", "config.local.yaml")); !strings.Contains(local, "participant: Ada") {
-		t.Errorf("the machine-local config should come back:\n%s", local)
-	}
-	runApp(t, repo, "show", movedFirst)
-}
-
 func TestMoveRefuses(t *testing.T) {
 	t.Run("more than one target", func(t *testing.T) {
 		repo := graphRepoToMove(t)
-		err := runAppResult(t, repo, "move", "--graph-dir", "graph", "--project-dir", "../elsewhere")
+		err := runAppResult(t, repo, "move", "--graph-dir", "graph", "--graph-repo", "https://example.test/acme/app-sdd.git")
 		if err == nil || !strings.Contains(err.Error(), "exactly one") {
 			t.Errorf("two targets should be refused, got %v", err)
+		}
+	})
+	t.Run("a checkout on disk as target", func(t *testing.T) {
+		repo := graphRepoToMove(t)
+		err := runAppResult(t, repo, "move", "--project-dir", "../elsewhere")
+		if err == nil || !strings.Contains(err.Error(), "project-dir") {
+			t.Errorf("sdd move should take no --project-dir, got %v", err)
 		}
 	})
 	t.Run("uncommitted graph", func(t *testing.T) {
@@ -273,32 +202,11 @@ func TestMoveRefuses(t *testing.T) {
 	})
 	t.Run("target holding a project", func(t *testing.T) {
 		repo := graphRepoToMove(t)
-		other := filepath.Join(filepath.Dir(repo), "other")
-		writeFile(t, filepath.Join(other, ".sdd", "config.yaml"), "graph_dir: graph\n")
-		initRepo(t, other)
-		err := runAppResult(t, repo, "move", "--project-dir", "../other")
+		remote := test.NewGraphRemote(t, graphCloneRepoID)
+		remote.Commit(t, "a project of its own", map[string]string{".sdd/config.yaml": "graph_dir: graph\n"})
+		err := runAppResult(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
 		if err == nil || !strings.Contains(err.Error(), "holds an sdd project already") {
 			t.Errorf("a target holding a graph should be refused, got %v", err)
-		}
-	})
-	t.Run("edited skill in the checkout the graph leaves", func(t *testing.T) {
-		repo := graphRepoToMove(t)
-		project := filepath.Join(filepath.Dir(repo), "graph-home")
-		runApp(t, repo, "move", "--project-dir", "../graph-home")
-		skill := filepath.Join(project, ".claude", "skills", "sdd", "SKILL.md")
-		writeFile(t, skill, readText(t, skill)+"\nAn edit of our own.\n")
-		gitIn(t, project, "commit", "-q", "-am", "edit the skill")
-		heads := gitIn(t, repo, "rev-parse", "HEAD") + gitIn(t, project, "rev-parse", "HEAD")
-
-		err := runAppResult(t, repo, "move", "--graph-dir", ".sdd/graph")
-		if err == nil || !strings.Contains(err.Error(), skill) || !strings.Contains(err.Error(), "sdd-content-hash") {
-			t.Fatalf("an edited skill in the vacated checkout should refuse the move, naming the file, got %v", err)
-		}
-		if now := gitIn(t, repo, "rev-parse", "HEAD") + gitIn(t, project, "rev-parse", "HEAD"); now != heads {
-			t.Error("a refused move should change nothing")
-		}
-		if _, err := os.Stat(entryPath(filepath.Join(project, "graph"), movedFirst)); err != nil {
-			t.Errorf("a refused move should leave the graph where it is: %v", err)
 		}
 	})
 	t.Run("target folder holding entries", func(t *testing.T) {
@@ -312,30 +220,32 @@ func TestMoveRefuses(t *testing.T) {
 }
 
 // An entry an older build committed into the former folder after the graph
-// moved out is carried into the project with the commit that wrote it.
+// moved out is carried into the graph repository with the commit that wrote
+// it.
 func TestMoveCarriesAStrayAcrossRepositories(t *testing.T) {
 	repo := graphRepoToMove(t)
-	project := filepath.Join(filepath.Dir(repo), "graph-home")
-	runApp(t, repo, "move", "--project-dir", "../graph-home")
+	remote := test.NewGraphRemote(t, graphCloneRepoID)
+	runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
+	clone := cloneDir(t)
 
 	const stray = "20261105-100000-s-tac-old"
 	writeFile(t, entryPath(filepath.Join(repo, ".sdd", "graph"), stray), movedEntry("Written by an older build."))
 	gitIn(t, repo, "add", "--force", ".sdd/graph")
 	gitIn(t, repo, "commit", "-q", "-m", "an older build captures in the code repository")
 	err := runAppResult(t, repo, "show", movedFirst)
-	if err == nil || !strings.Contains(err.Error(), "sdd move --project-dir ../graph-home") {
+	if err == nil || !strings.Contains(err.Error(), "sdd move --graph-repo "+string(graphCloneRepoID)) {
 		t.Fatalf("a stray should refuse the command and name the move that carries it, got %v", err)
 	}
 
-	runApp(t, repo, "move", "--project-dir", "../graph-home")
-	if _, err := os.Stat(entryPath(filepath.Join(project, "graph"), stray)); err != nil {
-		t.Errorf("the stray should be carried into the project: %v", err)
+	runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
+	if _, found := remote.Show(t, filepath.ToSlash(entryPath("graph", stray))); !found {
+		t.Error("the stray should be carried into the graph repository")
 	}
 	assertMissing(t, entryPath(filepath.Join(repo, ".sdd", "graph"), stray), "the stray leaves the former folder")
-	if log := gitIn(t, project, "log", "--format=%s"); !strings.Contains(log, "an older build captures") {
-		t.Errorf("the project should replay the commit that wrote the stray:\n%s", log)
+	if log := gitIn(t, clone, "log", "--format=%s"); !strings.Contains(log, "an older build captures") {
+		t.Errorf("the graph repository should replay the commit that wrote the stray:\n%s", log)
 	}
-	if headRecord(t, repo).ID != headRecord(t, project).ID {
+	if headRecord(t, repo).ID != headRecord(t, clone).ID {
 		t.Error("both repositories should record the carry")
 	}
 	runApp(t, repo, "show", stray)
@@ -346,12 +256,29 @@ func TestMoveCarriesAStrayAcrossRepositories(t *testing.T) {
 func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	repo := graphRepoToMove(t)
 	remote := test.NewGraphRemote(t, graphCloneRepoID)
+	writeFile(t, filepath.Join(repo, ".sdd", "sessions", "s_kept.json"), "{}\n")
+	writeFile(t, filepath.Join(repo, ".sdd", "stats", "llm.jsonl"), "{}\n")
 	runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
+	clone := cloneDir(t)
 
 	for _, id := range []string{movedFirst, movedSecond} {
 		if _, found := remote.Show(t, filepath.ToSlash(entryPath("graph", id))); !found {
 			t.Errorf("entry %s should be published to the graph repository", id)
 		}
+		assertMissing(t, entryPath(filepath.Join(repo, ".sdd", "graph"), id), "the code repository should hold no entry")
+	}
+	if log := gitIn(t, clone, "log", "--format=%s"); !strings.Contains(log, "add the first entry") || !strings.Contains(log, "add the second entry") {
+		t.Errorf("the graph repository should carry the graph's history:\n%s", log)
+	}
+	if session := readText(t, filepath.Join(clone, ".sdd", "sessions", "s_kept.json")); session != "{}\n" {
+		t.Errorf("the in-tree session store should move beside the graph, got %q", session)
+	}
+	if stats := readText(t, filepath.Join(clone, ".sdd", "stats", "llm.jsonl")); stats != "{}\n" {
+		t.Errorf("the usage stats should move beside the graph, got %q", stats)
+	}
+	codeRecord, graphRecord := headRecord(t, repo), headRecord(t, clone)
+	if codeRecord.ID != graphRecord.ID || codeRecord.To.String() != "git-repo:"+string(graphCloneRepoID)+"?branch=main&dir=graph" {
+		t.Errorf("both repositories should carry the same record, got %+v and %+v", codeRecord, graphRecord)
 	}
 	for _, path := range []string{".claude/skills/sdd/SKILL.md", ".mcp.json"} {
 		if _, found := remote.Show(t, path); found {
@@ -392,8 +319,11 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	if kept := readText(t, committedBeside); kept != "kept\n" {
 		t.Errorf("the move should leave a file beside the pointer as it was:\n%s", kept)
 	}
-	if config := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); strings.Contains(config, "graph_repo") || !strings.Contains(config, "graph_dir: .sdd/graph") {
+	if config := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); strings.Contains(config, "graph_repo") || !strings.Contains(config, "graph_dir: .sdd/graph") || !strings.Contains(config, "default_branch: main") {
 		t.Errorf("the code repository should hold the project's settings again:\n%s", config)
+	}
+	if session := readText(t, filepath.Join(repo, ".sdd", "sessions", "s_kept.json")); session != "{}\n" {
+		t.Errorf("the in-tree session store should come back, got %q", session)
 	}
 	runApp(t, repo, "show", movedSecond)
 }

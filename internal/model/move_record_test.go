@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -8,10 +9,15 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
+// gitPathLocation is the folder graph in the checkout at path.
+func gitPathLocation(path string) model.LocationRef {
+	return model.LocationRef{Kind: model.LocationGitPath, Address: path, Options: url.Values{"dir": {"graph"}}}
+}
+
 func TestLocationRefRoundTrip(t *testing.T) {
 	refs := []model.LocationRef{
 		model.GitDirLocation(".sdd/graph"),
-		model.GitPathLocation("../graph project?", "graph"),
+		gitPathLocation("../graph project?"),
 		model.GitRepoLocation("example.com/org/graph", "graph", "main"),
 	}
 	for _, ref := range refs {
@@ -51,7 +57,7 @@ func TestMoveRecordTrailersRoundTrip(t *testing.T) {
 	record := model.MoveRecord{
 		ID:       "01JC0000000000000000000000",
 		From:     model.GitDirLocation(".sdd/graph"),
-		To:       model.GitPathLocation("../graph", "graph"),
+		To:       gitPathLocation("../graph"),
 		Revision: "abc123",
 		Entries:  42,
 	}
@@ -80,8 +86,8 @@ func TestMoveRecordTrailersRoundTrip(t *testing.T) {
 func TestFindStrays(t *testing.T) {
 	current := model.GitDirLocation("graph")
 	records := []model.MoveRecord{
-		{From: model.GitDirLocation(".sdd/graph"), To: model.GitPathLocation("../graph", "graph")},
-		{From: model.GitPathLocation("../graph", "graph"), To: current},
+		{From: model.GitDirLocation(".sdd/graph"), To: gitPathLocation("../graph")},
+		{From: gitPathLocation("../graph"), To: current},
 	}
 	former := model.FormerLocations(records, current)
 	if len(former) != 2 || former[0].String() != "git-dir:.sdd/graph" || former[1].String() != "git-path:../graph?dir=graph" {

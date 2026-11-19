@@ -76,6 +76,48 @@ func runApp(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func runAppErr(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	return runAppAs(t, dir, "test", args...)
+}
+
+func runAppAs(t *testing.T, dir, version string, args ...string) (string, error) {
+	t.Helper()
+	t.Chdir(dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(dir))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
+	var output bytes.Buffer
+	command := cliapp.New(cliapp.Options{Version: version, Reader: strings.NewReader(""), Writer: &output, ErrWriter: &output})
+	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
+	return output.String(), err
+}
+
+func captureSignal(t *testing.T, dir string) {
+	t.Helper()
+	runApp(t, dir,
+		"new", "signal", "tactical",
+		"The code repository carries only the code, while signals and decisions live in a graph repository.",
+		"--confidence", "high", "--skip-preflight",
+		"--summary", "A graph repository keeps the code history free of capture commits.",
+		"--title", "Graph beside the code",
+	)
+}
+
+func sddDirContents(t *testing.T, repo string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(repo, ".sdd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
 func writeFile(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -153,23 +195,4 @@ func readFile(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return string(content)
-}
-
-// init refuses the graph_dir every later command would refuse.
-func TestInitRefusesAGraphDirOutsideAnyRepository(t *testing.T) {
-	root := canonicalTemp(t)
-	project := filepath.Join(root, "project")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initRepo(t, project)
-
-	_, err := runAppErr(t, project, "init", "--graph-dir", "../norepo/graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
-
-	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
-		t.Fatalf("a graph_dir outside any repository should be refused at init, got %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(project, ".sdd")); !os.IsNotExist(statErr) {
-		t.Errorf("a refused init should write nothing, stat err = %v", statErr)
-	}
 }

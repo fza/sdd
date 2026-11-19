@@ -22,25 +22,17 @@ type InitCmd struct {
 	StableRepoRoot string
 
 	// GraphDir is the graph directory path relative to RepoRoot, or to the
-	// project init sets up at ProjectDir. Empty defaults to
-	// model.DefaultGraphDirFor's choice: model.GraphOnlyGraphDir for a project
-	// set up through ProjectDir or GraphRepo, model.DefaultGraphDir otherwise.
+	// graph repository init sets up through GraphRepo. Empty defaults to
+	// model.DefaultGraphDirFor's choice: model.GraphOnlyGraphDir for a graph
+	// repository set up through GraphRepo, model.DefaultGraphDir otherwise.
 	GraphDir string
-
-	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
-	// in the sdd project at this path (relative to RepoRoot or absolute):
-	// init writes only the pointer config and the agent surfaces in RepoRoot.
-	// A path holding no sdd project is first set up as one, in a repository
-	// of its own, configured by GraphDir and Language; beside an existing
-	// project those two are refused.
-	ProjectDir string
 
 	// GraphRepo, when set, makes RepoRoot a code repository whose graph lives
 	// in that graph repository, reached through sdd's own clone of it:
-	// init clones it, sets up .sdd/ there when
-	// it holds none and pushes, then commits graph_repo and the stock guard
-	// in RepoRoot. RemoteURL is RepoRoot's origin, which picks the protocol
-	// the clone tries first.
+	// init clones it, sets up .sdd/ there when it holds none and pushes, then
+	// commits graph_repo in RepoRoot. RemoteURL is RepoRoot's origin, which
+	// picks the protocol the clone tries first. A graph repository set up
+	// already refuses GraphDir and Language.
 	GraphRepo model.RepoID
 	// GraphOnly marks RepoRoot as a graph repository set up through sdd's
 	// clone of it: agents work in the code repository, so no skills, MCP
@@ -48,8 +40,7 @@ type InitCmd struct {
 	GraphOnly bool
 
 	// DialogueMode, when set, records the person's dialogue.mode in
-	// config.local.yaml of the project holding the graph, which is RepoRoot
-	// unless ProjectDir names another.
+	// the machine-local config.
 	DialogueMode model.DialogueMode
 
 	// VerifyMode, when set, records how carefully drafts are checked against
@@ -59,12 +50,6 @@ type InitCmd struct {
 	// VerifierRunner, when set, records what runs the deep verifier on this
 	// machine in the local config.
 	VerifierRunner model.VerifierRunner
-
-	// SetUpProject allows init to set up a missing project at ProjectDir. Only
-	// a path the caller typed qualifies: a recorded project_dir names a shared
-	// project to clone, never one to create. It also lets ProjectDir rewrite the
-	// committed pointer.
-	SetUpProject bool
 
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
 	// captures on fresh initialization or when upgrading an older config.
@@ -83,7 +68,7 @@ type InitCmd struct {
 	LocalConfigPath string
 
 	// Language is the graph authoring language (locale code) to record in
-	// .sdd/config.yaml on fresh init, the project's under ProjectDir. Empty means "use the default behavior"
+	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.
 	// Only applied on fresh init; existing config.yaml is never rewritten.
 	Language string

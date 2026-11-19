@@ -224,34 +224,28 @@ func TestHooksRefuseACommandThatIsAFolder(t *testing.T) {
 }
 
 // Hooks of every layer resolve in order: user-global, work repository,
-// project repository, committed before local, each against its own hooks
+// graph repository, committed before local, each against its own hooks
 // folder and keyed by its repository's real root.
-func TestHooksReadEveryLayerOfAProjectDirLayout(t *testing.T) {
+func TestHooksReadEveryLayerOfAGraphRepoLayout(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	global := filepath.Join(base, "config", "sdd", "config.yaml")
-	work, project := filepath.Join(base, "work"), filepath.Join(base, "project")
+	work, project := filepath.Join(base, "work"), filepath.Join(base, "clone")
 	hook := func(command string) string { return "hooks:\n  - event: entry.written\n    command: " + command + "\n" }
 	write(t, global, hook("global.sh"))
-	write(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../project\n"+hook("work.sh"))
+	write(t, filepath.Join(work, ".sdd", "config.yaml"), "graph_repo: example.com/org/graph\n"+hook("work.sh"))
 	write(t, filepath.Join(work, ".sdd", "config.local.yaml"), hook("local/work-local.sh"))
-	write(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.com/org/project\n"+hook("project.sh"))
-	write(t, filepath.Join(project, ".sdd", "config.local.yaml"), hook("local/project-local.sh"))
+	write(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.com/org/graph\n"+hook("project.sh"))
 	script(t, filepath.Join(base, "config", "sdd", "hooks", "global.sh"), "true")
 	for _, file := range []string{"work.sh", "local/work-local.sh"} {
 		script(t, filepath.Join(work, ".sdd", "hooks", file), "true")
 	}
-	for _, file := range []string{"project.sh", "local/project-local.sh"} {
-		script(t, filepath.Join(project, ".sdd", "hooks", file), "true")
-	}
+	script(t, filepath.Join(project, ".sdd", "hooks", "project.sh"), "true")
 	gitIn(t, work, "init", "-q")
 	gitIn(t, project, "init", "-q")
-	resolved, err := meta.ResolveProject(work, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resolved := meta.Project{Root: project, WorkRoot: work, GraphRepo: "example.com/org/graph"}
 
 	declared, err := hooks.New(hooks.Sources{GlobalConfig: global, Project: resolved, Tracker: git.TrackedFiles{}}, hooks.NewAllows(filepath.Join(base, "state"))).Hooks(t.Context())
 	if err != nil {
@@ -266,7 +260,6 @@ func TestHooksReadEveryLayerOfAProjectDirLayout(t *testing.T) {
 		"work committed=work.sh@" + filepath.Join(work, ".sdd", "hooks"),
 		"work local=local/work-local.sh@" + filepath.Join(work, ".sdd", "hooks"),
 		"project committed=project.sh@" + filepath.Join(project, ".sdd", "hooks"),
-		"project local=local/project-local.sh@" + filepath.Join(project, ".sdd", "hooks"),
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("declared hooks\n %v\nwant\n %v", got, want)

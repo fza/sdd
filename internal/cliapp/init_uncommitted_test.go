@@ -109,29 +109,6 @@ func TestInitDropsRecordedPathsCommittedMeanwhile(t *testing.T) {
 	}
 }
 
-func TestInitCompletesARefusedCommitInTheProjectRepository(t *testing.T) {
-	work, project := workRepository(t)
-	runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
-	skill := filepath.Join(project, ".claude", "skills", "sdd", "SKILL.md")
-	gitIn(t, project, "rm", "-q", skill)
-	gitIn(t, project, "commit", "-q", "-m", "chore: drop the skill")
-	allow := refuseCommits(t, project)
-	_, err := runAppErr(t, work, "init")
-	if err == nil {
-		t.Fatal("init should fail when the project's commit is refused")
-	}
-	allow()
-
-	runApp(t, work, "init")
-
-	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
-		t.Errorf("a re-run should commit what the refused run left uncommitted in the project:\n%s", status)
-	}
-	if _, statErr := os.Stat(uncommittedRecord(project)); !os.IsNotExist(statErr) {
-		t.Errorf("a landed commit should remove the project's record: %v", statErr)
-	}
-}
-
 // A clone shipping a record: init refuses it before writing anything, so the
 // run after the record's removal sets up and commits everything.
 func TestInitRefusesAClonedRecordBeforeWritingAnything(t *testing.T) {

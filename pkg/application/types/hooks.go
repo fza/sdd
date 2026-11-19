@@ -49,7 +49,7 @@ const (
 // HookOrigin is where a hook is declared and where it runs.
 type HookOrigin struct {
 	Layer HookLayer
-	// Repo is "work" or "project" in a project_dir layout, empty otherwise.
+	// Repo is "work" or "project" in a graph_repo layout, empty otherwise.
 	Repo string
 	// ConfigPath is the declaring config file, Index the hook's position in
 	// its hooks list.
@@ -67,7 +67,7 @@ type HookOrigin struct {
 // are allowed on this machine: every layer but the user-global one.
 func (o HookOrigin) NeedsAllow() bool { return o.Layer != HookLayerGlobal }
 
-// Label names the layer, with its repository in a project_dir layout.
+// Label names the layer, with its repository in a graph_repo layout.
 func (o HookOrigin) Label() string {
 	if o.Repo == "" {
 		return string(o.Layer)

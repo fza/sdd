@@ -90,15 +90,6 @@ func TestInitThatOnlyWritesConfigIsNoNoOp(t *testing.T) {
 	}
 }
 
-func TestInitInAPointingRepositoryThatChangesNothingPrintsOneLine(t *testing.T) {
-	work, _ := pointedRepos(t)
-	runInit(t, work)
-
-	if out := runInit(t, work); out != nothingChanged {
-		t.Errorf("a repeat init beside its project should print only %q, got:\n%s", nothingChanged, out)
-	}
-}
-
 func TestInitWithAGraphRepositoryThatChangesNothingPrintsOneLine(t *testing.T) {
 	test.NewGraphRemote(t, graphCloneRepoID)
 	code := filepath.Join(canonicalTemp(t), "code")

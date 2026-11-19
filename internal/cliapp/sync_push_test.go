@@ -224,66 +224,24 @@ func TestServedSessionLeavesTheCodeRepositoryGraph(t *testing.T) {
 	})
 }
 
-// workRepoState is what a sync must never change in a work repository: HEAD,
-// every ref including remote-tracking ones, and the index.
-func workRepoState(t *testing.T, work string) string {
-	t.Helper()
-	return gitIn(t, work, "rev-parse", "HEAD") + "\n" +
-		gitIn(t, work, "for-each-ref", "--format=%(refname) %(objectname)") + "\n" +
-		gitIn(t, work, "ls-files", "--stage")
-}
-
-// A project kept in a repository of its own beside the work is no graph clone:
-// it never syncs automatically, and the work repository stays untouched.
-func TestPointedProjectNeverSyncsAutomatically(t *testing.T) {
-	work, project := pointedRepos(t)
-	base := filepath.Dir(work)
-	for _, repo := range []string{work, project} {
-		remote := filepath.Join(base, filepath.Base(repo)+".git")
-		gitIn(t, base, "init", "-q", "--bare", remote)
-		gitIn(t, repo, "remote", "add", "origin", remote)
-	}
-	writeFile(t, filepath.Join(work, ".gitignore"), "xdg-config/\nxdg-cache/\nxdg-state/\n")
-	gitIn(t, work, "add", ".gitignore", ".sdd/config.yaml")
-	gitIn(t, work, "commit", "-q", "-m", "chore: point at the project")
-	gitIn(t, work, "push", "-q", "-u", "origin", "HEAD")
-	writeFile(t, filepath.Join(project, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/index/\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\n")
-	gitIn(t, project, "add", ".gitignore", ".sdd/config.yaml")
-	gitIn(t, project, "commit", "-q", "-m", "sdd: init")
-	gitIn(t, project, "push", "-q", "-u", "origin", "HEAD")
-	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\nsync:\n  cooldown: 1ns\n  mode: auto\n")
-	upstreamCommit(t, work, "feat: work elsewhere", "elsewhere.go")
-	theirs := upstreamCommit(t, project, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
-	before := workRepoState(t, work)
-	published := remoteHead(t, project)
-
-	out, err := runAppErr(t, work, captureArgs()...)
-	if err != nil {
-		t.Fatalf("capture: %v\n%s", err, out)
-	}
-
-	if contains(t, project, theirs) {
-		t.Error("the project repository should merge nothing on its own")
-	}
-	if remoteHead(t, project) != published {
-		t.Error("the project repository should push nothing on its own")
-	}
-	if workRepoState(t, work) != before {
-		t.Error("a sync should leave the work repository's HEAD, refs and index unchanged")
-	}
-}
-
-func TestCaptureIntoAnotherGraphStaysLocal(t *testing.T) {
+// A capture into a graph outside the project writes its entry there; the
+// commit runs in the working directory, so nothing lands or is pushed.
+func TestCaptureIntoAnotherGraphFailsAtTheCommit(t *testing.T) {
 	root := syncedProject(t, "auto")
 	other := syncedProject(t, "manual")
 	before := remoteHead(t, other)
+	head := headSubject(t, other)
 
 	out, err := runAppErr(t, root, append(captureArgs(), "--graph-dir", filepath.Join(other, ".sdd", "graph"))...)
-	if err != nil {
-		t.Fatalf("capture: %v\n%s", err, out)
+
+	if err == nil || !strings.Contains(err.Error()+out, "outside repository") {
+		t.Fatalf("the commit should fail as git refuses a path outside the working directory's repository, got %v:\n%s", err, out)
+	}
+	if headSubject(t, other) != head {
+		t.Error("a capture into a graph outside the project should commit nothing there")
 	}
 	if remoteHead(t, other) != before {
-		t.Error("a capture into a graph outside the project should not push under the project's sync mode")
+		t.Error("a capture into a graph outside the project should push nothing")
 	}
 }
 

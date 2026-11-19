@@ -43,7 +43,7 @@ func hookValues(values []model.ConfigValue) []model.ConfigValue {
 	return hooks
 }
 
-// A project_dir layout's work repository lists its hooks between the global
+// A graph_repo layout's work repository lists its hooks between the global
 // layer's and the project's.
 func TestEffectiveConfigValuesListsTheWorkRepositorysHooksBeforeTheProjects(t *testing.T) {
 	layer := func(command string) *model.PerRepoConfig {

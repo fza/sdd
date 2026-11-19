@@ -137,25 +137,9 @@ func ReadConfigLayersWith(read ReadFile, sddDir, localConfigPath string) (commit
 	return readConfigLayers(read, sddDir, localConfigPath, readPersonalConfigFile)
 }
 
-// ReadLayoutConfig is ReadConfig for the keys that locate a project and its
-// graph: it reads past a value sdd refuses, which the command's own config
+// readLayoutLayers is ReadConfigLayersWith for the keys that locate a
+// project: it reads past a value sdd refuses, which the command's own config
 // load judges, so `sdd config set` still finds the file to repair it.
-func ReadLayoutConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	return ReadLayoutConfigWith(os.ReadFile, sddDir, localConfigPath)
-}
-
-// ReadLayoutConfigWith is ReadLayoutConfig reading through read.
-func ReadLayoutConfigWith(read ReadFile, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	committed, local, err := readLayoutLayers(read, sddDir, localConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if committed == nil && local == nil {
-		return nil, nil
-	}
-	return model.MergeConfig(committed, local), nil
-}
-
 func readLayoutLayers(read ReadFile, sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
 	return readConfigLayers(read, sddDir, localConfigPath, readConfigFile)
 }
@@ -181,60 +165,8 @@ func readConfigLayers(read ReadFile, sddDir, localConfigPath string, readPersona
 			return nil, nil, err
 		}
 		local = model.HonoredLocal(local)
-		under, err := underLocalConfigPath(read, sddDir, localPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		if under != "" {
-			own, err := readPersonal(read, under)
-			if err != nil {
-				return nil, nil, err
-			}
-			if own != nil {
-				local = model.MergeConfig(model.HonoredLocal(own), local)
-			}
-		}
 	}
 	return committed, local, nil
-}
-
-// UnderLocalConfigPath is the project's own machine-local file when
-// localPath is the machine-local file of a repository pointing at the
-// project through project_dir, whose settings lie over the project's own;
-// empty otherwise.
-func UnderLocalConfigPath(sddDir, localPath string) (string, error) {
-	return underLocalConfigPath(os.ReadFile, sddDir, localPath)
-}
-
-func underLocalConfigPath(read ReadFile, sddDir, localPath string) (string, error) {
-	own := LocalConfigPath(sddDir, "")
-	if sddDir == "" || filepath.Clean(localPath) == filepath.Clean(own) || filepath.Base(localPath) != LocalConfigFileName {
-		return "", nil
-	}
-	pointingSDDDir := filepath.Dir(localPath)
-	if filepath.Base(pointingSDDDir) != model.SDDDirName {
-		return "", nil
-	}
-	committed, err := readConfigFile(read, filepath.Join(pointingSDDDir, "config.yaml"))
-	if err != nil {
-		return "", err
-	}
-	local, err := readConfigFile(read, localPath)
-	if err != nil {
-		return "", err
-	}
-	pointers := model.MergeConfig(committed, local)
-	if pointers == nil || pointers.GraphRepo != "" || pointers.ProjectDir == "" {
-		return "", nil
-	}
-	target := pointers.ProjectDir
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(pointingSDDDir), target)
-	}
-	if filepath.Clean(target) != filepath.Clean(filepath.Dir(sddDir)) {
-		return "", nil
-	}
-	return own, nil
 }
 
 func readConfigFile(read ReadFile, path string) (*model.PerRepoConfig, error) {

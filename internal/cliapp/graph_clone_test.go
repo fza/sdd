@@ -25,8 +25,7 @@ func TestMain(m *testing.M) {
 }
 
 // graphRepoCode builds a code repository whose config names a graph
-// repository with graph_repo, beside a project_dir leading nowhere, and the
-// graph repository on a remote.
+// repository with graph_repo, and the graph repository on a remote.
 func graphRepoCode(t *testing.T) (code string, remote *test.GraphRemote) {
 	t.Helper()
 	remote = test.NewGraphRemote(t, graphCloneRepoID)
@@ -42,7 +41,7 @@ func graphRepoCode(t *testing.T) (code string, remote *test.GraphRemote) {
 		t.Fatal(err)
 	}
 	initRepo(t, code)
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphCloneRepoID)+"\nproject_dir: ../nowhere\nskill_scope: project\n")
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphCloneRepoID)+"\nskill_scope: project\n")
 	gitIn(t, code, "add", ".sdd")
 	gitIn(t, code, "commit", "-q", "-m", "point at the graph repository")
 	writeFile(t, filepath.Join(code, "xdg-config", "sdd", "config.yaml"), "participant: Ada\n")
@@ -56,7 +55,7 @@ func cloneDir(t *testing.T) string {
 
 // The first command needing the graph clones it, and a capture in the code
 // repository lands in the clone, is pushed, and leaves the code repository
-// untouched, though project_dir is set as well.
+// untouched.
 func TestGraphRepoCaptureGoesThroughTheClone(t *testing.T) {
 	code, remote := graphRepoCode(t)
 	codeHead := headSubject(t, code)

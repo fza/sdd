@@ -110,7 +110,6 @@ func MovedProjectConfig(source []byte, graphDir, defaultBranch string, repoID Re
 	set("graph_dir", graphDir)
 	set("default_branch", defaultBranch)
 	set("repo_id", string(repoID))
-	set("project_dir", "")
 	set("graph_repo", "")
 	if agents != nil {
 		set("skill_scope", string(agents.SkillScope))

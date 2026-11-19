@@ -15,7 +15,7 @@ func TestConfigChanges(t *testing.T) {
 	after := model.ConfigLayers{
 		Global:  model.BaseConfig{LLM: model.LLMConfig{APIKeys: map[string]string{"anthropic": "new-secret"}}},
 		Local:   &model.PerRepoConfig{BaseConfig: model.BaseConfig{Participant: "Ada", Dialogue: model.DialogueConfig{Mode: model.DialogueAuto}}},
-		Pointer: &model.PerRepoConfig{ProjectDir: "../graph"},
+		Pointer: &model.PerRepoConfig{GraphRepo: "example.test/acme/graph"},
 	}
 
 	changes := model.ConfigChanges(before, after)
@@ -29,7 +29,7 @@ func TestConfigChanges(t *testing.T) {
 	if got, ok := byKey["llm.api_keys.anthropic"]; !ok || !got.Secret || got.Old != "" || got.New != "" {
 		t.Errorf("a changed secret should name its key and carry no value, got %+v (found %v)", got, ok)
 	}
-	if got := byKey["pointer project_dir"]; got.New != "../graph" {
+	if got := byKey["pointer graph_repo"]; got.New != "example.test/acme/graph" {
 		t.Errorf("a changed pointer should be listed, got %+v", got)
 	}
 	if _, ok := byKey["participant"]; ok {

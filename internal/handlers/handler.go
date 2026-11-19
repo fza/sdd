@@ -215,8 +215,8 @@ type Options struct {
 	CloneRound CloneRound
 	// GraphClones owns the sdd-owned graph clones. Nil refuses graph_repo.
 	GraphClones *repos.GraphClones
-	// ProjectRepositories and RepositoryAt let a work repository's init set up
-	// and refresh its project in a repository of its own. Nil refuses both.
+	// ProjectRepositories and RepositoryAt let a code repository's init set up
+	// and refresh its graph repository's clone. Nil refuses both.
 	ProjectRepositories ProjectRepositories
 	RepositoryAt        func(dir string) Repository
 	// GraphMoverAt is the git work of a graph move in the repository at dir;

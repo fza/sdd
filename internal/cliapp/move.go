@@ -35,10 +35,6 @@ func moveCmd() *cli.Command {
 				Usage: "Graph folder in this repository, also the way back from a separate repository",
 			},
 			&cli.StringFlag{
-				Name:  "project-dir",
-				Usage: "Checkout on disk to move the graph out to, created and initialized when missing",
-			},
-			&cli.StringFlag{
 				Name:  "graph-repo",
 				Usage: "Address of a repository to move the graph out to, which sdd clones and pushes itself",
 			},
@@ -72,7 +68,6 @@ func moveCmd() *cli.Command {
 				ProjectRepositories: git.Repositories{},
 				GraphMoverAt:        func(dir string) handlers.GraphMover { return git.CLI{Dir: dir} },
 				Strays:              reader,
-				Reader:              reader,
 				SessionStoreDirs: func(sddDir string, repoID model.RepoID) (map[string]string, error) {
 					return machineSessionStores(locations, sddDir, repoID)
 				},
@@ -80,7 +75,6 @@ func moveCmd() *cli.Command {
 			})
 			return handler.MoveGraph(ctx, &command.MoveGraphCmd{
 				WorkRoot: workRoot, Target: target, LocalConfigOverride: localConfigOverride,
-				BinaryVersion: cmd.Root().Version,
 				OnMoved: func(record model.MoveRecord) {
 					fmt.Fprintf(cmd.Writer, "Moved the graph from %s to %s: %d entries with their history (move %s).\n", record.From, record.To, record.Entries, record.ID)
 				},
@@ -95,19 +89,16 @@ func moveCmd() *cli.Command {
 // moveTarget reads the one target flag sdd move takes.
 func moveTarget(cmd *cli.Command) (model.LocationRef, error) {
 	var set []string
-	for _, name := range []string{"graph-dir", "project-dir", "graph-repo"} {
+	for _, name := range []string{"graph-dir", "graph-repo"} {
 		if strings.TrimSpace(cmd.String(name)) != "" {
 			set = append(set, "--"+name)
 		}
 	}
 	if len(set) != 1 {
-		return model.LocationRef{}, errors.New("sdd move takes exactly one of --graph-dir, --project-dir and --graph-repo")
+		return model.LocationRef{}, errors.New("sdd move takes exactly one of --graph-dir and --graph-repo")
 	}
-	switch set[0] {
-	case "--graph-dir":
+	if set[0] == "--graph-dir" {
 		return model.GitDirLocation(filepath.ToSlash(filepath.Clean(strings.TrimSpace(cmd.String("graph-dir"))))), nil
-	case "--project-dir":
-		return model.LocationRef{Kind: model.LocationGitPath, Address: strings.TrimSpace(cmd.String("project-dir"))}, nil
 	}
 	repo, err := model.DeriveRepoID(strings.TrimSpace(cmd.String("graph-repo")))
 	if err != nil {

@@ -64,8 +64,8 @@ func TestReadConfigLayersDropsTheCommittedDialogueMode(t *testing.T) {
 	}
 }
 
-// Locating the project and its graph reads past a refused dialogue.mode in
-// the machine-local layer; the config load still refuses it.
+// Locating the project reads past a refused dialogue.mode in the
+// machine-local layer; the config load still refuses it.
 func TestLayoutReadsPassAnUnknownDialogueMode(t *testing.T) {
 	root := t.TempDir()
 	sddDir := meta.SDDDir(root)
@@ -85,13 +85,6 @@ func TestLayoutReadsPassAnUnknownDialogueMode(t *testing.T) {
 	}
 	if project.Root != root {
 		t.Errorf("the project should resolve to its own root, got %q", project.Root)
-	}
-	layout, err := meta.ReadLayoutConfig(sddDir, "")
-	if err != nil {
-		t.Fatalf("the layout read should not judge the dialogue mode: %v", err)
-	}
-	if layout.GraphDir != "decisions" {
-		t.Errorf("the layout read should carry the graph dir, got %q", layout.GraphDir)
 	}
 	_, err = meta.ReadConfig(sddDir, "")
 	if err == nil {
