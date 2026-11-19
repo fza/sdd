@@ -161,6 +161,11 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 			return nil, fmt.Errorf("ranking the deep reading: %w", err)
 		}
 	}
+	// A publish routed to the late entries wrote nothing to announce.
+	_, written := workflowStoreString(point.Store, "entryId")
+	if point.Event == entryWrittenEvent && !written {
+		return nil, nil
+	}
 	if err := h.resolve(); err != nil {
 		return nil, err
 	}

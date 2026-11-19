@@ -560,19 +560,27 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
 	}
-	// The write step's late-entries check, once more on a fresh graph right
-	// before the write: an entry landing in between leaves the capture
-	// unwritten, and publish routes to lateEntries.
-	late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
-		w.graphs.Invalidate()
-		return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
-	})
+	// A retry finds the entry an earlier attempt published under the same
+	// key, which the late-entries check would take for a late one.
+	published, err := w.app.entryPublicationExists(w.ctx, w.identity, target, draft.Publication, draft.EntryID)
 	if err != nil {
-		return err
+		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
 	}
-	if len(late) > 0 {
-		slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
-		return nil
+	if !published {
+		// The write step's late-entries check, once more on a fresh graph right
+		// before the write: an entry landing in between leaves the capture
+		// unwritten, and publish routes to lateEntries.
+		late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
+			w.graphs.Invalidate()
+			return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
+		})
+		if err != nil {
+			return err
+		}
+		if len(late) > 0 {
+			slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+			return nil
+		}
 	}
 	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
 	if err != nil {
