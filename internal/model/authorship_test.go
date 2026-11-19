@@ -280,6 +280,9 @@ func TestAuthorshipMarkConstruction(t *testing.T) {
 		if kind == model.KindDirective {
 			e.Intent = model.IntentPending
 		}
+		if kind == model.KindPlan {
+			e.Content = "Body.\n\n## Acceptance criteria\n\n- [ ] It holds."
+		}
 		return e
 	}
 	cases := []struct {
@@ -292,16 +295,16 @@ func TestAuthorshipMarkConstruction(t *testing.T) {
 			e.DecidedBy, e.Reason = model.DecidedByAgent, "The tests need it."
 			return e
 		}, ""},
-		{"an agent's decision without a reason", func() *model.Entry {
+		{"an agent's directive without a reason", func() *model.Entry {
 			e := base(model.TypeDecision, model.KindDirective)
 			e.DecidedBy = model.DecidedByAgent
 			return e
-		}, "reason"},
+		}, ""},
 		{"an agent's plan without a reason", func() *model.Entry {
 			e := base(model.TypeDecision, model.KindPlan)
 			e.DecidedBy = model.DecidedByAgent
 			return e
-		}, "reason"},
+		}, ""},
 		{"an agent's activity without a reason", func() *model.Entry {
 			e := base(model.TypeDecision, model.KindActivity)
 			e.DecidedBy = model.DecidedByAgent
@@ -317,11 +320,36 @@ func TestAuthorshipMarkConstruction(t *testing.T) {
 			e.DecidedBy, e.Reason = model.DecidedByAgent, "Why."
 			return e
 		}, "reason"},
-		{"a person's decision with a reason", func() *model.Entry {
+		{"a person's decision with a reason that names no one", func() *model.Entry {
 			e := base(model.TypeDecision, model.KindDirective)
 			e.Reason = "Why."
 			return e
-		}, "reason"},
+		}, "reason-by"},
+		{"a person's decision with the reason they gave", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindDirective)
+			e.Reason, e.ReasonBy = "Why.", "Ada"
+			return e
+		}, ""},
+		{"a person's decision whose reason the agent drafted", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindDirective)
+			e.Reason, e.ReasonBy = "Why.", model.DraftedByAgent
+			return e
+		}, "reason-by"},
+		{"a person's directive with the intent they gave", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindDirective)
+			e.IntentBy = "Ada"
+			return e
+		}, ""},
+		{"a person's plan with intent-by", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindPlan)
+			e.IntentBy = "Ada"
+			return e
+		}, "intent-by"},
+		{"an agent's decision with reason-by", func() *model.Entry {
+			e := base(model.TypeDecision, model.KindDirective)
+			e.DecidedBy, e.Reason, e.ReasonBy = model.DecidedByAgent, "Why.", "Ada"
+			return e
+		}, "reason-by"},
 		{"an unknown decided-by", func() *model.Entry {
 			e := base(model.TypeSignal, model.KindGap)
 			e.DecidedBy = "person"

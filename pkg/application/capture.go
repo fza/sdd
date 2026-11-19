@@ -349,8 +349,13 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 		entry.DecidedBy, entry.RunBy, entry.Participants = model.DecidedByAgent, participant, []string{actor}
 	case draft.approval != nil:
 		markApproved(entry, participant, *draft.approval)
-	case len(entry.Participants) == 0 && participant != "":
-		entry.Participants = []string{participant}
+	default:
+		if len(entry.Participants) == 0 && participant != "" {
+			entry.Participants = []string{participant}
+		}
+		if draft.confirmed {
+			markConfirmed(entry, participant)
+		}
 	}
 	attachmentDir, err := model.AttachDirRelPath(draft.EntryID)
 	if err != nil {
@@ -412,6 +417,25 @@ func markApproved(entry *model.Entry, person string, approval approvalAuthor) {
 	}
 	if entry.Kind == model.KindDirective {
 		entry.IntentBy = by
+	}
+}
+
+// markConfirmed names person on the reason and a directive's intent of the
+// guided draft they confirmed, as an approval does. A signal carries no
+// reason, and with no person to name the reason is not written, since no one
+// could answer for it.
+func markConfirmed(entry *model.Entry, person string) {
+	if person == "" || entry.Type != model.TypeDecision {
+		entry.Reason = ""
+	}
+	if person == "" {
+		return
+	}
+	if entry.Reason != "" {
+		entry.ReasonBy = person
+	}
+	if entry.Kind == model.KindDirective {
+		entry.IntentBy = person
 	}
 }
 

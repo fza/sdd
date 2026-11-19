@@ -147,12 +147,10 @@ func (w *WorkflowSession) startingClient(instance string) (string, error) {
 	return w.attachedClient(w.ctx)
 }
 
-// authorshipMissing lists what an autonomous draft's authorship fields owe:
-// the agent's own reason where the kind owes one (model.UserWordsOwed), no
-// reason on a signal, no participants. An assisted draft owes the same reason,
-// which the person's approval adopts, and may name participants, as the entry
-// is the person's. A guided draft owes none; its reason is the user's, in
-// reasonWords, and sdd ignores the reason field there.
+// authorshipMissing lists what an autonomous draft's authorship fields break:
+// a reason on a signal, participants. An assisted draft may name participants,
+// as the entry is the person's. A guided draft breaks none: the person's
+// confirm makes its reason theirs.
 func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	if !w.Autonomous() {
 		return nil
@@ -160,12 +158,8 @@ func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	kind, _ := workflowStoreString(store, "entryKind")
 	reason, _ := workflowStoreString(store, fieldReason)
 	decision := kind != "" && model.IsValidKindForType(model.TypeDecision, model.Kind(kind))
-	owed, _ := model.UserWordsOwed(model.Kind(kind))
 	var missing []string
-	switch {
-	case owed && strings.TrimSpace(reason) == "":
-		missing = append(missing, fmt.Sprintf("a %s in %s mode states your own reason for it in reason, inferred from the dialogue and the graph", kind, w.session.DialogueMode))
-	case !decision && reason != "":
+	if !decision && reason != "" {
 		missing = append(missing, "a signal carries no reason")
 	}
 	if !w.assisted() && len(workflowStoreStrings(store, "participants")) > 0 {
@@ -213,7 +207,7 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 	err = registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name:  "authorshipHeld",
-			Doc:   "In auto and assisted mode a decision whose kind owes a reason (model.UserWordsOwed) states the agent's own, a signal none, and an auto draft reports no participants; a guided draft owes nothing here.",
+			Doc:   "In auto and assisted mode a signal carries no reason, and an auto draft reports no participants; a guided draft owes nothing here.",
 			Reads: []string{"entryKind", fieldReason, "participants"},
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {

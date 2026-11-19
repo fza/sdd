@@ -45,7 +45,8 @@ type EntryDraft struct {
 	Supersedes   []string
 	Approves     []string
 	Participants []string
-	// Reason is an agent-decided decision's own reason (model.Entry.Reason).
+	// Reason is a decision's reason (model.Entry.Reason): the agent's own, or
+	// the words a person gave.
 	Reason     string
 	Confidence string
 	Topics     []string
@@ -55,7 +56,10 @@ type EntryDraft struct {
 	agent *agentAuthor
 	// approval marks a draft a person approved at an assisted session's gate:
 	// sdd writes it as theirs (model.Entry.Approved).
-	approval          *approvalAuthor
+	approval *approvalAuthor
+	// confirmed marks a guided draft, written only once the person confirmed
+	// it at the play-back: its reason and a directive's intent are theirs.
+	confirmed         bool
 	AttachmentHandles []string
 	Attachments       []StagedAttachment
 	// Canonical, Aliases and ActorKind carry a kind: actor signal's identity;

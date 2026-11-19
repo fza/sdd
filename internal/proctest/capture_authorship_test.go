@@ -133,16 +133,13 @@ func TestAuthorship_AGuidedCaptureCarriesNoMark(t *testing.T) {
 	}
 }
 
-func TestAuthorship_AnAutonomousDecisionStatesItsOwnReason(t *testing.T) {
+func TestAuthorship_AnAutonomousDecisionMayStateItsOwnReason(t *testing.T) {
 	world, session := authorshipWorld(t, proctest.WithAutonomousDialogue())
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
-	serve = session.Report(t, instance, directiveDraft("tactical"))
-	proctest.RequireStep(t, serve, "assemble")
-	if !hasDiagnostic(serve, "states your own reason for it in reason") {
-		t.Fatalf("a decision without the agent's reason should hold at assemble naming it, got %v", serve.Diagnostics)
-	}
-	serve = session.Report(t, instance, map[string]any{"reason": "The flaky step fails one run in ten."})
+	draft := directiveDraft("tactical")
+	draft["reason"] = "The flaky step fails one run in ten."
+	serve = session.Report(t, instance, draft)
 	proctest.RequireStep(t, serve, "playback")
 	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
 		return session.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
@@ -234,15 +231,18 @@ func TestAuthorship_AParkedDraftResumesForAPersonAsTheirs(t *testing.T) {
 	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
 		return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	})
-	if entry.AgentDecided() || entry.Reason != "" || entry.Layer != model.LayerConceptual {
-		t.Errorf("the person's capture should be theirs, without the agent's mark or reason, got decided-by %q reason %q layer %s", entry.DecidedBy, entry.Reason, entry.Layer)
+	if entry.AgentDecided() || entry.Layer != model.LayerConceptual {
+		t.Errorf("the person's capture should be theirs, without the agent's mark, got decided-by %q layer %s", entry.DecidedBy, entry.Layer)
+	}
+	if entry.Reason != "the old wording confused the team" || entry.ReasonBy != "Ada" || entry.IntentBy != "Ada" {
+		t.Errorf("the person's reason should replace the agent's, marked theirs, got %q by %q, intent-by %q", entry.Reason, entry.ReasonBy, entry.IntentBy)
 	}
 }
 
-// A decision drafted in auto mode holds no words of a person. Confirmed or
-// written in the guided mode, it returns to assemble for the person's own
-// reason and intent, and is then theirs.
-func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionAsksForTheUsersWords(t *testing.T) {
+// A decision drafted in auto mode and confirmed or written in the guided mode
+// is the person's, the drafted reason and intent with it, without asking them
+// for words.
+func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionIsThePersons(t *testing.T) {
 	cases := []struct {
 		name string
 		// toGuided turns the session guided and returns the serve that
@@ -252,11 +252,7 @@ func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionAsksForTheUsersWords(t *t
 		{name: "a playback confirmed after a mode switch", toGuided: func(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *sdd.WorkflowServe {
 			world.SetDialogue("guided")
 			session.Refresh(t)
-			serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-			if got := world.LLM.Calls("preflight"); got != 0 {
-				t.Errorf("the confirm should ask for the words before pre-flight judges the draft, ran %d times", got)
-			}
-			return serve
+			return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 		}},
 		{name: "a parked write the person retries", toGuided: func(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *sdd.WorkflowServe {
 			world.LLM.PreflightErr = preflightTimedOut()
@@ -282,18 +278,14 @@ func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionAsksForTheUsersWords(t *t
 			serve = session.Report(t, instance, draft)
 			proctest.RequireStep(t, serve, "playback")
 
-			serve = tc.toGuided(t, world, session, instance)
-			proctest.RequireStep(t, serve, "assemble")
-			if !hasDiagnostic(serve, "missing reasonWords, intentWords") {
-				t.Fatalf("assemble should ask for the person's reason and intent, got %v", serve.Diagnostics)
-			}
-			serve = session.Report(t, instance, map[string]any{"reasonWords": "the step fails one run in ten", "intentWords": "do it next"})
-			proctest.RequireStep(t, serve, "playback")
 			entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
-				return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+				return tc.toGuided(t, world, session, instance)
 			})
-			if entry.AgentDecided() || entry.Reason != "" || !slices.Equal(entry.Participants, []string{"Ada"}) {
-				t.Errorf("the decision should be the person's, got decided-by %q reason %q participants %v", entry.DecidedBy, entry.Reason, entry.Participants)
+			if entry.AgentDecided() || !slices.Equal(entry.Participants, []string{"Ada"}) {
+				t.Errorf("the decision should be the person's, got decided-by %q participants %v", entry.DecidedBy, entry.Participants)
+			}
+			if entry.Reason != "The flaky step fails one run in ten." || entry.ReasonBy != "Ada" || entry.IntentBy != "Ada" {
+				t.Errorf("the drafted reason and intent should be the person's, got %q by %q, intent-by %q", entry.Reason, entry.ReasonBy, entry.IntentBy)
 			}
 		})
 	}

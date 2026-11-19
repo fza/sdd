@@ -59,11 +59,12 @@ func TestApprovedAuthorshipConstruction(t *testing.T) {
 		{"an approved directive the agent also decided", directive(func(e *model.Entry) { e.DecidedBy = model.DecidedByAgent }), "approved-by"},
 		{"an approved plan without a reason", directive(func(e *model.Entry) {
 			e.Kind, e.Intent, e.IntentBy, e.Reason, e.ReasonBy = model.KindPlan, "", "", "", ""
-		}), "reason"},
+			e.Content = "Body.\n\n## Acceptance criteria\n\n- [ ] It holds."
+		}), ""},
 		{"an approved activity without a reason", directive(func(e *model.Entry) {
 			e.Kind, e.Intent, e.IntentBy, e.Reason, e.ReasonBy = model.KindActivity, "", "", "", ""
 		}), ""},
-		{"an approved decision without a reason", directive(func(e *model.Entry) { e.Reason, e.ReasonBy = "", "" }), "reason"},
+		{"an approved directive without a reason", directive(func(e *model.Entry) { e.Reason, e.ReasonBy = "", "" }), ""},
 		{"an approved decision whose reason names no one", directive(func(e *model.Entry) { e.ReasonBy = "" }), "reason-by"},
 		{"an approved directive whose intent names no one", directive(func(e *model.Entry) { e.IntentBy = "" }), "intent-by"},
 		{"reason-by on an entry no one approved", directive(func(e *model.Entry) { e.ApprovedBy, e.IntentBy = "", "" }), "reason-by"},
