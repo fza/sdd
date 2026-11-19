@@ -55,6 +55,15 @@ type Context struct {
 	// Round raises the step's round event with fields added to its payload;
 	// set only for a command declaring Rounds.
 	Round func(fields map[string]any) error
+	// Commit writes engine fields holding an effect the running operation
+	// committed outside the session and logs them at once, so a later failure
+	// of the same command keeps them; set only for a command recording a
+	// mutation intent.
+	Commit func(fields map[string]any) error
+	// Committed holds what earlier attempts of the running invocation
+	// committed, so its retry continues past the effect instead of repeating
+	// it. The store already holds these fields.
+	Committed map[string]any
 	// hooksJoined is whether the hooks joined findings into the current
 	// step's channel when it was last left.
 	hooksJoined bool

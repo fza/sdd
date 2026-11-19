@@ -515,6 +515,7 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 			s.intent = &MutationIntent{Ref: position, Instance: inst.ID, Step: inst.Step, Command: name, Values: values, To: to}
 			s.intentStore = inst.Store.Clone()
 			s.intentDone = false
+			s.intentCommitted = nil
 			s.cancelled = nil
 		}
 		if s.intent.Instance != inst.ID || s.intent.Step != inst.Step || s.intent.Command != name {
@@ -535,6 +536,11 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	}
 	ctx.Store = candidate
 	candidate.beginJournal()
+	if ctx.Intent != nil {
+		if err := s.openCommits(inst, ctx, candidate); err != nil {
+			return s.commandError(ctx.Intent, err)
+		}
+	}
 	if err := cmd.Fn(ctx); err != nil {
 		return s.commandError(ctx.Intent, fmt.Errorf("command %q at step %s: %w", name, inst.Step, err))
 	}
