@@ -481,7 +481,7 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	if !ok {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading, agentAnswers: s.DialogueMode.AgentAnswers()}
 	if step := inst.currentStep(); step != nil {
 		ctx.approval = s.approvalGateAt(inst, step)
 	}

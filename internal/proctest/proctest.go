@@ -410,6 +410,12 @@ func (w *World) SetDialogue(mode string) {
 	w.options.Access.(*accessResolver).dialogue = sdd.Dialogue{Mode: mode, Source: "config.local.yaml"}
 }
 
+// SetParticipant changes the participant the person's config resolves to,
+// which a session follows from its next call; "" unsets it.
+func (w *World) SetParticipant(name string) {
+	w.options.Access.(*accessResolver).participant = name
+}
+
 type accessResolver struct {
 	runtime     *sdd.ProjectRuntime
 	participant string

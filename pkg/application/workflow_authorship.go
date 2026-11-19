@@ -20,6 +20,8 @@ type agentAuthor struct {
 	client string
 }
 
+const reasonUnstoredLine = "No participant is configured, so the reason is not stored on the entry: set one with `sdd config set --local participant <name>`."
+
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
 // approvalAuthor marks a draft the person approves: given once they did.
@@ -216,6 +218,46 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 		FailMessage: "the draft's authorship fields do not fit the dialogue mode",
 		FailDetail: func(ctx *engine.Context) string {
 			return strings.Join(w.authorshipMissing(ctx.Store), "; ")
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{
+			Name:  "confirmFitsDialogue",
+			Doc:   "The agent answers the person's choices, or the playback confirmation is not the agent's: a guided write is the person's and rests on their own confirm.",
+			Reads: []string{"playbackConfirmation"},
+		},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			return w.Autonomous() || !engine.ConfirmedByAgent(ctx.Store), nil
+		},
+		FailMessage: "the agent confirmed this draft, and the person has not",
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterQuery(engine.Query{
+		Doc: engine.FuncDoc{
+			Name:  "reasonUnstored",
+			Doc:   "In a guided capture of a decision with a reason, the line naming that no participant is configured, so the reason is not stored (markConfirmed); empty otherwise.",
+			Reads: []string{"entryKind", fieldReason, fieldReasonWords},
+		},
+		ServeSafe: true,
+		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: len(reasonUnstoredLine)}},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			if w.Autonomous() || strings.TrimSpace(w.draftFromStore(ctx.Store).Reason) == "" {
+				return "", nil
+			}
+			kind, _ := workflowStoreString(ctx.Store, "entryKind")
+			if !model.IsValidKindForType(model.TypeDecision, model.Kind(kind)) {
+				return "", nil
+			}
+			info, err := w.readInfo()
+			if err != nil || strings.TrimSpace(info.Participant) != "" {
+				return "", err
+			}
+			return reasonUnstoredLine, nil
 		},
 	})
 	if err != nil {

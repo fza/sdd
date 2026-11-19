@@ -265,7 +265,14 @@ func TestAuthorship_AGuidedWriteOfAnAutoDraftedDecisionIsThePersons(t *testing.T
 			world.SetDialogue("guided")
 			world.LLM.PreflightErr = nil
 			session.Refresh(t)
-			return session.Answer(t, instance, "preflightTimedOut", "retry", nil, "retry it")
+			// The agent's confirm is no person's: the draft is played back
+			// to the person before it is written as theirs.
+			serve = session.Answer(t, instance, "preflightTimedOut", "retry", nil, "retry it")
+			proctest.RequireStep(t, serve, "playback")
+			if serve.PendingChooser == nil {
+				t.Fatalf("the playback should wait for the person, got %+v", serve)
+			}
+			return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 		}},
 	}
 	for _, tc := range cases {

@@ -61,6 +61,9 @@ type Context struct {
 	// approval is whether the step is an assisted session's approval gate,
 	// where only the person answers.
 	approval bool
+	// agentAnswers is whether the agent answers the person's choices in the
+	// session's dialogue mode.
+	agentAnswers bool
 	// sealed is the state snapshot an assisted session's approval gate last
 	// held the instance at; empty in any other session.
 	sealed string

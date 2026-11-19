@@ -205,6 +205,36 @@ func TestReasonKinds_AnOptionalReasonIsStored(t *testing.T) {
 	})
 }
 
+// With no participant configured, as when the config loses it after the
+// session opened, no one could answer for a guided reason: the capture goes
+// on without it, and the playback tells the agent so.
+func TestReasonKinds_GuidedReasonWithoutAParticipantIsNamedUnstored(t *testing.T) {
+	const unstored = "No participant is configured, so the reason is not stored on the entry: set one with `sdd config set --local participant <name>`."
+	world := proctest.NewWorld(t)
+	session := world.Open(t, "reason-no-participant")
+	draft := decisionDraft("directive")
+	draft["reasonWords"] = "empty input hid upstream bugs twice"
+	instance := session.Start(t, "capture", nil).Instance
+	world.SetParticipant("")
+	serve := session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(test.Untagged(serve.Instructions), unstored) {
+		t.Errorf("the playback should name the reason unstored, got:\n%s", serve.Instructions)
+	}
+	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
+		return session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	})
+	if entry.Reason != "" || entry.ReasonBy != "" || entry.IntentBy != "" {
+		t.Errorf("no reason or marks should be written without a participant, got %q by %q, intent-by %q", entry.Reason, entry.ReasonBy, entry.IntentBy)
+	}
+
+	_, session = reasonKindsWorld(t)
+	instance = session.Start(t, "capture", nil).Instance
+	if serve := session.Report(t, instance, draft); strings.Contains(serve.Instructions, "No participant is configured") {
+		t.Errorf("with a participant the playback should name nothing unstored, got:\n%s", serve.Instructions)
+	}
+}
+
 func planDraft() map[string]any {
 	draft := decisionDraft("plan")
 	draft["body"] = "Plan: the parser rejects empty input with an explicit error.\n\n## Acceptance criteria\n\n- [ ] Empty input returns an explicit error."
