@@ -94,8 +94,8 @@ func TestStageAttachmentStagesEveryFileInCallOrder(t *testing.T) {
 		{Handle: "from-path.md", SHA256: sha256Hex("read from a path\n")},
 		{Handle: "patched.md", SHA256: sha256Hex("alpha BETA\n")},
 	}
-	if fmt.Sprint(staged.Files) != fmt.Sprint(want) {
-		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.Files)
+	if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.StagedFiles())
 	}
 	snapshotResponse(t, res)
 }
@@ -184,13 +184,76 @@ func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
 				t.Errorf("a one-file call should answer its handle at the top level, got %q", staged.Handle)
 			}
 			want := []mcpserver.StagedFileResult{{Handle: name, SHA256: sha256Hex(tt.want)}}
-			if fmt.Sprint(staged.Files) != fmt.Sprint(want) {
-				t.Errorf("a one-file call should stage that one file, got %+v", staged.Files)
+			if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+				t.Errorf("a one-file call should stage that one file, got %+v", staged.StagedFiles())
 			}
 			var read mcpserver.ReadAttachmentResult
 			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": name}, &read)
 			if read.Content != tt.want {
 				t.Errorf("the staged file should hold %q, got %q", tt.want, read.Content)
+			}
+		})
+	}
+}
+
+// The one-file fields programs built on the upstream packages set; removing
+// one fails this file's compilation.
+var _ = mcpserver.StageAttachmentArgs{Session: "", Name: "", Content: "", Path: "", Patches: []mcpserver.SearchReplaceArg{}}
+
+// Map keys must be comparable, as the upstream types are.
+var (
+	_ map[mcpserver.AbandonArgs]bool
+	_ map[mcpserver.ParkArgs]bool
+	_ map[mcpserver.StageAttachmentResult]bool
+)
+
+func TestStageAttachmentArgsMarshalTheOneFileShape(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	args := mcpserver.StageAttachmentArgs{Session: session, Name: "typed.md", Content: "sent as typed args\n"}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: args})
+	checkToolCall(t, "stage_attachment", res, err)
+	var staged mcpserver.StageAttachmentResult
+	decodeStructured(t, res, &staged)
+	if staged.Handle != "typed.md" {
+		t.Fatalf("typed one-file args should stage that file, got %+v", staged)
+	}
+}
+
+func TestStageAttachmentOneFileShapeStagesAnEmptyFile(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(session string) any
+	}{
+		{name: "empty content", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md", "content": ""}
+		}},
+		{name: "name alone", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md"}
+		}},
+		{name: "typed args", args: func(session string) any {
+			return mcpserver.StageAttachmentArgs{Session: session, Name: "empty.md"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			cs := connect(t, env.srv)
+			session := openSession(t, cs).Session
+
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: tt.args(session)})
+			checkToolCall(t, "stage_attachment", res, err)
+			var staged mcpserver.StageAttachmentResult
+			decodeStructured(t, res, &staged)
+			if staged.Handle != "empty.md" {
+				t.Fatalf("a one-file call without a source should stage an empty file, got %+v", staged)
+			}
+			var read mcpserver.ReadAttachmentResult
+			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": "empty.md"}, &read)
+			if read.Content != "" {
+				t.Errorf("the staged file should be empty, got %q", read.Content)
 			}
 		})
 	}

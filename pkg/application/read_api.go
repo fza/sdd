@@ -73,6 +73,8 @@ type ViewResult struct {
 	// ViewSections are the layout's sections as data, the local graph's
 	// first, then each queried dependency's, tagged with its repo.
 	ViewSections []ViewSection
+	// Sections is ViewSections rendered as text, every entry in full.
+	Sections string
 	// MatchedCount is the total primary units the layout produced across the
 	// local graph and any queried dependency repos. Zero means the pipeline
 	// matched nothing — surfaces distinguish an empty result from a failure
@@ -104,8 +106,10 @@ type ShowRequest struct {
 }
 
 type ShowResult struct {
-	Project    ProjectRef
-	Items      []ShownEntry
+	Project ProjectRef
+	Items   []ShownEntry
+	// Entries is Items rendered as text, every entry in full.
+	Entries    string
 	FullIDs    []string
 	SummaryIDs []string
 }
@@ -134,9 +138,12 @@ type SearchResult struct {
 	Notice   string
 	// Notices are the notices Notice joins, each on its own: a credential
 	// found in the phrase, incomplete indexing.
-	Notices  []string
-	Project  ProjectRef
-	Hits     []SearchHit
+	Notices []string
+	Project ProjectRef
+	Hits    []SearchHit
+	// Results is Hits rendered as text, every hit in full, followed by
+	// Notices.
+	Results  string
 	EntryIDs []string
 }
 

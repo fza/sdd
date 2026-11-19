@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
@@ -280,7 +281,21 @@ type BindBranchResult struct {
 	ResultProofNotice
 }
 
+// StageAttachmentArgs is a stage_attachment call. Name with Content, Path or
+// Patches is the one-file shape, which marshals to arguments the server takes
+// as a Files call of that one file; the tool listing advertises Files alone.
 type StageAttachmentArgs struct {
+	Session string             `json:"session,omitempty"`
+	Files   []StageFileArg     `json:"files,omitempty"`
+	Name    string             `json:"name,omitempty"`
+	Content string             `json:"content,omitempty"`
+	Path    string             `json:"path,omitempty"`
+	Patches []SearchReplaceArg `json:"patches,omitempty"`
+}
+
+// stageAttachmentInput is the stage_attachment input schema the listing
+// advertises.
+type stageAttachmentInput struct {
 	Session string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Files   []StageFileArg `json:"files" jsonschema:"files to stage, in order; a name appears at most once. Every file is checked before any is staged: one failing file refuses the call and nothing is staged"`
 }
@@ -303,8 +318,17 @@ type StageAttachmentResult struct {
 	ResultNotices
 	// Handle answers a call in the one-file shape (name with content, path
 	// or patches beside session), which the listing does not advertise.
-	Handle string             `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
-	Files  []StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+	Handle string `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
+	// Files is a pointer so the result stays comparable; StagedFiles reads it.
+	Files *[]StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+}
+
+// StagedFiles returns the per-file results Files points at.
+func (r StageAttachmentResult) StagedFiles() []StagedFileResult {
+	if r.Files == nil {
+		return nil
+	}
+	return *r.Files
 }
 
 // StagedFileResult is one staged file of a stage_attachment call.
@@ -508,7 +532,11 @@ type RegistryResult struct {
 	ResultProofNotice
 }
 
-func (s *toolSet) register(srv *mcp.Server) {
+func (s *toolSet) register(srv *mcp.Server) error {
+	stageInput, err := jsonschema.For[stageAttachmentInput](&jsonschema.ForOptions{})
+	if err != nil {
+		return fmt.Errorf("stage_attachment input schema: %w", err)
+	}
 	srv.AddReceivingMiddleware(stageOneFile)
 	addTool(srv, s, &mcp.Tool{
 		Name: "start_session",
@@ -587,6 +615,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"not re-staged whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
 			"Never a graph write: the write gate materializes " +
 			"staged files with the entry.",
+		InputSchema: stageInput,
 	}, s.stageAttachment)
 
 	addTool(srv, s, &mcp.Tool{
@@ -640,6 +669,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
 			"name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
 	}, s.syncRepos)
+	return nil
 }
 
 // attachedSession returns the named session locked and replayed from its
@@ -685,7 +715,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
-	err := ss.root.BeginCall(proofs.Held, proofs.Reread)
+	err := ss.root.BeginCall(proofs.lists())
 	if err != nil {
 		ss.mu.Unlock()
 		return nil, err
@@ -1003,11 +1033,20 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 		return nil, StageAttachmentResult{}, err
 	}
 	defer ss.mu.Unlock()
+	oneFile, _ := ctx.Value(oneFileCallKey{}).(bool)
 	items := make([]sdd.StageItem, 0, len(args.Files))
 	for _, file := range args.Files {
-		item := sdd.StageItem{Name: file.Name, Content: []byte(file.Content), Path: file.Path}
+		item := sdd.StageItem{Name: file.Name, Path: file.Path}
+		if file.Content != "" {
+			item.Content = []byte(file.Content)
+		}
 		for _, p := range file.Patches {
 			item.Patches = append(item.Patches, textpatch.Pair{Old: p.Old, New: p.New})
+		}
+		// A one-file call without a source stages an empty file; a files
+		// item keeps the exactly-one-source rule the listing states.
+		if oneFile && item.Path == "" && len(item.Patches) == 0 && item.Content == nil {
+			item.Content = []byte{}
 		}
 		items = append(items, item)
 	}
@@ -1015,12 +1054,13 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
-	result := StageAttachmentResult{Files: make([]StagedFileResult, 0, len(staged))}
+	files := make([]StagedFileResult, 0, len(staged))
 	for _, file := range staged {
-		result.Files = append(result.Files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
+		files = append(files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
 	}
-	if oneFile, _ := ctx.Value(oneFileCallKey{}).(bool); oneFile && len(result.Files) == 1 {
-		result.Handle = result.Files[0].Handle
+	result := StageAttachmentResult{Files: &files}
+	if oneFile && len(files) == 1 {
+		result.Handle = files[0].Handle
 	}
 	return nil, result, nil
 }
@@ -1606,7 +1646,7 @@ func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest,
 		if failed {
 			ss.root.DropProved()
 		}
-		err := ss.root.RecordServed(ctx, identity)
+		err := ss.root.RecordAnchors(ctx, identity)
 		slot.unproved = ss.root.Unproved()
 		return notice, err
 	}

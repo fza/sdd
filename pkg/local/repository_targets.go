@@ -14,13 +14,24 @@ import (
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
-// NewRepositoryTargets opens configured graph readers and Git-backed mutation
-// targets. Each acquisition rereads the global, committed and local config;
-// a non-empty localConfigPath stands in for every checkout's
+// NewRepositoryTargets is NewRepositoryTargetsAt with each checkout's own
+// local config and the gate's record and sdd-owned clones in the default
+// XDG state and data locations.
+func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPath string) (*GitWorktreeAcquirer, error) {
+	locations, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, err
+	}
+	return NewRepositoryTargetsAt(context.Background(), project, serverCheckout, globalConfigPath, "", locations.StateRoot, locations.DataRoot)
+}
+
+// NewRepositoryTargetsAt opens configured graph readers and Git-backed
+// mutation targets. Each acquisition rereads the global, committed and local
+// config; a non-empty localConfigPath stands in for every checkout's
 // .sdd/config.local.yaml. The git network operations sync starts pass a gate
 // keeping its record in stateDir, under the limits the global config sets as
 // read now and the sdd-owned clones under dataDir.
-func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir, dataDir string) (*GitWorktreeAcquirer, error) {
+func NewRepositoryTargetsAt(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir, dataDir string) (*GitWorktreeAcquirer, error) {
 	limitsConfig, err := repos.LoadConfigFrom(globalConfigPath)
 	if err != nil {
 		return nil, err

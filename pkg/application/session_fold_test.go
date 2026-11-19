@@ -67,7 +67,7 @@ func TestWorkflowHolderFoldsAnotherAttachsAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	holder.ServeText("lane step", servedLane, nil)
-	err = holder.RecordServed(t.Context(), identity)
+	err = holder.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestWorkflowHolderFoldsAnotherAttachsStartedInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	holder.ServeText("lane step", servedLane, nil)
-	err = holder.RecordServed(t.Context(), alice)
+	err = holder.RecordAnchors(t.Context(), alice)
 	if err != nil {
 		t.Fatalf("the holder should continue past another attach's start, got %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 // servedProject is what serve answers calls with under one resolution of its
@@ -24,7 +25,7 @@ type servedProject struct {
 	cfg      *model.PerRepoConfig
 	layout   meta.Project
 	sessions sdd.SessionStore
-	blobs    sdd.StagedBlobStore
+	blobs    *localadapter.FilesystemStagedBlobStore
 	graphDir string
 	// entries is how many entries graphDir held when this resolution was
 	// built, the count a later move of the graph must reach.
@@ -329,7 +330,7 @@ func (s servedSessions) Delete(ctx context.Context, id sdd.SessionID) error {
 // servedBlobs stages attachments where the pinned project keeps them.
 type servedBlobs struct{ watch *configWatch }
 
-func (b servedBlobs) store(ctx context.Context) sdd.StagedBlobStore {
+func (b servedBlobs) store(ctx context.Context) *localadapter.FilesystemStagedBlobStore {
 	return b.watch.project(ctx).blobs
 }
 

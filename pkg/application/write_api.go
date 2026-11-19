@@ -17,8 +17,26 @@ type Finding struct {
 	Severity    string
 	Category    string
 	Observation string
-	// Basis names the reading entries a light verifier finding rests on.
-	Basis []string
+	// Basis names the reading entries a light verifier finding rests on; a
+	// pointer keeps Finding comparable. nil names none.
+	Basis *[]string
+}
+
+// BasisIDs returns the entries Basis names.
+func (f Finding) BasisIDs() []string {
+	if f.Basis == nil {
+		return nil
+	}
+	return *f.Basis
+}
+
+// sliceRef points at s, or is nil when s is, so a nil slice keeps its JSON
+// null.
+func sliceRef[T any](s []T) *[]T {
+	if s == nil {
+		return nil
+	}
+	return &s
 }
 
 type EntryRef struct {
