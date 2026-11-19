@@ -333,6 +333,21 @@ type Entry struct {
 	// loader, never serialized. Write-side surfaces (summary regeneration,
 	// missing-summary lint) skip embedded entries — there is no file to write.
 	Embedded bool
+
+	// prior holds the Warnings the entry carried into its first graph, so each
+	// later graph over the same entry starts from them instead of appending its
+	// findings onto an earlier graph's.
+	prior    []Warning
+	priorSet bool
+}
+
+// resetGraphWarnings sets Warnings back to what the entry carried before any
+// graph validated it.
+func (e *Entry) resetGraphWarnings() {
+	if !e.priorSet {
+		e.prior, e.priorSet = slices.Clone(e.Warnings), true
+	}
+	e.Warnings = slices.Clone(e.prior)
 }
 
 // IsContract returns true if this decision is a standing constraint.

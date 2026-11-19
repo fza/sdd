@@ -801,6 +801,9 @@ func (g *Graph) Health() GraphHealth {
 // cross-chain invariants).
 func (g *Graph) validate() {
 	for _, e := range g.Entries {
+		e.resetGraphWarnings()
+	}
+	for _, e := range g.Entries {
 		ValidateEntry(e, g)
 	}
 	validateActorInvariant(g)

@@ -262,6 +262,18 @@ func TestDeepFinding_DecodesSourcesStoredAsStrings(t *testing.T) {
 	}
 }
 
+// Sources stored as one string in place of the list decode as a one-item list.
+func TestDeepFinding_DecodesSourcesStoredAsOneString(t *testing.T) {
+	var finding model.DeepFinding
+	err := json.Unmarshal([]byte(`{"verdict":"v","axis":"evidence","severity":"medium","sources":"internal/foo.go"}`), &finding)
+	if err != nil {
+		t.Fatalf("a finding with one string as sources should decode: %v", err)
+	}
+	if len(finding.Sources) != 1 || finding.Sources[0].Kind != model.DeepSourceFile || finding.Sources[0].Ref != "internal/foo.go" {
+		t.Fatalf("the string should become a one-item list of the kind it denotes, got %+v", finding.Sources)
+	}
+}
+
 // A finding only the user can settle, such as whether incidents happened, has
 // nothing to cite: its missing evidence is what the user is asked for.
 func TestOwnerEvidenceFindingNeedsNoSources(t *testing.T) {
