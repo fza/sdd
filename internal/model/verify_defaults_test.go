@@ -43,21 +43,32 @@ func TestEffectiveConfigValues_PrefilterSetOffShowsFalse(t *testing.T) {
 }
 
 // The llm defaults follow the provider: codex runs its own default model, and
-// only the CLI providers take an effort.
+// the default effort depends on the provider.
 func TestEffectiveConfigValues_LLMDefaultsFollowTheProvider(t *testing.T) {
 	codex := effective(model.EffectiveConfigValues(model.BaseConfig{LLM: model.LLMConfig{Provider: "codex"}}, nil, nil))
 	if got, shown := codex["llm.model"]; shown {
 		t.Errorf("codex should show no default llm.model, got %+v", got)
 	}
-	if got := codex["llm.effort"]; got.Value != "medium" {
-		t.Errorf("codex should show the default effort, got %+v", got)
+	for provider, want := range map[string]string{"claude-cli": "medium", "codex": "medium", "anthropic": "medium", "openai": "low", "ollama": "low"} {
+		values := effective(model.EffectiveConfigValues(model.BaseConfig{LLM: model.LLMConfig{Provider: provider}}, nil, nil))
+		if got := values["llm.effort"]; got.Value != want || got.Source != model.ConfigSourceDefault {
+			t.Errorf("%s should show the default effort %s, got %+v", provider, want, got)
+		}
 	}
 	anthropic := effective(model.EffectiveConfigValues(model.BaseConfig{LLM: model.LLMConfig{Provider: "anthropic"}}, nil, nil))
-	if got, shown := anthropic["llm.effort"]; shown {
-		t.Errorf("an API provider takes no llm.effort, got %+v", got)
-	}
 	if got := anthropic["llm.model"]; got.Value != model.DefaultLLMModel {
 		t.Errorf("anthropic should show the default model, got %+v", got)
+	}
+}
+
+func TestResolvedEffort_DefaultsPerProvider(t *testing.T) {
+	for provider, want := range map[string]string{"": "medium", "claude-cli": "medium", "codex": "medium", "anthropic": "medium", "openai": "low", "ollama": "low"} {
+		if got := (model.LLMConfig{Provider: provider}).ResolvedEffort(); got != want {
+			t.Errorf("ResolvedEffort for %q = %q, want %q", provider, got, want)
+		}
+	}
+	if got := (model.LLMConfig{Provider: "openai", Effort: "high"}).ResolvedEffort(); got != "high" {
+		t.Errorf("a set llm.effort should win, got %q", got)
 	}
 }
 
