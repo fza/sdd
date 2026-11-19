@@ -20,9 +20,6 @@ func RenderInfo(w io.Writer, result *query.InfoResult) {
 	if line := SchemaLine(result.GraphSchema, result.BinarySchema); line != "" {
 		fmt.Fprintln(w, line)
 	}
-	if result.Contribution != "" {
-		fmt.Fprintf(w, "Mode: contribution (%s)\n", result.Contribution)
-	}
 }
 
 type infoJSON struct {
@@ -32,7 +29,6 @@ type infoJSON struct {
 	GraphSchema  int                       `json:"graph_schema,omitempty"`
 	BinarySchema int                       `json:"binary_schema"`
 	Capabilities *model.SchemaCapabilities `json:"capabilities"`
-	Contribution string                    `json:"contribution"`
 	SyncBlocked  *syncBlockedJSON          `json:"sync_blocked,omitempty"`
 	CachePrune   *cachePruneJSON           `json:"cache_prune,omitempty"`
 	SecretRules  secretRulesJSON           `json:"secret_rules"`
@@ -63,7 +59,6 @@ func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBloc
 		GraphSchema:  result.GraphSchema,
 		BinarySchema: result.BinarySchema,
 		Capabilities: result.Capabilities,
-		Contribution: result.Contribution,
 		CachePrune:   cachePruneValue(prune),
 		SecretRules:  secretRulesValue(rules),
 	}

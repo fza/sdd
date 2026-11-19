@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -147,16 +146,9 @@ func readLayoutLayers(read ReadFile, sddDir, localConfigPath string) (committed,
 
 func readConfigLayers(read ReadFile, sddDir, localConfigPath string, readPersonal func(read ReadFile, path string) (*model.PerRepoConfig, error)) (committed, local *model.PerRepoConfig, err error) {
 	if sddDir != "" {
-		committedPath := filepath.Join(sddDir, "config.yaml")
-		committed, err = readConfigFile(read, committedPath)
+		committed, err = readConfigFile(read, filepath.Join(sddDir, "config.yaml"))
 		if err != nil {
 			return nil, nil, err
-		}
-		if committed != nil {
-			localOnly := committed.MachineLocalKeys()
-			if len(localOnly) > 0 {
-				return nil, nil, fmt.Errorf("%s: %s is machine-local; set it in %s instead", committedPath, strings.Join(localOnly, ", "), LocalConfigFileName)
-			}
 		}
 	}
 	committed = model.HonoredCommitted(committed)

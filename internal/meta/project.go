@@ -159,8 +159,6 @@ func placementText(p model.KeyPlacement) string {
 		return "which belongs only in your own non-shared config, " + local + " or the user-global config" + notHere
 	case model.PlaceUserGlobal:
 		return "which belongs only in the user-global config" + notHere
-	case model.PlaceLocal:
-		return "which belongs only in " + local + notHere
 	}
 	return "which sdd does not know; if it is a project setting, it belongs in " + graphRepo + notHere
 }

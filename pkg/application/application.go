@@ -150,7 +150,6 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 	return InfoResult{
 		Project: runtime.options.Project, Participant: participant, Language: runtime.options.Language,
 		Search: search, GraphSchema: source.SchemaVersion(), BinarySchema: model.CurrentGraphSchemaVersion,
-		Contribution: source.Contribution(),
 	}, nil
 }
 

@@ -111,19 +111,3 @@ func TestLoadRendersProfiles(t *testing.T) {
 		}
 	}
 }
-
-// The skill names nothing of contribution mode: the session framing carries
-// it, so the skill file holds no command another build may lack.
-func TestSkillLeavesContributionModeToTheServer(t *testing.T) {
-	for _, target := range []model.AgentTarget{model.AgentClaude, model.AgentCodex} {
-		b, err := bundledskills.Load(target)
-		if err != nil {
-			t.Fatalf("%s: %v", target, err)
-		}
-		for _, e := range b.Entries {
-			if bytes.Contains(bytes.ToLower(e.Content), []byte("contribution")) {
-				t.Errorf("%s: %s/%s still names contribution mode", target, e.Skill, e.RelPath)
-			}
-		}
-	}
-}

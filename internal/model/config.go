@@ -189,20 +189,6 @@ type PerRepoConfig struct {
 	// Recheck names who runs the recheck work; only the committed
 	// .sdd/config.yaml sets it.
 	Recheck RecheckConfig `yaml:"recheck,omitempty"`
-	// Contribution names the upstream ref (e.g. origin/main) a checkout's
-	// graph writes are contributed to; set, it turns on contribution mode
-	// (ContributionRefusal). Machine-local only: a checkout opts in, the
-	// committed config.yaml never does.
-	Contribution string `yaml:"contribution,omitempty"`
-}
-
-// MachineLocalKeys returns the keys c sets that only a machine-local config
-// may set.
-func (c *PerRepoConfig) MachineLocalKeys() []string {
-	if c.Contribution != "" {
-		return []string{"contribution"}
-	}
-	return nil
 }
 
 // LocalPointerKeys are the keys of a machine-local config that belong to
@@ -346,6 +332,7 @@ var RetiredConfigKeys = map[string]string{
 	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text",
 	"relevance.commit":      retiredRelevanceReason,
 	"relevance.content":     retiredRelevanceReason,
+	"contribution":          "contribution mode was removed; graph writes are allowed on every branch",
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
@@ -907,9 +894,6 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
-	if overlay.Contribution != "" {
-		out.Contribution = overlay.Contribution
-	}
 	return &out
 }
 

@@ -1,6 +1,7 @@
 package meta_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,5 +44,13 @@ func TestHooksConcatenateGlobalThenCommittedThenLocal(t *testing.T) {
 	}
 	if strings.Join(commands, ",") != "notify,committed.sh,local/mine.sh" {
 		t.Fatalf("hook commands = %v, want the global, the committed, then the local hook", commands)
+	}
+}
+
+func writeLayer(t *testing.T, path, content string) {
+	t.Helper()
+	err := os.WriteFile(path, []byte(content), 0o644)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

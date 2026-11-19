@@ -43,9 +43,9 @@ func TestGraphRepoMisplacedKeys(t *testing.T) {
 			want: []model.MisplacedKey{{Key: "language", Placement: model.KeyPlacement{Place: model.PlaceGraphRepo}}},
 		},
 		{
-			name: "contribution belongs to the machine-local config",
+			name: "the retired contribution key names its reason",
 			yaml: pointer + "contribution: origin/main\n",
-			want: []model.MisplacedKey{{Key: "contribution", Placement: model.KeyPlacement{Place: model.PlaceLocal}}},
+			want: []model.MisplacedKey{{Key: "contribution", Placement: model.KeyPlacement{Place: model.PlaceRetired, Reason: model.RetiredConfigKeys["contribution"]}}},
 		},
 		{
 			name: "session retention belongs to the user-global config",

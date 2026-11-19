@@ -491,7 +491,6 @@ type InfoResult struct {
 	Version      string             `json:"version,omitempty"`
 	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
-	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
 	SecretRules  SecretRulesResult  `json:"secretRules" jsonschema:"the gitleaks rule file credential scans use"`
 	ResultProofNotice
 }
@@ -1499,7 +1498,7 @@ func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoA
 	}
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
-		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema, Contribution: info.Contribution,
+		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema,
 		SyncBlocked: syncBlockedResult(info.SyncBlocked), SecretRules: secretRulesResult(info.SecretRules),
 	}, nil
 

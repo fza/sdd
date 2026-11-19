@@ -1048,7 +1048,7 @@ func newCmd() *cli.Command {
 				Value: model.DefaultLLMExtractTimeout,
 			},
 		),
-		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
 
 			if cmd.Bool("skip-preflight") && cmd.Bool("preflight-verified") {
@@ -1257,7 +1257,7 @@ func newCmd() *cli.Command {
 			defer handler.Settle()
 
 			return handler.NewEntry(ctx, ncmd)
-		})),
+		}),
 	}
 }
 
@@ -1293,7 +1293,7 @@ func rewriteCmd() *cli.Command {
 				Usage: "Write changes to disk but skip the git commit",
 			},
 		},
-		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "rewrite"))
 
 			args := cmd.Args()
@@ -1357,7 +1357,7 @@ func rewriteCmd() *cli.Command {
 			}
 			handler := handlers.New(opts)
 			return handler.RewriteEntry(ctx, rcmd)
-		})),
+		}),
 	}
 }
 
@@ -1501,7 +1501,7 @@ func summarizeCmd() *cli.Command {
 				Usage: "Write `TITLE` as the title, bypassing the LLM. Single entry only; combinable with --text. " + model.TitleRule,
 			},
 		},
-		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "summarize"))
 
 			ids := cmd.Args().Slice()
@@ -1592,7 +1592,7 @@ func summarizeCmd() *cli.Command {
 					return struct{}{}, handler.Summarize(ctx, sumCmd)
 				})
 			return err
-		})),
+		}),
 	}
 }
 
@@ -2631,7 +2631,7 @@ func wipStartCmd() *cli.Command {
 				Usage: "Create a git branch and check out to it",
 			},
 		},
-		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			args := cmd.Args()
 			if args.Len() < 1 {
 				return fmt.Errorf("usage: sdd wip start <entry-id> [description]")
@@ -2690,7 +2690,7 @@ func wipStartCmd() *cli.Command {
 			}
 			handler := handlers.New(opts)
 			return handler.StartWIP(ctx, startCmd)
-		})),
+		}),
 	}
 }
 
@@ -2705,7 +2705,7 @@ func wipDoneCmd() *cli.Command {
 				Usage: "Force-delete unmerged branch (discard flow)",
 			},
 		},
-		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			args := cmd.Args()
 			if args.Len() < 1 {
 				return fmt.Errorf("usage: sdd wip done <marker-id>")
@@ -2755,7 +2755,7 @@ func wipDoneCmd() *cli.Command {
 			}
 			handler := handlers.New(opts)
 			return handler.FinishWIP(ctx, doneCmd)
-		})),
+		}),
 	}
 }
 

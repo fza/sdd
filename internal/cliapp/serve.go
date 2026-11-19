@@ -625,7 +625,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		return nil, err
 	}
 	project := sessionStoreProject(cfg)
-	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir, MetaPath: filepath.Join(sddDir, model.SchemaMetaFileName), Contribution: cfg.Contribution})
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir, MetaPath: filepath.Join(sddDir, model.SchemaMetaFileName)})
 	if err != nil {
 		return nil, err
 	}

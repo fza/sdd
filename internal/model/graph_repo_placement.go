@@ -29,8 +29,6 @@ const (
 	PlacePerson
 	// PlaceUserGlobal is the user-global config only.
 	PlaceUserGlobal
-	// PlaceLocal is config.local.yaml only.
-	PlaceLocal
 )
 
 // KeyPlacement is where a setting belongs; Reason says what replaced a
@@ -115,9 +113,8 @@ func placeSettings(path []string, value *yaml.Node, known, branches map[string]b
 	return nil
 }
 
-// settingPlace asks the layer rules (IgnoredSettings, MachineLocalKeys, the
-// user-global schema) which layers keep a config holding the one setting at
-// path. HonoredCommitted and HonoredLocal drop nothing that changes the
+// settingPlace asks the layer rules (IgnoredSettings and the user-global
+// schema) which layers keep a config holding the one setting at path. HonoredCommitted and HonoredLocal drop nothing that changes the
 // answer: the rest of what they drop is retired or on no user-global config.
 func settingPlace(path []string, value *yaml.Node) (KeyPlace, error) {
 	doc := value
@@ -133,7 +130,7 @@ func settingPlace(path []string, value *yaml.Node) (KeyPlace, error) {
 	if err != nil {
 		return PlaceUnknown, fmt.Errorf("placing %s: %w", strings.Join(path, "."), err)
 	}
-	committed := !misplacedIn(cfg.BaseConfig, ConfigSourceProject) && len(cfg.MachineLocalKeys()) == 0
+	committed := !misplacedIn(cfg.BaseConfig, ConfigSourceProject)
 	local := !misplacedIn(cfg.BaseConfig, ConfigSourceLocal)
 	global := KnownYAMLKey(strings.Join(path, "."), reflect.TypeFor[BaseConfig]())
 	switch {
@@ -145,8 +142,6 @@ func settingPlace(path []string, value *yaml.Node) (KeyPlace, error) {
 		return PlacePerson, nil
 	case global:
 		return PlaceUserGlobal, nil
-	case local:
-		return PlaceLocal, nil
 	}
 	return PlaceUnknown, nil
 }

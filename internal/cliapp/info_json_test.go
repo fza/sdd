@@ -57,7 +57,7 @@ func TestInfoJSONReportsTheWriteSchemaCapabilities(t *testing.T) {
 			if !reflect.DeepEqual(info["capabilities"], tc.wantCapabilities) {
 				t.Errorf("capabilities should describe the schema writes use, got %v", info["capabilities"])
 			}
-			for _, key := range []string{"participant", "language", "search", "binary_schema", "capabilities", "contribution"} {
+			for _, key := range []string{"participant", "language", "search", "binary_schema", "capabilities"} {
 				if _, ok := info[key]; !ok {
 					t.Errorf("key %s should be present on every run", key)
 				}

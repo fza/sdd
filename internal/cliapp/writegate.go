@@ -56,28 +56,3 @@ func withWriteGate(action cli.ActionFunc) cli.ActionFunc {
 		return action(ctx, cmd)
 	}
 }
-
-// withContributionGuard refuses a graph write contribution mode does not
-// allow: with `contribution` set in the machine-local config, entries are
-// written only on a feature branch cut from that ref. Without the key the
-// action runs unchanged.
-func withContributionGuard(action cli.ActionFunc) cli.ActionFunc {
-	return func(ctx context.Context, cmd *cli.Command) error {
-		cfg, err := loadConfig()
-		if err != nil {
-			return err
-		}
-		if cfg == nil || cfg.Contribution == "" {
-			return action(ctx, cmd)
-		}
-		graphDir, err := resolveGraphDir(cmd)
-		if err != nil {
-			return err
-		}
-		err = graphGit(graphDir).CheckContribution(ctx, cfg.Contribution, cfg.DefaultBranch)
-		if err != nil {
-			return err
-		}
-		return action(ctx, cmd)
-	}
-}

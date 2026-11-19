@@ -114,7 +114,7 @@ func TestResolveProjectNamesWhereAMisplacedKeyBelongs(t *testing.T) {
 		{
 			name:   "contribution",
 			config: pointer + "contribution: origin/main\n",
-			want:   []string{"{path}: contribution is machine-local; set it in config.local.yaml instead"},
+			want:   []string{"{path} sets contribution, which sdd no longer uses: contribution mode was removed; graph writes are allowed on every branch"},
 		},
 		{
 			name:   "an unknown key",

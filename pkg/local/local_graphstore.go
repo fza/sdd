@@ -34,9 +34,6 @@ type FilesystemGraphStoreOptions struct {
 	// MetaPath is the graph's .sdd/meta.json. Empty, or a missing file, means
 	// the graph is at the binary's schema.
 	MetaPath string
-	// Contribution is the checkout's contribution ref, reported on every
-	// snapshot; empty outside contribution mode.
-	Contribution string
 }
 
 // FilesystemGraphStore is the local canonical graph authority. It owns its
@@ -50,7 +47,6 @@ type FilesystemGraphStore struct {
 	latest         *retainedSnapshot
 	publicationGit *GitFinalizer
 	metaPath       string
-	contribution   string
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
 	// file under the runtime directory, which every store over this graph
@@ -85,7 +81,6 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 		dir:            options.GraphDir,
 		publicationGit: options.PublicationGit,
 		metaPath:       options.MetaPath,
-		contribution:   options.Contribution,
 	}, nil
 }
 
@@ -133,7 +128,7 @@ func (s *FilesystemGraphStore) currentLocked(ctx context.Context) (*app.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	return snapshot.WithSchemaVersion(version).WithContribution(s.contribution), nil
+	return snapshot.WithSchemaVersion(version), nil
 }
 
 func (s *FilesystemGraphStore) ReadAttachmentPage(_ context.Context, entryID, filename string, offset int64, maxBytes int) (app.AttachmentPage, error) {
