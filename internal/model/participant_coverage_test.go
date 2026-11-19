@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -22,9 +23,9 @@ func TestParticipantCoverageAcceptsActorAliases(t *testing.T) {
 		t.Run(tc.participant, func(t *testing.T) {
 			e := personEntry("20260410-130000-s-cpt-bbb")
 			e.Participants = []string{tc.participant}
-			model.NewGraph([]*model.Entry{actor, e})
+			g := model.NewGraph([]*model.Entry{actor, e})
 			warned := false
-			for _, w := range e.Warnings {
+			for _, w := range g.WarningsFor(e) {
 				warned = warned || w.Field == "participants" && w.Value == tc.participant
 			}
 			if warned == tc.known {
@@ -50,5 +51,35 @@ func TestGraphRebuiltOverSameEntriesKeepsWarnings(t *testing.T) {
 		if got := model.NewGraph(append([]*model.Entry(nil), entries...)).Health(); got.Warnings != first.Warnings || len(got.Issues) != len(first.Issues) {
 			t.Errorf("rebuild %d: %d warning(s), want %d: %+v", i+1, got.Warnings, first.Warnings, got.Issues)
 		}
+	}
+}
+
+// Graphs built at the same time over the same entries (cached snapshots share
+// them) each report their own warnings, without writing to the shared entries.
+func TestGraphsBuiltConcurrentlyOverSameEntries(t *testing.T) {
+	e := personEntry("20260410-130000-s-cpt-bbb")
+	e.Participants = []string{"Claude"}
+	e.Closes = []string{"20260410-110000-s-cpt-zzz"}
+	e.Warnings = []model.Warning{{Field: "topics", Value: "x", Message: "read-time warning"}}
+	entries := []*model.Entry{e}
+	want := model.NewGraph(append([]*model.Entry(nil), entries...)).Health()
+	if want.Warnings != 3 {
+		t.Fatalf("graph: %d warning(s), want the read-time, coverage and dangling-closes warning: %+v", want.Warnings, want.Issues)
+	}
+	healths := make([]model.GraphHealth, 8)
+	var wg sync.WaitGroup
+	for i := range healths {
+		wg.Go(func() {
+			healths[i] = model.NewGraph(append([]*model.Entry(nil), entries...)).Health()
+		})
+	}
+	wg.Wait()
+	for i, got := range healths {
+		if got.Warnings != want.Warnings || len(got.Issues) != len(want.Issues) {
+			t.Errorf("graph %d: %d warning(s), want %d: %+v", i, got.Warnings, want.Warnings, got.Issues)
+		}
+	}
+	if len(e.Warnings) != 1 {
+		t.Errorf("entry carries %d warning(s) after validation, want only its read-time one: %+v", len(e.Warnings), e.Warnings)
 	}
 }

@@ -154,7 +154,7 @@ func TestProcedureChainForCanonical_SeparateNamespaceFromActors(t *testing.T) {
 	}
 	// Neither invariant check may cross-flag the shared string.
 	for _, e := range []*Entry{a, p} {
-		for _, w := range e.Warnings {
+		for _, w := range g.WarningsFor(e) {
 			if strings.Contains(w.Message, "write-once") {
 				t.Errorf("unexpected write-once warning on %s: %s", e.ID, w.Message)
 			}
@@ -166,13 +166,13 @@ func TestValidateProcedureFrontmatter(t *testing.T) {
 	missing := procedureHelper("20260702-120000-d-prc-aaa", "")
 	wrongLayer := procedureHelper("20260702-130000-d-tac-bbb", "capture")
 	wrongLayer.Layer = LayerTactical
-	NewGraph([]*Entry{missing, wrongLayer})
+	g := NewGraph([]*Entry{missing, wrongLayer})
 
-	if !hasWarning(missing, "canonical", "missing required canonical") {
-		t.Errorf("missing canonical not flagged: %v", missing.Warnings)
+	if !hasWarning(g, missing, "canonical", "missing required canonical") {
+		t.Errorf("missing canonical not flagged: %v", g.WarningsFor(missing))
 	}
-	if !hasWarning(wrongLayer, "layer", "should live at process layer") {
-		t.Errorf("non-process layer not flagged: %v", wrongLayer.Warnings)
+	if !hasWarning(g, wrongLayer, "layer", "should live at process layer") {
+		t.Errorf("non-process layer not flagged: %v", g.WarningsFor(wrongLayer))
 	}
 }
 
@@ -180,11 +180,11 @@ func TestValidateProcedureInvariant_CanonicalInTwoChains(t *testing.T) {
 	// Two unrelated chains carrying the same canonical — write-once violated.
 	p1 := procedureHelper("20260702-120000-d-prc-aaa", "capture")
 	p2 := procedureHelper("20260702-130000-d-prc-bbb", "capture")
-	NewGraph([]*Entry{p1, p2})
+	g := NewGraph([]*Entry{p1, p2})
 
 	for _, e := range []*Entry{p1, p2} {
-		if !hasWarning(e, "canonical", "write-once invariant violated") {
-			t.Errorf("write-once violation not flagged on %s: %v", e.ID, e.Warnings)
+		if !hasWarning(g, e, "canonical", "write-once invariant violated") {
+			t.Errorf("write-once violation not flagged on %s: %v", e.ID, g.WarningsFor(e))
 		}
 	}
 }
@@ -193,17 +193,17 @@ func TestValidateProcedureForks_FlagsLiveHeadsAndSkipsGenericWarning(t *testing.
 	base := procedureHelper("20260702-120000-d-prc-aaa", "capture", withEmbedded())
 	override := procedureHelper("20260702-130000-d-prc-bbb", "capture", withSupersedes(base.ID))
 	shipped := procedureHelper("20260702-140000-d-prc-ccc", "capture", withSupersedes(base.ID), withEmbedded())
-	NewGraph([]*Entry{base, override, shipped})
+	g := NewGraph([]*Entry{base, override, shipped})
 
 	for _, e := range []*Entry{override, shipped} {
-		if !hasWarning(e, "canonical", "wins for execution") {
-			t.Errorf("fork not flagged on live head %s: %v", e.ID, e.Warnings)
+		if !hasWarning(g, e, "canonical", "wins for execution") {
+			t.Errorf("fork not flagged on live head %s: %v", e.ID, g.WarningsFor(e))
 		}
 	}
 	// The generic supersede-fork warning is owned by the procedure check —
 	// the forked base entry must not carry the "ambiguous" message.
-	if hasWarning(base, "supersedes", "ambiguous") {
-		t.Errorf("generic fork warning leaked onto procedure entry: %v", base.Warnings)
+	if hasWarning(g, base, "supersedes", "ambiguous") {
+		t.Errorf("generic fork warning leaked onto procedure entry: %v", g.WarningsFor(base))
 	}
 }
 
@@ -217,13 +217,13 @@ func TestValidateCloses_DirectiveMayCloseProcedure(t *testing.T) {
 		withKind(KindPlan),
 		withCloses(p.ID),
 		withContent("plan closing a procedure — invalid"))
-	NewGraph([]*Entry{p, retire, plan})
+	g := NewGraph([]*Entry{p, retire, plan})
 
-	if hasWarning(retire, "closes", "cannot close") {
-		t.Errorf("directive→procedure close wrongly rejected: %v", retire.Warnings)
+	if hasWarning(g, retire, "closes", "cannot close") {
+		t.Errorf("directive→procedure close wrongly rejected: %v", g.WarningsFor(retire))
 	}
-	if !hasWarning(plan, "closes", "use supersedes instead") {
-		t.Errorf("plan→procedure close not rejected: %v", plan.Warnings)
+	if !hasWarning(g, plan, "closes", "use supersedes instead") {
+		t.Errorf("plan→procedure close not rejected: %v", g.WarningsFor(plan))
 	}
 }
 
@@ -233,17 +233,17 @@ func TestParticipantCoverage_SkipsEmbeddedEntries(t *testing.T) {
 	a := actorHelper("20260702-120000-s-prc-aaa", "Christopher", nil)
 	p := procedureHelper("20260702-130000-d-prc-bbb", "capture", withEmbedded())
 	p.Participants = []string{"SomeoneElse"}
-	NewGraph([]*Entry{a, p})
+	g := NewGraph([]*Entry{a, p})
 
-	if hasWarning(p, "participants", "does not match") {
-		t.Errorf("participant coverage flagged embedded entry: %v", p.Warnings)
+	if hasWarning(g, p, "participants", "does not match") {
+		t.Errorf("participant coverage flagged embedded entry: %v", g.WarningsFor(p))
 	}
 }
 
-// hasWarning reports whether the entry carries a warning on the given field
+// hasWarning reports whether the entry carries a warning in g on the given field
 // whose message contains the given substring.
-func hasWarning(e *Entry, field, substr string) bool {
-	for _, w := range e.Warnings {
+func hasWarning(g *Graph, e *Entry, field, substr string) bool {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == field && strings.Contains(w.Message, substr) {
 			return true
 		}

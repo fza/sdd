@@ -271,9 +271,9 @@ func TestValidate_Annotation(t *testing.T) {
 			Refs:             refsOf(target1.ID, target2.ID),
 			AnnotationTopics: []AnnotationTopic{{Label: "catch-up-scaling"}},
 		}
-		ValidateEntry(e, g)
-		if len(e.Warnings) != 0 {
-			t.Fatalf("unexpected warnings: %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %v", warnings)
 		}
 	})
 
@@ -287,9 +287,9 @@ func TestValidate_Annotation(t *testing.T) {
 				{Label: "x", Members: []string{target1.ID}},
 			},
 		}
-		ValidateEntry(e, g)
-		if len(e.Warnings) != 0 {
-			t.Fatalf("unexpected warnings: %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %v", warnings)
 		}
 	})
 
@@ -300,9 +300,9 @@ func TestValidate_Annotation(t *testing.T) {
 			Kind:             KindAnnotation,
 			AnnotationTopics: []AnnotationTopic{{Label: "x"}},
 		}
-		ValidateEntry(e, g)
-		if !hasWarningField(e, "refs") {
-			t.Fatalf("expected refs warning, got %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if !hasWarningField(warnings, "refs") {
+			t.Fatalf("expected refs warning, got %v", warnings)
 		}
 	})
 
@@ -313,9 +313,9 @@ func TestValidate_Annotation(t *testing.T) {
 			Kind: KindAnnotation,
 			Refs: refsOf(target1.ID),
 		}
-		ValidateEntry(e, g)
-		if !hasWarningField(e, "topics") {
-			t.Fatalf("expected topics warning, got %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if !hasWarningField(warnings, "topics") {
+			t.Fatalf("expected topics warning, got %v", warnings)
 		}
 	})
 
@@ -329,16 +329,16 @@ func TestValidate_Annotation(t *testing.T) {
 				{Label: "x", Members: []string{target2.ID}}, // not in refs
 			},
 		}
-		ValidateEntry(e, g)
+		warnings := ValidateEntry(e, g)
 		found := false
-		for _, w := range e.Warnings {
+		for _, w := range warnings {
 			if w.Field == "topics" && strings.Contains(w.Message, "subset") {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("expected subset warning, got %v", e.Warnings)
+			t.Fatalf("expected subset warning, got %v", warnings)
 		}
 	})
 
@@ -352,9 +352,9 @@ func TestValidate_Annotation(t *testing.T) {
 				{Label: "has spaces"},
 			},
 		}
-		ValidateEntry(e, g)
-		if !hasWarningField(e, "topics") {
-			t.Fatalf("expected topics warning for malformed label, got %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if !hasWarningField(warnings, "topics") {
+			t.Fatalf("expected topics warning for malformed label, got %v", warnings)
 		}
 	})
 }
@@ -373,9 +373,9 @@ func TestValidate_Focus(t *testing.T) {
 				{Target: target.ID},
 			},
 		}
-		ValidateEntry(e, g)
-		if len(e.Warnings) != 0 {
-			t.Fatalf("unexpected warnings: %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %v", warnings)
 		}
 	})
 
@@ -394,9 +394,9 @@ func TestValidate_Focus(t *testing.T) {
 					When: &FocusWhen{To: "2026-05-13"}},
 			},
 		}
-		ValidateEntry(e, g)
-		if len(e.Warnings) != 0 {
-			t.Fatalf("unexpected warnings: %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %v", warnings)
 		}
 	})
 
@@ -407,9 +407,9 @@ func TestValidate_Focus(t *testing.T) {
 			Kind:  KindFocus,
 			Layer: LayerTactical,
 		}
-		ValidateEntry(e, g)
-		if !hasWarningField(e, "involvement") {
-			t.Fatalf("expected involvement warning, got %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if !hasWarningField(warnings, "involvement") {
+			t.Fatalf("expected involvement warning, got %v", warnings)
 		}
 	})
 
@@ -423,16 +423,16 @@ func TestValidate_Focus(t *testing.T) {
 				{Target: "20260101-000000-s-cpt-zzz"},
 			},
 		}
-		ValidateEntry(e, g)
+		warnings := ValidateEntry(e, g)
 		found := false
-		for _, w := range e.Warnings {
+		for _, w := range warnings {
 			if w.Field == "involvement" && strings.Contains(w.Message, "does not resolve") {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("expected unresolved-target warning, got %v", e.Warnings)
+			t.Fatalf("expected unresolved-target warning, got %v", warnings)
 		}
 	})
 
@@ -447,15 +447,15 @@ func TestValidate_Focus(t *testing.T) {
 				{Target: target.ID},
 			},
 		}
-		ValidateEntry(e, g)
-		if !hasWarningField(e, "when") {
-			t.Fatalf("expected when warning, got %v", e.Warnings)
+		warnings := ValidateEntry(e, g)
+		if !hasWarningField(warnings, "when") {
+			t.Fatalf("expected when warning, got %v", warnings)
 		}
 	})
 }
 
-func hasWarningField(e *Entry, field string) bool {
-	for _, w := range e.Warnings {
+func hasWarningField(warnings []Warning, field string) bool {
+	for _, w := range warnings {
 		if w.Field == field {
 			return true
 		}

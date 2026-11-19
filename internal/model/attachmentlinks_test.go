@@ -15,10 +15,8 @@ func linkWarnings(t *testing.T, id, body string, attachments ...string) []model.
 		ID: id, Type: model.TypeDecision, Layer: model.LayerTactical, Kind: model.KindDirective,
 		Content: body, Attachments: attachments,
 	}
-	model.ValidateEntry(e, model.NewGraph([]*model.Entry{}))
-
 	var out []model.Warning
-	for _, w := range e.Warnings {
+	for _, w := range model.ValidateEntry(e, model.NewGraph([]*model.Entry{})) {
 		if w.Field == "attachments" {
 			out = append(out, w)
 		}

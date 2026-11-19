@@ -181,8 +181,7 @@ func TestAllBaseFactsRenderAndValidate(t *testing.T) {
 	}
 	graph := model.NewGraph(entries)
 	for _, fact := range entries {
-		model.ValidateEntry(fact, graph)
-		for _, w := range fact.Warnings {
+		for _, w := range graph.WarningsFor(fact) {
 			t.Errorf("base fact %s invalid: %s: %s", fact.ID, w.Field, w.Message)
 		}
 	}

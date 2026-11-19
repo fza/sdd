@@ -327,27 +327,12 @@ type Entry struct {
 	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Title        string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1
 	Summary      string    // LLM-generated summary: this entry + direct relationships
-	Warnings     []Warning // validation issues found during graph construction
+	Warnings     []Warning // issues found reading the entry; a graph's validation findings are Graph.WarningsFor's
 	// Embedded marks a base entry compiled into the sdd binary (base
 	// procedures) rather than loaded from the graph directory. Set by the
 	// loader, never serialized. Write-side surfaces (summary regeneration,
 	// missing-summary lint) skip embedded entries — there is no file to write.
 	Embedded bool
-
-	// prior holds the Warnings the entry carried into its first graph, so each
-	// later graph over the same entry starts from them instead of appending its
-	// findings onto an earlier graph's.
-	prior    []Warning
-	priorSet bool
-}
-
-// resetGraphWarnings sets Warnings back to what the entry carried before any
-// graph validated it.
-func (e *Entry) resetGraphWarnings() {
-	if !e.priorSet {
-		e.prior, e.priorSet = slices.Clone(e.Warnings), true
-	}
-	e.Warnings = slices.Clone(e.prior)
 }
 
 // IsContract returns true if this decision is a standing constraint.

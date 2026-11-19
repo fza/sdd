@@ -94,6 +94,7 @@ type ExportEntry struct {
 	Heat         float64
 	InDegree     int
 	Attachments  []ExportAttachment
+	Warnings     []model.Warning // the entry's warnings in its owning graph
 }
 
 // ExportAttachment describes one attachment file; Content is set only for

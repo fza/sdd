@@ -218,7 +218,7 @@ func exportEntryJSONFrom(x query.ExportEntry) exportEntryJSON {
 		}
 		ej.Involvement = append(ej.Involvement, involvementJSON{Target: inv.Target, Actors: actors, When: focusWhenJSONFrom(e.ResolveWhen(inv))})
 	}
-	for _, w := range e.Warnings {
+	for _, w := range x.Warnings {
 		ej.Warnings = append(ej.Warnings, warningJSON(w))
 	}
 	for _, a := range x.Attachments {

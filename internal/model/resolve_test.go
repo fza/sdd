@@ -19,8 +19,8 @@ func mkDec(id string, supersedes ...string) *model.Entry {
 	}
 }
 
-func entryHasWarning(e *model.Entry, substr string) bool {
-	for _, w := range e.Warnings {
+func entryHasWarning(g *model.Graph, e *model.Entry, substr string) bool {
+	for _, w := range g.WarningsFor(e) {
 		if strings.Contains(w.Message, substr) {
 			return true
 		}
@@ -124,13 +124,12 @@ func TestValidateSupersedeForks(t *testing.T) {
 	y := mkDec("20260101-110000-d-tac-yyy", x.ID) // active head
 	z := mkDec("20260101-120000-d-tac-zzz", x.ID) // active head — live fork
 	g := model.NewGraph([]*model.Entry{x, y, z})
-	_ = g
 
-	if !entryHasWarning(x, "2 active supersede heads") {
-		t.Fatalf("expected live-fork warning on %s, got %+v", x.ID, x.Warnings)
+	if !entryHasWarning(g, x, "2 active supersede heads") {
+		t.Fatalf("expected live-fork warning on %s, got %+v", x.ID, g.WarningsFor(x))
 	}
-	if !entryHasWarning(x, y.ID) || !entryHasWarning(x, z.ID) {
-		t.Errorf("fork warning should name both active heads %s and %s, got %+v", y.ID, z.ID, x.Warnings)
+	if !entryHasWarning(g, x, y.ID) || !entryHasWarning(g, x, z.ID) {
+		t.Errorf("fork warning should name both active heads %s and %s, got %+v", y.ID, z.ID, g.WarningsFor(x))
 	}
 }
 
@@ -144,10 +143,9 @@ func TestValidateSupersedeForks_SettledForkNoWarning(t *testing.T) {
 	doneY := &model.Entry{ID: "20260101-130000-s-tac-dyy", Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindDone, Closes: []string{y.ID}}
 	doneZ := &model.Entry{ID: "20260101-140000-s-tac-dzz", Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindDone, Closes: []string{z.ID}}
 	g := model.NewGraph([]*model.Entry{x, y, z, doneY, doneZ})
-	_ = g
 
-	if entryHasWarning(x, "active supersede heads") {
-		t.Errorf("settled fork (both branch heads closed) should not warn: %+v", x.Warnings)
+	if entryHasWarning(g, x, "active supersede heads") {
+		t.Errorf("settled fork (both branch heads closed) should not warn: %+v", g.WarningsFor(x))
 	}
 }
 
@@ -160,10 +158,9 @@ func TestValidateSupersedeForks_ConvergedDiamondNoWarning(t *testing.T) {
 	z := mkDec("20260101-120000-d-tac-zzz", x.ID)
 	w := mkDec("20260101-130000-d-tac-www", y.ID, z.ID) // supersedes both branches
 	g := model.NewGraph([]*model.Entry{x, y, z, w})
-	_ = g
 
-	if entryHasWarning(x, "active supersede heads") {
-		t.Errorf("converged diamond (single live head) should not warn: %+v", x.Warnings)
+	if entryHasWarning(g, x, "active supersede heads") {
+		t.Errorf("converged diamond (single live head) should not warn: %+v", g.WarningsFor(x))
 	}
 }
 
@@ -171,9 +168,8 @@ func TestValidateSupersedeForks_LinearChainNoWarning(t *testing.T) {
 	a := mkDec("20260101-100000-d-tac-aaa")
 	b := mkDec("20260101-110000-d-tac-bbb", a.ID)
 	g := model.NewGraph([]*model.Entry{a, b})
-	_ = g
 
-	if entryHasWarning(a, "active supersede heads") {
-		t.Errorf("linear chain should not raise a fork warning: %+v", a.Warnings)
+	if entryHasWarning(g, a, "active supersede heads") {
+		t.Errorf("linear chain should not raise a fork warning: %+v", g.WarningsFor(a))
 	}
 }
