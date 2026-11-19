@@ -17,9 +17,8 @@ func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 	proctest.RequireStep(t, serve, "assemble")
 	assemble := test.Untagged(serve.Instructions)
 	for _, want := range []string{
+		"Words the user gives for a decision's reason go to `reasonWords`, and for a directive's intent to `intentWords`, quoted as the user said them",
 		"Never write words they did not pick or give.",
-		"A decision's reason states what the user said or picked in `reasonWords`; never write one they did not.",
-		"Words the user gives for it go to `intentWords`; never write ones they did not.",
 	} {
 		if !strings.Contains(assemble, want) {
 			t.Errorf("assemble should carry %q:\n%s", want, assemble)
