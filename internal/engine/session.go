@@ -73,12 +73,22 @@ const (
 	EventReoriented EventType = "reoriented"
 	// EventModel is a log naming the agent's model: replay reads past it.
 	EventModel EventType = "model"
-	// EventBuildMark follows the header of every session this build opens. A
-	// stock build refuses it as an unknown event and so skips the session; a
-	// move the log starts before it was started by such a build, which this
-	// one cannot continue: it offers only abandon for it (ForeignMoveGoal).
+	// EventBuildMark follows the header of every session this build opens,
+	// and leads what it appends to a log without one. A stock build refuses it
+	// as an unknown event and so skips the session. A move a log starts before
+	// it, in a log holding only stockEventTypes there, was started by a stock
+	// build, which this one cannot continue: it offers only abandon for it
+	// (ForeignMoveGoal).
 	EventBuildMark EventType = "build_mark"
 )
+
+// stockEventTypes is the event set of stock sdd's engine at origin/main.
+var stockEventTypes = map[EventType]bool{
+	EventSessionMeta: true, EventLabeled: true, EventStarted: true, EventReport: true,
+	EventChooserAnswer: true, EventOpResult: true, EventMutationIntent: true, EventMutationOutcome: true,
+	EventServed: true, EventTransition: true, EventCompleted: true, EventAbandoned: true,
+	EventRead: true, EventParked: true, EventServedBlocks: true, EventReoriented: true,
+}
 
 // The serve of a move another build started, and the refusal of every other
 // call on it.
@@ -269,8 +279,10 @@ type Session struct {
 	counter   int
 	instances map[string]*Instance
 	order     []string
-	// marked is set once the log holds the build mark (EventBuildMark).
-	marked bool
+	// marked is set once the log holds the build mark (EventBuildMark);
+	// forkBeforeMark once it holds a fork-only event ahead of it.
+	marked         bool
+	forkBeforeMark bool
 	// reads folds the session's read events into the deepest depth each entry
 	// was served at — what the refsInspected gate evaluates. Session-level by
 	// design: a parent's inspections count for children dispatched in the same
@@ -381,6 +393,11 @@ func (s *Session) mark() {
 	}
 	s.appendEvent("", EventBuildMark, buildMark)
 	s.marked = true
+}
+
+// foreign reports whether inst is a move a stock build started.
+func (s *Session) foreign(inst *Instance) bool {
+	return inst.beforeMark && !s.forkBeforeMark
 }
 
 // answerer judges who may answer step and returns who did, as the answer
@@ -608,7 +625,7 @@ func (s *Session) Park(instanceID, note string) error {
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has ended (%s) — only running moves park", instanceID, inst.Outcome)
 	}
-	if inst.foreign {
+	if s.foreign(inst) {
 		return foreignMoveRefusal(inst)
 	}
 	data := map[string]any{"step": inst.Step}
@@ -624,6 +641,9 @@ func (s *Session) Park(instanceID, note string) error {
 func (s *Session) appendEvent(instance string, typ EventType, data map[string]any) uint64 {
 	if s.sinkErr != nil {
 		return 0
+	}
+	if typ != EventSessionMeta && typ != EventBuildMark {
+		s.mark()
 	}
 	s.seq++
 	if s.sink == nil {
@@ -716,7 +736,6 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if len(seed) > 0 {
 		data["seed"] = seed
 	}
-	s.mark()
 	s.appendEvent(inst.ID, EventStarted, data)
 	if err := s.arrive(inst); err != nil {
 		return nil, err
@@ -866,7 +885,7 @@ func (s *Session) report(instanceID string, fields map[string]any, unserved bool
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
-	if inst.foreign {
+	if s.foreign(inst) {
 		return nil, foreignMoveRefusal(inst)
 	}
 	if len(fields) == 0 {
@@ -944,7 +963,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
-	if inst.foreign {
+	if s.foreign(inst) {
 		return nil, foreignMoveRefusal(inst)
 	}
 	step := inst.currentStep()
@@ -1224,6 +1243,9 @@ func (s *Session) fold(events []Event, resolve SpecResolver) error {
 		if ev.Seq > s.seq {
 			s.seq = ev.Seq
 		}
+		if !s.marked && ev.Event != EventBuildMark && !stockEventTypes[ev.Event] {
+			s.forkBeforeMark = true
+		}
 		err := s.applyEvent(ev, resolve)
 		if err != nil {
 			return fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
@@ -1279,7 +1301,7 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			Parent: parent,
 			// The shell is left out: it carries no draft another procedure
 			// revision could strand.
-			foreign: !s.marked && spec.Class != model.ProcedureClassShell,
+			beforeMark: !s.marked && spec.Class != model.ProcedureClassShell,
 		}
 		if params, ok := ev.Data["params"].(map[string]any); ok {
 			if err := inst.Store.SetStart(declaredInputs(spec, params)); err != nil {

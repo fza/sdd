@@ -72,6 +72,54 @@ func TestAMoveStartedBeforeTheMarkOffersOnlyAbandon(t *testing.T) {
 	}
 }
 
+// A log without the mark that holds an event only this build writes was
+// written by an earlier build of this line, whose moves continue.
+func TestAnUnmarkedLogHoldingAForkOnlyEventKeepsItsMoves(t *testing.T) {
+	spec := patchSpec(t)
+	resolve := func(string) (*engine.Spec, error) { return spec, nil }
+	log := append(unmarkedLog(), engine.Event{V: 1, TS: time.Date(2026, 11, 1, 10, 0, 1, 0, time.UTC), Session: "s_other", Seq: 4, Event: engine.EventModel, Data: map[string]any{"model": "a-model"}})
+	sess, err := newPatchEngine().ReplaySession("s_other", "tester", log, resolve, &recordingSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err := sess.Serve("i_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Goal == engine.ForeignMoveGoal || sv.ReportSchema == nil {
+		t.Fatalf("a move of an unmarked log holding a fork-only event should serve its step, got %+v", sv)
+	}
+	if _, err := sess.Report("i_1", map[string]any{"goal": "done"}); err != nil {
+		t.Errorf("a report on it should pass, got %v", err)
+	}
+}
+
+// The first event this build appends to a log holding only stock's events is
+// the mark, so what it appends later never makes the stock moves its own.
+func TestAStockLogThisBuildAppendsToKeepsItsMovesForeign(t *testing.T) {
+	spec := patchSpec(t)
+	resolve := func(string) (*engine.Spec, error) { return spec, nil }
+	sink := &recordingSink{}
+	sess, err := newPatchEngine().ReplaySession("s_other", "tester", unmarkedLog(), resolve, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.SetLabel("picked up")
+	if len(sink.events) != 2 || sink.events[0].Event != engine.EventBuildMark || sink.events[1].Event != engine.EventLabeled {
+		t.Fatalf("the first append should log the mark before it, got %+v", sink.events)
+	}
+
+	later := engine.Event{V: 1, TS: time.Date(2026, 11, 1, 10, 0, 2, 0, time.UTC), Session: "s_other", Seq: 6, Event: engine.EventModel, Data: map[string]any{"model": "a-model"}}
+	replayed, err := newPatchEngine().ReplaySession("s_other", "tester", append(append(unmarkedLog(), sink.events...), later), resolve, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv, _ := replayed.Serve("i_1"); sv.Goal != engine.ForeignMoveGoal {
+		t.Errorf("the stock move should stay abandon-only, got %+v", sv)
+	}
+}
+
 func TestAMoveStartedAfterTheMarkContinues(t *testing.T) {
 	spec := patchSpec(t)
 	resolve := func(string) (*engine.Spec, error) { return spec, nil }

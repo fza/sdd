@@ -101,8 +101,8 @@ type Instance struct {
 	hookBase map[string]hookBase
 	// startHeld marks the current step held by a failing start hook.
 	startHeld bool
-	// foreign marks a move the log started before the build mark.
-	foreign bool
+	// beforeMark marks a move the log started before the build mark.
+	beforeMark bool
 }
 
 // Reading returns the instance's credited grounding reads.
@@ -705,7 +705,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		return sv, nil
 	}
-	if inst.foreign {
+	if s.foreign(inst) {
 		sv.Step = inst.loggedStep()
 		sv.Goal = ForeignMoveGoal
 		sv.Instructions = foreignMoveInstructions
