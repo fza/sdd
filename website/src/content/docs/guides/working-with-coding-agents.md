@@ -54,7 +54,7 @@ How best to hand work between agent sessions this way is still being worked out.
 
 ## Parked captures
 
-Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself. The agent cannot drop a blocked capture: sdd refuses its abandon of the move, and its end of the session by the session's handle, while the move waits at such a step. You drop it in a guided dialogue, or end the session with `sdd sessions abandon <session>`.
+Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided or assisted dialogue to answer the step yourself. The agent cannot drop a blocked capture: sdd refuses its abandon of the move, and its end of the session by the session's handle, while the move waits at such a step. You drop it in a guided dialogue, or end the session with `sdd sessions abandon <session>`.
 
 ## Decisions an agent takes alone
 
@@ -88,7 +88,7 @@ An approved entry loses its mark and stops the chain: an agent's entry built on 
 
 ## Entries you approve
 
-Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once, through your agent's question tool: `AskUserQuestion` in Claude Code and Claude Desktop, `request_user_input` in Codex where its tools list it. Every choice sdd puts to you goes the same way, in `guided` too. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
+Under `dialogue.mode: assisted` the agent works as in `auto` up to one final gate per entry. It drafts the capture, runs every check, and answers each step itself. A check that blocks the draft a second time goes to you instead of parking, and your relayed answer settles it. Once the writing guide, pre-flight and the verifier have passed, the draft is sealed and played back to you once, through your agent's question tool: `AskUserQuestion` in Claude Code and Claude Desktop, `request_user_input` in Codex where its tools list it. Every choice sdd puts to you goes the same way, in `guided` too. Your answer is relayed verbatim, as in a guided dialogue. The agent cannot answer that step, and it cannot drop a sealed draft; `abort` is yours.
 
 Your approval binds to the draft you saw. Any change after it, such as an `adjust`, sends the draft back through the checks and plays it back again. The entry is then yours, without `decided-by`:
 
