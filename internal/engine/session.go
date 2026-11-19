@@ -73,7 +73,27 @@ const (
 	EventReoriented EventType = "reoriented"
 	// EventModel is a log naming the agent's model: replay reads past it.
 	EventModel EventType = "model"
+	// EventBuildMark follows the header of every session this build opens. A
+	// stock build refuses it as an unknown event and so skips the session; a
+	// move the log starts before it was started by such a build, which this
+	// one cannot continue: it offers only abandon for it (ForeignMoveGoal).
+	EventBuildMark EventType = "build_mark"
 )
+
+// The serve of a move another build started, and the refusal of every other
+// call on it.
+const (
+	ForeignMoveGoal         = "abandon this move: another sdd build started it"
+	foreignMoveInstructions = "Another sdd build started this move under a procedure of the same name, " +
+		"which this build cannot continue: abandon is its only choice. Start the move anew if it is still wanted."
+)
+
+func foreignMoveRefusal(inst *Instance) error {
+	return fmt.Errorf("%s %s was started by another sdd build, which this build cannot continue: abandon it, then start it anew", inst.Spec.Canonical, inst.ID)
+}
+
+// buildMark is the mark's payload, naming what it is for to a reader of the log.
+var buildMark = map[string]any{"sessions": "stay with the sdd build that opened them"}
 
 // ReadDepth classifies how deeply an entry was served: full means the body
 // was served (a show primary, an injected chain's primary, or a same-session
@@ -249,6 +269,8 @@ type Session struct {
 	counter   int
 	instances map[string]*Instance
 	order     []string
+	// marked is set once the log holds the build mark (EventBuildMark).
+	marked bool
 	// reads folds the session's read events into the deepest depth each entry
 	// was served at — what the refsInspected gate evaluates. Session-level by
 	// design: a parent's inspections count for children dispatched in the same
@@ -347,8 +369,18 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 			meta["dialogueSource"] = s.DialogueSource
 		}
 		s.appendEvent("", EventSessionMeta, meta)
+		s.mark()
 	}
 	return s
+}
+
+// mark logs the build mark once per session.
+func (s *Session) mark() {
+	if s.marked || s.sink == nil {
+		return
+	}
+	s.appendEvent("", EventBuildMark, buildMark)
+	s.marked = true
 }
 
 // answerer judges who may answer step and returns who did, as the answer
@@ -576,6 +608,9 @@ func (s *Session) Park(instanceID, note string) error {
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has ended (%s) — only running moves park", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return foreignMoveRefusal(inst)
+	}
 	data := map[string]any{"step": inst.Step}
 	if note != "" {
 		data["note"] = note
@@ -681,6 +716,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if len(seed) > 0 {
 		data["seed"] = seed
 	}
+	s.mark()
 	s.appendEvent(inst.ID, EventStarted, data)
 	if err := s.arrive(inst); err != nil {
 		return nil, err
@@ -830,6 +866,9 @@ func (s *Session) report(instanceID string, fields map[string]any, unserved bool
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
+	}
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty report — send state fields or a chooser answer")
 	}
@@ -904,6 +943,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	}
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
+	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
 	}
 	step := inst.currentStep()
 	if step == nil {
@@ -1235,6 +1277,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			Step:   step,
 			Status: StatusRunning,
 			Parent: parent,
+			// The shell is left out: it carries no draft another procedure
+			// revision could strand.
+			foreign: !s.marked && spec.Class != model.ProcedureClassShell,
 		}
 		if params, ok := ev.Data["params"].(map[string]any); ok {
 			if err := inst.Store.SetStart(declaredInputs(spec, params)); err != nil {
@@ -1445,6 +1490,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			}
 			inst.unservedDraft = false
 		}
+
+	case EventBuildMark:
+		s.marked = true
 
 	case EventServedBlocks, EventReoriented, EventModel:
 		// Forensic only — no state effect.

@@ -107,7 +107,15 @@ steps:
 func TestSession_SurvivesRestartByLogReplay(t *testing.T) {
 	env := newFixtureEnv(t)
 	var log bytes.Buffer
-	env.session.sink = NewWriterSink(&log)
+	writer := NewWriterSink(&log)
+	// The log a restart replays opens with the header and build mark the
+	// session logged.
+	for _, ev := range env.sink.events {
+		if _, err := writer.Append(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env.session.sink = writer
 
 	// Drive to the pending playback chooser, mid-procedure.
 	sv, err := env.session.Start(env.spec, nil, "")
