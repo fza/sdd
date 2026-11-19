@@ -676,6 +676,9 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.root = workflow
 	}
 	ss.playbacks = nil
+	ss.call = callKey(req)
+	ss.repeatsPaged = ss.call != "" && ss.call == ss.pagedCall
+	ss.pagedCall = ""
 	s.noteSyncSession(ctx, req, ss)
 	if ss.root.Finished() {
 		ss.mu.Unlock()
