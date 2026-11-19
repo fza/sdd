@@ -311,6 +311,15 @@ func TestSessionWorksDownTheDependencyChain(t *testing.T) {
 	}
 }
 
+func TestInstructionsNameTheWholeDependencyChain(t *testing.T) {
+	if !strings.Contains(mcpserver.Instructions, "directly or through its dependencies") {
+		t.Error("the server instructions should let a move or a read work anywhere down the home's dependency chain")
+	}
+	if strings.Contains(mcpserver.Instructions, "never in one only a dependency declares") {
+		t.Error("the server instructions should not limit work to directly declared dependencies")
+	}
+}
+
 // TestSingleProjectCompositionInfersProject: with one accessible project,
 // start_session infers it — the local sdd serve shape stays a one-call door.
 func TestSingleProjectCompositionInfersProject(t *testing.T) {
