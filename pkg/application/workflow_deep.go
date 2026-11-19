@@ -366,9 +366,14 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{Name: commandAcceptDeepProposal, Doc: "Refuses a draft that differs from the proposal; records the deep verdict over the draft once it matches, and has the writing guide's judgment cover it, so a delta check leaves what the exchange settled alone. An accept reporting no draft field carries the fields the proposal changes, written by sdd.", Reads: append(slices.Clone(captureDraftFields), fieldDeepProposal, "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
 			Fn: func(ctx *engine.Context) error {
 				proposal, _ := workflowStoreString(ctx.Store, fieldDeepProposal)
-				current := draftText(ctx.Store)
-				if current != proposal {
-					return fmt.Errorf("the draft differs from the proposal; report the fields so the draft matches it, or none so sdd writes the proposal:\n%s", textdiff.Unified(proposal, current))
+				if current := draftText(ctx.Store); current != proposal {
+					changed, err := deepProposalFields(ctx.Store, proposal)
+					if err != nil {
+						return err
+					}
+					if len(changed) > 0 {
+						return fmt.Errorf("the draft differs from the proposal; report the fields so the draft matches it, or none so sdd writes the proposal:\n%s", textdiff.Unified(proposal, current))
+					}
 				}
 				err := w.writeDeepVerdict(ctx, "verified", "")
 				if err != nil || !guideRan(ctx.Store) {
