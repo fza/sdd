@@ -334,11 +334,12 @@ type InfoArgs struct {
 }
 
 type InfoResult struct {
-	Project     string `json:"project,omitempty" jsonschema:"the session's project ID"`
-	Participant string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
-	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
-	Search      string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
-	Version     string `json:"version,omitempty"`
+	Project      string `json:"project,omitempty" jsonschema:"the session's project ID"`
+	Participant  string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
+	Language     string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
+	Search       string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
+	Version      string `json:"version,omitempty"`
+	Contribution string `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
 }
 
 type RegistryArgs struct {
@@ -1159,7 +1160,7 @@ func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoA
 	}
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
-		Version: s.version,
+		Version: s.version, Contribution: info.Contribution,
 	}, nil
 
 }

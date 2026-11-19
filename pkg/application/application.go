@@ -98,14 +98,14 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	_, runtime, err = readMaterializedSnapshot(ctx, runtime, branch)
+	snapshot, runtime, err := readMaterializedSnapshot(ctx, runtime, branch)
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return a.infoFromRuntime(ctx, principal, runtime)
+	return a.infoFromRuntime(ctx, principal, runtime, snapshot)
 }
 
-func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime) (InfoResult, error) {
+func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime, source *Snapshot) (InfoResult, error) {
 	search := "text"
 	if runtime.options.Embedder != nil && runtime.options.SearchIndex != nil {
 		search = "vector,text"
@@ -116,7 +116,7 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 	}
 	return InfoResult{
 		Project: runtime.options.Project, Participant: participant, Language: runtime.options.Language,
-		Search: search,
+		Search: search, Contribution: source.Contribution(),
 	}, nil
 }
 

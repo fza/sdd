@@ -14,11 +14,15 @@ func (f *Finder) Info(_ query.InfoQuery) (*query.InfoResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &query.InfoResult{
+	result := &query.InfoResult{
 		LocalParticipant: participant,
 		Language:         language,
 		Search:           f.searchCapability(),
-	}, nil
+	}
+	if f.cfg != nil {
+		result.Contribution = f.cfg.Contribution
+	}
+	return result, nil
 }
 
 // searchCapability reports whether vector search is configured. Returns

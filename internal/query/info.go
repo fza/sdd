@@ -24,4 +24,7 @@ type InfoResult struct {
 	LocalParticipant string
 	Language         string
 	Search           string
+	// Contribution is the machine-local contribution ref, empty outside
+	// contribution mode.
+	Contribution string
 }

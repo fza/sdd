@@ -27,6 +27,9 @@ type FilesystemGraphStoreOptions struct {
 	// finalizer wrote; the finalizer, not the store, commits. Without it,
 	// publication recognizes retries by entry ID only.
 	PublicationGit *GitFinalizer
+	// Contribution is the checkout's contribution ref, reported on every
+	// snapshot; empty outside contribution mode.
+	Contribution string
 }
 
 // FilesystemGraphStore is the local canonical graph authority. It owns its
@@ -38,6 +41,7 @@ type FilesystemGraphStore struct {
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
 	publicationGit *GitFinalizer
+	contribution   string
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
 	// file under the runtime directory, which every store over this graph
@@ -68,6 +72,7 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 		branch:         options.Branch,
 		dir:            options.GraphDir,
 		publicationGit: options.PublicationGit,
+		contribution:   options.Contribution,
 	}, nil
 }
 
@@ -87,7 +92,11 @@ func (s *FilesystemGraphStore) currentLocked(ctx context.Context) (*app.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	return app.LoadSnapshotFS(ctx, s.project, revision, os.DirFS(s.dir), ".")
+	snapshot, err := app.LoadSnapshotFS(ctx, s.project, revision, os.DirFS(s.dir), ".")
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.WithContribution(s.contribution), nil
 }
 
 func (s *FilesystemGraphStore) ReadAttachmentPage(_ context.Context, entryID, filename string, offset int64, maxBytes int) (app.AttachmentPage, error) {
