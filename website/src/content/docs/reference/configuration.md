@@ -23,6 +23,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
+| `contribution` | Local | sdd refuses it in `.sdd/config.yaml` and ignores it in the user-global file. |
 
 :::caution[Keep API keys out of the project file]
 `.sdd/config.yaml` is committed and shared. sdd reads `api_keys` from any file and does not stop you, so put keys in the user-global or the local file. `sdd config set` writes only to those two.
@@ -74,6 +75,14 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `participant` | None | Your name, recorded as the author of the entries you capture. `sdd init` asks for it, offers your git `user.name`, and writes it to `.sdd/config.local.yaml` unless another file already sets it. Every command warns while it is missing. |
+
+### Contribution mode
+
+For a fork whose features go upstream as pull requests: keeps each feature's entries on that feature's branch.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `contribution` | None | An upstream ref, such as `origin/main`. Set, every graph write in this checkout is refused unless the checked-out branch is cut from the ref and is neither `default_branch` nor the ref's own branch. Covers `sdd new`, `sdd rewrite`, `sdd summarize`, `sdd wip start`, `sdd wip done` and captures through `sdd serve`. A ref that does not resolve refuses every write, so fetch it first. Set it with `sdd config set --local contribution origin/main` in the feature's worktree. `sdd info` and the session framing show `Mode: contribution (origin/main)` while it is on. |
 
 ### Language model
 
