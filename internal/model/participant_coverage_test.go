@@ -33,3 +33,22 @@ func TestParticipantCoverageAcceptsActorAliases(t *testing.T) {
 		})
 	}
 }
+
+// A graph built over entries an earlier graph validated reports the same
+// warnings, not the earlier graph's plus its own (as a composition assembling
+// a fresh graph per serve does).
+func TestGraphRebuiltOverSameEntriesKeepsWarnings(t *testing.T) {
+	e := personEntry("20260410-130000-s-cpt-bbb")
+	e.Participants = []string{"Claude"}
+	e.Warnings = []model.Warning{{Field: "topics", Value: "x", Message: "read-time warning"}}
+	entries := []*model.Entry{e}
+	first := model.NewGraph(append([]*model.Entry(nil), entries...)).Health()
+	if first.Warnings != 2 {
+		t.Fatalf("first graph: %d warning(s), want the read-time and the coverage warning: %+v", first.Warnings, first.Issues)
+	}
+	for i := range 3 {
+		if got := model.NewGraph(append([]*model.Entry(nil), entries...)).Health(); got.Warnings != first.Warnings || len(got.Issues) != len(first.Issues) {
+			t.Errorf("rebuild %d: %d warning(s), want %d: %+v", i+1, got.Warnings, first.Warnings, got.Issues)
+		}
+	}
+}
