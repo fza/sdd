@@ -367,7 +367,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "approves", "reason", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "approves", "reason", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings", "recheckStored", "relevanceStored"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -567,10 +567,12 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 			return err
 		}
 	}
-	if err := w.storeCaptureRecheck(ctx, target.Project, entryID); err != nil {
+	err = commitStep(ctx, "recheckStored", func() error { return w.storeCaptureRecheck(ctx, target.Project, entryID) })
+	if err != nil {
 		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
 	}
-	if err := w.storeCaptureRelevance(ctx, target.Project, entryID); err != nil {
+	err = commitStep(ctx, "relevanceStored", func() error { return w.storeCaptureRelevance(ctx, target.Project, entryID) })
+	if err != nil {
 		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
 	}
 	if err := w.releasePublished(ctx.Instance, draft.Attachments); err != nil {
@@ -578,6 +580,19 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	}
 	w.session.LogRead("newEntry", []string{entryID}, nil)
 	return w.session.SinkErr()
+}
+
+// commitStep runs a step behind the publish and commits marker once it
+// succeeds, so a retry after a later failure skips it.
+func commitStep(ctx *engine.Context, marker string, step func() error) error {
+	if done, _ := ctx.Committed[marker].(bool); done {
+		return nil
+	}
+	err := step()
+	if err != nil {
+		return err
+	}
+	return ctx.Commit(map[string]any{marker: true})
 }
 
 // publishDraft publishes the draft and commits its entryId, so a retry after
