@@ -137,7 +137,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			}
 			budget := servedViewBudget
 			budget.BodyBytes = ctx.Cap.MaxBytes
-			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: budget})
+			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: budget, DataOnly: true})
 			if err != nil {
 				return nil, err
 			}
@@ -218,7 +218,8 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			}
 			result, err := showFromSnapshot(view.runtime, view.snapshot, ShowRequest{
 				IDs: ids, UpDepth: workflowIntArg(args, "up", query.DefaultUpDepth), DownDepth: workflowIntArg(args, "down", query.DefaultDownDepth),
-				Budget: serveChainBudget,
+				Budget:   serveChainBudget,
+				DataOnly: true,
 			})
 			if err != nil {
 				return nil, err

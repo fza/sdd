@@ -1158,12 +1158,7 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	if err != nil {
 		return nil, SearchResult{}, err
 	}
-	result, err := s.app.Search(ctx, s.requestIdentity(req), project, sdd.SearchRequest{
-		SyncMode: s.searchSyncMode, IncludesRevision: args.IncludesRevision,
-		Terms: args.Terms, Phrase: args.Query, Type: args.Type, Layer: args.Layer, Kind: args.Kind,
-		IncludeSuperseded: args.IncludeSuperseded, Limit: limit, MaxCitations: maxCitations,
-		Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
-	})
+	result, err := s.app.Search(ctx, s.requestIdentity(req), project, args.request(s.searchSyncMode, limit, maxCitations, branch, branchFromSession))
 	if err != nil {
 		return nil, SearchResult{}, toolError("searching: %v", err)
 	}
@@ -1176,6 +1171,32 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	}
 	return nil, SearchResult{Results: pagedText(ss, "search", out), Coverage: result.Coverage, Notice: result.Notice}, nil
 
+}
+
+// request is the search tool's read. The read tools render what they serve
+// with the session's repeats, so their requests are DataOnly.
+func (a SearchArgs) request(mode sdd.SearchSyncMode, limit, maxCitations int, branch string, branchFromSession bool) sdd.SearchRequest {
+	return sdd.SearchRequest{
+		SyncMode: mode, IncludesRevision: a.IncludesRevision,
+		Terms: a.Terms, Phrase: a.Query, Type: a.Type, Layer: a.Layer, Kind: a.Kind,
+		IncludeSuperseded: a.IncludeSuperseded, Limit: limit, MaxCitations: maxCitations,
+		Branch: branch, BranchFromSession: branchFromSession, Repos: a.Repos, AllRepos: a.AllRepos,
+		DataOnly: true,
+	}
+}
+
+func (a ViewArgs) request(branch string, branchFromSession bool) sdd.ViewRequest {
+	return sdd.ViewRequest{
+		Layout: a.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: a.Repos, AllRepos: a.AllRepos,
+		DataOnly: true,
+	}
+}
+
+func (a ShowArgs) request(up, down int, branch string, branchFromSession bool) sdd.ShowRequest {
+	return sdd.ShowRequest{
+		IDs: a.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession,
+		DataOnly: true,
+	}
 }
 
 func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewArgs) (*mcp.CallToolResult, ViewResult, error) {
@@ -1195,9 +1216,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	if err != nil {
 		return nil, ViewResult{}, err
 	}
-	result, err := s.app.View(ctx, s.requestIdentity(req), project, sdd.ViewRequest{
-		Layout: args.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
-	})
+	result, err := s.app.View(ctx, s.requestIdentity(req), project, args.request(branch, branchFromSession))
 	if err != nil {
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
@@ -1373,9 +1392,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
-	result, err := s.app.Show(ctx, s.requestIdentity(req), project, sdd.ShowRequest{
-		IDs: args.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession,
-	})
+	result, err := s.app.Show(ctx, s.requestIdentity(req), project, args.request(up, down, branch, branchFromSession))
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
