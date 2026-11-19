@@ -544,7 +544,7 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 				t.Fatal(err)
 			}
 			proofs := model.ReadAnchors(session.WF.ServeEntry(late.ID, late.Content, nil))
-			err = session.WF.RecordServed(t.Context(), world.Identity)
+			err = session.WF.RecordAnchors(t.Context(), world.Identity)
 			if err != nil {
 				t.Fatal(err)
 			}

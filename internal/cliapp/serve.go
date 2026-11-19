@@ -662,7 +662,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		runeCap = localEmbedder.MaxRunes
 	}
 	serverCheckout := filepath.Dir(sddDir)
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -830,7 +830,7 @@ func cloneRuntimeOptions(ctx context.Context, repoID sdd.RepoID, dir string, cfg
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return sdd.ProjectRuntimeOptions{}, err
 	}

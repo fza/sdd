@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -308,6 +309,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	return ViewResult{
 		Project:           runtime.options.Project,
 		ViewSections:      sections,
+		Sections:          presenters.ViewText(sections, nil),
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
@@ -351,7 +353,11 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	show := ShowResult{Project: runtime.options.Project, Items: items}
+	text, err := presenters.ShowText(items, nil)
+	if err != nil {
+		return ShowResult{}, err
+	}
+	show := ShowResult{Project: runtime.options.Project, Items: items, Entries: text}
 	show.FullIDs, show.SummaryIDs = showResult.ServedIDs()
 	return show, nil
 }
@@ -430,6 +436,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 			break
 		}
 	}
+	search.Results = presenters.SearchText(hits, search.Notices, nil)
 	search.EntryIDs = searchResult.ServedIDs()
 	return search, nil
 }

@@ -149,7 +149,7 @@ func TestRepositoryTargetsReadTheLocalConfigOverride(t *testing.T) {
 	if err := os.WriteFile(override, []byte("repo_id: example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	targets, err := local.NewRepositoryTargets(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), override, t.TempDir(), t.TempDir())
+	targets, err := local.NewRepositoryTargetsAt(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), override, t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	if r.state == "" {
 		r.state = r.t.TempDir()
 	}
-	targets, err := local.NewRepositoryTargets(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
+	targets, err := local.NewRepositoryTargetsAt(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
 	if err != nil {
 		r.t.Fatal(err)
 	}

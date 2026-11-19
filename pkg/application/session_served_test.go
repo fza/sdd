@@ -32,7 +32,7 @@ func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := proofOf(t, w.ServeText("lane step", servedLane, nil))
-	err = w.RecordServed(t.Context(), identity)
+	err = w.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}

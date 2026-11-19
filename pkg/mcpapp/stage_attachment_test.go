@@ -196,6 +196,25 @@ func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
 	}
 }
 
+// The one-file fields programs built on the upstream packages set; removing
+// one fails this file's compilation.
+var _ = mcpserver.StageAttachmentArgs{Session: "", Name: "", Content: "", Path: "", Patches: []mcpserver.SearchReplaceArg{}}
+
+func TestStageAttachmentArgsMarshalTheOneFileShape(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	args := mcpserver.StageAttachmentArgs{Session: session, Name: "typed.md", Content: "sent as typed args\n"}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: args})
+	checkToolCall(t, "stage_attachment", res, err)
+	var staged mcpserver.StageAttachmentResult
+	decodeStructured(t, res, &staged)
+	if staged.Handle != "typed.md" {
+		t.Fatalf("typed one-file args should stage that file, got %+v", staged)
+	}
+}
+
 func TestStageAttachmentAnswersAFilesCallWithoutATopLevelHandle(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)

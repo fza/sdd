@@ -192,9 +192,9 @@ func (w *WorkflowSession) Unproved() []UnprovedPiece {
 // call that failed.
 func (w *WorkflowSession) DropProved() { w.session.DropProved() }
 
-// RecordServed logs the anchors the call issued. A finished session records
+// RecordAnchors logs the anchors the call issued. A finished session records
 // nothing: its last serve is the one that ended it.
-func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity) error {
+func (w *WorkflowSession) RecordAnchors(ctx context.Context, identity RequestIdentity) error {
 	if w.Finished() {
 		return nil
 	}

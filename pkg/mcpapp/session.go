@@ -50,7 +50,7 @@ func (ss *shellSession) repeats() *presenters.Repeats {
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
 	playbacks := ss.playbacks
 	ss.playbacks = nil
-	if err := ss.root.RecordServed(ctx, identity); err != nil {
+	if err := ss.root.RecordAnchors(ctx, identity); err != nil {
 		return err
 	}
 	return ss.root.RecordPlayback(ctx, identity, playbacks...)

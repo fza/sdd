@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
@@ -280,7 +281,21 @@ type BindBranchResult struct {
 	ResultProofNotice
 }
 
+// StageAttachmentArgs is a stage_attachment call. Name with Content, Path or
+// Patches is the one-file shape, which marshals to arguments the server takes
+// as a Files call of that one file; the tool listing advertises Files alone.
 type StageAttachmentArgs struct {
+	Session string             `json:"session,omitempty"`
+	Files   []StageFileArg     `json:"files,omitempty"`
+	Name    string             `json:"name,omitempty"`
+	Content string             `json:"content,omitempty"`
+	Path    string             `json:"path,omitempty"`
+	Patches []SearchReplaceArg `json:"patches,omitempty"`
+}
+
+// stageAttachmentInput is the stage_attachment input schema the listing
+// advertises.
+type stageAttachmentInput struct {
 	Session string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Files   []StageFileArg `json:"files" jsonschema:"files to stage, in order; a name appears at most once. Every file is checked before any is staged: one failing file refuses the call and nothing is staged"`
 }
@@ -508,7 +523,11 @@ type RegistryResult struct {
 	ResultProofNotice
 }
 
-func (s *toolSet) register(srv *mcp.Server) {
+func (s *toolSet) register(srv *mcp.Server) error {
+	stageInput, err := jsonschema.For[stageAttachmentInput](&jsonschema.ForOptions{})
+	if err != nil {
+		return fmt.Errorf("stage_attachment input schema: %w", err)
+	}
 	srv.AddReceivingMiddleware(stageOneFile)
 	addTool(srv, s, &mcp.Tool{
 		Name: "start_session",
@@ -587,6 +606,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"not re-staged whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
 			"Never a graph write: the write gate materializes " +
 			"staged files with the entry.",
+		InputSchema: stageInput,
 	}, s.stageAttachment)
 
 	addTool(srv, s, &mcp.Tool{
@@ -640,6 +660,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
 			"name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
 	}, s.syncRepos)
+	return nil
 }
 
 // attachedSession returns the named session locked and replayed from its
@@ -1606,7 +1627,7 @@ func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest,
 		if failed {
 			ss.root.DropProved()
 		}
-		err := ss.root.RecordServed(ctx, identity)
+		err := ss.root.RecordAnchors(ctx, identity)
 		slot.unproved = ss.root.Unproved()
 		return notice, err
 	}

@@ -432,21 +432,9 @@ func RunStagedBlobStoreTests(t *testing.T, factory func(*testing.T) StagedBlobSt
 	if err != nil {
 		t.Fatalf("Stage other session: %v", err)
 	}
-	if err := fixture.Store.DeleteBlob(t.Context(), fixture.Session, replacement.ID); err != nil {
-		t.Fatalf("DeleteBlob: %v", err)
+	if deleter, ok := fixture.Store.(sdd.StagedBlobDeleter); ok {
+		runDeleteBlobTests(t, fixture, deleter, replacement.ID, blob.ID)
 	}
-	if reader, err := fixture.Store.Open(t.Context(), fixture.Session, replacement.ID); err == nil {
-		_ = reader.Close()
-		t.Fatal("Open after DeleteBlob succeeded")
-	}
-	if err := fixture.Store.DeleteBlob(t.Context(), fixture.Session, replacement.ID); err != nil {
-		t.Fatalf("second DeleteBlob: %v", err)
-	}
-	reader, err = fixture.Store.Open(t.Context(), fixture.Session, blob.ID)
-	if err != nil {
-		t.Fatalf("DeleteBlob removed another blob of the session: %v", err)
-	}
-	_ = reader.Close()
 	if err := fixture.Store.DeleteStaged(t.Context(), fixture.Session); err != nil {
 		t.Fatalf("DeleteStaged: %v", err)
 	}
@@ -466,6 +454,27 @@ func RunStagedBlobStoreTests(t *testing.T, factory func(*testing.T) StagedBlobSt
 	if readErr != nil || closeErr != nil || !bytes.Equal(got, fixture.Content) {
 		t.Fatalf("other session content = %q, read %v, close %v", got, readErr, closeErr)
 	}
+}
+
+// runDeleteBlobTests deletes the blob id names twice and checks that kept, a
+// blob of the same session, stays.
+func runDeleteBlobTests(t *testing.T, fixture StagedBlobStoreFixture, deleter sdd.StagedBlobDeleter, id, kept string) {
+	t.Helper()
+	if err := deleter.DeleteBlob(t.Context(), fixture.Session, id); err != nil {
+		t.Fatalf("DeleteBlob: %v", err)
+	}
+	if reader, err := fixture.Store.Open(t.Context(), fixture.Session, id); err == nil {
+		_ = reader.Close()
+		t.Fatal("Open after DeleteBlob succeeded")
+	}
+	if err := deleter.DeleteBlob(t.Context(), fixture.Session, id); err != nil {
+		t.Fatalf("second DeleteBlob: %v", err)
+	}
+	reader, err := fixture.Store.Open(t.Context(), fixture.Session, kept)
+	if err != nil {
+		t.Fatalf("DeleteBlob removed another blob of the session: %v", err)
+	}
+	_ = reader.Close()
 }
 
 type EmbedderFixture struct {
