@@ -36,10 +36,6 @@ const (
 	// signed in to Codex alone needs no Claude login or API key.
 	LLMProviderCodex = "codex"
 
-	// DefaultLLMEffort is the reasoning effort the claude-cli and codex
-	// providers run with when llm.effort is unset.
-	DefaultLLMEffort = "medium"
-
 	// DefaultLLMModel is the claude model used when none is configured.
 	// Sonnet-class, matching the model the pre-flight calibration eval
 	// measures — pre-flight is the highest-stakes LLM call, and a blocking
@@ -551,9 +547,9 @@ type LLMConfig struct {
 	Provider string `yaml:"provider,omitempty"`
 	// Model is the provider-specific model identifier.
 	Model string `yaml:"model,omitempty"`
-	// Effort is the reasoning effort of the claude-cli (--effort) and codex
-	// (model_reasoning_effort) providers, passed as written; empty means
-	// DefaultLLMEffort. The API providers take theirs through Params.
+	// Effort is the reasoning effort every provider passes as written, to the
+	// models whose API takes one; empty means DefaultLLMEffortFor the
+	// provider.
 	Effort string `yaml:"effort,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
@@ -728,13 +724,26 @@ func (c LLMConfig) ResolvedModel() string {
 	return c.Model
 }
 
-// ResolvedEffort is the effort the claude-cli and codex providers pass:
-// Effort, else DefaultLLMEffort.
+// ResolvedEffort is the reasoning effort a call runs at: Effort, else
+// DefaultLLMEffortFor the provider.
 func (c LLMConfig) ResolvedEffort() string {
 	if c.Effort == "" {
-		return DefaultLLMEffort
+		return DefaultLLMEffortFor(c.ResolvedProvider())
 	}
 	return c.Effort
+}
+
+// DefaultLLMEffortFor is the reasoning effort provider runs at when
+// llm.effort is unset; an empty provider means DefaultLLMProvider, and an
+// unknown one has none.
+func DefaultLLMEffortFor(provider string) string {
+	switch provider {
+	case "", DefaultLLMProvider, LLMProviderCodex, "anthropic":
+		return "medium"
+	case "openai", "ollama":
+		return "low"
+	}
+	return ""
 }
 
 // ResolvedMaxTokens is the output cap a call carries: DefaultLLMMaxTokens when

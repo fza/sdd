@@ -146,6 +146,8 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 		cfgOpts = append(cfgOpts, upstream.SetTimeout(d))
 	}
 
+	params := requestParams(cfg)
+
 	newClient := func(formatKey string, formatValue any) (upstream.LLM, error) {
 		client, err := upstream.NewLLM(cfgOpts...)
 		if err != nil {
@@ -164,8 +166,8 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 
 		// Behaviour-affecting params go to the provider verbatim; gollm forwards
 		// unknown option keys straight into the request body.
-		for _, k := range sortedKeys(cfg.Params) {
-			client.SetOption(k, cfg.Params[k])
+		for _, k := range sortedKeys(params) {
+			client.SetOption(k, params[k])
 		}
 		if formatKey != "" {
 			client.SetOption(formatKey, formatValue)
@@ -181,7 +183,7 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 	runner := &Runner{
 		provider:     cfg.Provider,
 		model:        cfg.Model,
-		variant:      canonicalVariant(cfg.Params),
+		variant:      canonicalVariant(params),
 		host:         endpointHost(cfg.Provider, cfg.Model, cfgOpts),
 		useCache:     useCache,
 		ollama:       cfg.Provider == "ollama",

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -42,7 +43,6 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowWIP,
 		w.registerWorkflowGrounding,
 		w.registerWorkflowTiming,
-		w.registerUserWords,
 		w.registerAuthorship,
 		w.registerBatch,
 		w.registerWorkflowDeep,
@@ -481,6 +481,11 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft.Intent, _ = workflowStoreString(store, "intent")
 	if w.Autonomous() {
 		draft.Reason, _ = workflowStoreString(store, fieldReason)
+	} else {
+		words, _ := workflowStoreString(store, fieldReasonWords)
+		proposed, _ := workflowStoreString(store, fieldReason)
+		draft.Reason = cmp.Or(strings.TrimSpace(words), strings.TrimSpace(proposed))
+		draft.confirmed = true
 	}
 	skip, _ := store.Get("skipGrounding")
 	draft.SkipGrounding, _ = skip.(bool)

@@ -5,15 +5,11 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/test"
 )
 
-// A decision captured with a user present carries the user's own words for
-// its reason, and a directive's for its intent: assemble holds until they
-// are reported and tells the agent to ask the user for them.
-
-const userReasonAsk = "with two options: your proposal, shown in full"
+// A decision captured with a user present may carry the user's own words for
+// its reason, and a directive's for its intent; none are owed.
 
 func decisionDraft(kind string) map[string]any {
 	draft := map[string]any{
@@ -29,33 +25,12 @@ func decisionDraft(kind string) map[string]any {
 	return draft
 }
 
-func requireUserWordsHeld(t *testing.T, serve *sdd.WorkflowServe, field string) {
-	t.Helper()
-	proctest.RequireStep(t, serve, "assemble")
-	if !hasDiagnostic(serve, userReasonAsk) || !hasDiagnostic(serve, field) {
-		t.Fatalf("assemble should hold on the missing %s and tell the agent to ask the user, got diagnostics %v", field, serve.Diagnostics)
-	}
-}
-
-func TestCapture_DirectiveWithoutTheUsersReasonIsHeld(t *testing.T) {
+func TestCapture_DirectiveWithoutTheUsersWordsAdvances(t *testing.T) {
 	world := proctest.NewWorld(t)
-	session := world.Open(t, "reason-directive-held")
+	session := world.Open(t, "reason-directive-no-words")
 	serve := session.Start(t, "capture", nil)
 	serve = session.Report(t, serve.Instance, decisionDraft("directive"))
-	requireUserWordsHeld(t, serve, "reasonWords")
-}
-
-func TestCapture_DirectiveWithoutTheUsersIntentIsHeld(t *testing.T) {
-	world := proctest.NewWorld(t)
-	session := world.Open(t, "reason-intent-held")
-	serve := session.Start(t, "capture", nil)
-	draft := decisionDraft("directive")
-	draft["reasonWords"] = "empty input hid upstream bugs twice"
-	serve = session.Report(t, serve.Instance, draft)
-	requireUserWordsHeld(t, serve, "intentWords")
-	if hasDiagnostic(serve, "reasonWords") {
-		t.Errorf("reported reasonWords should no longer be owed, got %v", serve.Diagnostics)
-	}
+	proctest.RequireStep(t, serve, "playback")
 }
 
 func TestCapture_DirectiveWithTheUsersWordsAdvances(t *testing.T) {
@@ -71,18 +46,6 @@ func TestCapture_DirectiveWithTheUsersWordsAdvances(t *testing.T) {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("playback should show the user's quoted words %q", want)
 		}
-	}
-}
-
-func TestCapture_PlanNeedsTheUsersReasonOnly(t *testing.T) {
-	world := proctest.NewWorld(t)
-	session := world.Open(t, "reason-plan")
-	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, planDraft())
-	requireUserWordsHeld(t, serve, "reasonWords")
-	serve = session.Report(t, serve.Instance, map[string]any{"reasonWords": "the release needs it"})
-	if serve.Step == "assemble" {
-		t.Fatalf("a plan with the user's reason should advance without intent words, held with %v", serve.Diagnostics)
 	}
 }
 
@@ -106,50 +69,29 @@ func TestCapture_AutonomousDecisionNeedsNoUserWords(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
-func TestCapture_ReasonRepeatingTheIntentIsHeld(t *testing.T) {
-	world := proctest.NewWorld(t)
-	session := world.Open(t, "reason-repeats-intent")
-	serve := session.Start(t, "capture", nil)
-	draft := decisionDraft("directive")
-	draft["reasonWords"] = "We decided the parser module should reject empty input with a clear error instead of returning an empty result."
-	draft["intentWords"] = "the parser module should reject empty input with a clear error"
-	serve = session.Report(t, serve.Instance, draft)
-	proctest.RequireStep(t, serve, "assemble")
-	if !hasDiagnostic(serve, "reasonWords repeats intentWords") || !hasDiagnostic(serve, "infer why the user decided it") {
-		t.Fatalf("a reason restating the decision should hold assemble and send the agent to propose why, got %v", serve.Diagnostics)
-	}
-	serve = session.Report(t, serve.Instance, map[string]any{"reasonWords": "empty input hid upstream bugs twice"})
-	proctest.RequireStep(t, serve, "playback")
-}
-
 func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "reason-why-not-what")
 	serve := session.Start(t, "capture", nil)
-	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The dialogue holds none of these words, or the user's give no why? Infer them from the dialogue and the graph"
+	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`."
 	if !strings.Contains(test.Untagged(serve.Instructions), want) {
 		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
 	}
 }
 
 // A directive's posture is an SDD mechanic the user does not know: the agent
-// asks in the user's terms and maps the answer itself, wherever it asks.
-func TestCapture_IntentIsAskedInTheUsersTerms(t *testing.T) {
+// speaks of it in the user's terms, wherever it shows it.
+func TestCapture_IntentIsShownInTheUsersTerms(t *testing.T) {
 	const noPosture = "never name the posture"
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "intent-users-terms")
 	serve := session.Start(t, "capture", nil)
 	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
-		t.Errorf("assemble should tell the agent to ask for the intent without naming the posture:\n%s", serve.Instructions)
+		t.Errorf("assemble should tell the agent to speak of the intent without naming the posture:\n%s", serve.Instructions)
 	}
 	draft := decisionDraft("directive")
 	draft["reasonWords"] = "empty input hid upstream bugs twice"
 	serve = session.Report(t, serve.Instance, draft)
-	requireUserWordsHeld(t, serve, "intentWords")
-	if !hasDiagnostic(serve, noPosture) {
-		t.Errorf("the missing intent words should send the agent to ask without naming the posture, got %v", serve.Diagnostics)
-	}
-	serve = session.Report(t, serve.Instance, map[string]any{"intentWords": "build it now"})
 	proctest.RequireStep(t, serve, "playback")
 	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
 		t.Errorf("playback should tell the agent to show the intent without naming the posture:\n%s", serve.Instructions)

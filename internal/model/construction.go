@@ -505,11 +505,11 @@ func (c *EntryConstruction) Validate(g *Graph) []Finding {
 	return findings
 }
 
-// validateAuthorship checks the authorship mark and approvals: a reason
-// belongs only to a decision an agent decided or a person approved, which must
-// state one where its kind owes it (UserWordsOwed), the approved one naming
-// who gave it and who set a directive's intent, and only a person's settled
-// directive approves.
+// validateAuthorship checks the authorship mark and approvals: a reason, which
+// no kind owes, belongs only to a decision; a person's decision names who gave
+// it, the person or, once approved, the agent that drafted it; an approved
+// directive names who set its intent; and only a person's settled directive
+// approves.
 func (c *EntryConstruction) validateAuthorship() []Finding {
 	var findings []Finding
 	add := func(field, value, message string) {
@@ -522,30 +522,28 @@ func (c *EntryConstruction) validateAuthorship() []Finding {
 	approved := c.ApprovedBy != ""
 	decision := c.Type == TypeDecision
 	directive := c.isKind(TypeDecision, KindDirective)
-	owed, _ := UserWordsOwed(c.Kind)
 	if c.DecidedBy != "" && !agent {
 		add("decided-by", string(c.DecidedBy), fmt.Sprintf("decided-by: only %q is defined; omit it on a person's entry", DecidedByAgent))
 	}
 	if approved && agent {
 		add("approved-by", c.ApprovedBy, "an approved entry is the person's: it carries no decided-by")
 	}
-	switch {
-	case c.Reason != "" && (!agent && !approved || !decision):
-		add("reason", "", "reason is only valid on a decision an agent decided or a person approved")
-	case agent && owed && strings.TrimSpace(c.Reason) == "":
-		owe("reason", fmt.Sprintf("a %s an agent decided states the agent's own reason", c.Kind))
-	case approved && owed && strings.TrimSpace(c.Reason) == "":
-		owe("reason", fmt.Sprintf("an approved %s states its reason", c.Kind))
+	if c.Reason != "" && !decision {
+		add("reason", "", "reason is only valid on a decision")
 	}
 	switch {
-	case c.ReasonBy != "" && (!approved || c.Reason == ""):
-		add("reason-by", c.ReasonBy, "reason-by is only valid on the reason of an approved decision")
-	case approved && c.Reason != "" && c.ReasonBy == "":
-		owe("reason-by", fmt.Sprintf("an approved decision names who gave its reason in reason-by: the person, or %q", DraftedByAgent))
+	case c.ReasonBy != "" && (agent || c.Reason == ""):
+		add("reason-by", c.ReasonBy, "reason-by is only valid on the reason of a person's decision")
+	case c.ReasonBy == DraftedByAgent && !approved:
+		add("reason-by", c.ReasonBy, fmt.Sprintf("reason-by: %q is only valid on an approved decision", DraftedByAgent))
+	case !agent && decision && c.Reason != "" && c.ReasonBy == "":
+		owe("reason-by", fmt.Sprintf("a person's decision names who gave its reason in reason-by: the person, or %q on an approved one", DraftedByAgent))
 	}
 	switch {
-	case c.IntentBy != "" && (!approved || !directive):
-		add("intent-by", c.IntentBy, "intent-by is only valid on an approved directive")
+	case c.IntentBy != "" && (agent || !directive):
+		add("intent-by", c.IntentBy, "intent-by is only valid on a person's directive")
+	case c.IntentBy == DraftedByAgent && !approved:
+		add("intent-by", c.IntentBy, fmt.Sprintf("intent-by: %q is only valid on an approved directive", DraftedByAgent))
 	case approved && directive && c.IntentBy == "":
 		owe("intent-by", fmt.Sprintf("an approved directive names who set its intent in intent-by: the person, or %q", DraftedByAgent))
 	}

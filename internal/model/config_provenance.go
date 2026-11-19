@@ -39,7 +39,6 @@ var configDefaults = map[string]string{
 	"graph_dir":              DefaultGraphDir,
 	"llm.provider":           DefaultLLMProvider,
 	"llm.model":              DefaultLLMModel,
-	"llm.effort":             DefaultLLMEffort,
 	"llm.max_tokens":         strconv.Itoa(DefaultLLMMaxTokens),
 	"llm.concurrency":        strconv.Itoa(DefaultLLMConcurrency),
 	"llm.extract_timeout":    DefaultLLMExtractTimeout.String(),
@@ -142,8 +141,12 @@ func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, lo
 			}
 			if !set {
 				def, ok := configDefaults[leaf.path]
-				if leaf.path == "llm.timeout" {
+				switch leaf.path {
+				case "llm.timeout":
 					def, ok = DefaultLLMTimeoutFor(provider), true
+				case "llm.effort":
+					def = DefaultLLMEffortFor(provider)
+					ok = def != ""
 				}
 				if !ok || !providerDefault(leaf.path, provider) {
 					continue
@@ -361,14 +364,12 @@ func concatLayers(layers []struct {
 }
 
 // providerDefault reports whether the baked default of path applies under
-// provider: codex runs its own default model, only the CLI providers take
-// llm.effort, and only claude-cli llm.claude_cli.credentials.
+// provider: codex runs its own default model, and only claude-cli takes
+// llm.claude_cli.credentials.
 func providerDefault(path, provider string) bool {
 	switch path {
 	case "llm.model":
 		return provider != LLMProviderCodex
-	case "llm.effort":
-		return provider == DefaultLLMProvider || provider == LLMProviderCodex
 	case "llm.claude_cli.credentials":
 		return provider == DefaultLLMProvider
 	}

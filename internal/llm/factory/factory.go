@@ -21,7 +21,7 @@ import (
 
 // New builds a composed llm.Runner from config. Provider and model fall back
 // to model.DefaultLLMProvider / model.DefaultLLMModel when empty (codex keeps
-// an empty model for its own default), and the CLI providers take
+// an empty model for its own default), and every provider takes
 // cfg.ResolvedEffort. Remote providers (anthropic, openai) get wrapped with
 // llm.RateLimited: an
 // explicit cfg.RateLimitRPS takes precedence, otherwise a conservative

@@ -86,6 +86,9 @@ func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 	world.SetDialogue("guided")
 	session.Refresh(t)
 	serve = session.Answer(t, serve.Instance, "reviseOrOverride", "override", nil, "override it, the finding does not apply")
+	// The agent confirmed the playback, so the person confirms it before the write.
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "verifySummary")
 }
 

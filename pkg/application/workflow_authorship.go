@@ -20,6 +20,8 @@ type agentAuthor struct {
 	client string
 }
 
+const reasonUnstoredLine = "No participant is configured, so the reason is not stored on the entry: set one with `sdd config set --local participant <name>`."
+
 const agentParticipantsRule = "participants are not reported in auto mode: sdd writes the actor of your MCP client"
 
 // approvalAuthor marks a draft the person approves: given once they did.
@@ -147,12 +149,10 @@ func (w *WorkflowSession) startingClient(instance string) (string, error) {
 	return w.attachedClient(w.ctx)
 }
 
-// authorshipMissing lists what an autonomous draft's authorship fields owe:
-// the agent's own reason where the kind owes one (model.UserWordsOwed), no
-// reason on a signal, no participants. An assisted draft owes the same reason,
-// which the person's approval adopts, and may name participants, as the entry
-// is the person's. A guided draft owes none; its reason is the user's, in
-// reasonWords, and sdd ignores the reason field there.
+// authorshipMissing lists what an autonomous draft's authorship fields break:
+// a reason on a signal, participants. An assisted draft may name participants,
+// as the entry is the person's. A guided draft breaks none: the person's
+// confirm makes its reason theirs.
 func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	if !w.Autonomous() {
 		return nil
@@ -160,12 +160,8 @@ func (w *WorkflowSession) authorshipMissing(store *engine.Store) []string {
 	kind, _ := workflowStoreString(store, "entryKind")
 	reason, _ := workflowStoreString(store, fieldReason)
 	decision := kind != "" && model.IsValidKindForType(model.TypeDecision, model.Kind(kind))
-	owed, _ := model.UserWordsOwed(model.Kind(kind))
 	var missing []string
-	switch {
-	case owed && strings.TrimSpace(reason) == "":
-		missing = append(missing, fmt.Sprintf("a %s in %s mode states your own reason for it in reason, inferred from the dialogue and the graph", kind, w.session.DialogueMode))
-	case !decision && reason != "":
+	if !decision && reason != "" {
 		missing = append(missing, "a signal carries no reason")
 	}
 	if !w.assisted() && len(workflowStoreStrings(store, "participants")) > 0 {
@@ -213,7 +209,7 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 	err = registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name:  "authorshipHeld",
-			Doc:   "In auto and assisted mode a decision whose kind owes a reason (model.UserWordsOwed) states the agent's own, a signal none, and an auto draft reports no participants; a guided draft owes nothing here.",
+			Doc:   "In auto and assisted mode a signal carries no reason, and an auto draft reports no participants; a guided draft owes nothing here.",
 			Reads: []string{"entryKind", fieldReason, "participants"},
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {
@@ -222,6 +218,46 @@ func (w *WorkflowSession) registerAuthorship(registry *engine.Registry) error {
 		FailMessage: "the draft's authorship fields do not fit the dialogue mode",
 		FailDetail: func(ctx *engine.Context) string {
 			return strings.Join(w.authorshipMissing(ctx.Store), "; ")
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{
+			Name:  "confirmFitsDialogue",
+			Doc:   "The agent answers the person's choices, or the playback confirmation is not the agent's: a guided write is the person's and rests on their own confirm.",
+			Reads: []string{"playbackConfirmation"},
+		},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			return w.Autonomous() || !engine.ConfirmedByAgent(ctx.Store), nil
+		},
+		FailMessage: "the agent confirmed this draft, and the person has not",
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterQuery(engine.Query{
+		Doc: engine.FuncDoc{
+			Name:  "reasonUnstored",
+			Doc:   "In a guided capture of a decision with a reason, the line naming that no participant is configured, so the reason is not stored (markConfirmed); empty otherwise.",
+			Reads: []string{"entryKind", fieldReason, fieldReasonWords},
+		},
+		ServeSafe: true,
+		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: len(reasonUnstoredLine)}},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			if w.Autonomous() || strings.TrimSpace(w.draftFromStore(ctx.Store).Reason) == "" {
+				return "", nil
+			}
+			kind, _ := workflowStoreString(ctx.Store, "entryKind")
+			if !model.IsValidKindForType(model.TypeDecision, model.Kind(kind)) {
+				return "", nil
+			}
+			info, err := w.readInfo()
+			if err != nil || strings.TrimSpace(info.Participant) != "" {
+				return "", err
+			}
+			return reasonUnstoredLine, nil
 		},
 	})
 	if err != nil {

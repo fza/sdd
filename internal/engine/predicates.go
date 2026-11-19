@@ -42,6 +42,9 @@ type playbackConfirmation struct {
 	// Approval marks a person's confirmation at an assisted session's
 	// approval gate.
 	Approval bool `json:"approval,omitempty"`
+	// Agent marks a confirmation the agent gave in a session where it
+	// answers the person's choices.
+	Agent bool `json:"agent,omitempty"`
 }
 
 // presenceFields maps each presence predicate to the store field it reads.
@@ -489,6 +492,7 @@ func registerBuiltinCommands(r *Registry) {
 				Snapshot: ctx.Store.StateSnapshot(),
 				Step:     ctx.Step,
 				Approval: ctx.approval,
+				Agent:    ctx.agentAnswers && !ctx.approval,
 			})
 		},
 	})
@@ -1041,10 +1045,11 @@ func asConfirmation(v any) (playbackConfirmation, bool) {
 		snap, _ := c["snapshot"].(string)
 		step, _ := c["step"].(string)
 		approval, _ := c["approval"].(bool)
+		agent, _ := c["agent"].(bool)
 		if snap == "" {
 			return playbackConfirmation{}, false
 		}
-		return playbackConfirmation{Snapshot: snap, Step: step, Approval: approval}, true
+		return playbackConfirmation{Snapshot: snap, Step: step, Approval: approval, Agent: agent}, true
 	default:
 		return playbackConfirmation{}, false
 	}

@@ -139,6 +139,9 @@ func TestUnattended_AParkedCaptureResumesForAPerson(t *testing.T) {
 	}
 	world.LLM.PreflightFindings = nil
 	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "override it, the finding does not apply")
+	// The agent confirmed the playback, so the person confirms it before the write.
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "verifySummary")
 	sessions, err = world.App.ListWorkflowSessions(t.Context(), world.Identity, "proctest")
 	if err != nil {

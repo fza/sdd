@@ -56,6 +56,14 @@ func Approved(store *Store) bool {
 	return ok && conf.Approval && conf.Snapshot == store.StateSnapshot()
 }
 
+// ConfirmedByAgent reports whether store's current playback confirmation is
+// one the agent gave, answering for the person.
+func ConfirmedByAgent(store *Store) bool {
+	v, _ := store.Get(fieldPlaybackConfirmation)
+	conf, ok := asConfirmation(v)
+	return ok && conf.Agent && conf.Snapshot == store.StateSnapshot()
+}
+
 // Sealed lists the running instances that wait at their approval gate, in
 // start order: the drafts one answer of the person may settle together.
 func (s *Session) Sealed() []string {
