@@ -48,9 +48,41 @@ func (r titleOnlyRunner) Run(ctx context.Context, request pkgllm.Request) (pkgll
 	return pkgllm.Result{Text: string(data)}, err
 }
 
+const backfillOn = "titles:\n  backfill: true\n"
+
+func TestBackfillTitlesRunsOnlyWhereTheSwitchIsOn(t *testing.T) {
+	for _, trigger := range []sdd.SyncTrigger{sdd.SyncOnSessionStart, sdd.SyncOnTimer, sdd.SyncOnCall} {
+		t.Run(string(trigger), func(t *testing.T) {
+			repo, _ := syncedRepository(t, "manual")
+			path, content := untitledEntry("20261101-100000-s-tac-off")
+			repo.write(path, content)
+			repo.git("add", path)
+			repo.git("commit", "-m", "sdd: signal tactical gap")
+			head := repo.git("rev-parse", "HEAD")
+			calls := 0
+			runner := pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+				calls++
+				return pkgllm.Result{Text: `{"title": "backfilled title"}`}, nil
+			})
+
+			err := repo.targets().BackfillTitles(t.Context(), "main", trigger, runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if calls != 0 || repo.git("rev-parse", "HEAD") != head || repo.git("status", "--porcelain") != "" {
+				t.Errorf("without titles.backfill no trigger should call the model or commit, got %d calls, head %q", calls, repo.git("log", "-1", "--format=%s"))
+			}
+		})
+	}
+}
+
 func TestSyncRoundPullsUntitledEntriesAndTheBackfillTitlesThem(t *testing.T) {
 	existingPath, existing := untitledEntry("20261101-100000-s-tac-old")
-	repo, remote := syncedClone(t, map[string]string{existingPath: existing})
+	repo, remote := syncedClone(t, map[string]string{
+		".sdd/config.yaml": "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n" + backfillOn,
+		existingPath:       existing,
+	})
 	pulledPath, pulled := untitledEntry("20261101-110000-s-tac-new")
 	pushUpstream(t, remote, pulledPath, pulled, "sdd: signal tactical gap")
 
@@ -86,6 +118,7 @@ func TestSyncRoundPullsUntitledEntriesAndTheBackfillTitlesThem(t *testing.T) {
 
 func TestBackfillTitlesRunsUnderManualSync(t *testing.T) {
 	repo, _ := syncedRepository(t, "manual")
+	repo.write(".sdd/config.local.yaml", backfillOn)
 	path, content := untitledEntry("20261101-100000-s-tac-man")
 	repo.write(path, content)
 	repo.git("add", path)
@@ -125,6 +158,7 @@ func TestBackfillTitlesRunsUnderManualSync(t *testing.T) {
 
 func TestBackfillAndCaptureInOneCheckoutBothCommit(t *testing.T) {
 	repo, _ := syncedRepository(t, "manual")
+	repo.write(".sdd/config.local.yaml", backfillOn)
 	path, content := untitledEntry("20261101-100000-s-tac-cap")
 	repo.write(path, content)
 	repo.git("add", path)
@@ -176,6 +210,7 @@ func TestBackfillTitlesWaitsOutTheCooldownOnCallsOnly(t *testing.T) {
 	} {
 		t.Run(string(tc.trigger), func(t *testing.T) {
 			repo, _ := syncedRepository(t, "manual")
+			repo.write(".sdd/config.local.yaml", backfillOn)
 			repo.write(".sdd/tmp/last-titles", "")
 			path, content := untitledEntry("20261101-100000-s-tac-cdn")
 			repo.write(path, content)
@@ -198,6 +233,7 @@ func TestBackfillTitlesWaitsOutTheCooldownOnCallsOnly(t *testing.T) {
 // waits for it, so neither overwrites the other.
 func TestBackfillWaitsForTheGraphLock(t *testing.T) {
 	repo, _ := syncedRepository(t, "manual")
+	repo.write(".sdd/config.local.yaml", backfillOn)
 	path, content := untitledEntry("20261101-100000-s-tac-lck")
 	repo.write(path, content)
 	repo.git("add", path)

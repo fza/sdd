@@ -118,10 +118,11 @@ func (a *GitWorktreeAcquirer) DemandGraph(ctx context.Context, branch string, se
 	return demand, nil
 }
 
-// BackfillTitles titles the untitled entries in the checkout of branch,
-// whatever its sync mode. A backfill started by a
-// call waits out model.TitleBackfillCooldown; one from a session start or a
-// timer always runs. Under automatic sync the next round pushes its commit.
+// BackfillTitles titles the untitled entries in the checkout of branch where
+// its config switches titles.backfill on, whatever its sync mode. A backfill
+// started by a call waits out model.TitleBackfillCooldown; one from a session
+// start or a timer always runs. Under automatic sync the next round pushes its
+// commit.
 func (a *GitWorktreeAcquirer) BackfillTitles(ctx context.Context, branch string, trigger app.SyncTrigger, runner llm.Runner) error {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
 	if err != nil || cfg == nil {
@@ -145,7 +146,7 @@ func (a *GitWorktreeAcquirer) BackfillTitles(ctx context.Context, branch string,
 	}
 	log := slogutils.FromContext(ctx)
 	ctx = handlers.WithSyncReport(ctx, func(block model.SyncBlocked) { log.Info(block.Banner()) })
-	err = handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{SDDDir: sddDir, Cooldown: cooldown})
+	err = handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{Enabled: cfg.Titles.Backfills(), SDDDir: sddDir, Cooldown: cooldown})
 	if err != nil {
 		return fmt.Errorf("titling the entries of %s: %w", branch, err)
 	}

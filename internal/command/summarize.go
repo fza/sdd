@@ -52,7 +52,10 @@ type CommitStrandedTitlesCmd struct {
 // BackfillTitlesCmd captures intent to title the graph's untitled entries in
 // the background and record a failure for the sync notice.
 type BackfillTitlesCmd struct {
-	SDDDir string
+	// Enabled is the titles.backfill switch. Off, nothing is titled, and a
+	// recorded failure is dropped, since nothing retries it.
+	Enabled bool
+	SDDDir  string
 	// Cooldown skips the backfill when the last one is more recent; zero
 	// always runs.
 	Cooldown time.Duration

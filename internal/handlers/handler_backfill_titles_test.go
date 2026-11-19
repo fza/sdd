@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 )
@@ -115,7 +116,7 @@ func (f *backfillFixture) handler(runner llm.Runner) *handlers.Handler {
 
 func (f *backfillFixture) backfill(t *testing.T) {
 	t.Helper()
-	err := f.handler(f.runner).BackfillTitles(context.Background(), &command.BackfillTitlesCmd{SDDDir: f.sddDir})
+	err := f.handler(f.runner).BackfillTitles(context.Background(), &command.BackfillTitlesCmd{Enabled: true, SDDDir: f.sddDir})
 	if err != nil {
 		t.Fatalf("BackfillTitles: %v", err)
 	}
@@ -128,6 +129,44 @@ func (f *backfillFixture) title(t *testing.T, id string) string {
 		t.Fatal(err)
 	}
 	return entry.Title
+}
+
+func TestBackfillTitlesDoesNothingWhileSwitchedOff(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recorded *model.SyncBlocked
+		wantKept bool
+	}{
+		{name: "nothing recorded"},
+		{name: "an earlier failed backfill is dropped, since nothing retries it", recorded: &model.SyncBlocked{Kind: model.SyncBlockedTitles}},
+		{name: "a blocked sync stays recorded", recorded: &model.SyncBlocked{Kind: model.SyncBlockedNoUpstream}, wantKept: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBackfillFixture(t)
+			id := writeUntitled(t, f.graphDir, 1)
+			f.record.Current = tc.recorded
+			skipped := false
+
+			err := f.handler(f.runner).BackfillTitles(context.Background(), &command.BackfillTitlesCmd{SDDDir: f.sddDir, OnSkipped: func() { skipped = true }})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if f.runner.callCount() != 0 || len(f.committer.Messages) != 0 || f.title(t, id) != "" {
+				t.Errorf("a backfill switched off should make no model call and no commit, got %d calls, commits %q", f.runner.callCount(), f.committer.Messages)
+			}
+			last, err := meta.ReadLastTitles(f.sddDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !last.IsZero() || skipped {
+				t.Error("a backfill switched off is no attempt: it should neither start the cooldown nor report a skipped run")
+			}
+			if (f.record.Current != nil) != tc.wantKept {
+				t.Errorf("only a failed backfill's record should be dropped, got %+v", f.record.Current)
+			}
+		})
+	}
 }
 
 func TestBackfillTitlesTitlesTheNewestTenInOneCommit(t *testing.T) {
@@ -259,7 +298,7 @@ func TestBackfillTitlesFailureReachesTheNoticeAndIsRetried(t *testing.T) {
 func TestBackfillTitlesWithoutAnLLMRecordsTheFailure(t *testing.T) {
 	f := newBackfillFixture(t)
 	writeUntitled(t, f.graphDir, 1)
-	err := f.handler(nil).BackfillTitles(context.Background(), &command.BackfillTitlesCmd{SDDDir: f.sddDir})
+	err := f.handler(nil).BackfillTitles(context.Background(), &command.BackfillTitlesCmd{Enabled: true, SDDDir: f.sddDir})
 	if err != nil {
 		t.Fatalf("a missing LLM should be recorded, not fail the trigger: %v", err)
 	}
@@ -304,7 +343,7 @@ func TestBackfillTitlesRunsOncePerCheckoutAndCooldown(t *testing.T) {
 			f := newBackfillFixture(t)
 			id := writeUntitled(t, f.graphDir, 1)
 			f.locks.TitlesHeld = tc.held
-			cmd := &command.BackfillTitlesCmd{SDDDir: f.sddDir}
+			cmd := &command.BackfillTitlesCmd{Enabled: true, SDDDir: f.sddDir}
 			if tc.cooldown {
 				f.backfill(t)
 				writeUntitled(t, f.graphDir, 2)

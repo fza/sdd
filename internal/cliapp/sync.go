@@ -145,7 +145,7 @@ func printDeferred(w io.Writer, operation string, next time.Time) {
 }
 
 // backfillTitles titles the untitled entries of graphDir after an explicit
-// sync, waiting for it. A failure is recorded and
+// sync where titles.backfill is on, waiting for it. A failure is recorded and
 // printed as the sync banner, as a blocked sync is, and leaves the sync
 // itself successful.
 func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) error {
@@ -157,29 +157,30 @@ func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) erro
 	if err != nil {
 		return err
 	}
-	// A runner that cannot be built leaves none: the backfill records that no
-	// LLM is configured, as the background backfill does.
-	runner, err := newRunner(cmd, "")
-	if err != nil {
-		slogutils.FromContext(ctx).Warn("title backfill: building the LLM runner", "err", err)
-		runner = nil
+	backfill := &command.BackfillTitlesCmd{Enabled: cfg != nil && cfg.Titles.Backfills(), SDDDir: sddDir}
+	opts := handlers.Options{Stderr: cmd.ErrWriter, SDDDir: sddDir}
+	if backfill.Enabled {
+		// A runner that cannot be built leaves none: the backfill records that
+		// no LLM is configured, as the background backfill does.
+		runner, err := newRunner(cmd, "")
+		if err != nil {
+			slogutils.FromContext(ctx).Warn("title backfill: building the LLM runner", "err", err)
+			runner = nil
+		}
+		opts.Reader = finders.New(finders.Options{Config: cfg})
+		opts.LLMRunner = runner
+		opts.Committer = graphGit(graphDir)
+		opts.Language = configLanguage(cfg)
+		opts, err = withTitleSearch(cmd, opts)
+		if err != nil {
+			return err
+		}
 	}
-	opts, err := syncstate.TitlesOptions(ctx, graphDir, handlers.Options{
-		Stderr:    cmd.ErrWriter,
-		SDDDir:    sddDir,
-		Reader:    finders.New(finders.Options{Config: cfg}),
-		LLMRunner: runner,
-		Committer: graphGit(graphDir),
-		Language:  configLanguage(cfg),
-	})
+	opts, err = syncstate.TitlesOptions(ctx, graphDir, opts)
 	if err != nil {
 		return err
 	}
-	opts, err = withTitleSearch(cmd, opts)
-	if err != nil {
-		return err
-	}
-	return handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{SDDDir: sddDir})
+	return handlers.New(opts).BackfillTitles(ctx, backfill)
 }
 
 // graphSyncOptions adds the git surfaces and sync state of graphDir's

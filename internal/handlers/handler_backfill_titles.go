@@ -30,6 +30,9 @@ type TitlesLock interface {
 // record for the sync notice, never failing the trigger; a run that succeeds
 // clears it.
 func (h *Handler) BackfillTitles(ctx context.Context, cmd *command.BackfillTitlesCmd) error {
+	if !cmd.Enabled {
+		return h.clearRecord(model.SyncBlocked.TitlesFailed)
+	}
 	skip := func() {
 		if cmd.OnSkipped != nil {
 			cmd.OnSkipped()
