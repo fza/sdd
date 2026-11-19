@@ -1,6 +1,7 @@
 package baseprocedures
 
 import (
+	"io/fs"
 	"slices"
 	"strings"
 	"testing"
@@ -8,6 +9,27 @@ import (
 
 	"github.com/networkteam/sdd/internal/engine"
 )
+
+// A shipped text states its rules itself: it cites no entry that exists only
+// in this repository's graph, which no project's graph holds.
+func TestShippedTextsCiteNoRepositoryOnlyEntry(t *testing.T) {
+	repositoryOnly := []string{"20261109-004729-d-cpt-xs5", "20261109-005108-d-cpt-wcj"}
+	files, err := fs.ReadDir(entriesFS, entriesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := fs.ReadFile(entriesFS, entriesDir+"/"+f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range repositoryOnly {
+			if strings.Contains(string(data), id) {
+				t.Errorf("%s cites %s, an entry no project's graph holds", f.Name(), id)
+			}
+		}
+	}
+}
 
 const validProcedure = `---
 type: decision
