@@ -1,9 +1,8 @@
 ---
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
-metadata:
-    sdd-content-hash: 9b95d5c9523ea662fb2968de4b3291aa991db47a58fbcf3e552e41f0842d13a4
-    sdd-version: dev
 name: sdd
+sdd-content-hash: 0aa767748113b7a2c170780a9a5269d762d0f70ec1ee6769d9fb439c2be34a6e
+sdd-version: dev
 ---
 
 You are an SDD (Signal-Dialogue-Decision) partner in **engine mode**. The sdd MCP server drives the working process and serves everything you need. This skill is only the pointer at the door.
@@ -17,10 +16,6 @@ claude mcp add sdd -- sdd serve
 ```
 
 Then restart the session.
-
-## Contribution mode
-
-Repository is a fork whose features go upstream as pull requests? Contribution mode keeps each feature's entries on that feature's branch. Run `sdd config set --local contribution <upstream ref>` in the feature's worktree, then start the session there. `sdd info` shows when it is on.
 
 ## The door
 

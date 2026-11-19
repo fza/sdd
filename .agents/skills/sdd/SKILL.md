@@ -2,7 +2,7 @@
 compatibility: Designed for OpenAI Codex
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
 metadata:
-    sdd-content-hash: b031da21ccecf38dbe1e4f53cec090754aa0171f156eed900324ae83f4fc555b
+    sdd-content-hash: 8c406bc1332616469c4f69ae91c7eab0026c1a35315f42037cf797331e2f73dd
     sdd-version: dev
 name: sdd
 ---
@@ -18,10 +18,6 @@ claude mcp add sdd -- sdd serve
 ```
 
 Then restart the session.
-
-## Contribution mode
-
-Repository is a fork whose features go upstream as pull requests? Contribution mode keeps each feature's entries on that feature's branch. Run `sdd config set --local contribution <upstream ref>` in the feature's worktree, then start the session there. `sdd info` shows when it is on.
 
 ## The door
 

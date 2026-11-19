@@ -1,6 +1,7 @@
 framing: |
   Local participant: Tester
   Search: text
+  Contribution mode: off. Fork whose features go upstream as pull requests? `sdd config set --local contribution <upstream ref>` in the feature's worktree, then a session started there, keeps each feature's entries on that feature's branch.
   Base branch: main (configured default)
 
   ## Working principles

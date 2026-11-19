@@ -16,7 +16,8 @@ import (
 
 // AgentTarget identifies which agent a skill bundle renders and installs for.
 // Each target is a render profile over the one neutral template tree — the
-// value drives {{ if eq .Agent "..." }} conditionals and the install directory.
+// value drives {{ if eq .Agent "..." }} conditionals, the install directory,
+// and the frontmatter stamp shape.
 type AgentTarget string
 
 const (
@@ -98,6 +99,10 @@ type SkillBundleEntry struct {
 
 	// Content is the raw file bytes as embedded.
 	Content []byte
+
+	// AgentDefinition marks a harness subagent definition (SkillBundle.Agents),
+	// which is no skill file.
+	AgentDefinition bool
 }
 
 // SkillBundle is the set of files embedded in the binary for a single agent
@@ -126,12 +131,6 @@ type SkillFile struct {
 	// StoredHash is the value of the sdd-content-hash frontmatter stamp, or
 	// empty if absent.
 	StoredHash string
-
-	// StampsTopLevel reports stamps found as top-level frontmatter keys
-	// rather than under metadata:. The Agent Skills standard rejects such
-	// keys, so a file stamped this way is refreshed even when its content is
-	// current.
-	StampsTopLevel bool
 }
 
 // SkillInstallStatus describes the install state of a single skill file
@@ -182,7 +181,7 @@ func ComputeSkillStatus(embedded SkillBundleEntry, installed *SkillFile) SkillIn
 	if installedComputed != installed.StoredHash {
 		return SkillStatusModified
 	}
-	if installed.StoredHash == embeddedHash && !installed.StampsTopLevel {
+	if installed.StoredHash == embeddedHash {
 		return SkillStatusCurrent
 	}
 	return SkillStatusPristine
@@ -268,10 +267,10 @@ func normalizeForJSON(v any) any {
 // to exclude sdd-version and sdd-content-hash from the hash input so the hash
 // is stable under re-stamping.
 //
-// Stamps are stripped wherever they live, nested under metadata: or at the
-// top level (see SkillFile.StampsTopLevel). A metadata map emptied by the
-// strip is dropped entirely so a stamped file hashes identically to its
-// unstamped embedded source (which carries no metadata key).
+// Stamps are stripped wherever they live, at the top level or nested under
+// metadata: (see setStamps). A metadata map emptied by the strip is dropped
+// entirely so a stamped file hashes identically to its unstamped embedded
+// source (which carries no metadata key).
 func stripStampKeys(fm map[string]any) map[string]any {
 	out := make(map[string]any, len(fm))
 	for k, v := range fm {
@@ -297,11 +296,22 @@ func stripStampKeys(fm map[string]any) map[string]any {
 	return out
 }
 
-// setStamps nests the install-time version and content-hash stamps under
-// metadata:, the one place the Agent Skills standard admits client keys and
-// Claude Code accepts too. Stamps merge into any metadata the template already
-// authored rather than replacing it.
-func setStamps(fm map[string]any, version, contentHash string) {
+// setStamps injects the install-time version and content-hash stamps into a
+// skill file's frontmatter. Claude keeps them at the top level; Codex nests
+// them under metadata: so the rendered SKILL.md conforms to the Agent Skills
+// standard, which rejects unknown top-level keys.
+func setStamps(fm map[string]any, target AgentTarget, version, contentHash string) {
+	if target == AgentCodex {
+		nestStamps(fm, version, contentHash)
+		return
+	}
+	fm[SkillStampVersion] = version
+	fm[SkillStampHash] = contentHash
+}
+
+// nestStamps puts the stamps under metadata:, merged into any metadata the
+// template already authored rather than replacing it.
+func nestStamps(fm map[string]any, version, contentHash string) {
 	meta, ok := asStringMap(fm["metadata"])
 	if !ok {
 		meta = map[string]any{}
@@ -311,19 +321,31 @@ func setStamps(fm map[string]any, version, contentHash string) {
 	fm["metadata"] = meta
 }
 
-// readStamps extracts the install-time stamps from fm, nested under metadata:
-// or, failing that, at the top level.
-func readStamps(fm map[string]any) (version, hash string, topLevel bool) {
+// readStamps extracts the install-time stamps from fm, accepting either
+// placement whatever the target.
+func readStamps(fm map[string]any) (version, hash string) {
+	if v, ok := fm[SkillStampVersion].(string); ok {
+		version = v
+	}
+	if h, ok := fm[SkillStampHash].(string); ok {
+		hash = h
+	}
+	if version != "" && hash != "" {
+		return version, hash
+	}
 	if meta, ok := asStringMap(fm["metadata"]); ok {
-		version, _ = meta[SkillStampVersion].(string)
-		hash, _ = meta[SkillStampHash].(string)
+		if version == "" {
+			if v, ok := meta[SkillStampVersion].(string); ok {
+				version = v
+			}
+		}
+		if hash == "" {
+			if h, ok := meta[SkillStampHash].(string); ok {
+				hash = h
+			}
+		}
 	}
-	if version != "" || hash != "" {
-		return version, hash, false
-	}
-	version, _ = fm[SkillStampVersion].(string)
-	hash, _ = fm[SkillStampHash].(string)
-	return version, hash, version != "" || hash != ""
+	return version, hash
 }
 
 // asStringMap coerces a frontmatter value into a map[string]any, tolerating the
@@ -394,14 +416,15 @@ func splitFrontmatter(content []byte) (map[string]any, []byte) {
 // given install-time stamps injected. If the entry has no original
 // frontmatter, a fresh block with just the stamps is written.
 //
-// Stamps go under metadata: for every agent target, since the Agent Skills
-// standard rejects unknown top-level keys.
+// A skill file takes its stamps where setStamps puts them for the target. An
+// agent definition is no skill file: TOML carries them as comment lines, and
+// frontmatter nests them under metadata: for every target.
 //
 // The returned bytes are what gets hashed by ComputeSkillHash once the stamps
 // are stripped — callers writing new installations should compute the hash
 // from the embedded entry content (which has no stamps) to populate the
 // sdd-content-hash stamp itself.
-func RenderSkillFile(entry SkillBundleEntry, version, contentHash string) ([]byte, error) {
+func RenderSkillFile(entry SkillBundleEntry, target AgentTarget, version, contentHash string) ([]byte, error) {
 	if isTOML(entry.RelPath) {
 		return renderTOMLStamped(entry.Content, version, contentHash), nil
 	}
@@ -409,7 +432,11 @@ func RenderSkillFile(entry SkillBundleEntry, version, contentHash string) ([]byt
 	if fm == nil {
 		fm = map[string]any{}
 	}
-	setStamps(fm, version, contentHash)
+	if entry.AgentDefinition {
+		nestStamps(fm, version, contentHash)
+	} else {
+		setStamps(fm, target, version, contentHash)
+	}
 
 	yamlBytes, err := yaml.Marshal(fm)
 	if err != nil {
@@ -472,7 +499,7 @@ func ParseSkillFile(absPath string, content []byte) *SkillFile {
 	if fm == nil {
 		return sf
 	}
-	sf.StoredVersion, sf.StoredHash, sf.StampsTopLevel = readStamps(fm)
+	sf.StoredVersion, sf.StoredHash = readStamps(fm)
 	return sf
 }
 

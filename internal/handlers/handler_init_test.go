@@ -346,17 +346,18 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	}
 }
 
-// Init removes from the root .gitignore and .gitattributes exactly the
-// lines earlier builds derived for the graph_dir, keeps the lines added by
-// hand, drops a comment left heading none of them, and gives a runtime folder
-// an earlier build made its own .gitignore.
-func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
+// Init leaves the root .gitignore as it is, the .sdd/ lines another build's
+// init wrote into it included, so the two never undo each other. From the
+// root .gitattributes it removes exactly the routing line derived for the
+// graph_dir and keeps the lines added by hand, and it gives the runtime
+// folder its own .gitignore.
+func TestInit_KeepsTheRootGitignoreAndMovesTheRouting(t *testing.T) {
 	cases := []struct {
 		name, graphDir, handIgnore, heading, handAttributes, wantAttributes string
 	}{
 		{name: "lines added by hand stay", graphDir: "decisions", handIgnore: "node_modules/\n", handAttributes: "*.png binary\n", wantAttributes: "*.png binary\n"},
-		{name: "files left empty go", graphDir: "decisions"},
-		{name: "a heading over the derived lines goes with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
+		{name: "an attributes file left empty goes", graphDir: "decisions"},
+		{name: "a heading over the ignore lines stays with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
 		{name: "a graph at the root keeps its routing", graphDir: ".", handIgnore: "node_modules/\n", wantAttributes: model.GraphAttributesLine + "\n"},
 	}
 	for _, tc := range cases {
@@ -366,26 +367,38 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+tc.heading+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
+			runtimeLine := filepath.ToSlash(filepath.Join(tc.graphDir, model.GraphRuntimeDir)) + "/"
+			rootIgnore := tc.handIgnore + tc.heading + ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n" + runtimeLine + "\n"
+			rootIgnorePath := filepath.Join(tmp, ".gitignore")
+			writeTestFile(t, rootIgnorePath, rootIgnore)
 			writeTestFile(t, filepath.Join(tmp, ".gitattributes"), legacyAttribute+"\n"+tc.handAttributes)
 			writeTestFile(t, filepath.Join(tmp, tc.graphDir, model.GraphRuntimeDir, "graph.lock"), "")
 			h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
-			err = h.Init(context.Background(), &command.InitCmd{RepoRoot: tmp, GraphDir: tc.graphDir, BinaryVersion: "v0.2.0", Scope: model.ScopeProject})
+			var ignoreUpdates []string
+			err = h.Init(context.Background(), &command.InitCmd{
+				RepoRoot: tmp, GraphDir: tc.graphDir, BinaryVersion: "v0.2.0", Scope: model.ScopeProject,
+				OnGitignoreUpdated: func(path string) { ignoreUpdates = append(ignoreUpdates, path) },
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			for _, file := range []struct{ name, want string }{{".gitignore", tc.handIgnore}, {".gitattributes", tc.wantAttributes}} {
-				data, err := os.ReadFile(filepath.Join(tmp, file.name))
-				if file.want == "" {
-					if err == nil {
-						t.Errorf("the root %s should go once only derived lines left it, got:\n%s", file.name, data)
-					}
-					continue
+			if data := readFile(t, rootIgnorePath); string(data) != rootIgnore {
+				t.Errorf("the root .gitignore should stay byte for byte, got:\n%s", data)
+			}
+			if slices.Contains(ignoreUpdates, rootIgnorePath) {
+				t.Errorf("init should report no update of the root .gitignore, got %v", ignoreUpdates)
+			}
+			if data := readFile(t, filepath.Join(tmp, ".sdd", ".gitignore")); string(data) != strings.Join(model.SDDIgnoreLines, "\n")+"\n" {
+				t.Errorf(".sdd/.gitignore should hold the committed ignore lines, got:\n%s", data)
+			}
+			data, err := os.ReadFile(filepath.Join(tmp, ".gitattributes"))
+			if tc.wantAttributes == "" {
+				if err == nil {
+					t.Errorf("the root .gitattributes should go once only the derived line left it, got:\n%s", data)
 				}
-				if string(data) != file.want {
-					t.Errorf("the root %s should keep only the lines added by hand, got:\n%s", file.name, data)
-				}
+			} else if string(data) != tc.wantAttributes {
+				t.Errorf("the root .gitattributes should keep only the lines added by hand, got:\n%s", data)
 			}
 			if data, err := os.ReadFile(filepath.Join(tmp, tc.graphDir, ".gitattributes")); err != nil || !strings.Contains(string(data), model.GraphAttributesLine) {
 				t.Errorf("the graph's .gitattributes should route entries to the merge driver: %v\n%s", err, data)
@@ -397,9 +410,8 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 	}
 }
 
-// A root .gitignore holding no derived line stays byte for byte as it was,
-// a missing final newline included.
-func TestInit_LeavesARootGitignoreWithoutDerivedLinesAlone(t *testing.T) {
+// A root .gitignore without a final newline stays byte for byte as it was.
+func TestInit_LeavesARootGitignoreWithoutFinalNewlineAlone(t *testing.T) {
 	tmp := t.TempDir()
 	writeTestFile(t, filepath.Join(tmp, ".gitignore"), "node_modules/")
 	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
@@ -529,83 +541,86 @@ func TestInit_RepeatIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestInit_UpgradeFromTopLevelStamps covers an upgrade over installs whose
-// Claude render carries its stamps as top-level frontmatter keys and ships the
-// German vocabulary reference: init reads those stamps, refreshes the unedited
-// SKILL.md with stamps under metadata: without asking, keeps the Codex render
-// current, and prunes the vocabulary reference the bundle no longer ships.
-func TestInit_UpgradeFromTopLevelStamps(t *testing.T) {
-	tmp := t.TempDir()
-	h := initExistingWithAgents(t, tmp, model.AgentClaude, model.AgentCodex)
+// TestInit_ReadsStampsInEitherPlacement covers an install whose Claude
+// SKILL.md holds the bundle's content under stamps another build wrote, at the
+// top level or under metadata:, and which ships the German vocabulary
+// reference: init reads the stamps in either place and leaves the file as it
+// is, keeps the Codex render current, and prunes the vocabulary reference the
+// bundle no longer ships.
+func TestInit_ReadsStampsInEitherPlacement(t *testing.T) {
+	placements := map[string]string{
+		"top level":      "\nsdd-content-hash: %s\nsdd-version: v0.1.0\n---\n",
+		"under metadata": "\nmetadata:\n    sdd-content-hash: %s\n    sdd-version: v0.1.0\n---\n",
+	}
+	for name, stamps := range placements {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			h := initExistingWithAgents(t, tmp, model.AgentClaude, model.AgentCodex)
 
-	bundle, err := bundledskills.Load(model.AgentClaude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	embedded := bundle.Entries[0]
-	if embedded.RelPath != "SKILL.md" {
-		t.Fatalf("expected the bundle to open with SKILL.md, got %s", embedded.RelPath)
-	}
-	hash := model.ComputeSkillHash(embedded.Content)
-	topLevel := strings.Replace(string(embedded.Content), "\n---\n", "\nsdd-content-hash: "+hash+"\nsdd-version: v0.1.0\n---\n", 1)
-	claudeSkill := filepath.Join(tmp, ".claude/skills/sdd/SKILL.md")
-	if err := os.WriteFile(claudeSkill, []byte(topLevel), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	vocabularies := []string{
-		filepath.Join(tmp, ".claude/skills/sdd/references/vocabulary-de.md"),
-		filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md"),
-	}
-	for _, p := range vocabularies {
-		writeStampedOrphan(t, p, "# SDD Vokabular\n")
-	}
+			bundle, err := bundledskills.Load(model.AgentClaude)
+			if err != nil {
+				t.Fatal(err)
+			}
+			embedded := bundle.Entries[0]
+			if embedded.RelPath != "SKILL.md" {
+				t.Fatalf("expected the bundle to open with SKILL.md, got %s", embedded.RelPath)
+			}
+			hash := model.ComputeSkillHash(embedded.Content)
+			stamped := strings.Replace(string(embedded.Content), "\n---\n", fmt.Sprintf(stamps, hash), 1)
+			claudeSkill := filepath.Join(tmp, ".claude/skills/sdd/SKILL.md")
+			if err := os.WriteFile(claudeSkill, []byte(stamped), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			vocabularies := []string{
+				filepath.Join(tmp, ".claude/skills/sdd/references/vocabulary-de.md"),
+				filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md"),
+			}
+			for _, p := range vocabularies {
+				writeStampedOrphan(t, p, "# SDD Vokabular\n")
+			}
 
-	var installed []command.SkillInstallResult
-	var pruned []command.AgentPruneResult
-	if err := h.Init(context.Background(), &command.InitCmd{
-		RepoRoot:             tmp,
-		BinaryVersion:        "v0.2.0",
-		Scope:                model.ScopeProject,
-		OnSkillsInstalled:    func(r command.SkillInstallResult) { installed = append(installed, r) },
-		OnSkillOrphansPruned: func(r command.AgentPruneResult) { pruned = append(pruned, r) },
-	}); err != nil {
-		t.Fatal(err)
-	}
+			var installed []command.SkillInstallResult
+			var pruned []command.AgentPruneResult
+			if err := h.Init(context.Background(), &command.InitCmd{
+				RepoRoot:             tmp,
+				BinaryVersion:        "v0.2.0",
+				Scope:                model.ScopeProject,
+				OnSkillsInstalled:    func(r command.SkillInstallResult) { installed = append(installed, r) },
+				OnSkillOrphansPruned: func(r command.AgentPruneResult) { pruned = append(pruned, r) },
+			}); err != nil {
+				t.Fatal(err)
+			}
 
-	codexSkill := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
-	var refreshed, current, modified []string
-	for _, r := range installed {
-		refreshed = append(refreshed, r.Refreshed...)
-		current = append(current, r.Current...)
-		modified = append(modified, r.SkippedModified...)
-		modified = append(modified, r.Overwritten...)
-	}
-	if !slices.Contains(refreshed, claudeSkill) {
-		t.Errorf("unedited top-level-stamped SKILL.md should be refreshed, got refreshed=%v", refreshed)
-	}
-	if len(modified) != 0 {
-		t.Errorf("no file should be treated as modified, got %v", modified)
-	}
-	if !slices.Contains(current, codexSkill) {
-		t.Errorf("codex SKILL.md should stay current, got current=%v", current)
-	}
+			codexSkill := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
+			var current, written []string
+			for _, r := range installed {
+				current = append(current, r.Current...)
+				written = append(written, r.Installed...)
+				written = append(written, r.Refreshed...)
+				written = append(written, r.Overwritten...)
+				written = append(written, r.SkippedModified...)
+			}
+			if len(written) != 0 {
+				t.Errorf("no file should be written or taken for modified, got %v", written)
+			}
+			for _, path := range []string{claudeSkill, codexSkill} {
+				if !slices.Contains(current, path) {
+					t.Errorf("%s should stay current, got current=%v", path, current)
+				}
+			}
+			if data := readFile(t, claudeSkill); string(data) != stamped {
+				t.Errorf("SKILL.md should stay byte for byte, got:\n%.400s", data)
+			}
 
-	data := readFile(t, claudeSkill)
-	sf := model.ParseSkillFile(claudeSkill, data)
-	if sf.StampsTopLevel || sf.StoredHash != hash || sf.StoredVersion != "v0.2.0" {
-		t.Errorf("refreshed SKILL.md should carry fresh stamps under metadata, got version=%q hash=%q topLevel=%v", sf.StoredVersion, sf.StoredHash, sf.StampsTopLevel)
-	}
-	if strings.Contains(string(data), "\nsdd-version:") || strings.Contains(string(data), "\nsdd-content-hash:") {
-		t.Errorf("refreshed SKILL.md still carries a top-level stamp:\n%.400s", data)
-	}
-
-	for _, p := range vocabularies {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
-			t.Errorf("unedited vocabulary reference %s should be pruned, stat err = %v", p, err)
-		}
-	}
-	if len(pruned) != 2 {
-		t.Errorf("expected one orphan-prune callback per agent, got %+v", pruned)
+			for _, p := range vocabularies {
+				if _, err := os.Stat(p); !os.IsNotExist(err) {
+					t.Errorf("unedited vocabulary reference %s should be pruned, stat err = %v", p, err)
+				}
+			}
+			if len(pruned) != 2 {
+				t.Errorf("expected one orphan-prune callback per agent, got %+v", pruned)
+			}
+		})
 	}
 }
 
@@ -626,7 +641,7 @@ func TestInit_PostUpgradeRefreshesDriftedPristine(t *testing.T) {
 
 	oldContent := []byte("---\nname: " + entry.Skill + "\n---\nprior bundle body\n")
 	oldHash := model.ComputeSkillHash(oldContent)
-	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, "v0.1.0", oldHash)
+	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, model.AgentClaude, "v0.1.0", oldHash)
 	if err != nil {
 		t.Fatal(err)
 	}

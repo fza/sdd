@@ -3,16 +3,15 @@ package cliapp_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/test"
 )
 
 // A work repository that held its graph at the default .sdd/graph before it
-// pointed elsewhere keeps that graph's runtime line in its root .gitignore
-// from earlier builds; init removes it and keeps the lines added by hand.
-func TestInitInAWorkRepositoryDropsTheRuntimeLineOfItsFormerGraph(t *testing.T) {
+// pointed elsewhere keeps that graph's runtime line in its root .gitignore;
+// init leaves the file as it is and commits nothing for it.
+func TestInitInAWorkRepositoryKeepsItsRootGitignore(t *testing.T) {
 	cases := []struct {
 		name  string
 		setUp func(t *testing.T) string
@@ -38,21 +37,22 @@ func TestInitInAWorkRepositoryDropsTheRuntimeLineOfItsFormerGraph(t *testing.T) 
 		t.Run(c.name, func(t *testing.T) {
 			work := c.setUp(t)
 			ignorePath := filepath.Join(work, ".gitignore")
-			writeFile(t, ignorePath, "node_modules/\n\n# sdd\n.sdd/graph/.sdd-runtime/\n")
+			rootIgnore := "node_modules/\n\n# sdd\n.sdd/graph/.sdd-runtime/\n"
+			writeFile(t, ignorePath, rootIgnore)
 			gitIn(t, work, "add", ".gitignore")
 			gitIn(t, work, "commit", "-q", "-m", "chore: the ignore file of the former graph")
+			before := headSubject(t, work)
 
 			runApp(t, work, "init")
 
-			ignore := readText(t, ignorePath)
-			if strings.Contains(ignore, ".sdd-runtime") {
-				t.Errorf("init should drop the runtime line of the graph the work repository held before:\n%s", ignore)
+			if ignore := readText(t, ignorePath); ignore != rootIgnore {
+				t.Errorf("init should leave the root .gitignore byte for byte:\n%s", ignore)
 			}
-			if !strings.Contains(ignore, "node_modules/") {
-				t.Errorf("init should keep the lines added by hand:\n%s", ignore)
+			if subject := headSubject(t, work); subject != before {
+				t.Errorf("init should commit nothing for the ignore file, HEAD is %q", subject)
 			}
 			if status := gitIn(t, work, "status", "--porcelain"); status != "" {
-				t.Errorf("init should commit the cleaned ignore file:\n%s", status)
+				t.Errorf("init should leave the work tree clean:\n%s", status)
 			}
 		})
 	}
