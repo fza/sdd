@@ -340,77 +340,76 @@ func pluralEntries(n int) string {
 }
 
 // PrepareCrossRepoSearch runs the side-effect half of a cross-graph search,
-// mirroring how the local lazy-fill precedes the search finder: select the
-// query's repos from the direct dependencies, refresh their clones, and —
-// when vector mode is in play — lazy-fill each selected repo's index with
-// the shared embedder. The finder read (finders.MultiSearch) then runs pure.
-// fill is optional: the CLI passes progress callbacks so the member builds
-// render through the output coordinator.
-func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuery, embedder IndexEmbedder, refresh command.RefreshDependenciesCmd, fill *command.BuildConnectedIndexesCmd) error {
+// mirroring how the local lazy-fill precedes the search finder: refresh the
+// dependency closure, select the query's repos from it, and — when vector
+// mode is in play — lazy-fill each selected repo's index with the shared
+// embedder. The finder read (finders.MultiSearch) then runs pure. fill is
+// optional: the CLI passes progress callbacks so the member builds render
+// through the output coordinator.
+func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuery, embedder IndexEmbedder, refresh command.RefreshDependencyClosureCmd, fill *command.BuildConnectedIndexesCmd) error {
 	if !q.AllRepos && len(q.Repos) == 0 {
 		return nil
 	}
-	home, err := h.reader.LocalRepoID()
+	closure, err := h.refreshDependencyClosure(ctx, refresh)
 	if err != nil {
 		return err
 	}
-	direct, err := h.reader.DirectDependencies()
-	if err != nil {
-		return err
-	}
-	repoIDs, err := model.SelectRepos(home, q.Repos, q.AllRepos, direct)
-	if err != nil {
-		return err
-	}
-	refresh.RepoIDs = repoIDs
-	err = h.RefreshDependencies(ctx, refresh)
+	repoIDs, err := model.SelectRepos(q.Repos, q.AllRepos, closure)
 	if err != nil || q.Phrase == "" {
 		return err
 	}
 	return h.BuildConnectedIndexes(ctx, repoIDs, embedder, fill)
 }
 
-// RefreshDependencies refreshes the clone of each of the local repo's direct
-// dependencies the command selects: made on
-// first use, else its sync round when its lease asks for one. What the
-// refresh cannot do is reported through the command's callbacks; a repo
-// beyond the direct dependencies is refused.
-func (h *Handler) RefreshDependencies(ctx context.Context, cmd command.RefreshDependenciesCmd) error {
-	err := cmd.Validate()
-	if err != nil {
-		return err
-	}
-	if h.repos == nil {
-		return errNoRepos
-	}
-	home, err := h.reader.LocalRepoID()
-	if err != nil {
-		return err
-	}
-	direct, err := h.reader.DirectDependencies()
-	if err != nil {
-		return err
-	}
-	repoIDs, err := model.SelectRepos(home, cmd.RepoIDs, len(cmd.RepoIDs) == 0, direct)
-	if err != nil {
-		return err
-	}
-	for _, repoID := range repoIDs {
-		err = ctx.Err()
-		if err != nil {
-			return err
-		}
-		err = h.refreshClone(ctx, repoID, cmd)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+// RefreshDependencyClosure walks the local repo's dependency closure,
+// refreshing each connected repo's clone (made on first use, else its sync
+// round when its lease asks for one) before reading what it declares, so a
+// config repaired upstream is read after its round. What the refresh cannot
+// do is reported through the command's callbacks; only a failure to read the
+// closure itself is returned.
+func (h *Handler) RefreshDependencyClosure(ctx context.Context, cmd command.RefreshDependencyClosureCmd) error {
+	_, err := h.refreshDependencyClosure(ctx, cmd)
+	return err
 }
 
-// refreshClone refreshes one direct dependency, reporting a missing
-// connection or a failed clone or sync round instead of returning it.
-func (h *Handler) refreshClone(ctx context.Context, repoID model.RepoID, cmd command.RefreshDependenciesCmd) error {
+func (h *Handler) refreshDependencyClosure(ctx context.Context, cmd command.RefreshDependencyClosureCmd) ([]model.RepoID, error) {
+	err := cmd.Validate()
+	if err != nil {
+		return nil, err
+	}
+	if h.repos == nil {
+		return nil, errNoRepos
+	}
+	root, err := h.reader.LocalRepoID()
+	if err != nil {
+		return nil, err
+	}
+	step := func(ctx context.Context, repoID model.RepoID) ([]model.RepoID, error) {
+		err := ctx.Err()
+		if err != nil {
+			return nil, err
+		}
+		if repoID != root {
+			err = h.refreshClone(ctx, repoID, cmd)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return h.reader.DeclaredDependencies(ctx, repoID)
+	}
+	var closure []model.RepoID
+	for repoID, err := range model.DependencyClosure(ctx, root, model.DependencyResolverFunc[model.RepoID](step)) {
+		if err != nil {
+			return nil, err
+		}
+		closure = append(closure, repoID)
+	}
+	return closure, nil
+}
+
+// refreshClone refreshes one closure member, reporting a missing connection
+// or a failed clone or sync round instead of returning it.
+func (h *Handler) refreshClone(ctx context.Context, repoID model.RepoID, cmd command.RefreshDependencyClosureCmd) error {
 	_, connected, err := h.repos.Registry().Clone(repoID)
 	if err != nil {
 		return err

@@ -66,12 +66,12 @@ func TestMultiSearchTextAcrossRepos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, err := f.DirectDependencies()
+	closure, err := f.DependencyClosure(t.Context(), query.DependencyClosureQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	local := NewSearchFinder(SearchFinderOptions{Graph: g, GraphDir: localDir, Repos: reg, Home: "example.com/team/local", Dependencies: direct})
+	local := NewSearchFinder(SearchFinderOptions{Graph: g, GraphDir: localDir, Repos: reg, Closure: closure})
 	q := query.SearchQuery{
 		Terms:    []string{"telemetry"},
 		AllRepos: true,
@@ -80,8 +80,8 @@ func TestMultiSearchTextAcrossRepos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MultiSearch(context.Background(), local, query.SearchQuery{Terms: []string{"telemetry"}, Repos: []model.RepoID{"example.com/team/undeclared"}}); !errors.Is(err, model.ErrNotDirectDependency) {
-		t.Errorf("searching a repo outside the direct dependencies: err = %v, want ErrNotDirectDependency", err)
+	if _, err := MultiSearch(context.Background(), local, query.SearchQuery{Terms: []string{"telemetry"}, Repos: []model.RepoID{"example.com/team/undeclared"}}); !errors.Is(err, model.ErrNotInClosure) {
+		t.Errorf("searching a repo outside the closure: err = %v, want ErrNotInClosure", err)
 	}
 
 	byID := map[string]query.SearchEntry{}

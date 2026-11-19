@@ -245,8 +245,8 @@ func TestMovesAndReadsInDependencyProject(t *testing.T) {
 		t.Fatalf("show in the dependency should render its entry, got %q", shown.Entries)
 	}
 	msg := callExpectError(t, cs, "show", map[string]any{"session": door.Session, "project": "gamma", "ids": []string{fixtureGapID}})
-	if !strings.Contains(msg, "not a direct dependency of alpha") {
-		t.Fatalf("a project outside the direct dependencies must be refused, got %q", msg)
+	if !strings.Contains(msg, "dependency closure") {
+		t.Fatalf("a project outside the declared closure must be refused, got %q", msg)
 	}
 
 	var move mcpserver.ServeResult
@@ -268,6 +268,46 @@ func TestMovesAndReadsInDependencyProject(t *testing.T) {
 	}
 	if projects[move.Instance] != "beta" || projects[homeMove.Instance] != "alpha" {
 		t.Fatalf("resume should project each instance's target, got %v", projects)
+	}
+}
+
+// TestSessionWorksDownTheDependencyChain: alpha declares beta, beta declares
+// gamma, and alpha does not name gamma. A session homed in alpha reads and
+// starts a move in gamma, and is refused delta, which the chain never
+// reaches.
+func TestSessionWorksDownTheDependencyChain(t *testing.T) {
+	access := newMultiAccess(t, "gamma", "delta")
+	access.runtimes["beta"] = newProjectRuntime(t, "beta", "gamma")
+	access.runtimes["alpha"] = newProjectRuntime(t, "alpha", "beta")
+	access.order = []sdd.ProjectID{"alpha"}
+	cs := connect(t, newServerOver(t, access))
+	var door mcpserver.ServeResult
+	call(t, cs, "start_session", map[string]any{"project": "alpha"}, &door)
+
+	var info mcpserver.InfoResult
+	call(t, cs, "info", map[string]any{"session": door.Session, "project": "gamma"}, &info)
+	if info.Project != "gamma" {
+		t.Errorf("info down the chain should describe gamma, got %+v", info)
+	}
+	var shown mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": door.Session, "project": "gamma", "ids": []string{fixtureGapID}}, &shown)
+	if !strings.Contains(shown.Entries, fixtureGapID) {
+		t.Errorf("show down the chain should render gamma's entry, got %q", shown.Entries)
+	}
+	var found mcpserver.SearchResult
+	call(t, cs, "search", map[string]any{"session": door.Session, "terms": []string{"."}, "repos": []string{"gamma"}}, &found)
+	if !strings.Contains(found.Results, "\n  gamma:") {
+		t.Errorf("search naming gamma from the home should list its entries, got %q", found.Results)
+	}
+	var move mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "project": "gamma"}, &move)
+	if move.Status != "running" || move.Project != "gamma" {
+		t.Errorf("a move started down the chain should serve as gamma's, got status %q project %q", move.Status, move.Project)
+	}
+
+	msg := callExpectError(t, cs, "show", map[string]any{"session": door.Session, "project": "delta", "ids": []string{fixtureGapID}})
+	if !strings.Contains(msg, "dependency closure") {
+		t.Errorf("a project the chain never reaches must be refused, got %q", msg)
 	}
 }
 

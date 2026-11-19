@@ -12,14 +12,13 @@ import (
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
-// newDependencyFixture composes three projects: A is the home and declares B
+// newDependencyFixture composes four projects: A is the home and declares B
 // under the repo ID example.test/b, which differs from B's project ID as it
-// does in every composition but the local one; C is readable and declared by
-// B, so it lies beyond the home's direct dependencies.
-// Alice is a full member of A and B and reads C; B has no write authority of
-// its own, as a local dependency has today. Bob is a full member of A and
-// reads B. verifiers sets a project's verify
-// policy.
+// does in every composition but the local one; B declares C, which A does not
+// name; D is readable but undeclared. Alice is a full member of A and B and
+// reads C and D; B has no write authority of its own, as a local dependency
+// has today. Bob is a full member of A and reads B. verifiers sets a
+// project's verify policy.
 func newDependencyFixture(t *testing.T, verifiers ...map[sdd.ProjectID]sdd.VerifierPolicy) (*sdd.Application, sdd.RequestIdentity) {
 	t.Helper()
 	root := t.TempDir()
@@ -52,6 +51,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		{id: "project-a", dir: filepath.Join(root, "project-a"), dependencies: []sdd.RepoID{"example.test/b"}, branch: "main"},
 		{id: "project-b", dir: graphB, dependencies: []sdd.RepoID{"example.test/c"}},
 		{id: "project-c", dir: filepath.Join(root, "project-c")},
+		{id: "project-d", dir: filepath.Join(root, "project-d")},
 	} {
 		graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project.id, GraphDir: project.dir})
 		if err != nil {
@@ -77,7 +77,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 	access := &compositionAccess{
 		runtimes: runtimes,
 		permissions: map[string]map[sdd.ProjectID]compositionPermission{
-			"alice": {"project-a": {read: true, write: true}, "project-b": {read: true, write: true}, "project-c": {read: true}},
+			"alice": {"project-a": {read: true, write: true}, "project-b": {read: true, write: true}, "project-c": {read: true}, "project-d": {read: true}},
 			"bob":   {"project-a": {read: true, write: true}, "project-b": {read: true}},
 		},
 		dependencies: map[sdd.RepoID]sdd.ProjectID{"example.test/b": "project-b", "example.test/c": "project-c"},
@@ -98,12 +98,13 @@ func verifierOf(verifiers []map[sdd.ProjectID]sdd.VerifierPolicy, project sdd.Pr
 	return sdd.VerifierPolicy{}
 }
 
-// TestInstanceTargetsDirectDependency pins where an instance's
+// TestInstanceTargetsProjectInDependencyClosure pins where an instance's
 // project comes from and what gates it (d-cpt-yjc): a start call's project is
 // recorded, a dispatched child derives its parent's, a plain move derives the
-// home project, a project outside the home's direct dependencies is refused, and
-// the targets survive a reload from the ledger.
-func TestInstanceTargetsDirectDependency(t *testing.T) {
+// home project, a project a dependency declares is reached, a project outside
+// the home's declared closure is refused, and the targets survive a reload
+// from the ledger.
+func TestInstanceTargetsProjectInDependencyClosure(t *testing.T) {
 	application, alice := newDependencyFixture(t)
 	workflow, _, err := application.OpenWorkflow(t.Context(), alice, "project-a", sdd.WorkflowOpenRequest{ClientName: "alice-mcp"})
 	if err != nil {
@@ -135,21 +136,32 @@ func TestInstanceTargetsDirectDependency(t *testing.T) {
 		t.Fatalf("dispatched child serve = %q, want the parent's project", child.Project)
 	}
 
-	_, err = workflow.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "project-c"})
-	if applicationErrorCode(err) != sdd.ErrorProjectUnavailable || !strings.Contains(err.Error(), "not a direct dependency of project-a") {
-		t.Fatalf("start beyond the direct dependencies = %v, want a refusal naming why", err)
+	chained, err := workflow.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "engage", Project: "project-c"})
+	if err != nil {
+		t.Fatalf("start in a project only a dependency declares: %v", err)
 	}
-	// The declared repo ID is not a project: the direct dependencies are resolved projects.
+	if chained.Project != "project-c" {
+		t.Fatalf("serve of a move started down the chain names %q", chained.Project)
+	}
+
+	_, err = workflow.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "project-d"})
+	if applicationErrorCode(err) != sdd.ErrorProjectUnavailable || !strings.Contains(err.Error(), "dependency closure") {
+		t.Fatalf("start outside the closure = %v, want a closure refusal", err)
+	}
+	// The declared repo ID is not a project: the closure holds resolved projects.
 	_, err = workflow.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "example.test/b"})
-	if applicationErrorCode(err) != sdd.ErrorProjectUnavailable || !strings.Contains(err.Error(), "not a direct dependency of project-a") {
-		t.Fatalf("start on the declared string = %v, want a refusal naming why", err)
+	if applicationErrorCode(err) != sdd.ErrorProjectUnavailable || !strings.Contains(err.Error(), "dependency closure") {
+		t.Fatalf("start on the declared string = %v, want a closure refusal", err)
 	}
 
 	if project, branch, fromBinding, err := workflow.ReadScope(t.Context(), alice, "project-b"); err != nil || project != "project-b" || branch != "" || fromBinding {
 		t.Fatalf("read scope in dependency = %q %q %v %v, want project-b on its default", project, branch, fromBinding, err)
 	}
-	if _, _, _, err := workflow.ReadScope(t.Context(), alice, "project-c"); applicationErrorCode(err) != sdd.ErrorProjectUnavailable {
-		t.Fatalf("read scope beyond the direct dependencies = %v, want a refusal", err)
+	if project, _, _, err := workflow.ReadScope(t.Context(), alice, "project-c"); err != nil || project != "project-c" {
+		t.Fatalf("read scope in a project only a dependency declares = %q %v", project, err)
+	}
+	if _, _, _, err := workflow.ReadScope(t.Context(), alice, "project-d"); applicationErrorCode(err) != sdd.ErrorProjectUnavailable {
+		t.Fatalf("read scope outside the closure = %v, want a closure refusal", err)
 	}
 
 	// A write in the dependency reaches the dependency's runtime and fails
@@ -173,7 +185,7 @@ func TestInstanceTargetsDirectDependency(t *testing.T) {
 	for _, serve := range result.Open {
 		projects[serve.Instance] = serve.Project
 	}
-	if projects[explicit.Instance] != "project-b" || projects[home.Instance] != "project-a" || projects[child.Instance] != "project-b" {
+	if projects[explicit.Instance] != "project-b" || projects[home.Instance] != "project-a" || projects[child.Instance] != "project-b" || projects[chained.Instance] != "project-c" {
 		t.Fatalf("resumed instance projects = %v, want the recorded and derived targets restored", projects)
 	}
 }

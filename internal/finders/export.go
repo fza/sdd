@@ -65,17 +65,17 @@ func (gf *GraphFinder) Export(ctx context.Context, q query.ExportQuery) (*query.
 		return result, nil
 	}
 
-	direct, err := gf.finder.DirectDependencies()
+	closure, err := gf.finder.DependencyClosure(ctx, query.DependencyClosureQuery{})
 	if err != nil {
 		return nil, err
 	}
 	var cited map[model.RepoID]map[string]bool
 	if q.Dependencies == query.ExportDependenciesReferenced {
-		if cited, err = model.CitedAcross(gf.graph, direct, q.Hops); err != nil {
+		if cited, err = model.CitedAcross(gf.graph, closure, q.Hops); err != nil {
 			return nil, err
 		}
 	}
-	for _, id := range direct {
+	for _, id := range closure {
 		member, err := gf.graph.MemberGraph(id)
 		if err != nil {
 			return nil, fmt.Errorf("loading graph for %s: %w", id, err)
