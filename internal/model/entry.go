@@ -1105,15 +1105,16 @@ func (e *Entry) LayerLabel() string {
 	return string(e.Layer)
 }
 
-// CaptureCommitMessage is the subject of the commit that captures e: its
-// type, layer and title, or its opening content where it has no title, so the
-// history names what was captured.
+// CaptureCommitMessage is the message of the commit that captures e. The
+// subject carries its type, layer and title, or its opening content where it
+// has no title, so the history names what was captured; the Entry trailer
+// carries its ID, so `git log --grep` finds the commit by entry.
 func (e *Entry) CaptureCommitMessage() string {
 	subject := e.Title
 	if subject == "" {
 		subject = e.ShortContent(72)
 	}
-	return fmt.Sprintf("sdd: %s %s %s", e.TypeLabel(), e.LayerLabel(), subject)
+	return fmt.Sprintf("sdd: %s %s %s\n\nEntry: %s", e.TypeLabel(), e.LayerLabel(), subject, e.ID)
 }
 
 // ShortContent returns content truncated to maxLen, preferring sentence boundaries.
