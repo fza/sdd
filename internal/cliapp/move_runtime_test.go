@@ -64,29 +64,16 @@ func TestMoveCarriesTheGraphsRuntimeFolder(t *testing.T) {
 }
 
 func TestMoveCarriesTheRuntimeFolderAcrossRepositories(t *testing.T) {
-	t.Run("project dir and back", func(t *testing.T) {
-		repo := graphRepoToMove(t)
-		project := filepath.Join(filepath.Dir(repo), "graph-home")
-		withRuntime(t, filepath.Join(repo, ".sdd", "graph"))
+	repo := graphRepoToMove(t)
+	test.NewGraphRemote(t, graphCloneRepoID)
+	withRuntime(t, filepath.Join(repo, ".sdd", "graph"))
 
-		runApp(t, repo, "move", "--project-dir", "../graph-home")
-		assertRuntimeCarried(t, filepath.Join(repo, ".sdd", "graph"), filepath.Join(project, "graph"))
+	runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
+	clone := cloneDir(t)
+	assertRuntimeCarried(t, filepath.Join(repo, ".sdd", "graph"), filepath.Join(clone, "graph"))
 
-		runApp(t, repo, "move", "--graph-dir", ".sdd/graph")
-		assertRuntimeCarried(t, filepath.Join(project, "graph"), filepath.Join(repo, ".sdd", "graph"))
-	})
-	t.Run("graph repo and back", func(t *testing.T) {
-		repo := graphRepoToMove(t)
-		test.NewGraphRemote(t, graphCloneRepoID)
-		withRuntime(t, filepath.Join(repo, ".sdd", "graph"))
-
-		runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
-		clone := cloneDir(t)
-		assertRuntimeCarried(t, filepath.Join(repo, ".sdd", "graph"), filepath.Join(clone, "graph"))
-
-		runApp(t, repo, "move", "--graph-dir", ".sdd/graph")
-		assertRuntimeCarried(t, filepath.Join(clone, "graph"), filepath.Join(repo, ".sdd", "graph"))
-	})
+	runApp(t, repo, "move", "--graph-dir", ".sdd/graph")
+	assertRuntimeCarried(t, filepath.Join(clone, "graph"), filepath.Join(repo, ".sdd", "graph"))
 }
 
 // A former graph folder holding more than the runtime folder stays, what it

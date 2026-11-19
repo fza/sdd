@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -8,10 +9,15 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
+// gitPathLocation is the folder graph in the checkout at path.
+func gitPathLocation(path string) model.LocationRef {
+	return model.LocationRef{Kind: model.LocationGitPath, Address: path, Options: url.Values{"dir": {"graph"}}}
+}
+
 func TestLocationRefRoundTrip(t *testing.T) {
 	refs := []model.LocationRef{
 		model.GitDirLocation(".sdd/graph"),
-		model.GitPathLocation("../graph project?", "graph"),
+		gitPathLocation("../graph project?"),
 		model.GitRepoLocation("example.com/org/graph", "graph", "main"),
 	}
 	for _, ref := range refs {
@@ -51,7 +57,7 @@ func TestMoveRecordTrailersRoundTrip(t *testing.T) {
 	record := model.MoveRecord{
 		ID:       "01JC0000000000000000000000",
 		From:     model.GitDirLocation(".sdd/graph"),
-		To:       model.GitPathLocation("../graph", "graph"),
+		To:       gitPathLocation("../graph"),
 		Revision: "abc123",
 		Entries:  42,
 	}
@@ -80,8 +86,8 @@ func TestMoveRecordTrailersRoundTrip(t *testing.T) {
 func TestFindStrays(t *testing.T) {
 	current := model.GitDirLocation("graph")
 	records := []model.MoveRecord{
-		{From: model.GitDirLocation(".sdd/graph"), To: model.GitPathLocation("../graph", "graph")},
-		{From: model.GitPathLocation("../graph", "graph"), To: current},
+		{From: model.GitDirLocation(".sdd/graph"), To: gitPathLocation("../graph")},
+		{From: gitPathLocation("../graph"), To: current},
 	}
 	former := model.FormerLocations(records, current)
 	if len(former) != 2 || former[0].String() != "git-dir:.sdd/graph" || former[1].String() != "git-path:../graph?dir=graph" {
@@ -118,26 +124,8 @@ func TestFormatULID(t *testing.T) {
 	}
 }
 
-func TestMoveMinimumVersion(t *testing.T) {
-	cases := []struct {
-		name, recorded, want string
-	}{
-		{name: "no floor", want: model.MoveRecordsMinimumVersion},
-		{name: "lower floor", recorded: "v0.10.0", want: model.MoveRecordsMinimumVersion},
-		{name: "stock base of the first move release", recorded: "v0.18.0-alpha.3", want: model.MoveRecordsMinimumVersion},
-		{name: "higher floor kept", recorded: "v9.0.0", want: "v9.0.0"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := model.MoveMinimumVersion(tc.recorded); got != tc.want {
-				t.Errorf("MoveMinimumVersion = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestMoveMinimumVersion_AdmitsOnlyBuildsReadingMoveRecords(t *testing.T) {
-	floor := model.MoveMinimumVersion("")
+func TestCheckCompatibility_AMinimumVersionWithABuildSuffix(t *testing.T) {
+	floor := "v0.18.0-alpha.3.fza.43"
 	meta := model.SchemaMeta{GraphSchemaVersion: model.CurrentGraphSchemaVersion, MinimumVersion: &floor}
 	cases := []struct {
 		binary string
@@ -152,7 +140,7 @@ func TestMoveMinimumVersion_AdmitsOnlyBuildsReadingMoveRecords(t *testing.T) {
 		t.Run(tc.binary, func(t *testing.T) {
 			got := model.CheckCompatibility(meta, tc.binary, model.CurrentGraphSchemaVersion)
 			if got.Compatible != tc.admit {
-				t.Errorf("binary %s against a moved graph: compatible = %v, reason %q", tc.binary, got.Compatible, got.Reason)
+				t.Errorf("binary %s against minimum_version %s: compatible = %v, reason %q", tc.binary, floor, got.Compatible, got.Reason)
 			}
 		})
 	}

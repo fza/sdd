@@ -21,8 +21,7 @@ const (
 
 	// GraphOnlyGraphDir is the default graph directory of a project whose
 	// repository holds only the graph a code repository points at through
-	// project_dir or graph_repo: with no code beside it, the graph sits at
-	// the top level.
+	// graph_repo: with no code beside it, the graph sits at the top level.
 	GraphOnlyGraphDir = "graph"
 
 	// SDDDirName is the metadata directory name at the repository root.
@@ -180,15 +179,10 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []RepoID `yaml:"dependencies,omitempty"`
-	// ProjectDir points a work repository at the sdd project that holds its
-	// graph, kept in a repository of its own: the folder holding that
-	// project's .sdd/, relative to the folder holding this .sdd/ or absolute.
-	// Its committed config carries no project settings of its own (see
-	// PointerKeys); its machine-local layer lies over the project's own.
-	ProjectDir string `yaml:"project_dir,omitempty"`
 	// GraphRepo points a code repository at the repository holding its graph,
-	// which sdd reads and writes only through the clone it owns. Beside
-	// project_dir it wins.
+	// which sdd reads and writes only through the clone it owns. Its
+	// committed config carries no project settings of its own (see
+	// GraphRepoPointerKeys).
 	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
@@ -206,20 +200,15 @@ type PerRepoConfig struct {
 	Contribution string `yaml:"contribution,omitempty"`
 }
 
-// PointerKeys are the keys a committed config may set beside project_dir:
-// what concerns the agents working in the repository, not the graph, and
-// the hooks the repository ships.
-var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "hooks"}
-
 // LocalPointerKeys are the keys of a machine-local config that belong to
-// its own repository, which a graph move leaves in place: where this machine
-// keeps the project's checkout, and the repository's own hooks.
-var LocalPointerKeys = []string{"project_dir", "hooks"}
+// its own repository, which a graph move leaves in place: the repository's
+// own hooks.
+var LocalPointerKeys = []string{"hooks"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
-// graph_repo: the pointer keys, project_dir for older builds and graph_dir for
-// the guard against stock sdd.
-var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents", "hooks"}
+// graph_repo: what concerns the agents working in the repository, the hooks
+// it ships, and graph_dir, which ParseConfig ignores there.
+var GraphRepoPointerKeys = []string{"graph_repo", "graph_dir", "skill_scope", "supported_agents", "hooks"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
@@ -802,11 +791,15 @@ func (rc RetryConfig) Resolved() (maxAttempts int, baseDelay, maxDelay time.Dura
 }
 
 // ParseConfig unmarshals YAML bytes into a PerRepoConfig. Empty input is
-// valid and yields a zero-valued config.
+// valid and yields a zero-valued config. A config naming a graph_repo reads
+// without its graph_dir: the graph repository's own config names the folder.
 func ParseConfig(data []byte) (*PerRepoConfig, error) {
 	var cfg PerRepoConfig
 	if err := UnmarshalYAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if cfg.GraphRepo != "" {
+		cfg.GraphDir = ""
 	}
 	return &cfg, nil
 }
@@ -885,9 +878,6 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	if len(overlay.Dependencies) > 0 {
 		out.Dependencies = overlay.Dependencies
-	}
-	if overlay.ProjectDir != "" {
-		out.ProjectDir = overlay.ProjectDir
 	}
 	if overlay.GraphRepo != "" {
 		out.GraphRepo = overlay.GraphRepo
@@ -1174,26 +1164,9 @@ func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
 	return DialogueGuided
 }
 
-// FormatPointerConfig returns the config of a work repository whose graph
-// lives in the sdd project at cfg.ProjectDir: the pointer and the agent keys,
-// nothing about the graph.
-func FormatPointerConfig(cfg PerRepoConfig) string {
-	return "# SDD configuration\n" +
-		"# See https://github.com/networkteam/sdd for documentation.\n" +
-		"\n" +
-		"# The sdd project holding this repository's graph: the folder holding its\n" +
-		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
-		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
-		"project_dir: " + cfg.ProjectDir + "\n" +
-		"\n" +
-		skillScopeBlock(cfg) +
-		"\n" +
-		supportedAgentsBlock(cfg)
-}
-
 // FormatGraphRepoPointerConfig returns the config of a code repository whose
-// graph lives in the graph repository cfg.GraphRepo: the pointer, the stock
-// guard as graph_dir, and the agent keys.
+// graph lives in the graph repository cfg.GraphRepo: the pointer and the
+// agent keys.
 func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
 	return "# SDD configuration\n" +
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
@@ -1201,11 +1174,6 @@ func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
 		"# The repository holding this repository's graph. sdd reads and writes it\n" +
 		"# through a clone of its own; `sdd repo path " + string(cfg.GraphRepo) + "` prints where.\n" +
 		"graph_repo: " + string(cfg.GraphRepo) + "\n" +
-		"\n" +
-		"# Guard for sdd builds without graph_repo: graph_dir names a file, so their\n" +
-		"# captures fail here instead of starting a second graph. sdd with graph_repo\n" +
-		"# ignores it.\n" +
-		"graph_dir: " + GraphElsewhereFile + "\n" +
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +

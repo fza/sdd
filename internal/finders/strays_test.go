@@ -2,6 +2,7 @@ package finders_test
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,7 +38,7 @@ func TestGraphStrays(t *testing.T) {
 	work := t.TempDir()
 	current := model.GitDirLocation("graph")
 	records := []model.MoveRecord{
-		{ID: "a", From: model.GitPathLocation("../missing-checkout", "graph"), To: model.GitDirLocation(".sdd/graph"), Revision: "r", Entries: 1},
+		{ID: "a", From: model.LocationRef{Kind: model.LocationGitPath, Address: "../missing-checkout", Options: url.Values{"dir": {"graph"}}}, To: model.GitDirLocation(".sdd/graph"), Revision: "r", Entries: 1},
 		{ID: "b", From: model.GitDirLocation(".sdd/graph"), To: current, Revision: "r", Entries: 1},
 	}
 	var trailers []string

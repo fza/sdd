@@ -16,7 +16,8 @@ const (
 	// LocationGitDir is a folder in the repository sdd move runs in.
 	LocationGitDir = "git-dir"
 	// LocationGitPath is a checkout on disk, its path relative to the
-	// repository sdd move runs in or absolute, with the graph folder in it.
+	// repository sdd move ran in or absolute, with the graph folder in it.
+	// No move leads there; move records name it as a former location.
 	LocationGitPath = "git-path"
 	// LocationGitRepo is a repository sdd clones and pushes itself.
 	LocationGitRepo = "git-repo"
@@ -64,11 +65,6 @@ func requireOptions(ref LocationRef, names ...string) error {
 // GitDirLocation is the graph folder dir in the repository sdd move runs in.
 func GitDirLocation(dir string) LocationRef {
 	return LocationRef{Kind: LocationGitDir, Address: dir}
-}
-
-// GitPathLocation is the graph folder dir in the checkout at path.
-func GitPathLocation(path, dir string) LocationRef {
-	return LocationRef{Kind: LocationGitPath, Address: path, Options: url.Values{"dir": {dir}}}
 }
 
 // GitRepoLocation is the graph folder dir on branch of the repository sdd
@@ -125,14 +121,10 @@ func ParseLocationRef(text string) (LocationRef, error) {
 // MoveCall is the sdd move invocation that moves a graph to r, and carries
 // any stray entries over to it when the graph is there already.
 func (r LocationRef) MoveCall() string {
-	switch r.Kind {
-	case LocationGitPath:
-		return "sdd move --project-dir " + r.Address
-	case LocationGitRepo:
+	if r.Kind == LocationGitRepo {
 		return "sdd move --graph-repo " + r.Address
-	default:
-		return "sdd move --graph-dir " + r.Address
 	}
+	return "sdd move --graph-dir " + r.Address
 }
 
 // MoveRecordVersion is the move record format this build writes and reads.
@@ -314,22 +306,6 @@ func FormatULID(at time.Time, entropy [10]byte) string {
 	return string(out)
 }
 
-// MoveRecordsMinimumVersion is the first sdd release that reads move
-// records; a moved graph raises its minimum_version to it so older builds
-// refuse the graph instead of writing into its former location.
-const MoveRecordsMinimumVersion = "v0.18.0-alpha.3.fza.43"
-
-// MoveMinimumVersion is the minimum_version a move leaves a graph with:
-// MoveRecordsMinimumVersion, whichever build moves it, so every release
-// reading move records still accepts the graph; a higher recorded one is kept.
-func MoveMinimumVersion(recorded string) string {
-	floor := MoveRecordsMinimumVersion
-	if recorded != "" && !ShouldBumpMinimumVersion(recorded, floor) {
-		return recorded
-	}
-	return floor
-}
-
 // LayoutLocation is where a layout keeps its graph. pointer is the config of
 // the repository pointing at the project holding the graph, nil when that
 // repository holds its graph itself; project is the config of the project
@@ -339,15 +315,12 @@ func LayoutLocation(pointer, project *PerRepoConfig) LocationRef {
 	if project != nil && project.GraphDir != "" {
 		graphDir = project.GraphDir
 	}
-	switch {
-	case pointer != nil && pointer.GraphRepo != "":
+	if pointer != nil && pointer.GraphRepo != "" {
 		branch := ""
 		if project != nil {
 			branch = project.DefaultBranch
 		}
 		return GitRepoLocation(pointer.GraphRepo, graphDir, branch)
-	case pointer != nil && pointer.ProjectDir != "":
-		return GitPathLocation(pointer.ProjectDir, graphDir)
 	}
 	return GitDirLocation(graphDir)
 }

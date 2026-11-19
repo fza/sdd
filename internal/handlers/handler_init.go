@@ -59,18 +59,11 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	if cmd.GraphRepo != "" {
 		return h.initGraphRepo(ctx, cmd, changed)
 	}
-	if cmd.ProjectDir != "" {
-		return h.initPointer(ctx, cmd, changed)
-	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
 	}
 	err := gitignoreLine(graphDir)
-	if err != nil {
-		return fmt.Errorf("graph directory: %w", err)
-	}
-	_, err = model.EntryMergeAttributeLine(graphDir)
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}

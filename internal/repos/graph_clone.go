@@ -394,7 +394,7 @@ func committedGraphDir(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if cfg.GraphDir == "" || cfg.GraphDir == model.GraphElsewhereFile {
+	if cfg.GraphDir == "" {
 		return model.DefaultGraphDir, nil
 	}
 	return path.Clean(filepath.ToSlash(cfg.GraphDir)), nil

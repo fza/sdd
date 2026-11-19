@@ -45,7 +45,7 @@ func TestRewriteLinesCommentBlocks(t *testing.T) {
 }
 
 func TestMovedProjectConfig(t *testing.T) {
-	source := []byte("# kept comment\ngraph_dir: .sdd/graph\ndefault_branch: main\nrepo_id: example.com/code\nproject_dir: ../x\nlanguage: de\nskill_scope: user\n")
+	source := []byte("# kept comment\ngraph_dir: .sdd/graph\ndefault_branch: main\nrepo_id: example.com/code\ngraph_repo: example.com/graph\nlanguage: de\nskill_scope: user\n")
 	got, err := model.MovedProjectConfig(source, "graph", "trunk", "", &model.PerRepoConfig{SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude", "codex"}})
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestMovedProjectConfig(t *testing.T) {
 			t.Errorf("the moved config should hold %q:\n%s", want, text)
 		}
 	}
-	for _, gone := range []string{"repo_id", "project_dir"} {
+	for _, gone := range []string{"repo_id", "graph_repo"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("the moved config should drop %s:\n%s", gone, text)
 		}
@@ -64,12 +64,13 @@ func TestMovedProjectConfig(t *testing.T) {
 }
 
 func TestMergeLocalConfig(t *testing.T) {
-	got, err := model.MergeLocalConfig([]byte("project_dir: ../graph\nllm:\n  model: kept\n"), []byte("participant: Ada\nllm:\n  model: moved\nproject_dir: ../other\n"), model.LocalPointerKeys)
+	hooks := func(command string) string { return "hooks:\n  - event: entry.written\n    command: " + command + "\n" }
+	got, err := model.MergeLocalConfig([]byte(hooks("here.sh")+"llm:\n  model: kept\n"), []byte("participant: Ada\nllm:\n  model: moved\n"+hooks("there.sh")), model.LocalPointerKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(got)
-	if !strings.Contains(text, "participant: Ada") || !strings.Contains(text, "model: moved") || strings.Contains(text, "project_dir") || strings.Contains(text, "kept") {
+	if !strings.Contains(text, "participant: Ada") || !strings.Contains(text, "model: moved") || strings.Contains(text, "hooks") || strings.Contains(text, "kept") {
 		t.Errorf("the moved settings should win and the pointer keys leave both:\n%s", text)
 	}
 }
@@ -83,8 +84,7 @@ func TestLayoutLocation(t *testing.T) {
 		want    string
 	}{
 		{name: "graph in its own repository", project: &model.PerRepoConfig{}, want: "git-dir:.sdd/graph"},
-		{name: "project_dir", pointer: &model.PerRepoConfig{ProjectDir: "../g"}, project: project, want: "git-path:../g?dir=graph"},
-		{name: "graph_repo", pointer: &model.PerRepoConfig{GraphRepo: "example.com/g", ProjectDir: "../g"}, project: project, want: "git-repo:example.com/g?branch=main&dir=graph"},
+		{name: "graph_repo", pointer: &model.PerRepoConfig{GraphRepo: "example.com/g"}, project: project, want: "git-repo:example.com/g?branch=main&dir=graph"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -301,7 +301,6 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 			if err := os.WriteFile(entry, []byte("entry\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fresh := filepath.Join(t.TempDir(), "fresh")
 			runGit(t, work, "remote", "add", "origin", "https://example.test/work.git")
 			runGit(t, sidecar, "remote", "add", "origin", "https://example.test/sidecar.git")
 			runGit(t, sidecar, "checkout", "-q", "-b", "graph-line")
@@ -311,7 +310,6 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 			root := RepoRootFor(filepath.Dir(entry))
 			rootOf, rootErr := (Repositories{}).RootOf(filepath.Dir(entry))
 			commitErr := (CLI{Dir: sidecar}).Commit("sdd: capture", entry)
-			initErr := (Repositories{}).Init(fresh)
 			branch, branchErr := (Repositories{}).CurrentBranch(sidecar)
 			remote := (Repositories{}).RemoteURL(sidecar)
 			if err := os.Unsetenv("GIT_DIR"); err != nil {
@@ -333,12 +331,6 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 			}
 			if subject := strings.TrimSpace(runGit(t, work, "log", "-1", "--format=%s")); subject != "seed" {
 				t.Errorf("the hook's repository should gain no commit, HEAD is %q", subject)
-			}
-			if initErr != nil {
-				t.Errorf("Init should create the repository at the path: %v", initErr)
-			}
-			if _, err := os.Stat(filepath.Join(fresh, ".git")); err != nil {
-				t.Errorf("Init should create the repository at the path: %v", err)
 			}
 			if branchErr != nil || branch != "graph-line" {
 				t.Errorf("CurrentBranch should read the repository at the path, got %q (%v)", branch, branchErr)

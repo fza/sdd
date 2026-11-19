@@ -74,14 +74,14 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path. |
+| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path. It may lead [out of the repository](/sdd/guides/graph-repository/#a-graph-folder-outside-the-repository). Ignored in a file that sets `graph_repo`. |
 | `default_branch` | The branch checked out during `sdd init` | A session that names no branch works on the branch checked out in the project directory, and on this branch when none is checked out. `sdd serve` does not start without it. |
 | `repo_id` | Derived from the `origin` remote | The project's identity, such as `github.com/acme/platform`. Other graphs reference an entry here as `<repo_id>:<entry-id>`. Empty for a repository without a remote. Do not change it by hand. |
 | `language` | English | Language of the entry text, as a locale code such as `en`, `de` or `de-DE`. Translated SDD vocabulary ships for `de`. |
 | `skill_scope` | Asked by `sdd init` | `project` installs the skill into the repository, such as `.claude/skills/`. `user` installs it into your home directory, such as `~/.claude/skills/`. |
 | `supported_agents` | `[claude]` | The agents `sdd init` installs the skill for: `claude`, `codex` or both. |
 | `dependencies` | None | The `repo_id`s of other graphs this graph references. See [connected repositories](#connected-repositories). |
-| `project_dir` | None | Set in a work repository only: the folder holding the sdd project's `.sdd/`, relative to the repository root; an absolute path only in `.sdd/config.local.yaml`. See [a graph in its own repository](/sdd/guides/graph-repository/). |
+| `graph_repo` | None | Set in a code repository only: the `repo_id` of the repository holding its graph, which sdd reads and writes through a clone of its own. See [a graph in its own repository](/sdd/guides/graph-repository/). |
 
 ### Participant
 
@@ -604,7 +604,7 @@ A hook is a script sdd runs at an event of a running procedure, such as a prose 
 
 ### Where hooks live
 
-Every config file may declare `hooks`: the user-global file, and both `.sdd/config.yaml` and `.sdd/config.local.yaml` of the project. In a project whose graph lives in a [repository of its own](/sdd/guides/graph-repository/), the work repository's two files declare hooks as well. sdd runs the hooks of every file together.
+Every config file may declare `hooks`: the user-global file, and both `.sdd/config.yaml` and `.sdd/config.local.yaml` of the project. In a project whose graph lives in a [repository of its own](/sdd/guides/graph-repository/), the code repository's two files declare hooks as well. sdd runs the hooks of every file together.
 
 `command` names a file in the declaring layer's hooks folder:
 

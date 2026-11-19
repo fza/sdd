@@ -9,15 +9,12 @@ type MoveGraphCmd struct {
 	// WorkRoot is the repository sdd runs in; git-dir locations and a
 	// relative git-path name places in or beside it.
 	WorkRoot string
-	// Target is where the graph goes. A git-path or git-repo target without
-	// the dir option takes model.GraphOnlyGraphDir, a git-repo target
-	// without a branch the one its clone checks out.
+	// Target is where the graph goes. A git-repo target without the dir
+	// option takes model.GraphOnlyGraphDir, and without a branch the one its
+	// clone checks out.
 	Target model.LocationRef
 	// LocalConfigOverride is the --local-config file, which stays where it is.
 	LocalConfigOverride string
-	// BinaryVersion is the running sdd's version, stamped into the agent
-	// surfaces a move installs.
-	BinaryVersion string
 
 	// OnMoved fires once the graph moved, with the record its commits carry.
 	OnMoved func(record model.MoveRecord)

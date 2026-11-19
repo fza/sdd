@@ -26,8 +26,7 @@ func TestServeAnswersBeforeTheFirstGraphClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	initRepo(t, code)
-	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphRepoID)+"\ngraph_dir: "+model.GraphElsewhereFile+"\nskill_scope: project\n")
-	writeFile(t, filepath.Join(code, model.GraphElsewhereFile), model.GraphElsewhereText(graphRepoID))
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphRepoID)+"\nskill_scope: project\n")
 	writeFile(t, filepath.Join(code, ".gitignore"), ".sdd/config.local.yaml\nxdg-*/\n")
 	gitIn(t, code, "add", ".sdd", ".gitignore")
 	gitIn(t, code, "commit", "-q", "-m", "point at the graph repository")

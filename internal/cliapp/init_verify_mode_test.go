@@ -1,11 +1,13 @@
 package cliapp_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/test"
 )
 
 // The answer is recorded as verify.mode in the committed config.
@@ -18,7 +20,7 @@ func TestInitRecordsTheVerifyMode(t *testing.T) {
 	} {
 		answer := tc.answer
 		t.Run(answer, func(t *testing.T) {
-			work, _ := workRepository(t)
+			work := workRepository(t)
 			runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--verify-mode", answer)
 
 			raw := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
@@ -37,7 +39,7 @@ func TestInitRecordsTheVerifyMode(t *testing.T) {
 }
 
 func TestInitRefusesAnUnknownVerifyMode(t *testing.T) {
-	work, _ := workRepository(t)
+	work := workRepository(t)
 	_, err := runAppErr(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--verify-mode", "light")
 	if err == nil || !strings.Contains(err.Error(), "--verify-mode") {
 		t.Fatalf("a mode outside the set should be refused naming the flag, got %v", err)
@@ -47,7 +49,7 @@ func TestInitRefusesAnUnknownVerifyMode(t *testing.T) {
 // The deep verifier's runner is personal: init records it in the local
 // config, and offers only the agents supported_agents names.
 func TestInitRecordsTheVerifierRunnerLocally(t *testing.T) {
-	work, _ := workRepository(t)
+	work := workRepository(t)
 	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--verify-mode", "deep", "--verify-runner", "claude")
 
 	local, err := model.ParseConfig([]byte(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml"))))
@@ -69,7 +71,7 @@ func TestInitRefusesARunnerTheProjectDoesNotRun(t *testing.T) {
 		{"helper", `invalid --verify-runner "helper"`},
 	} {
 		t.Run(tc.runner, func(t *testing.T) {
-			work, _ := workRepository(t)
+			work := workRepository(t)
 			_, err := runAppErr(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--verify-mode", "deep", "--verify-runner", tc.runner)
 			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
 				t.Fatalf("a runner outside the offered set should be refused naming the flag, got %v", err)
@@ -78,25 +80,29 @@ func TestInitRefusesARunnerTheProjectDoesNotRun(t *testing.T) {
 	}
 }
 
-// The verify mode is a project setting: an init in the work repository
-// records it in the project's committed config, never in the pointer.
-func TestInitInTheWorkRepositoryRecordsTheProjectsVerifyMode(t *testing.T) {
-	work, project := workRepository(t)
-	runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+// The verify mode is a project setting: an init in the code repository
+// records it in the graph repository's committed config, never in the pointer.
+func TestInitInTheCodeRepositoryRecordsTheGraphRepositorysVerifyMode(t *testing.T) {
+	remote := test.NewGraphRemote(t, graphCloneRepoID)
+	code := filepath.Join(canonicalTemp(t), "code")
+	err := os.MkdirAll(code, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, code)
+	runApp(t, code, "init", "--graph-repo", "https://example.test/acme/app-sdd.git", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
-	runApp(t, work, "init", "--verify-mode", "deep", "--verify-runner", "subagent")
+	runApp(t, code, "init", "--verify-mode", "deep", "--verify-runner", "subagent")
 
-	cfg, err := model.ParseConfig([]byte(readFile(t, filepath.Join(project, ".sdd", "config.yaml"))))
+	committed, _ := remote.Show(t, ".sdd/config.yaml")
+	cfg, err := model.ParseConfig([]byte(committed))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Verify.Mode != model.VerifyDeep {
-		t.Fatalf("the project's committed config should carry the answer, got mode %q", cfg.Verify.Mode)
+		t.Fatalf("the graph repository's committed config should carry the answer, got mode %q", cfg.Verify.Mode)
 	}
-	if pointer := readFile(t, filepath.Join(work, ".sdd", "config.yaml")); strings.Contains(pointer, "verify") {
+	if pointer := readFile(t, filepath.Join(code, ".sdd", "config.yaml")); strings.Contains(pointer, "verify") {
 		t.Errorf("the pointer should carry no project setting:\n%s", pointer)
-	}
-	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
-		t.Errorf("the project's verify mode should be committed there:\n%s", status)
 	}
 }

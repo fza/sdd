@@ -3,28 +3,38 @@ title: A graph in its own repository
 description: Keep the graph in a repository of its own, beside the repository where the work happens.
 ---
 
-The graph can live in an sdd project of its own, beside the repository where the work happens. The work repository's history then carries only the work, and every `sdd: …` commit lands in the project's repository. Set the project up first, then point the work repository at it:
+The graph can live in a repository of its own. The code repository's history then carries only the work, and every `sdd: …` commit lands in the graph repository. Name the graph repository when you set the code repository up:
 
 ```bash
-cd project-sdd && sdd init
-cd ../project && sdd init --project-dir ../project-sdd
+cd project && sdd init --graph-repo git@github.com:acme/project-sdd.git
 ```
+
+On a terminal, a fresh `sdd init` without the flag asks where the graph lives: in this repository, or in a repository of its own on a remote.
 
 ```text
-project/                     # only work commits
-  .sdd/config.yaml           # project_dir, skill_scope, supported_agents, hooks
-  .sdd/config.local.yaml     # optional: project_dir, hooks and personal settings for this machine
-  .claude/skills/            # sdd init installs and commits these here
-  .mcp.json                  # sdd serve
+project/                       # only work commits
+  .sdd/config.yaml             # graph_repo, skill_scope, supported_agents, hooks
+  .sdd/config.local.yaml       # participant and other personal settings for this machine
+  .claude/skills/              # sdd init installs and commits these here
+  .mcp.json                    # sdd serve
   src/
 
-project-sdd/                 # only sdd: commits
-  .sdd/config.yaml           # graph_dir, repo_id, default_branch, language, dependencies, ...
-  .sdd/config.local.yaml     # participant and other personal settings for this project
+github.com/acme/project-sdd    # only sdd: commits
+  .sdd/config.yaml             # graph_dir, repo_id, default_branch, language, dependencies, ...
   .sdd/meta.json
-  .sdd/graph/2026/09/...
+  graph/2026/09/...
 ```
 
-`project_dir` names the folder holding the project's `.sdd/`, relative to the work repository's root, its real folder with symlinks resolved; an absolute path belongs in `config.local.yaml` only. `sdd init` records a typed absolute `--project-dir` relative between the real folders, and refuses one outside the repository's parent folder. The work repository's committed config carries nothing else but [hooks](/sdd/reference/configuration/#hooks): every shared project setting, the graph, `meta.json`, sessions and stats live in the project, so a committed work config that sets any other key is refused, naming the file and key. Its `config.local.yaml` may hold any machine-local setting. A command run in the work repository lays that file over the project's own: built-in defaults, then the user-global config, the project's `config.yaml`, the project's `config.local.yaml` and the work repository's `config.local.yaml`. `sdd config set --local` run there writes the work repository's file, and `sdd config` names its values `work local`. `sdd config set --local project_dir <path>` writes that file also under `--local-config` and while the pointer names no project; in a repository holding its own project it is refused. A project that sets `project_dir` in either of its files is refused as a target. A `graph_dir` leading into another repository, a repository nested in the project or reached through a symlink included, is refused the same way, since commits, the schema and engine branches all belong to the repository holding the project's `.sdd/`. So is a `graph_dir` leading out of the project into no repository. A `project_dir` is refused when it names a folder inside the work repository (a repository of its own there included), a folder containing the work repository, a folder inside another repository rather than at its root, or an existing project outside any repository. `sdd init` refuses each of these before it writes anything, as every later command refuses them.
+sdd reads and writes the graph repository through a clone of its own under `~/.local/share/sdd/repos/`; `sdd repo path <repo_id>` prints where. The first command that needs the graph makes the clone. Nobody works in it: sdd discards hand edits there. `sdd init --graph-repo` sets up `.sdd/` in a graph repository that holds none, with the graph under `graph/`, and pushes it.
 
-Every command run in the work repository acts on the project: captures commit there, `sdd serve` serves it and works on its branches (a session binds a branch checked out in the project's repository), and the write gate reads its `meta.json`. The work itself stays where it is: `sdd init` installs skills and registers the MCP server in the work repository, `sdd wip start` branches it, and closure evidence comes from its history.
+`graph_repo` holds the graph repository's `repo_id`, such as `github.com/acme/project-sdd`. The code repository's committed config carries `graph_repo`, `skill_scope`, `supported_agents` and [hooks](/sdd/reference/configuration/#hooks), nothing else: every shared project setting, the graph and `meta.json` live in the graph repository, so a committed config that sets any other key beside `graph_repo` is refused, naming the file and the key. `graph_dir` is the one exception: a config file that sets `graph_repo` may set it too, and it is ignored there; the graph repository's own config names the graph folder. A graph repository whose own config sets `graph_repo` is refused.
+
+Personal settings stay in the code repository: `.sdd/config.local.yaml` there is the project's machine-local file, and `sdd config set --local` writes it.
+
+Every command run in the code repository acts on the graph repository: captures commit in the clone and are pushed, `sdd serve` serves it, and the write gate reads its `meta.json`. The work itself stays where it is: `sdd init` installs skills and registers the MCP server in the code repository, `sdd wip start` branches it, and closure evidence comes from its history.
+
+## A graph folder outside the repository
+
+`graph_dir` may also lead out of the repository holding `.sdd/`, as a relative or an absolute path, into another repository or into none. sdd reads the entries there and writes new ones there. The settings of the repository holding `.sdd/` apply; a `.sdd/` in the repository the graph folder lies in is not read.
+
+sdd commits a capture with git in the working directory. git refuses a file outside that repository, so the capture fails after its entry file is written, and the file stays uncommitted. To keep a graph in another repository with its commits, use `graph_repo`.

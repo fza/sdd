@@ -1,6 +1,7 @@
 package meta_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,12 +17,13 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "graph_repo with the stock guard resolves to the clone",
+			name: "graph_repo beside a graph_dir resolves to the clone",
 			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\ngraph_dir: .sdd/GRAPH-ELSEWHERE.md\nskill_scope: project\n"},
 		},
 		{
-			name: "with both pointers set the clone wins",
-			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nproject_dir: ../project\n"},
+			name:      "project_dir beside graph_repo",
+			work:      map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nproject_dir: ../project\n"},
+			wantError: "sets project_dir",
 		},
 		{
 			name: "the local file may name the graph repository",
@@ -78,8 +80,7 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 }
 
 // A repository init switches to a graph repository resolves as that graph
-// repository's project while it still points through project_dir, so its
-// local layer may hold the settings a graph_repo project keeps there.
+// repository's project while its config still names another.
 func TestResolveSwitchedProject(t *testing.T) {
 	const switched = model.RepoID("example.test/acme/next-sdd")
 	cases := []struct {
@@ -89,13 +90,8 @@ func TestResolveSwitchedProject(t *testing.T) {
 		wantError string
 	}{
 		{
-			name:     "project_dir with project settings in the local file",
-			work:     map[string]string{"config.yaml": "project_dir: ../project\nskill_scope: project\nsupported_agents: [claude]\n", "config.local.yaml": "participant: Ada\ndialogue:\n  mode: guided\n"},
-			wantRepo: switched,
-		},
-		{
 			name:     "graph_repo naming another graph repository",
-			work:     map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\n"},
+			work:     map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\n", "config.local.yaml": "participant: Ada\ndialogue:\n  mode: guided\n"},
 			wantRepo: switched,
 		},
 		{
@@ -104,8 +100,13 @@ func TestResolveSwitchedProject(t *testing.T) {
 			wantRepo: "",
 		},
 		{
-			name:      "a project setting beside project_dir",
-			work:      map[string]string{"config.yaml": "project_dir: ../project\nlanguage: de\n"},
+			name:     "a repository naming project_dir resolves as itself",
+			work:     map[string]string{"config.yaml": "project_dir: ../project\nskill_scope: project\n"},
+			wantRepo: "",
+		},
+		{
+			name:      "a project setting beside graph_repo",
+			work:      map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nlanguage: de\n"},
 			wantError: "sets language",
 		},
 	}
@@ -139,6 +140,43 @@ func TestResolveSwitchedProject(t *testing.T) {
 	}
 }
 
+func TestRefuseNestedGraphRepo(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/app-sdd")
+	cases := []struct {
+		name      string
+		clone     string
+		graphRepo model.RepoID
+		wantError bool
+	}{
+		{name: "a graph repository holding its graph", clone: "graph_dir: graph\nrepo_id: example.test/acme/app-sdd\n", graphRepo: repoID},
+		{name: "a graph repository not cloned yet", graphRepo: repoID},
+		{name: "a graph repository naming another one", clone: "graph_repo: example.test/acme/next-sdd\n", graphRepo: repoID, wantError: true},
+		{name: "a project of its own", clone: "graph_repo: example.test/acme/next-sdd\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			clone := filepath.Join(root, "clone")
+			if tc.clone != "" {
+				writeConfig(t, clone, "config.yaml", tc.clone)
+			}
+			project := meta.Project{Root: clone, WorkRoot: filepath.Join(root, "code"), GraphRepo: tc.graphRepo}
+
+			err := meta.RefuseNestedGraphRepo(os.ReadFile, project)
+
+			if !tc.wantError {
+				if err != nil {
+					t.Fatalf("the project should be accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), string(repoID)) || !strings.Contains(err.Error(), filepath.Join(clone, ".sdd", "config.yaml")) {
+				t.Errorf("the refusal should name the graph repository and its config file: %v", err)
+			}
+		})
+	}
+}
+
 func TestProjectLocalConfigPath(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -149,7 +187,6 @@ func TestProjectLocalConfigPath(t *testing.T) {
 		{name: "graph_repo uses the code repository's file", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, want: "/code/.sdd/config.local.yaml"},
 		{name: "--local-config wins", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, override: "/elsewhere.yaml", want: "/elsewhere.yaml"},
 		{name: "a project of its own keeps the file under its .sdd", project: meta.Project{Root: "/code", WorkRoot: "/code"}},
-		{name: "project_dir uses the code repository's file over the project's", project: meta.Project{Root: "/project", WorkRoot: "/code"}, want: "/code/.sdd/config.local.yaml"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

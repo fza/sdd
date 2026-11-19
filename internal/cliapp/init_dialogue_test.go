@@ -22,7 +22,7 @@ func readDialogueMode(t *testing.T, path string) model.DialogueMode {
 
 func TestInitRecordsTheDialogueMode(t *testing.T) {
 	t.Run("in this repository", func(t *testing.T) {
-		work, _ := workRepository(t)
+		work := workRepository(t)
 
 		runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "auto")
 
@@ -33,20 +33,19 @@ func TestInitRecordsTheDialogueMode(t *testing.T) {
 			t.Errorf("the dialogue mode should stay out of the committed config, got %q", got)
 		}
 	})
-	t.Run("in the project holding the graph", func(t *testing.T) {
-		work, _ := workRepository(t)
+	t.Run("an explicit guided mode", func(t *testing.T) {
+		work := workRepository(t)
 
-		runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "guided")
+		runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "guided")
 
-		project := filepath.Join(filepath.Dir(work), "work-sdd")
-		if got := readDialogueMode(t, filepath.Join(project, ".sdd", "config.local.yaml")); got != model.DialogueGuided {
-			t.Errorf("an explicit guided mode should be recorded where the graph lives, got %q", got)
+		if got := readDialogueMode(t, filepath.Join(work, ".sdd", "config.local.yaml")); got != model.DialogueGuided {
+			t.Errorf("an explicit guided mode should be recorded in the person's local config, got %q", got)
 		}
 	})
 }
 
 func TestInitRefusesAnUnknownDialogueMode(t *testing.T) {
-	work, _ := workRepository(t)
+	work := workRepository(t)
 
 	_, err := runAppErr(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "free")
 

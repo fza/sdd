@@ -32,10 +32,9 @@ import (
 // Commit method name and therefore lives on its own type (RemovalCommitter).
 type CLI struct {
 	// Dir is the repository the ambient operations run in. Empty means the
-	// process working directory. A graph kept in its own checkout, beside the
-	// project rather than inside it, needs entry commits to reach that
-	// checkout while the process runs in the project: the working directory
-	// alone cannot express both.
+	// process working directory. A graph in an sdd-owned clone needs entry
+	// commits to reach that clone while the process runs in the code
+	// repository: the working directory alone cannot express both.
 	Dir string
 }
 
@@ -639,13 +638,12 @@ func GraphRepoRoot(graphDir string) (string, error) {
 }
 
 // Repositories reaches repositories by path rather than through one adapter's
-// Dir: a work repository's init sets its project up in a repository beside it.
+// Dir: a code repository's init and move work in the clone holding its graph.
 // It is the production handlers.ProjectRepositories.
 type Repositories struct{}
 
 // RootOf is RepoRootFor that fails loud: only git's own "not a git
-// repository" answer means no repository, so a setup never runs `git init`
-// inside a repository git could not read.
+// repository" answer means no repository.
 func (Repositories) RootOf(dir string) (string, error) {
 	ancestor := existingAncestor(dir)
 	if ancestor == "" {
@@ -663,14 +661,6 @@ func (Repositories) RootOf(dir string) (string, error) {
 		return "", nil
 	}
 	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(stderr.String()), err)
-}
-
-func (Repositories) Init(dir string) error {
-	out, err := pathCommand("init", "--quiet", dir).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
-	}
-	return nil
 }
 
 func (Repositories) CurrentBranch(dir string) (string, error) {

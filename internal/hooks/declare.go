@@ -100,13 +100,7 @@ func readLayers(src Sources) ([]layerFile, error) {
 	if project.Root == "" {
 		return layers, nil
 	}
-	// Hooks list per file, so the project's own local file stands apart from
-	// the work repository's that lies over it in project_dir layouts.
-	localLayer := src.LocalConfig
-	if project.GraphRepo != "" {
-		localLayer = project.LocalConfigPath(src.LocalConfig)
-	}
-	projectLocal := meta.LocalConfigPath(project.SDDDir(), localLayer)
+	projectLocal := meta.LocalConfigPath(project.SDDDir(), project.LocalConfigPath(src.LocalConfig))
 	if !project.Pointed() {
 		repo, err := repoLayers(project.Root, "", projectLocal)
 		if err != nil {

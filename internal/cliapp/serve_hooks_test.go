@@ -241,55 +241,66 @@ func TestConfigListsTheCommittedLayersHooks(t *testing.T) {
 	}
 }
 
-// In a project_dir layout both repositories declare hooks, in both of their
-// config files; sdd hooks and sdd config list every layer in order.
-func TestHooksOfBothRepositoriesOfAProjectDirLayout(t *testing.T) {
-	work, project := pointedRepos(t)
-	declare := func(repo, file, command string) {
-		path := filepath.Join(repo, ".sdd", file)
-		existing := ""
-		if raw, err := os.ReadFile(path); err == nil {
-			existing = string(raw)
-		}
-		writeFile(t, path, existing+"hooks:\n  - event: capture.assemble\n    command: "+command+"\n")
-		writeFile(t, filepath.Join(repo, ".sdd", "hooks", command), "#!/bin/sh\n")
-		if err := os.Chmod(filepath.Join(repo, ".sdd", "hooks", command), 0o755); err != nil {
+// In a graph_repo layout both repositories declare hooks; sdd hooks and sdd
+// config list every layer in order.
+func TestHooksOfBothRepositoriesOfAGraphRepoLayout(t *testing.T) {
+	code, remote := graphRepoCode(t)
+	const hook = "hooks:\n  - event: capture.assemble\n    command: "
+	script := func(repo, command string) {
+		path := filepath.Join(repo, ".sdd", "hooks", command)
+		writeFile(t, path, "#!/bin/sh\n")
+		if err := os.Chmod(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	declare(work, "config.yaml", "work.sh")
-	declare(work, "config.local.yaml", "local/work-local.sh")
-	declare(project, "config.yaml", "project.sh")
-	declare(project, "config.local.yaml", "local/project-local.sh")
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(graphCloneRepoID)+"\nskill_scope: project\n"+hook+"work.sh\n")
+	writeFile(t, filepath.Join(code, ".sdd", "config.local.yaml"), hook+"local/work-local.sh\n")
+	script(code, "work.sh")
+	script(code, "local/work-local.sh")
+	graph := remote.Clone(t)
+	writeFile(t, filepath.Join(graph, ".sdd", "config.yaml"), readFile(t, filepath.Join(graph, ".sdd", "config.yaml"))+hook+"project.sh\n")
+	script(graph, "project.sh")
+	gitIn(t, graph, "add", ".sdd")
+	gitIn(t, graph, "commit", "-q", "-m", "declare a hook")
+	gitIn(t, graph, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	listed, err := runAppErr(t, work, "hooks")
+	listed, err := runAppErr(t, code, "hooks")
 	if err != nil {
 		t.Fatalf("sdd hooks: %v\n%s", err, listed)
 	}
-	order := regexp.MustCompile(`(?s)pending +work committed .*work\.sh.*pending +work local .*local/work-local\.sh.*pending +project committed .*project\.sh.*pending +project local .*local/project-local\.sh`)
+	order := regexp.MustCompile(`(?s)pending +work committed .*work\.sh.*pending +work local .*local/work-local\.sh.*pending +project committed .*project\.sh`)
 	if !order.MatchString(listed) {
 		t.Errorf("sdd hooks should list every repository's layers, work before project, committed before local:\n%s", listed)
 	}
 
-	config, err := runAppErr(t, work, "config")
+	config, err := runAppErr(t, code, "config")
 	if err != nil {
 		t.Fatalf("sdd config: %v\n%s", err, config)
 	}
-	for _, row := range []string{`hooks\.0\.command +work\.sh +\(work\)`, `hooks\.1\.command +local/work-local\.sh +\(work local\)`, `hooks\.2\.command +project\.sh +\(project\)`, `hooks\.3\.command +local/project-local\.sh +\(local\)`} {
+	for _, row := range []string{`hooks\.0\.command +work\.sh +\(work\)`, `hooks\.\d\.command +project\.sh +\(project\)`} {
 		if !regexp.MustCompile(row).MatchString(config) {
 			t.Errorf("sdd config should list %s:\n%s", row, config)
 		}
 	}
 }
 
-// sdd init names the pending hooks when it cannot ask on a terminal.
-func TestInitNamesThePendingHooks(t *testing.T) {
-	work, _ := pointedRepos(t)
-	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\nhooks:\n  - event: capture.assemble\n    command: lint.sh\n")
-	writeFile(t, filepath.Join(work, ".sdd", "hooks", "lint.sh"), "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(work, ".sdd", "hooks", "lint.sh"), 0o755); err != nil {
+// hookedProject is a project whose committed config declares one hook.
+func hookedProject(t *testing.T) string {
+	t.Helper()
+	project := canonicalTemp(t)
+	initRepo(t, project)
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/project\ndefault_branch: main\nlanguage: en\nskill_scope: project\nsupported_agents: [claude]\nverify:\n  mode: off\nhooks:\n  - event: capture.assemble\n    command: lint.sh\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	writeFile(t, filepath.Join(project, ".sdd", "hooks", "lint.sh"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(project, ".sdd", "hooks", "lint.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return project
+}
+
+// sdd init names the pending hooks when it cannot ask on a terminal.
+func TestInitNamesThePendingHooks(t *testing.T) {
+	work := hookedProject(t)
 	output, err := runAppErr(t, work, "init", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 	if err != nil {
 		t.Fatalf("sdd init: %v\n%s", err, output)
@@ -302,12 +313,7 @@ func TestInitNamesThePendingHooks(t *testing.T) {
 // On a terminal sdd init asks about each repository waiting and allows the
 // accepted one.
 func TestInitAllowsThePendingHooksOnATerminal(t *testing.T) {
-	work, _ := pointedRepos(t)
-	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\nhooks:\n  - event: capture.assemble\n    command: lint.sh\n")
-	writeFile(t, filepath.Join(work, ".sdd", "hooks", "lint.sh"), "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(work, ".sdd", "hooks", "lint.sh"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	work := hookedProject(t)
 	gitIn(t, work, "add", "-f", ".sdd/hooks")
 	if output, err := runAppErr(t, work, "init", "--scope", "project", "--participant", "Ada", "--agents", "claude"); err != nil {
 		t.Fatalf("sdd init: %v\n%s", err, output)
@@ -317,7 +323,7 @@ func TestInitAllowsThePendingHooksOnATerminal(t *testing.T) {
 	if result.err != nil || !strings.Contains(result.stdout, "Allow these hooks to run on this machine?") || !strings.Contains(result.stdout, "allowed;") {
 		t.Fatalf("sdd init on a terminal should ask and allow:\n%s%s%v", result.stdout, result.stderr, result.err)
 	}
-	if list := fixture.run(t, "hooks"); !regexp.MustCompile(`allowed +work committed +capture\.assemble +lint\.sh`).MatchString(list.stdout) {
+	if list := fixture.run(t, "hooks"); !regexp.MustCompile(`allowed +committed +capture\.assemble +lint\.sh`).MatchString(list.stdout) {
 		t.Fatalf("the hook accepted in sdd init should list as allowed:\n%s%v", list.stdout, list.err)
 	}
 }

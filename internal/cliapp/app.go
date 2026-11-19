@@ -357,11 +357,6 @@ func localConfigLayer() (string, error) {
 		return "", err
 	}
 	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil, nil).Dir)
-	// A pointer at a missing project still names its own local file, the one
-	// `sdd init --project-dir` writes while setting that project up.
-	if errors.Is(err, meta.ErrNotAProject) {
-		return meta.LocalConfigPath(meta.SDDDir(workRoot), ""), nil
-	}
 	if err != nil {
 		return "", err
 	}
@@ -577,7 +572,6 @@ func New(options Options) *cli.Command {
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
 			configWrite := writesConfig(cmd)
-			repointing := repointsProject(cmd)
 			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
@@ -588,7 +582,7 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
-			if err != nil && !repairingConfig(configWrite, err) && !repointing {
+			if err != nil && !repairingConfig(configWrite, err) {
 				if isScheduledCachePrune(cmd.Args()) {
 					err = recordScheduledPruneFailure(ctx, err)
 				}
@@ -597,7 +591,7 @@ func New(options Options) *cli.Command {
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
-				if err != nil && !repairingConfig(configWrite, err) && !repointing {
+				if err != nil && !repairingConfig(configWrite, err) {
 					if isScheduledCachePrune(cmd.Args()) {
 						err = recordScheduledPruneFailure(ctx, err)
 					}
@@ -1758,15 +1752,21 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 	return cfg.Participant, nil
 }
 
-// graphGit is the git adapter for graph writes and graph history: it runs in
-// the repository holding graphDir, which is the project's. A work repository
-// pointing at its project with project_dir runs the process elsewhere, so the
-// working directory alone cannot name it.
-//
-// Operations on the work itself (branches for a WIP marker, the skill and
-// config commits of sdd init) keep the process working directory.
+// graphGit is the git adapter for graph writes and graph history. It runs in
+// the working directory, except for a graph in an sdd-owned clone, which the
+// working directory cannot name.
 func graphGit(graphDir string) git.CLI {
-	return git.CLI{Dir: git.RepoRootFor(graphDir)}
+	return git.CLI{Dir: graphCloneRoot(graphDir)}
+}
+
+// graphCloneRoot is the root of the sdd-owned clone holding graphDir, empty
+// for a graph held elsewhere.
+func graphCloneRoot(graphDir string) string {
+	root := git.RepoRootFor(graphDir)
+	if git.IsGraphClone(root) {
+		return root
+	}
+	return ""
 }
 
 // graphSyncMode is the sync mode a graph-writing command on graphDir runs
@@ -1794,7 +1794,8 @@ func graphSyncMode(graphDir string) (model.SyncMode, error) {
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
 
 // optionalSDDDir is resolveSDDDir for commands that also run outside any
-// project: only the absence of a .sdd/ yields "", a broken pointer still fails.
+// project: only the absence of a .sdd/ yields "", a broken graph_repo still
+// fails.
 func optionalSDDDir() (string, error) {
 	sddDir, err := resolveSDDDir()
 	if errors.Is(err, errNoProject) {
@@ -1804,7 +1805,7 @@ func optionalSDDDir() (string, error) {
 }
 
 // resolveSDDDir returns the .sdd/ directory of the project governing the
-// working directory: its own, or the one its project_dir points at.
+// working directory: its own, or the one of its graph_repo's clone.
 func resolveSDDDir() (string, error) {
 	project, err := resolveProject()
 	if err != nil {
@@ -1828,10 +1829,10 @@ func resolveProjectWith(read meta.ReadFile) (meta.Project, error) {
 		if err != nil {
 			return meta.Project{}, err
 		}
-	}
-	err = requireGraphInsideRepository(read, project)
-	if err != nil {
-		return meta.Project{}, err
+		err = meta.RefuseNestedGraphRepo(read, project)
+		if err != nil {
+			return meta.Project{}, err
+		}
 	}
 	return project, nil
 }
@@ -1888,31 +1889,6 @@ func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project me
 	return nil
 }
 
-// requireGraphInsideRepository refuses a project placed where its work
-// repository cannot point at it, and a graph_dir leading out of the project's
-// repository (meta.RequireGraphInProjectRepository).
-func requireGraphInsideRepository(read meta.ReadFile, project meta.Project) error {
-	cfg, err := meta.ReadLayoutConfigWith(read, project.SDDDir(), project.LocalConfigPath(localConfigOverride))
-	if err != nil {
-		return err
-	}
-	if project.Pointed() && project.GraphRepo == "" {
-		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
-		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, repoRootFor)
-		if err != nil {
-			return err
-		}
-		err = meta.RequireProjectRepository(subject, project.Root, repoRootFor)
-		if err != nil {
-			return err
-		}
-	}
-	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), repoRootFor)
-}
-
-// repoRootFor is git.RepoRootFor as a meta.RootOf.
-func repoRootFor(path string) (string, error) { return git.RepoRootFor(path), nil }
-
 // promptGraphDir runs an interactive prompt for the graph directory. Empty
 // input accepts the default; cancellation returns an error.
 func promptGraphDir(cmd *cli.Command, defaultValue string) (string, error) {
@@ -1931,11 +1907,10 @@ type graphLocation int
 const (
 	graphHere graphLocation = iota
 	graphRemote
-	graphFolder
 )
 
-// promptGraphLocation asks where the graph lives: this repository, a
-// repository of its own on a remote, or a local folder without a remote.
+// promptGraphLocation asks where the graph lives: this repository, or a
+// repository of its own on a remote.
 func promptGraphLocation(cmd *cli.Command) (graphLocation, error) {
 	return tui.RunSelect(tui.SelectPrompt[graphLocation]{
 		Reader: cmd.Reader,
@@ -1944,7 +1919,6 @@ func promptGraphLocation(cmd *cli.Command) (graphLocation, error) {
 		Options: []tui.SelectOption[graphLocation]{
 			{Label: "this repository", Hint: "graph and settings committed beside the code", Value: graphHere},
 			{Label: "a repository of its own on a remote", Hint: "sdd keeps its own clone; this repository keeps only a pointer (graph_repo)", Value: graphRemote},
-			{Label: "a local folder without a remote", Hint: "this repository keeps only a pointer to it (project_dir)", Value: graphFolder},
 		},
 	})
 }
@@ -1956,18 +1930,6 @@ func promptGraphRepoAddress(cmd *cli.Command) (string, error) {
 		Writer: cmd.Writer,
 		Label:  "Graph repository address, e.g. git@github.com:org/app-sdd.git",
 		Width:  60,
-	})
-}
-
-// promptProjectDir asks for the path of the repository holding the graph.
-// Empty input accepts the default; cancellation returns an error.
-func promptProjectDir(cmd *cli.Command, defaultValue string) (string, error) {
-	return tui.RunTextPrompt(tui.TextPrompt{
-		Reader:  cmd.Reader,
-		Writer:  cmd.Writer,
-		Label:   "Graph repository path (relative to this repository)",
-		Default: defaultValue,
-		Width:   60,
 	})
 }
 
@@ -2118,12 +2080,8 @@ func initCmd() *cli.Command {
 				Usage: "Graph directory relative to repo root (prompted interactively on fresh init)",
 			},
 			&cli.StringFlag{
-				Name:  "project-dir",
-				Usage: "Root of the sdd project holding this repository's graph, kept in a repository of its own and set up there when it holds none yet; this repository then carries only the pointer and the agent skills",
-			},
-			&cli.StringFlag{
 				Name:  "graph-repo",
-				Usage: "Address of a remote repository holding this repository's graph; sdd clones it into a clone of its own, sets up .sdd/ there when it is empty and pushes, and this repository carries only graph_repo and a guard",
+				Usage: "Address of a remote repository holding this repository's graph; sdd clones it into a clone of its own, sets up .sdd/ there when it is empty and pushes, and this repository carries only graph_repo and the agent skills",
 			},
 			&cli.StringFlag{
 				Name:  "participant",
@@ -2210,32 +2168,21 @@ func initCmd() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading existing configuration before init: %w", err)
 			}
-			projectDir := strings.TrimSpace(cmd.String("project-dir"))
-			if projectDir == "" && recordedFiles != nil {
-				projectDir = recordedFiles.ProjectDir
-			}
-			// Only a path typed or chosen here may name a project to set up; a
-			// recorded one names a shared project to clone.
-			setUpProject := cmd.IsSet("project-dir")
 			graphRepoAddress := strings.TrimSpace(cmd.String("graph-repo"))
 			var graphRepo model.RepoID
-			if graphRepoAddress == "" && !cmd.IsSet("project-dir") && recordedFiles != nil {
+			if graphRepoAddress == "" && recordedFiles != nil {
 				graphRepo = recordedFiles.GraphRepo
 			}
-			if projectDir == "" && graphRepo == "" && graphRepoAddress == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
+			if graphRepo == "" && graphRepoAddress == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
 				location, err := promptGraphLocation(cmd)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
-				switch location {
-				case graphRemote:
+				if location == graphRemote {
 					graphRepoAddress, err = promptGraphRepoAddress(cmd)
-				case graphFolder:
-					projectDir, err = promptProjectDir(cmd, filepath.Join("..", filepath.Base(repoRoot)+"-sdd"))
-					setUpProject = true
-				}
-				if err != nil {
-					return fmt.Errorf("prompt: %w", err)
+					if err != nil {
+						return fmt.Errorf("prompt: %w", err)
+					}
 				}
 			}
 			if graphRepoAddress != "" {
@@ -2244,18 +2191,14 @@ func initCmd() *cli.Command {
 					return fmt.Errorf("--graph-repo: %w", err)
 				}
 			}
-			if graphRepo != "" {
-				projectDir = ""
-			}
-			pointer := projectDir != "" || graphRepo != ""
+			pointer := graphRepo != ""
 			// The participant is a setting of the project holding the graph,
 			// which a pointing repository is not.
 			projectSDDDir := sddDir
-			// A pointer at a folder holding no sdd project sets that project
-			// up first, asking what a fresh init asks.
+			// A graph repository holding no sdd project is set up first, asking
+			// what a fresh init asks.
 			projectMissing := false
-			var projectRoot string
-			if graphRepo != "" {
+			if pointer {
 				locations, err := repos.DefaultLocations()
 				if err != nil {
 					return err
@@ -2270,18 +2213,6 @@ func initCmd() *cli.Command {
 					return fmt.Errorf("reading the graph repository's configuration before init: %w", err)
 				}
 				projectMissing = cloneCommitted == nil
-			} else if pointer {
-				projectRoot = projectDir
-				if !filepath.IsAbs(projectRoot) {
-					projectRoot = filepath.Join(repoRoot, projectRoot)
-				}
-				projectRoot = filepath.Clean(projectRoot)
-				projectSDDDir = meta.SDDDir(projectRoot)
-				projectCommitted, _, err := meta.ReadConfigLayers(projectSDDDir, "")
-				if err != nil {
-					return fmt.Errorf("reading the project's configuration before init: %w", err)
-				}
-				projectMissing = projectCommitted == nil && setUpProject
 			}
 			freshGraph := !pointer && !sddExists || projectMissing
 			// Overlay-aware: a participant or dialogue mode configured
@@ -2317,13 +2248,9 @@ func initCmd() *cli.Command {
 					missing = append(missing, "--participant NAME   (canonical author name)")
 				}
 				if len(missing) > 0 {
-					purpose := "to run non-interactively"
-					if projectMissing && projectRoot != "" {
-						purpose = "to set up the project in " + projectRoot + " non-interactively"
-					}
 					return fmt.Errorf(
-						"sdd init needs values for the following flags %s:\n  %s",
-						purpose, strings.Join(missing, "\n  "),
+						"sdd init needs values for the following flags to run non-interactively:\n  %s",
+						strings.Join(missing, "\n  "),
 					)
 				}
 			}
@@ -2361,14 +2288,6 @@ func initCmd() *cli.Command {
 					graphDir = model.DefaultGraphDir
 				}
 
-				absGraphDir := meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})
-				graphRepoRoot := git.RepoRootFor(absGraphDir)
-				if graphRepoRoot == "" && !meta.WithinDir(repoRoot, absGraphDir) {
-					return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", absGraphDir)
-				}
-				if graphRepoRoot != "" && !meta.SameDir(graphRepoRoot, repoRoot) {
-					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
-				}
 				remoteURL = git.RemoteURL(repoRoot)
 				if existingMerged != nil {
 					defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
@@ -2499,9 +2418,7 @@ func initCmd() *cli.Command {
 				RepoRoot:        repoRoot,
 				StableRepoRoot:  stableRepoRoot,
 				GraphDir:        graphDir,
-				ProjectDir:      projectDir,
 				GraphRepo:       graphRepo,
-				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
 				VerifyMode:      verifyMode,
 				VerifierRunner:  verifierRunner,
@@ -2602,10 +2519,6 @@ func initCmd() *cli.Command {
 			}
 
 			reader, err := newReadFinder()
-			// The project this run sets up does not resolve yet.
-			if errors.Is(err, meta.ErrNotAProject) && projectMissing {
-				reader, err = newReadFinderFor(existingMerged)
-			}
 			if err != nil {
 				return err
 			}
@@ -2833,7 +2746,7 @@ func wipDoneCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				Committer: git.RemovalCommitter{Dir: graphCloneRoot(dir)},
 				SyncMode:  syncMode,
 				Brancher:  git.CLI{},
 			})

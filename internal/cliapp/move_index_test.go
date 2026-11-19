@@ -8,6 +8,7 @@ import (
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/test"
 )
 
 func machineLocations(t *testing.T) repos.Locations {
@@ -33,16 +34,16 @@ func stableRoot(t *testing.T, dir string) string {
 // store a directory of its own.
 func TestMoveLinksTheSearchIndexStore(t *testing.T) {
 	repo := graphRepoToMove(t)
+	test.NewGraphRemote(t, graphCloneRepoID)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(repo, "xdg-cache"))
-	project := filepath.Join(filepath.Dir(repo), "graph-home")
 	cacheRoot := machineLocations(t).CacheRoot
 	oldKey := index.RepoKey("", stableRoot(t, repo))
 	store := index.StoreDir(cacheRoot, oldKey, "embedder")
 	writeFile(t, filepath.Join(store, "manifest.json"), "{}\n")
 
-	runApp(t, repo, "move", "--project-dir", "../graph-home")
+	runApp(t, repo, "move", "--graph-repo", "https://example.test/acme/app-sdd.git")
 
-	newKey := index.RepoKey("", stableRoot(t, project))
+	newKey := index.RepoKey(graphCloneRepoID, stableRoot(t, cloneDir(t)))
 	linked := index.StoreDir(cacheRoot, newKey, "embedder")
 	if index.RealStoreDir(linked) != index.RealStoreDir(store) {
 		t.Fatal("the new repository key should reach the store the graph had")
