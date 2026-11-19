@@ -589,6 +589,18 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
+// fullReads lists the entries served in full, sorted.
+func (s *Session) fullReads() []string {
+	var ids []string
+	for id, depth := range s.reads {
+		if depth == ReadFull {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // RecordPlayback logs that a serve marked PlaysBack reached its consumer, so
 // the instance's draft change counts as played back.
 func (s *Session) RecordPlayback(instance string) {

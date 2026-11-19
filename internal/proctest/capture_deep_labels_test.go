@@ -99,3 +99,59 @@ func TestCaptureDeep_AnOpenedHiddenEntryIsAMissOnlyUnderAFinding(t *testing.T) {
 		}
 	}
 }
+
+// A hidden entry an earlier verifier opened keeps its opening once a fresh
+// verifier replaced it, and the capture publishes.
+func TestCaptureDeep_AnEndedVerifiersOpeningCountsAtPublish(t *testing.T) {
+	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	store := laneLedger(t, true)
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-opened-ended", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}), proctest.WithDelegateLauncher(launcher))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	round := launcher.NextRound(t)
+	dispatch := &sdd.WorkflowDispatch{Session: round.Launch.Session, Instance: round.Launch.Instance}
+	x := &deepExchange{world: world, session: session, instance: instance, dispatch: dispatch, delegate: world.Delegate(t, dispatch), child: round.Launch.Instance}
+	reading := verifierReading(t, x)
+	opened := ""
+	for i := range 40 {
+		if id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i); strings.Contains(reading, "\n"+id+"  Low directive") {
+			opened = id
+			break
+		}
+	}
+	if opened == "" {
+		t.Fatalf("the reading should hide the low entries:\n%s", reading)
+	}
+	x.delegate.LogRead(t, "show", []string{opened}, nil)
+	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": subjectFinding("observes something.")}, "")
+	round.Finish("", nil)
+	waitForRounds(t, world, round.Launch.Session, 1)
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepDispatch")
+	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	driveRound(t, world, launcher.NextRound(t))
+	if _, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: round.Launch.Session}); err == nil {
+		t.Fatal("the fresh verifier should end the one it replaced")
+	}
+	serve = x.pickUp(t)
+	if serve.PendingOperation != nil {
+		t.Fatalf("the publish should succeed, it failed: %s", serve.PendingOperation.Error)
+	}
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ledger.Reader(model.NewRelevancePair(entryID, opened)); !got.OpenedHidden {
+		t.Fatalf("the ended verifier's opening = %+v: want the opening flag", got)
+	}
+}

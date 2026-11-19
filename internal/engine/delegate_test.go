@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -924,6 +925,40 @@ func TestForksListEndedForksBesideLiveOnes(t *testing.T) {
 	}
 	if forks := f.parent.Forks(f.parentInst); len(forks) != 1 || forks[0].Status != engine.ForkConcluded || len(f.parent.LiveForks()) != 0 {
 		t.Fatalf("an ended fork should stay listed, no longer live, got %+v", forks)
+	}
+}
+
+// Each delivery carries what the delegate read in full to its fork, where it
+// stays once the fork ends and after a replay of the stored log.
+func TestForkKeepsWhatItsDelegateReadInFull(t *testing.T) {
+	f := newExchange(t)
+	f.child.LogRead("show", []string{"e-opened"}, []string{"e-listed"})
+	if _, err := f.child.Report(f.childInst, map[string]any{"plan": "f1"}); err != nil {
+		t.Fatal(err)
+	}
+	f.child.LogRead("show", []string{"e-later"}, nil)
+	if err := f.parent.EndFork(f.parentInst, engine.Link{Session: "s_child", Instance: f.childInst}, "replaced"); err != nil {
+		t.Fatal(err)
+	}
+	if forks := f.parent.Forks(f.parentInst); len(forks) != 1 || !slices.Equal(forks[0].Reads, []string{"e-opened"}) {
+		t.Fatalf("the ended fork should keep what its delegate read in full by its delivery, got %+v", forks)
+	}
+	stored, err := json.Marshal(f.parentSink.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []engine.Event
+	if err := json.Unmarshal(stored, &events); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (*engine.Spec, error) { return f.parentSpec, nil }
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	replayed, err := eng.ReplaySession("s_parent", "tester", events, resolve, nopSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forks := replayed.Forks(f.parentInst); len(forks) != 1 || !slices.Equal(forks[0].Reads, []string{"e-opened"}) {
+		t.Fatalf("replay should restore what the delegate read in full, got %+v", forks)
 	}
 }
 
