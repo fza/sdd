@@ -33,10 +33,13 @@ func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIden
 	return w.RecordAnchors(ctx, identity)
 }
 
-// StageAttachment stages content under filename and returns its handle.
-// StageAttachments stages several files in one call and reports each file's
-// hash.
+// StageAttachment stages content under filename, an empty file for empty
+// content, and returns its handle. StageAttachments stages several files in
+// one call and reports each file's hash.
 func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (string, error) {
+	if content == nil {
+		content = []byte{}
+	}
 	staged, err := w.StageAttachments(ctx, identity, []StageItem{{Name: filename, Content: content}})
 	if err != nil {
 		return "", err

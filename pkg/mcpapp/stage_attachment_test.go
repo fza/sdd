@@ -215,6 +215,43 @@ func TestStageAttachmentArgsMarshalTheOneFileShape(t *testing.T) {
 	}
 }
 
+func TestStageAttachmentOneFileShapeStagesAnEmptyFile(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(session string) any
+	}{
+		{name: "empty content", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md", "content": ""}
+		}},
+		{name: "name alone", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md"}
+		}},
+		{name: "typed args", args: func(session string) any {
+			return mcpserver.StageAttachmentArgs{Session: session, Name: "empty.md"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			cs := connect(t, env.srv)
+			session := openSession(t, cs).Session
+
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: tt.args(session)})
+			checkToolCall(t, "stage_attachment", res, err)
+			var staged mcpserver.StageAttachmentResult
+			decodeStructured(t, res, &staged)
+			if staged.Handle != "empty.md" {
+				t.Fatalf("a one-file call without a source should stage an empty file, got %+v", staged)
+			}
+			var read mcpserver.ReadAttachmentResult
+			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": "empty.md"}, &read)
+			if read.Content != "" {
+				t.Errorf("the staged file should be empty, got %q", read.Content)
+			}
+		})
+	}
+}
+
 func TestStageAttachmentAnswersAFilesCallWithoutATopLevelHandle(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)

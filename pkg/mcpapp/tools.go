@@ -1024,11 +1024,20 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 		return nil, StageAttachmentResult{}, err
 	}
 	defer ss.mu.Unlock()
+	oneFile, _ := ctx.Value(oneFileCallKey{}).(bool)
 	items := make([]sdd.StageItem, 0, len(args.Files))
 	for _, file := range args.Files {
-		item := sdd.StageItem{Name: file.Name, Content: []byte(file.Content), Path: file.Path}
+		item := sdd.StageItem{Name: file.Name, Path: file.Path}
+		if file.Content != "" {
+			item.Content = []byte(file.Content)
+		}
 		for _, p := range file.Patches {
 			item.Patches = append(item.Patches, textpatch.Pair{Old: p.Old, New: p.New})
+		}
+		// A one-file call without a source stages an empty file; a files
+		// item keeps the exactly-one-source rule the listing states.
+		if oneFile && item.Path == "" && len(item.Patches) == 0 && item.Content == nil {
+			item.Content = []byte{}
 		}
 		items = append(items, item)
 	}
@@ -1040,7 +1049,7 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	for _, file := range staged {
 		result.Files = append(result.Files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
 	}
-	if oneFile, _ := ctx.Value(oneFileCallKey{}).(bool); oneFile && len(result.Files) == 1 {
+	if oneFile && len(result.Files) == 1 {
 		result.Handle = result.Files[0].Handle
 	}
 	return nil, result, nil

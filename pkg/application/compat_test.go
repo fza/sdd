@@ -71,6 +71,28 @@ func TestSingleFileStagingStagesAndEdits(t *testing.T) {
 	}
 }
 
+func TestSingleFileStagingStagesEmptyContent(t *testing.T) {
+	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{"nil.md": nil, "empty.md": {}} {
+		handle, err := workflow.StageAttachment(t.Context(), identity, name, content)
+		if err != nil {
+			t.Fatalf("%s: empty content should stage an empty file: %v", name, err)
+		}
+		page, _, err := workflow.ReadStagedAttachment(t.Context(), identity, handle, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Content) != 0 {
+			t.Fatalf("%s: staged content = %q, want empty", name, page.Content)
+		}
+	}
+}
+
 func TestReadResultsCarryRenderedText(t *testing.T) {
 	snapshot := acquiredSnapshot(t, "base", "r1", "Rendered body")
 	app := preparationApp(t, acquiredRuntime(t, "base", staticGraphStore{snapshot: snapshot}), nil, nil)

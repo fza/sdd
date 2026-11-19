@@ -17,10 +17,10 @@ import (
 )
 
 // StageItem is one file of a staging call. It takes exactly one source:
-// Content stages the given bytes; Path stages the file read from that local
-// path and keeps the path, so a playback confirm reads it again; Patches edits
-// the file staged under Name before the call with ordered exact search-replace
-// pairs.
+// Content stages the given bytes, a non-nil empty Content an empty file; Path
+// stages the file read from that local path and keeps the path, so a playback
+// confirm reads it again; Patches edits the file staged under Name before the
+// call with ordered exact search-replace pairs.
 type StageItem struct {
 	Name    string
 	Content []byte
@@ -84,7 +84,7 @@ func (w *WorkflowSession) checkStageItem(ctx context.Context, identity RequestId
 		return stageWrite{}, err
 	}
 	sources := 0
-	for _, present := range []bool{len(item.Content) > 0, item.Path != "", len(item.Patches) > 0} {
+	for _, present := range []bool{item.Content != nil, item.Path != "", len(item.Patches) > 0} {
 		if present {
 			sources++
 		}
