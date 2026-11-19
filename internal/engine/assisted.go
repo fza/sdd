@@ -10,7 +10,8 @@ import (
 // an autonomous one does, except its approval gate: the step whose option
 // confirms playback. There the person answers, the confirmation records their
 // approval bound to the state snapshot, and the instance is held for them on
-// arrival, so a session ending unanswered leaves it parked at the gate.
+// arrival, so a session ending unanswered leaves it parked at the gate. An
+// unattended step the agent spent is the person's too (Session.personAnswersAt).
 
 const approvalHoldReason = "the checked draft waits for the person's approval"
 

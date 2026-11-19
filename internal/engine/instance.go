@@ -737,7 +737,13 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
-	if s.unattendedAt(step) != nil && inst.unattendedSpent(step) {
+	personAnswers := s.personAnswersAt(inst, step)
+	switch {
+	case personAnswers:
+		if err := s.hold(inst, step); err != nil {
+			return nil, err
+		}
+	case s.unattendedAt(step) != nil && inst.unattendedSpent(step):
 		return sv, s.park(inst, step, sv)
 	}
 	if s.approvalGateAt(inst, step) {
@@ -763,6 +769,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	lanes, sizes, cuts, err := s.renderUnit(inst, step)
 	if err != nil {
 		return nil, err
+	}
+	if personAnswers {
+		lanes = append([]ServeLane{s.heldForPersonLane(inst, step)}, lanes...)
 	}
 	if lane, exchangeCuts := s.exchangeLane(inst); lane != nil {
 		lanes = append(lanes, *lane)
@@ -857,8 +866,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode, inst.Store)
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.modeAt(inst, step), inst.Store)
 		switch {
+		case personAnswers:
+			sv.Goal = "put the choice to the person through " + s.HowToAsk() + "; relay their answer verbatim"
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
 		case s.approvalGateAt(inst, step):
@@ -1147,16 +1158,16 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 			return nil, fmt.Errorf("template value %q collides with a procedure state field", name)
 		}
 	}
-	ctx[dialogueModeValue] = string(s.dialogueMode())
+	ctx[dialogueModeValue] = string(s.modeAt(inst, inst.currentStep()))
 	ctx[questionToolValue] = s.HowToAsk()
 	ctx[heldForApprovalValue] = inst.sealed != "" && inst.sealed == inst.Store.StateSnapshot()
 	return ctx, nil
 }
 
-// dialogueModeValue names the session's dialogue mode, questionToolValue how
-// the agent puts a choice to its person, and heldForApprovalValue whether an
-// assisted approval gate held the instance at its current state, in every
-// unit's template context.
+// dialogueModeValue names the dialogue mode the current step is served in
+// (Session.modeAt), questionToolValue how the agent puts a choice to its
+// person, and heldForApprovalValue whether an assisted approval gate held the
+// instance at its current state, in every unit's template context.
 const (
 	dialogueModeValue    = "dialogueMode"
 	questionToolValue    = "questionTool"
