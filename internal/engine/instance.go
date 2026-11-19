@@ -169,7 +169,8 @@ type Serve struct {
 	UnitText string
 	// Lanes are the unit's rendered lanes in declaration order (empty
 	// rendered lanes dropped), the blocks a host dedups independently
-	// (d-tac-87o). UnitText is their join.
+	// (d-tac-87o), led by the DraftLane where the step serves one. UnitText
+	// is their join.
 	Lanes []ServeLane
 	// Diagnostics are the stall messages appended to Instructions ("Gate
 	// held" lines), kept separate so shells can recompose around UnitText.
@@ -216,6 +217,9 @@ type Serve struct {
 // ServeLane is defined in pkg/application/types — the exported surface names
 // it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
 type ServeLane = types.ServeLane
+
+// DraftLane is types.DraftLane.
+const DraftLane = types.DraftLane
 
 // evalGuard evaluates a step guard or transition guard against the registry,
 // returning the verdict and the clauses that block it for diagnostics.
@@ -766,7 +770,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		draftCap := serveview.Default().Cap(serveview.PartDraft).MaxBytes
 		if block, draftCuts := renderDraft(inst.Spec, step.ServeDelta, prev, cur, fullDraft, draftCap); block != "" {
-			lanes = append(lanes, ServeLane{Name: "draft", Text: block})
+			lanes = append([]ServeLane{{Name: DraftLane, Text: block}}, lanes...)
 			cuts = append(cuts, draftCuts...)
 		}
 		if inst.draftServed == nil {

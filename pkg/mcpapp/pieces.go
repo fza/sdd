@@ -99,7 +99,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 			continue
 		}
 		// A playback recorded delivered holds the draft itself, never its pointer.
-		if serve.PlaysBack && lane.Name == "draft" {
+		if serve.PlaysBack && lane.Name == types.DraftLane {
 			fresh = append(fresh, lane.Text)
 			continue
 		}

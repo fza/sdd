@@ -62,7 +62,7 @@ func (ss *shellSession) notePlayback(serve *sdd.WorkflowServe, keep int) {
 	if serve == nil || !serve.PlaysBack {
 		return
 	}
-	draft := slices.IndexFunc(serve.InstructionLanes, func(lane types.ServeLane) bool { return lane.Name == "draft" })
+	draft := slices.IndexFunc(serve.InstructionLanes, func(lane types.ServeLane) bool { return lane.Name == types.DraftLane })
 	if draft >= 0 && draft < keep {
 		ss.playbacks = append(ss.playbacks, serve)
 	}

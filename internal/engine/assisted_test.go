@@ -89,7 +89,7 @@ func TestAssistedAgentTakesTheChoicesBeforeTheGate(t *testing.T) {
 func TestAssistedGateIsThePersons(t *testing.T) {
 	session, sv := assistedSession(t, nopSink{}, assisted())
 	sv = toGate(t, session, sv.Instance)
-	if !strings.HasPrefix(sv.UnitText, "Play it back to the person.") || !strings.HasPrefix(sv.Goal, "play the checked draft back to the person") {
+	if !strings.HasSuffix(sv.UnitText, "Play it back to the person.") || !strings.HasPrefix(sv.Goal, "play the checked draft back to the person") {
 		t.Errorf("the gate should address the person, got text %q goal %q", sv.UnitText, sv.Goal)
 	}
 	if schemaHas(sv, "reason") || !schemaRequires(sv, "userWords") || !schemaHas(sv, "batch") {
