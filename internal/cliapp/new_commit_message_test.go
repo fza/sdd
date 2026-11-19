@@ -13,7 +13,8 @@ func TestNewCommitNamesTheEntryInSubjectAndBody(t *testing.T) {
 	project := canonicalTemp(t)
 	initRepo(t, project)
 	graphDir := filepath.Join(project, ".sdd", "graph")
-	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+	err := os.MkdirAll(graphDir, 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nverify:\n  mode: off\n")
@@ -35,8 +36,8 @@ func TestNewCommitNamesTheEntryInSubjectAndBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "sdd: signal tactical Entry ID in the commit\n\nEntry: " + id
-	if message := strings.TrimSpace(gitIn(t, project, "log", "-1", "--format=%B")); message != want {
+	message := strings.TrimSpace(gitIn(t, project, "log", "-1", "--format=%B"))
+	if message != "sdd: signal tactical Entry ID in the commit\n\nEntry: "+id {
 		t.Errorf("the capture commit should carry the title in its subject and the entry ID in its body, got %q", message)
 	}
 }
