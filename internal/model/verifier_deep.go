@@ -112,6 +112,24 @@ func deepSourceOf(ref string) DeepSource {
 	return DeepSource{Kind: DeepSourceFile, Ref: ref, formless: true}
 }
 
+// DeepSources is the list of sources a finding cites.
+type DeepSources []DeepSource
+
+// UnmarshalJSON also reads the plain string an earlier session log can hold
+// in place of the list, as a one-item list.
+func (s *DeepSources) UnmarshalJSON(data []byte) error {
+	if bytes.HasPrefix(bytes.TrimSpace(data), []byte(`"`)) {
+		var one DeepSource
+		err := json.Unmarshal(data, &one)
+		if err != nil {
+			return err
+		}
+		*s = DeepSources{one}
+		return nil
+	}
+	return json.Unmarshal(data, (*[]DeepSource)(s))
+}
+
 // Validate checks the source's form: a known kind, a path inside the
 // checkout, a commit hash, an http or https URL, or a full entry ID.
 func (s DeepSource) Validate() error {
@@ -161,7 +179,7 @@ type DeepFinding struct {
 	Owner    bool          `json:"owner,omitempty"`
 	Pointers []DeepPointer `json:"pointers,omitempty"`
 	Basis    []string      `json:"basis,omitempty"`
-	Sources  []DeepSource  `json:"sources,omitempty"`
+	Sources  DeepSources   `json:"sources,omitempty"`
 	Edits    []DeepEdit    `json:"edits,omitempty"`
 }
 

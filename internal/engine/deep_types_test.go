@@ -1,6 +1,8 @@
 package engine_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -49,10 +51,31 @@ func TestDeepExchangeTypesCarrySchemaAndMeaning(t *testing.T) {
 	}
 }
 
-// A session an earlier build logged, whose finding cites its source as a
-// plain string, replays with the source in its object form.
-func TestDeepFindingWithStringSourcesReplays(t *testing.T) {
-	spec := historySpec(t, `state:
+// A session log an earlier build wrote, whose finding cites its sources in an
+// older shape, replays with each source in its object form.
+func TestDeepFindingLoggedInOlderShapeReplays(t *testing.T) {
+	// listFinding is DeepFinding as it stood before sources became objects.
+	type listFinding struct {
+		Verdict  string   `json:"verdict"`
+		Axis     string   `json:"axis"`
+		Severity string   `json:"severity"`
+		Sources  []string `json:"sources,omitempty"`
+	}
+	type stringFinding struct {
+		Verdict  string `json:"verdict"`
+		Axis     string `json:"axis"`
+		Severity string `json:"severity"`
+		Sources  string `json:"sources,omitempty"`
+	}
+	for _, tc := range []struct {
+		name   string
+		logged any
+	}{
+		{"list of strings", listFinding{Verdict: "the draft misstates it", Axis: "evidence", Severity: "medium", Sources: []string{"internal/foo.go"}}},
+		{"one string", stringFinding{Verdict: "the draft misstates it", Axis: "evidence", Severity: "medium", Sources: "internal/foo.go"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := historySpec(t, `state:
     findings: {type: list<deep-finding>, desc: the findings}
 steps:
     - id: first
@@ -63,37 +86,48 @@ steps:
       chooser: agent
       options:
           - {choice: finish, to: end(completed)}`)
-	sink := &recordingSink{}
-	session := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_history", "tester", sink)
-	sv, err := session.Start(spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	finding := map[string]any{"verdict": "the draft misstates it", "axis": "contradicts", "severity": "medium"}
-	_, err = session.Answer(sv.Instance, "first", "go", map[string]any{"findings": []any{finding}}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, ev := range sink.events {
-		if ev.Event == engine.EventChooserAnswer {
-			stored := map[string]any{"verdict": "the draft misstates it", "axis": "evidence", "severity": "medium", "sources": []any{"internal/foo.go"}}
-			sink.events[i].Data["fields"] = map[string]any{"findings": []any{stored}}
-		}
-	}
+			sink := &recordingSink{}
+			session := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_history", "tester", sink)
+			sv, err := session.Start(spec, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			finding := map[string]any{"verdict": "the draft misstates it", "axis": "contradicts", "severity": "medium"}
+			_, err = session.Answer(sv.Instance, "first", "go", map[string]any{"findings": []any{finding}}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var log bytes.Buffer
+			for _, ev := range sink.events {
+				if ev.Event == engine.EventChooserAnswer {
+					ev.Data["fields"] = map[string]any{"findings": []any{tc.logged}}
+				}
+				line, err := json.Marshal(ev)
+				if err != nil {
+					t.Fatal(err)
+				}
+				log.Write(append(line, '\n'))
+			}
+			events, err := engine.ReadEvents(&log)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	replayed := replayAgainst(t, spec, sink.events)
-	inst, _ := replayed.Instance(sv.Instance)
-	findings, _ := inst.Store.Get("findings")
-	items, _ := findings.([]any)
-	if len(items) != 1 {
-		t.Fatalf("the replayed store should hold the logged finding, got %v", findings)
-	}
-	sources, _ := items[0].(map[string]any)["sources"].([]any)
-	if len(sources) != 1 {
-		t.Fatalf("the replayed finding should keep its source, got %v", items[0])
-	}
-	source, _ := sources[0].(map[string]any)
-	if source["kind"] != model.DeepSourceFile || source["ref"] != "internal/foo.go" {
-		t.Fatalf("the string source should replay as a file source, got %v", sources[0])
+			replayed := replayAgainst(t, spec, events)
+			inst, _ := replayed.Instance(sv.Instance)
+			findings, _ := inst.Store.Get("findings")
+			items, _ := findings.([]any)
+			if len(items) != 1 {
+				t.Fatalf("the replayed store should hold the logged finding, got %v", findings)
+			}
+			sources, _ := items[0].(map[string]any)["sources"].([]any)
+			if len(sources) != 1 {
+				t.Fatalf("the replayed finding should keep its source, got %v", items[0])
+			}
+			source, _ := sources[0].(map[string]any)
+			if source["kind"] != model.DeepSourceFile || source["ref"] != "internal/foo.go" {
+				t.Fatalf("the string source should replay as a file source, got %v", sources[0])
+			}
+		})
 	}
 }
