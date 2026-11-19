@@ -160,13 +160,14 @@ func TestCachePruneCommand(t *testing.T) {
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "2 clones") {
+	if !strings.Contains(r.stdout, "1 clones") {
 		t.Errorf("the run should name what it removed, stdout:\n%s", r.stdout)
 	}
-	for _, dir := range []string{clone, owned} {
-		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Errorf("the clone no connection names and nothing uses should be gone, stat of %s says %v", dir, err)
-		}
+	if _, err := os.Stat(owned); !os.IsNotExist(err) {
+		t.Errorf("the sdd-owned clone no connection names and nothing uses should be gone, stat says %v", err)
+	}
+	if _, err := os.Stat(clone); err != nil {
+		t.Errorf("a clone under the cache root should stay, dropped or not, stat says %v", err)
 	}
 	if _, err := os.Stat(undropped); err != nil {
 		t.Errorf("a clone no repo remove dropped should stay, stat says %v", err)

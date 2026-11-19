@@ -14,48 +14,57 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
-// The first use of a connected repo removes the read-only cache clone an
-// earlier sdd kept for it; a cache still holding a pre-store index, a cache
-// dir that is no clone, and the index stores stay.
-func TestEnsureDropsTheFormerCacheClone(t *testing.T) {
+// A clone under the cache root belongs to an sdd that keeps its clones
+// there: the first use of its repository and `sdd repo add` leave it whole.
+func TestTheManagerKeepsACloneUnderTheCacheRoot(t *testing.T) {
 	const repoID = model.RepoID("example.test/acme/other")
+	repo := repos.ConnectedRepo{RepoID: repoID, CloneURL: "https://example.test/acme/other.git"}
 	cases := []struct {
-		name     string
-		contents []string
-		dropped  bool
+		name string
+		use  func(t *testing.T, mgr *repos.Manager)
 	}{
-		{name: "a cache clone", contents: []string{".git", ".sdd"}, dropped: true},
-		{name: "a cache clone holding a pre-store index", contents: []string{".git", ".index"}},
-		{name: "a directory that is no clone", contents: []string{".sdd"}},
+		{name: "first use", use: func(t *testing.T, mgr *repos.Manager) {
+			_, _, err := mgr.Ensure(t.Context(), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "repo add", use: func(t *testing.T, mgr *repos.Manager) {
+			staged, remove, err := mgr.Stage(t.Context(), repo.CloneURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer remove()
+			_, err = mgr.Place(t.Context(), staged, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loc := testLocations(t)
 			mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, &countingGit{}, fixedGate(t), synctest.CloneLocks{}))
 			cache := filepath.Join(loc.CacheRoot, filepath.FromSlash(string(repoID)))
-			for _, sub := range tc.contents {
-				err := os.MkdirAll(filepath.Join(cache, sub), 0o755)
+			kept := []string{filepath.Join(cache, ".git", "HEAD"), filepath.Join(cache, ".sdd", "config.yaml")}
+			for _, path := range kept {
+				err := os.MkdirAll(filepath.Dir(path), 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = os.WriteFile(path, []byte("kept\n"), 0o644)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			store := filepath.Join(loc.CacheRoot, "index", filepath.FromSlash(string(repoID)))
-			err := os.MkdirAll(store, 0o755)
-			if err != nil {
-				t.Fatal(err)
-			}
 
-			_, _, err = mgr.Ensure(t.Context(), repos.ConnectedRepo{RepoID: repoID, CloneURL: "https://example.test/acme/other.git"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, statErr := os.Stat(cache)
-			if dropped := os.IsNotExist(statErr); dropped != tc.dropped {
-				t.Errorf("the cache dir should be dropped: %v, got dropped %v", tc.dropped, dropped)
-			}
-			_, statErr = os.Stat(store)
-			if statErr != nil {
-				t.Errorf("the index store should stay: %v", statErr)
+			tc.use(t, mgr)
+
+			for _, path := range kept {
+				_, statErr := os.Stat(path)
+				if statErr != nil {
+					t.Errorf("the clone under the cache root should stay whole: %v", statErr)
+				}
 			}
 		})
 	}

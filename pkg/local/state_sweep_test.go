@@ -341,7 +341,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 		{name: "open in a second checkout", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_first", f.now.Add(-time.Hour))
 			second := t.TempDir()
-			if err := localadapter.RecordCheckout(f.root, key, second); err != nil {
+			if err := localadapter.RecordCheckout(f.root, key, second, f.now); err != nil {
 				t.Fatal(err)
 			}
 			f.inRepoSession(t, key, second, "s_inrepo", time.Time{})
@@ -360,7 +360,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 			f := newStateFixture(t)
 			const key = "github.com/acme/paused"
 			checkout := t.TempDir()
-			if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+			if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 				t.Fatal(err)
 			}
 			f.used(t, key, f.now.Add(-long))
@@ -386,7 +386,7 @@ func TestStateSweepRemovesTheKeptStagedAttachmentsOnceTheInRepoSessionEnds(t *te
 	f := newStateFixture(t)
 	const key = "github.com/acme/paused"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.relevance(t, key)
@@ -414,7 +414,7 @@ func TestStateSweepCollectsTheSessionsOfRecordedCheckouts(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now)
@@ -438,20 +438,48 @@ func TestStateSweepCollectsTheSessionsOfRecordedCheckouts(t *testing.T) {
 	}
 }
 
-func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
-	f := newStateFixture(t)
-	const key = "local/abcdef012345"
-	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
-		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
-			t.Fatal(err)
-		}
-	}
-	content, err := os.ReadFile(filepath.Join(f.root, "checkouts", "local", "abcdef012345.list"))
+// recordTime is a time as a checkout record line holds it.
+func recordTime(at time.Time) string { return at.UTC().Format(time.RFC3339) }
+
+func (f stateFixture) checkoutRecord(t *testing.T, key string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(f.root, "checkouts", filepath.FromSlash(key)+".list"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(content), "/work/app\n/work/app-feature\n"; got != want {
-		t.Errorf("the record should list each checkout once, got %q, want %q", got, want)
+	return string(content)
+}
+
+// A record line is "<path>\t<last seen>[\t<missing since>]", its times RFC
+// 3339 in UTC; a checkout is listed once and its last-seen time rewritten at
+// most once a day.
+func TestRecordCheckoutWritesEachCheckoutOnceWithItsLastSeenTime(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
+		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := "/work/app\t" + recordTime(f.now) + "\n/work/app-feature\t" + recordTime(f.now) + "\n"
+	if got := f.checkoutRecord(t, key); got != first {
+		t.Errorf("the record should list each checkout once with when it was seen, got %q, want %q", got, first)
+	}
+
+	if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now.Add(23*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.checkoutRecord(t, key); got != first {
+		t.Errorf("a checkout seen within a day should stay as recorded, got %q, want %q", got, first)
+	}
+
+	later := f.now.Add(25 * time.Hour)
+	if err := localadapter.RecordCheckout(f.root, key, "/work/app", later); err != nil {
+		t.Fatal(err)
+	}
+	want := "/work/app\t" + recordTime(later) + "\n/work/app-feature\t" + recordTime(f.now) + "\n"
+	if got := f.checkoutRecord(t, key); got != want {
+		t.Errorf("a checkout seen a day later should get the new time, got %q, want %q", got, want)
 	}
 }
 
@@ -483,7 +511,7 @@ func TestStateSweepDropsARemovedWorktreeAfterTheRetention(t *testing.T) {
 	const key = "github.com/acme/busy"
 	removed, kept := t.TempDir(), t.TempDir()
 	for _, checkout := range []string{removed, kept} {
-		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -492,7 +520,6 @@ func TestStateSweepDropsARemovedWorktreeAfterTheRetention(t *testing.T) {
 	if err := os.RemoveAll(removed); err != nil {
 		t.Fatal(err)
 	}
-	record := filepath.Join(f.root, "checkouts", "github.com", "acme", "busy.list")
 
 	soon := f
 	soon.now = f.now.Add(time.Hour)
@@ -501,9 +528,9 @@ func TestStateSweepDropsARemovedWorktreeAfterTheRetention(t *testing.T) {
 	if !f.stagedExists(t, key, "s_removed") {
 		t.Fatal("the staged attachments of a checkout missing for less than the retention should stay")
 	}
-	content, err := os.ReadFile(record)
-	if err != nil || !strings.Contains(string(content), removed+"\t") {
-		t.Fatalf("the record should note since when the checkout is missing, got %q, %v", content, err)
+	noted := removed + "\t" + recordTime(f.now) + "\t" + recordTime(soon.now) + "\n" + kept + "\t" + recordTime(f.now) + "\n"
+	if got := f.checkoutRecord(t, key); got != noted {
+		t.Fatalf("the record should note since when the checkout is missing, after when it was last seen, got %q, want %q", got, noted)
 	}
 
 	late := f
@@ -516,31 +543,123 @@ func TestStateSweepDropsARemovedWorktreeAfterTheRetention(t *testing.T) {
 	if !f.stagedExists(t, key, "s_kept") {
 		t.Error("the staged attachments of a session logged in a present checkout should stay")
 	}
-	content, err = os.ReadFile(record)
-	if err != nil || string(content) != kept+"\n" {
-		t.Errorf("the record should keep only the present checkout, got %q, %v", content, err)
+	if got, want := late.checkoutRecord(t, key), kept+"\t"+recordTime(late.now)+"\n"; got != want {
+		t.Errorf("the record should keep only the present checkout, seen by this sweep, got %q, want %q", got, want)
 	}
 }
 
-// A record line from an earlier build, a path alone, still reads; recording a
-// checkout again clears its missing mark.
-func TestRecordCheckoutClearsTheMissingMark(t *testing.T) {
-	f := newStateFixture(t)
-	record := filepath.Join(f.root, "checkouts", "local", "abcdef012345.list")
+// writeCheckoutRecord writes a record as found on disk, last written at at.
+func (f stateFixture) writeCheckoutRecord(t *testing.T, key, content string, at time.Time) {
+	t.Helper()
+	record := filepath.Join(f.root, "checkouts", filepath.FromSlash(key)+".list")
 	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(record, []byte("/work/app\t2026-01-02T03:04:05Z\n/work/legacy\n"), 0o644); err != nil {
+	if err := os.WriteFile(record, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := localadapter.RecordCheckout(f.root, "local/abcdef012345", "/work/app"); err != nil {
+	if err := os.Chtimes(record, at, at); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(record)
-	if err != nil {
+}
+
+// A line holding a path alone is an earlier build's record. It still reads,
+// its checkout last seen when the record was last written, and the next
+// write puts every line into the current format. The times are split off
+// from the end of a line, so a path may hold a tab.
+func TestRecordCheckoutRewritesPathOnlyLines(t *testing.T) {
+	const key = "local/abcdef012345"
+	for _, tc := range []struct {
+		name    string
+		written func(at time.Time) string
+		want    func(now, at time.Time) string
+	}{
+		{
+			name:    "paths alone",
+			written: func(time.Time) string { return "/work/app\n/work/legacy\n" },
+			want: func(now, at time.Time) string {
+				return "/work/app\t" + recordTime(now) + "\n/work/legacy\t" + recordTime(at) + "\n"
+			},
+		},
+		{
+			name:    "a path alone holding a tab",
+			written: func(time.Time) string { return "/work/a\tb\n" },
+			want: func(now, at time.Time) string {
+				return "/work/a\tb\t" + recordTime(at) + "\n/work/app\t" + recordTime(now) + "\n"
+			},
+		},
+		{
+			name:    "a path alone beside a current line",
+			written: func(at time.Time) string { return "/work/app\t" + recordTime(at) + "\n/work/legacy\n" },
+			want: func(now, at time.Time) string {
+				return "/work/app\t" + recordTime(now) + "\n/work/legacy\t" + recordTime(at) + "\n"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			at := f.now.Add(-48 * time.Hour)
+			f.writeCheckoutRecord(t, key, tc.written(at), at)
+
+			if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now); err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := f.checkoutRecord(t, key), tc.want(f.now, at); got != want {
+				t.Errorf("record %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// Recording a checkout the record already lists in the current format, seen
+// within a day, still rewrites the record's path-only lines.
+func TestRecordCheckoutRewritesPathOnlyLinesBesideAFreshOne(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	at := f.now.Add(-time.Hour)
+	f.writeCheckoutRecord(t, key, "/work/app\t"+recordTime(at)+"\n/work/legacy\n", at)
+
+	if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(content), "/work/app\n/work/legacy\n"; got != want {
+
+	want := "/work/app\t" + recordTime(at) + "\n/work/legacy\t" + recordTime(at) + "\n"
+	if got := f.checkoutRecord(t, key); got != want {
+		t.Errorf("record %q, want %q", got, want)
+	}
+}
+
+func TestRecordCheckoutClearsTheMissingMark(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	seen, missing := f.now.Add(-3*time.Hour), f.now.Add(-2*time.Hour)
+	f.writeCheckoutRecord(t, key, "/work/app\t"+recordTime(seen)+"\t"+recordTime(missing)+"\n", missing)
+
+	if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := f.checkoutRecord(t, key), "/work/app\t"+recordTime(f.now)+"\n"; got != want {
+		t.Errorf("a checkout recorded again is on disk and seen now, record %q, want %q", got, want)
+	}
+}
+
+// The sweep rewrites a path-only record too: a checkout on disk is seen by
+// the sweep, one gone from disk keeps the record's last write as its last-seen
+// time and is missing since the sweep.
+func TestStateSweepRewritesAPathOnlyCheckoutRecord(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/app"
+	present, gone := t.TempDir(), filepath.Join(t.TempDir(), "removed")
+	at := f.now.Add(-48 * time.Hour)
+	f.writeCheckoutRecord(t, key, present+"\n"+gone+"\n", at)
+	f.used(t, key, f.now)
+
+	f.sweep(t)
+
+	want := present + "\t" + recordTime(f.now) + "\n" + gone + "\t" + recordTime(at) + "\t" + recordTime(f.now) + "\n"
+	if got := f.checkoutRecord(t, key); got != want {
 		t.Errorf("record %q, want %q", got, want)
 	}
 }

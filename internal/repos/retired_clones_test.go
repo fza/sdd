@@ -33,13 +33,15 @@ func ownedCloneDir(loc repos.Locations, repoID model.RepoID) string {
 	return filepath.Join(loc.DataRoot, "repos", filepath.FromSlash(string(repoID)))
 }
 
-// A clone named like one an earlier run retired, or a cache clone an earlier
-// sdd left, goes only by the rules every clone goes by.
-func TestUnconnectedClonesJudgeEveryCloneByItsRecord(t *testing.T) {
+// A clone named like one an earlier run retired goes only by the rules every
+// sdd-owned clone goes by, and a clone under the cache root is never listed,
+// whatever the record of its repository says.
+func TestUnconnectedClonesJudgeEveryOwnedCloneByItsRecord(t *testing.T) {
 	loc := cloneLocations(t)
-	recordedCache := filepath.Join(loc.CacheRoot, "github.com", "acme", "dropped")
+	recorded := ownedCloneDir(loc, "github.com/acme/dropped")
 	for _, dir := range []string{
-		recordedCache,
+		recorded,
+		filepath.Join(loc.CacheRoot, "github.com", "acme", "dropped"),
 		filepath.Join(loc.CacheRoot, "github.com", "acme", "unrecorded"),
 		ownedCloneDir(loc, "github.com/acme/.old.pruned"),
 	} {
@@ -53,16 +55,16 @@ func TestUnconnectedClonesJudgeEveryCloneByItsRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []repos.UnconnectedClone{{Dir: recordedCache, RepoID: "github.com/acme/dropped"}}
+	want := []repos.UnconnectedClone{{Dir: recorded, RepoID: "github.com/acme/dropped"}}
 	if !slices.Equal(stale, want) {
-		t.Errorf("only clones with a record should be listed, got %+v", stale)
+		t.Errorf("only the sdd-owned clone with a record should be listed, got %+v", stale)
 	}
 }
 
 func TestRetireUnconnectedCloneKeepsAConnectedCloneNamedLikeARetiredOne(t *testing.T) {
 	loc := cloneLocations(t)
 	writeFile(t, loc.ConfigPath, "repos:\n  - repo_id: github.com/acme/.kept.pruned\n    clone_url: git@github.com:acme/.kept.pruned.git\n")
-	clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "github.com/acme/.kept.pruned"), RepoID: "github.com/acme/.kept.pruned", Owned: true}
+	clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "github.com/acme/.kept.pruned"), RepoID: "github.com/acme/.kept.pruned"}
 	makeClone(t, clone.Dir)
 	retired, err := repos.NewRegistry(loc).RetireUnconnectedClone(clone, letGo)
 	if err != nil {
@@ -97,7 +99,7 @@ func TestRetireUnconnectedCloneRejudgesUnderTheLock(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loc := cloneLocations(t)
-			clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "github.com/acme/dropped"), RepoID: "github.com/acme/dropped", Owned: true}
+			clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "github.com/acme/dropped"), RepoID: "github.com/acme/dropped"}
 			makeClone(t, clone.Dir)
 			registry := repos.NewRegistry(loc)
 			if err := repos.NewManager(registry, nil).MarkDisconnected(clone.RepoID); err != nil {
@@ -120,17 +122,19 @@ func TestRetireUnconnectedCloneRejudgesUnderTheLock(t *testing.T) {
 
 func TestRetiredClonesWaitWhereNoRepoIDReaches(t *testing.T) {
 	loc := cloneLocations(t)
-	owned := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "github.com/acme/dropped"), RepoID: "github.com/acme/dropped", Owned: true}
-	cached := repos.UnconnectedClone{Dir: filepath.Join(loc.CacheRoot, "github.com", "acme", "dropped"), RepoID: "github.com/acme/dropped"}
-	for _, clone := range []repos.UnconnectedClone{owned, cached} {
-		makeClone(t, clone.Dir)
+	clones := []repos.UnconnectedClone{
+		{Dir: ownedCloneDir(loc, "github.com/acme/dropped"), RepoID: "github.com/acme/dropped"},
+		{Dir: ownedCloneDir(loc, "github.com/acme/other"), RepoID: "github.com/acme/other"},
 	}
 	registry := repos.NewRegistry(loc)
-	if err := repos.NewManager(registry, nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
-		t.Fatal(err)
+	for _, clone := range clones {
+		makeClone(t, clone.Dir)
+		if err := repos.NewManager(registry, nil).MarkDisconnected(clone.RepoID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var retired []string
-	for _, clone := range []repos.UnconnectedClone{owned, cached} {
+	for _, clone := range clones {
 		dir, err := registry.RetireUnconnectedClone(clone, letGo)
 		if err != nil {
 			t.Fatal(err)
@@ -138,11 +142,9 @@ func TestRetiredClonesWaitWhereNoRepoIDReaches(t *testing.T) {
 		if dir == "" {
 			t.Fatalf("a recorded clone of a repo that is gone from the list should be retired: %s", clone.Dir)
 		}
-		for _, root := range []string{filepath.Join(loc.DataRoot, "repos"), loc.CacheRoot} {
-			rel, err := filepath.Rel(root, dir)
-			if err == nil && filepath.IsLocal(rel) && model.ValidateRepoID(model.RepoID(filepath.ToSlash(rel))) == nil {
-				t.Errorf("a retired clone should wait where no repo ID places a clone, got %s", dir)
-			}
+		rel, err := filepath.Rel(filepath.Join(loc.DataRoot, "repos"), dir)
+		if err != nil || !filepath.IsLocal(rel) || model.ValidateRepoID(model.RepoID(filepath.ToSlash(rel))) == nil {
+			t.Errorf("a retired clone should wait under the sdd-owned clones where no repo ID places a clone, got %s", dir)
 		}
 		retired = append(retired, dir)
 	}
@@ -172,7 +174,7 @@ func TestRetireUnconnectedCloneOfALongRepoID(t *testing.T) {
 	loc := cloneLocations(t)
 	segment := strings.Repeat("a", 90)
 	repoID := model.RepoID("git.example.com/" + segment + "/" + segment + "/" + segment)
-	clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, repoID), RepoID: repoID, Owned: true}
+	clone := repos.UnconnectedClone{Dir: ownedCloneDir(loc, repoID), RepoID: repoID}
 	makeClone(t, clone.Dir)
 	registry := repos.NewRegistry(loc)
 	if err := repos.NewManager(registry, nil).MarkDisconnected(repoID); err != nil {

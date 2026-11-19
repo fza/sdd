@@ -41,7 +41,8 @@ type pruneFixture struct {
 	unusedStore string
 	keptRow     []string
 	expiredRow  []string
-	keptClone   string
+	// cacheClones lie under the cache root, where this sdd keeps no clone.
+	cacheClones []string
 	staleClone  string
 	keptGraph   string
 }
@@ -90,13 +91,16 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 		}
 	}
 
-	f.keptClone = filepath.Join(f.loc.CacheRoot, "github.com", "acme", "kept")
-	f.staleClone = filepath.Join(f.loc.CacheRoot, "github.com", "acme", "dropped")
-	for _, dir := range []string{f.keptClone, f.staleClone} {
+	f.cacheClones = []string{
+		filepath.Join(f.loc.CacheRoot, "github.com", "acme", "kept"),
+		filepath.Join(f.loc.CacheRoot, "github.com", "acme", "dropped"),
+	}
+	for _, dir := range f.cacheClones {
 		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	f.staleClone, _ = ownedClone(t, f.loc, "dropped")
 	if err := repos.NewManager(repos.NewRegistry(f.loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
 		t.Fatal(err)
 	}
@@ -159,8 +163,13 @@ func TestCacheHandlerPrune(t *testing.T) {
 	if index.DocumentsSize(f.usedStore, f.expiredRow) != 0 || index.DocumentsSize(f.usedStore, f.keptRow) == 0 {
 		t.Error("the used store should lose only its replaced version")
 	}
-	if exists(t, f.staleClone) || !exists(t, f.keptClone) {
-		t.Error("only the clone no connection names should go")
+	if exists(t, f.staleClone) {
+		t.Error("the sdd-owned clone no connection names should go")
+	}
+	for _, dir := range f.cacheClones {
+		if !exists(t, filepath.Join(dir, ".git")) {
+			t.Errorf("a clone under the cache root should stay, %s is gone", dir)
+		}
 	}
 	if _, ok, err := graphcache.New(filepath.Join(f.loc.CacheRoot, "graph")).Load(f.keptGraph, map[string]filestamp.Stamp{}); err != nil || !ok {
 		t.Errorf("the snapshot of an existing graph should stay, load says %v, %v", ok, err)
@@ -305,8 +314,10 @@ func TestCacheHandlerPruneSweepsIndexLeftovers(t *testing.T) {
 	if err := os.MkdirAll(stage, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(retired, ".lock"), nil, 0o644); err != nil {
-		t.Fatal(err)
+	for _, lock := range []string{".lock", ".fill.lock"} {
+		if err := os.WriteFile(filepath.Join(retired, lock), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, path := range []string{retired, stage} {
 		if err := os.Chtimes(path, old, old); err != nil {
@@ -334,11 +345,13 @@ func (h hashesByCap) CurrentHashes(_ context.Context, maxRunes int) (map[string]
 func TestCacheHandlerPruneGoesOnPastADamagedStore(t *testing.T) {
 	f := newPruneFixture(t, "")
 	broken := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "broken", "ccc")
-	if err := os.MkdirAll(broken, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(broken, "used"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(broken, "manifest.json"), []byte("{"), 0o644); err != nil {
-		t.Fatal(err)
+	for name, content := range map[string]string{"manifest.json": "{", filepath.Join("used", index.DerivationCurrent+"@1"): ""} {
+		if err := os.WriteFile(filepath.Join(broken, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := f.handler(fixedHashes{}).Prune(t.Context(), &command.PruneCacheCmd{}); err == nil {
 		t.Error("a damaged store should fail the run")

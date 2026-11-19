@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -71,26 +72,28 @@ func projectStampPath(stateRoot, repoKey string) (string, error) {
 }
 
 // RecordCheckout notes checkout as a working tree the project keyed repoKey
-// is opened from, so the sweep reads the sessions older versions logged into
-// its .sdd/sessions.
-func RecordCheckout(stateRoot, repoKey, checkout string) error {
+// is opened from, seen at now, so the sweep reads the sessions older versions
+// logged into its .sdd/sessions. A checkout seen within a day is left as
+// recorded.
+func RecordCheckout(stateRoot, repoKey, checkout string, now time.Time) error {
 	path, err := checkoutsPath(stateRoot, repoKey)
 	if err != nil {
 		return err
 	}
-	recorded, err := readCheckoutRecord(path)
+	recorded, undated, err := readCheckoutRecord(path)
 	if err != nil {
 		return err
 	}
-	if slices.Contains(recorded, checkoutEntry{path: checkout}) {
+	here := func(e checkoutEntry) bool { return e.path == checkout }
+	if i := slices.IndexFunc(recorded, here); i >= 0 && !undated && recorded[i].seenBy(now) {
 		return nil
 	}
 	return updateCheckoutRecord(stateRoot, path, func(entries []checkoutEntry) []checkoutEntry {
-		i := slices.IndexFunc(entries, func(e checkoutEntry) bool { return e.path == checkout })
+		i := slices.IndexFunc(entries, here)
 		if i < 0 {
-			return append(entries, checkoutEntry{path: checkout})
+			return append(entries, checkoutEntry{path: checkout, seen: now})
 		}
-		entries[i].missing = time.Time{}
+		entries[i].see(now)
 		return entries
 	})
 }
@@ -103,50 +106,94 @@ func checkoutsPath(stateRoot, repoKey string) (string, error) {
 	return dir + checkoutsSuffix, nil
 }
 
-// checkoutEntry is one line of a checkout record: the checkout's path and,
-// once a sweep found it gone, a tab and since when (RFC 3339).
+// checkoutEntry is one line of a checkout record: the checkout's path, when
+// it was last seen on disk and, once a sweep found it gone, since when:
+// "<path>\t<seen>[\t<missing>]", the times RFC 3339 in UTC.
 type checkoutEntry struct {
 	path    string
+	seen    time.Time
 	missing time.Time
 }
 
-func parseCheckoutLine(line string) checkoutEntry {
-	if i := strings.LastIndexByte(line, '\t'); i >= 0 {
-		if missing, err := time.Parse(time.RFC3339, line[i+1:]); err == nil {
-			return checkoutEntry{path: line[:i], missing: missing}
-		}
+// seenBy reports whether the entry already says what a sighting at now would
+// record.
+func (e checkoutEntry) seenBy(now time.Time) bool {
+	return e.missing.IsZero() && now.Sub(e.seen) < projectUseRefresh
+}
+
+// see records the checkout as on disk at now, rewriting the time at most once
+// a day.
+func (e *checkoutEntry) see(now time.Time) {
+	if !e.seenBy(now) {
+		e.seen, e.missing = now, time.Time{}
 	}
-	return checkoutEntry{path: line}
+}
+
+// parseCheckoutLine reads one record line, its times split off from the end
+// so a path may hold a tab. A line without a time is an earlier build's, the
+// path alone: dated is false and seen is left for the caller to set.
+func parseCheckoutLine(line string) (entry checkoutEntry, dated bool) {
+	rest, last, ok := cutLastTime(line)
+	if !ok {
+		return checkoutEntry{path: line}, false
+	}
+	if path, seen, ok := cutLastTime(rest); ok {
+		return checkoutEntry{path: path, seen: seen, missing: last}, true
+	}
+	return checkoutEntry{path: rest, seen: last}, true
+}
+
+func cutLastTime(s string) (string, time.Time, bool) {
+	i := strings.LastIndexByte(s, '\t')
+	if i <= 0 {
+		return "", time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, s[i+1:])
+	return s[:i], t, err == nil
 }
 
 func (e checkoutEntry) line() string {
-	if e.missing.IsZero() {
-		return e.path + "\n"
+	line := e.path + "\t" + e.seen.UTC().Format(time.RFC3339)
+	if !e.missing.IsZero() {
+		line += "\t" + e.missing.UTC().Format(time.RFC3339)
 	}
-	return e.path + "\t" + e.missing.UTC().Format(time.RFC3339) + "\n"
+	return line + "\n"
 }
 
 // readCheckoutRecord reads a checkout record; a missing record names none.
-func readCheckoutRecord(path string) ([]checkoutEntry, error) {
-	content, err := os.ReadFile(path)
+// undated reports a line holding a path alone: its checkout counts as last
+// seen when the record was last written, and the record is due a rewrite.
+func readCheckoutRecord(path string) (entries []checkoutEntry, undated bool, err error) {
+	file, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading checkout record: %w", err)
+		return nil, false, fmt.Errorf("reading checkout record: %w", err)
 	}
-	var entries []checkoutEntry
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("reading checkout record: %w", err)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading checkout record: %w", err)
+	}
 	for line := range strings.Lines(string(content)) {
 		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			continue
 		}
-		entry := parseCheckoutLine(line)
+		entry, dated := parseCheckoutLine(line)
+		if !dated {
+			entry.seen, undated = info.ModTime(), true
+		}
 		if !slices.ContainsFunc(entries, func(e checkoutEntry) bool { return e.path == entry.path }) {
 			entries = append(entries, entry)
 		}
 	}
-	return entries, nil
+	return entries, undated, nil
 }
 
 // checkoutRecordsLockWait bounds how long a record update waits for another.
@@ -154,7 +201,8 @@ const checkoutRecordsLockWait = 5 * time.Second
 
 // updateCheckoutRecord rewrites the record at path with what change makes of
 // its entries, under a lock shared by every record of stateRoot; an empty
-// result removes the record.
+// result removes the record. A record holding a path-only line is rewritten
+// whatever change makes of it.
 func updateCheckoutRecord(stateRoot, path string, change func([]checkoutEntry) []checkoutEntry) (err error) {
 	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", stateRoot, err)
@@ -166,12 +214,12 @@ func updateCheckoutRecord(stateRoot, path string, change func([]checkoutEntry) [
 		return fmt.Errorf("locking checkout records: %w", err)
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
-	before, err := readCheckoutRecord(path)
+	before, undated, err := readCheckoutRecord(path)
 	if err != nil {
 		return err
 	}
 	after := change(slices.Clone(before))
-	if slices.Equal(before, after) {
+	if !undated && slices.Equal(before, after) {
 		return nil
 	}
 	if len(after) == 0 {
@@ -213,7 +261,8 @@ func (s *StateSwept) add(o StateSwept) {
 	s.Bytes += o.Bytes
 }
 
-// StateSweep removes the per-project state under StateRoot nothing needs:
+// StateSweep removes the per-project state under StateRoot nothing needs, of
+// the projects this sdd holds a record of using (projectKeys) and of no other:
 // ended sessions past their retention with their staged attachments, those
 // logged in a recorded checkout's .sdd/sessions (RecordCheckout) too, and the
 // relevance ledger and empty session folder of a project unused for longer
@@ -291,7 +340,7 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 	if err != nil {
 		return counts, err
 	}
-	checkouts, err := readCheckoutRecord(path)
+	checkouts, _, err := readCheckoutRecord(path)
 	if err != nil {
 		return counts, err
 	}
@@ -476,7 +525,7 @@ func (s StateSweep) openInCheckouts(ctx context.Context, key string) (open map[a
 	if err != nil {
 		return nil, false, err
 	}
-	checkouts, err := readCheckoutRecord(path)
+	checkouts, _, err := readCheckoutRecord(path)
 	if err != nil || len(checkouts) == 0 {
 		return nil, false, err
 	}
@@ -508,17 +557,17 @@ func (s StateSweep) openInCheckouts(ctx context.Context, key string) (open map[a
 	return open, true, nil
 }
 
-// tendCheckoutRecord notes when a sweep first found a recorded checkout gone
-// and drops one gone for longer than retention, as a removed worktree; until
-// then it may be an unmounted volume. It reports whether a checkout on record
-// is gone. The checkouts are looked up outside the record lock, so a hung
-// mount holds no RecordCheckout.
+// tendCheckoutRecord records each checkout found on disk as seen, notes when
+// a sweep first found one gone and drops one gone for longer than retention,
+// as a removed worktree; until then it may be an unmounted volume. It reports
+// whether a checkout on record is gone. The checkouts are looked up outside
+// the record lock, so a hung mount holds no RecordCheckout.
 func (s StateSweep) tendCheckoutRecord(key string, now time.Time, retention time.Duration) (missing bool, err error) {
 	path, err := checkoutsPath(s.StateRoot, key)
 	if err != nil {
 		return false, err
 	}
-	entries, err := readCheckoutRecord(path)
+	entries, _, err := readCheckoutRecord(path)
 	if err != nil || len(entries) == 0 {
 		return false, err
 	}
@@ -537,7 +586,7 @@ func (s StateSweep) tendCheckoutRecord(key string, now time.Time, retention time
 		for _, entry := range entries {
 			switch {
 			case !absent[entry.path]:
-				entry.missing = time.Time{}
+				entry.see(now)
 			case entry.missing.IsZero():
 				entry.missing = now
 			case now.Sub(entry.missing) > retention:
@@ -609,7 +658,7 @@ func (s StateSweep) loggedInCheckouts(key string) (map[app.SessionID]bool, error
 	if err != nil {
 		return nil, err
 	}
-	checkouts, err := readCheckoutRecord(path)
+	checkouts, _, err := readCheckoutRecord(path)
 	if err != nil {
 		return nil, err
 	}
@@ -725,35 +774,37 @@ func removeEmptySessionFolder(dir string, stillUnused func() (bool, error)) (boo
 	return true, nil
 }
 
-// projectKeys lists the repository keys holding state in any category.
+// projectKeys lists the repository keys this sdd holds a record of using: a
+// relevance ledger, a use stamp or a checkout record. The session and
+// staged-attachment folders are shared with sdd builds that keep none of
+// these, so a project found there alone is not listed, and the sweep leaves
+// it untouched.
 func (s StateSweep) projectKeys() ([]string, error) {
 	seen := map[string]bool{}
-	for _, category := range []string{sessionsCategory, model.RelevanceDirName} {
-		root := filepath.Join(s.StateRoot, category)
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) && path == root {
-					return filepath.SkipAll
-				}
-				return err
-			}
-			if !d.IsDir() || path == root {
-				return nil
-			}
-			leaf, err := holdsState(path)
-			if err != nil || !leaf {
-				return err
-			}
-			key, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			seen[filepath.ToSlash(key)] = true
-			return filepath.SkipDir
-		})
+	ledgers := filepath.Join(s.StateRoot, model.RelevanceDirName)
+	err := filepath.WalkDir(ledgers, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, fmt.Errorf("listing %s: %w", root, err)
+			if errors.Is(err, fs.ErrNotExist) && path == ledgers {
+				return filepath.SkipAll
+			}
+			return err
 		}
+		if !d.IsDir() || path == ledgers {
+			return nil
+		}
+		leaf, err := holdsState(path)
+		if err != nil || !leaf {
+			return err
+		}
+		key, err := filepath.Rel(ledgers, path)
+		if err != nil {
+			return err
+		}
+		seen[filepath.ToSlash(key)] = true
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", ledgers, err)
 	}
 	for category, suffix := range map[string]string{usedCategory: usedStampSuffix, checkoutsCategory: checkoutsSuffix} {
 		root := filepath.Join(s.StateRoot, category)

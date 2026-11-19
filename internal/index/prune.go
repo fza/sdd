@@ -279,7 +279,11 @@ func retireStore(indexDir string, now time.Time, retention time.Duration) (doome
 
 // StoreTree is what lies under a cache root's index tree.
 type StoreTree struct {
+	// Stores hold a use stamp; pruning works on these alone.
 	Stores []string
+	// Unstamped are the stores without a use stamp (see stamped), listed so a
+	// caller can name what it left alone.
+	Unstamped []string
 	// Interrupted are the leftovers of removals a crash interrupted, which
 	// callers delete.
 	Interrupted []string
@@ -309,7 +313,15 @@ func Stores(cacheRoot string) (StoreTree, error) {
 			return filepath.SkipDir
 		}
 		if isStoreDir(path) {
-			tree.Stores = append(tree.Stores, path)
+			used, err := stamped(path)
+			if err != nil {
+				return err
+			}
+			if used {
+				tree.Stores = append(tree.Stores, path)
+			} else {
+				tree.Unstamped = append(tree.Unstamped, path)
+			}
 			return filepath.SkipDir
 		}
 		retired, err := isRetiredStore(path)
@@ -329,7 +341,8 @@ func Stores(cacheRoot string) (StoreTree, error) {
 }
 
 // isRetiredStore reports whether dir holds its two lock files and nothing
-// else.
+// else. Both must be there: retireStore leaves both, while a binary that
+// takes no fill lock leaves the store lock alone in a store it opened.
 func isRetiredStore(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -345,7 +358,7 @@ func isRetiredStore(dir string) (bool, error) {
 		}
 		locks++
 	}
-	return locks > 0, nil
+	return locks == 2, nil
 }
 
 func isStoreDir(path string) bool {

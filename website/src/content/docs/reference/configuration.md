@@ -571,11 +571,19 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
 | A whole index nothing uses | After `cache.retention`. |
 | Graph snapshots, the git gate's record of a repository, embedding calibrations | After `cache.retention` without use. |
-| A clone under `~/.local/share/sdd/repos/`, or one an earlier sdd kept under `~/.cache/sdd` | Once `sdd repo remove` dropped its repository under the same user-global config file and the `repos` list in it no longer names it, unless it holds unpushed commits or entries a force push set aside, or sdd fetched or pushed it within `cache.retention`. A clone no `sdd repo remove` dropped stays, `graph_repo` clones included; delete it by hand. So does a clone holding another clone, or the place of a listed repo, inside it. Listed clones stay and get `git gc --auto`. |
+| A clone under `~/.local/share/sdd/repos/` | Once `sdd repo remove` dropped its repository under the same user-global config file and the `repos` list in it no longer names it, unless it holds unpushed commits or entries a force push set aside, or sdd fetched or pushed it within `cache.retention`. A clone no `sdd repo remove` dropped stays, `graph_repo` clones included; delete it by hand. So does a clone holding another clone, or the place of a listed repo, inside it. Listed clones stay and get `git gc --auto`. |
 | The log of a verifier round | After `cache.retention`. |
-| What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
+| What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders | One day after, once no lock holds it. |
 
 A session log sdd cannot read stays, with its staged attachments: it may belong to a newer sdd. The run reports how many it kept.
+
+Another sdd version on the machine may use the same cache and state folders. The run works only on what this sdd has a record of using, and leaves the rest untouched, however old:
+
+- An index that holds no use stamp. sdd stamps an index each time it searches or fills it.
+- The sessions and staged attachments of a project this sdd never opened: one it holds no use stamp, checkout record or relevance ledger of.
+- Every clone and folder under `~/.cache/sdd` that a version keeping its clones there placed. This sdd keeps its clones under `~/.local/share/sdd/repos/` only.
+
+The checkout record of a project is `~/.local/state/sdd/checkouts/<repository>.list`. Each line holds a checkout's path, when sdd last saw it on disk and, once it is gone, since when, separated by tabs, the times in UTC. A line holding a path alone, as earlier versions wrote it, still reads, and sdd rewrites it on the next write.
 
 While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use and does not stop the run's other work, but fails the run: the next command reports it once, and `sdd info` shows it with its reason until a later check succeeds. `sdd cache prune` by hand fetches nothing.
 

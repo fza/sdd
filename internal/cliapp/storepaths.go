@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/index"
@@ -39,8 +40,9 @@ func resolveSessionLocations(
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	for _, key := range slices.Compact([]string{index.RepoKey(repoID, stableRoot), index.RepoKey("", stableRoot)}) {
-		if err := localadapter.RecordCheckout(locations.StateRoot, key, filepath.Dir(sddDir)); err != nil {
+		if err := localadapter.RecordCheckout(locations.StateRoot, key, filepath.Dir(sddDir), now); err != nil {
 			return nil, err
 		}
 	}

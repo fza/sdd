@@ -38,7 +38,7 @@ func TestRetireUnconnectedCloneKeepsACloneHoldingAnother(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			loc := cloneLocations(t)
 			writeFile(t, loc.ConfigPath, tc.config)
-			outer := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "git.example.com/foo"), RepoID: "git.example.com/foo", Owned: true}
+			outer := repos.UnconnectedClone{Dir: ownedCloneDir(loc, "git.example.com/foo"), RepoID: "git.example.com/foo"}
 			makeClone(t, outer.Dir)
 			inner := filepath.Join(outer.Dir, "bar")
 			tc.inner(t, inner)

@@ -433,20 +433,35 @@ func TestStores(t *testing.T) {
 	leftover := filepath.Join(root, "index", "github.com", "o", "r", ".def456.pruned")
 	retired := filepath.Join(root, "index", "github.com", "o", "r", "fed654")
 	empty := filepath.Join(root, "index", "github.com", "o", "empty")
-	for _, dir := range []string{filepath.Join(store, "chromem"), leftover, retired, empty} {
+	unstamped := filepath.Join(root, "index", "github.com", "o", "shared", "abc123")
+	opened := filepath.Join(root, "index", "github.com", "o", "shared", "fed654")
+	for _, dir := range []string{
+		filepath.Join(store, "chromem"), filepath.Join(store, "used"), leftover, retired, empty,
+		filepath.Join(unstamped, "chromem"), opened,
+	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(retired, ".lock"), nil, 0o644); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{
+		filepath.Join(store, "used", index.DerivationCurrent+"@1"),
+		filepath.Join(retired, ".lock"), filepath.Join(retired, ".fill.lock"),
+		filepath.Join(unstamped, "manifest.json"), filepath.Join(unstamped, ".lock"),
+		filepath.Join(opened, ".lock"),
+	} {
+		if err := os.WriteFile(file, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tree, err := index.Stores(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(tree.Stores, []string{store}) || !slices.Equal(tree.Interrupted, []string{leftover}) || !slices.Equal(tree.Retired, []string{retired}) {
-		t.Errorf("listing should find the store, the interrupted removal and the retired store, never an empty folder, got %+v", tree)
+		t.Errorf("listing should find the stamped store, the interrupted removal and the store emptied under both locks, never an empty folder, a store without a use stamp or a folder holding only the store lock, got %+v", tree)
+	}
+	if !slices.Equal(tree.Unstamped, []string{unstamped}) {
+		t.Errorf("the store without a use stamp should be listed apart, got %v", tree.Unstamped)
 	}
 	if tree, err := index.Stores(t.TempDir()); err != nil || len(tree.Stores) != 0 {
 		t.Errorf("a cache without an index tree should list nothing, got %v, %v", tree.Stores, err)

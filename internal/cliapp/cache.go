@@ -44,7 +44,9 @@ and crash leftovers a day old. The background pass also fetches the rule file
 of gitleaks' newest release for credential scans while secrets.rules_update is
 daily (the default). All four keys live in the user-global config. Open
 sessions, unreadable session logs and the versions the current checkout
-searches always stay. sdd index gc removes more on request.`,
+searches always stay. So do index stores and projects this sdd holds no
+record of using, and every clone under the cache folder: another sdd
+version may use them. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,
