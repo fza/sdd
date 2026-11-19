@@ -383,7 +383,9 @@ type World struct {
 	StagedBlobDir string
 	// Sessions is the session store the application appends to.
 	Sessions sdd.SessionStore
-	LLM      *LLMScript
+	// SessionsDir holds the session logs Sessions writes, <session>.jsonl.
+	SessionsDir string
+	LLM         *LLMScript
 	// Rounds runs the rounds a world with a delegate launcher launches.
 	Rounds *test.RoundProcesses
 
@@ -463,7 +465,8 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := localadapter.NewFilesystemSessionStoreAt(t.TempDir())
+	sessionsDir := t.TempDir()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(sessionsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +508,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, LLM: script, dropped: dropped}
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped}
 	world.options = sdd.ApplicationOptions{
 		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
 	}

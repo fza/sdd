@@ -301,7 +301,10 @@ type SearchReplaceArg struct {
 
 type StageAttachmentResult struct {
 	ResultNotices
-	Files []StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+	// Handle answers a call in the one-file shape (name with content, path
+	// or patches beside session), which the listing does not advertise.
+	Handle string             `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
+	Files  []StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
 }
 
 // StagedFileResult is one staged file of a stage_attachment call.
@@ -506,7 +509,7 @@ type RegistryResult struct {
 }
 
 func (s *toolSet) register(srv *mcp.Server) {
-	srv.AddReceivingMiddleware(refuseSingleFileStaging)
+	srv.AddReceivingMiddleware(stageOneFile)
 	addTool(srv, s, &mcp.Tool{
 		Name: "start_session",
 		Description: "Open a fresh dialogue session. One of the two doors, and the only tool that takes a " +
@@ -673,6 +676,9 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.root = workflow
 	}
 	ss.playbacks = nil
+	ss.call = callKey(req)
+	ss.repeatsPaged = ss.call != "" && ss.call == ss.pagedCall
+	ss.pagedCall = ""
 	s.noteSyncSession(ctx, req, ss)
 	if ss.root.Finished() {
 		ss.mu.Unlock()
@@ -1013,13 +1019,18 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	for _, file := range staged {
 		result.Files = append(result.Files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
 	}
+	if oneFile, _ := ctx.Value(oneFileCallKey{}).(bool); oneFile && len(result.Files) == 1 {
+		result.Handle = result.Files[0].Handle
+	}
 	return nil, result, nil
 }
 
-// refuseSingleFileStaging answers a stage_attachment call carrying the
-// single-file fields ahead of the schema check, whose refusal would not name
-// files.
-func refuseSingleFileStaging(next mcp.MethodHandler) mcp.MethodHandler {
+type oneFileCallKey struct{}
+
+// stageOneFile takes a stage_attachment call in the one-file shape, name with
+// content, path or patches beside session, as a files call of that one file.
+// It runs ahead of the schema check, which knows files alone.
+func stageOneFile(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		call, ok := req.(*mcp.CallToolRequest)
 		if !ok || call.Params == nil || call.Params.Name != "stage_attachment" {
@@ -1030,14 +1041,30 @@ func refuseSingleFileStaging(next mcp.MethodHandler) mcp.MethodHandler {
 		if err != nil {
 			return next(ctx, method, req)
 		}
+		file := map[string]json.RawMessage{}
 		for _, field := range []string{"name", "content", "path", "patches"} {
-			_, present := args[field]
+			value, present := args[field]
 			if present {
-				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_attachment takes files: [{name, content | path | patches}, ...]; " +
-					"pass each file as an item of files, not name, content, path or patches beside it"}}}, nil
+				file[field] = value
+				delete(args, field)
 			}
 		}
-		return next(ctx, method, req)
+		if len(file) == 0 {
+			return next(ctx, method, req)
+		}
+		if _, present := args["files"]; present {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_attachment takes files: [{name, content | path | patches}, ...], " +
+				"or one file's name with content, path or patches beside session, not both"}}}, nil
+		}
+		args["files"], err = json.Marshal([]map[string]json.RawMessage{file})
+		if err != nil {
+			return nil, err
+		}
+		call.Params.Arguments, err = json.Marshal(args)
+		if err != nil {
+			return nil, err
+		}
+		return next(context.WithValue(ctx, oneFileCallKey{}, true), method, req)
 	}
 }
 
