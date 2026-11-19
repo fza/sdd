@@ -126,6 +126,35 @@ func TestLint_MissingSummaryOnly(t *testing.T) {
 	}
 }
 
+// TestLint_RepeatedRunsOnOneGraph pins that lint leaves the graph as it found
+// it: a second run reports each finding once, as the first did.
+func TestLint_RepeatedRunsOnOneGraph(t *testing.T) {
+	missing := lintEntry(t, "20260101-120001-s-prc-bbb", "")
+	undeclared := lintRefEntry(t, "20260101-120002-s-prc-ccc", "github.com/networkteam/undeclared:20260101-100000-s-tac-yyy")
+	g := model.NewGraph([]*model.Entry{missing, undeclared})
+	f := finders.New(finders.Options{Config: &model.PerRepoConfig{}}).OnGraph(g)
+
+	first, err := f.Lint(query.LintQuery{})
+	if err != nil {
+		t.Fatalf("first Lint: %v", err)
+	}
+	second, err := f.Lint(query.LintQuery{})
+	if err != nil {
+		t.Fatalf("second Lint: %v", err)
+	}
+	for _, id := range []string{missing.ID, undeclared.ID} {
+		if got := findingsFor(first, id); len(got) != 1 {
+			t.Errorf("first run: %s has %d finding(s), want 1: %+v", id, len(got), got)
+		}
+		if got, want := findingsFor(second, id), findingsFor(first, id); len(got) != len(want) {
+			t.Errorf("second run: %s has %d finding(s), want %d: %+v", id, len(got), len(want), got)
+		}
+	}
+	if health := g.Health(); health.Warnings != 0 {
+		t.Errorf("graph health after lint: %d warning(s), want none: %+v", health.Warnings, health.Issues)
+	}
+}
+
 // TestLint_ProcedureRuntimeProvider pins the procedure-runtime provider: a
 // graph-resident spec that fails to load is an error, an overshooting one an
 // advisory that never flips the exit code, and without a registry the
