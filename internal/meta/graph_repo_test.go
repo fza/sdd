@@ -99,7 +99,7 @@ func TestResolveProjectNamesWhereAMisplacedKeyBelongs(t *testing.T) {
 		{
 			name:   "dialogue holding mode",
 			config: pointer + "dialogue:\n  mode: auto\n",
-			want:   []string{"{path} sets dialogue, which belongs only in a person's own config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo"},
+			want:   []string{"{path} sets dialogue, which belongs only in your own non-shared config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo"},
 		},
 		{
 			name:   "llm",
@@ -127,7 +127,7 @@ func TestResolveProjectNamesWhereAMisplacedKeyBelongs(t *testing.T) {
 			want: []string{
 				"{path} sets sessions, which belongs only in the user-global config, not in a repository with graph_repo",
 				"{path} sets inbound, which belongs in the graph repository's .sdd/config.yaml, not in a repository with graph_repo",
-				"{path} sets dialogue, which belongs only in a person's own config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo",
+				"{path} sets dialogue, which belongs only in your own non-shared config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo",
 			},
 		},
 	}

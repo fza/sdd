@@ -156,7 +156,7 @@ func placementText(p model.KeyPlacement) string {
 	case model.PlaceTeamOrPerson:
 		return "which belongs in " + graphRepo + ", or per person in " + local + " or the user-global config" + notHere
 	case model.PlacePerson:
-		return "which belongs only in a person's own config, " + local + " or the user-global config" + notHere
+		return "which belongs only in your own non-shared config, " + local + " or the user-global config" + notHere
 	case model.PlaceUserGlobal:
 		return "which belongs only in the user-global config" + notHere
 	case model.PlaceLocal:
