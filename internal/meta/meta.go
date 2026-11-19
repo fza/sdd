@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -151,8 +152,11 @@ func readConfigLayers(read ReadFile, sddDir, localConfigPath string, readPersona
 		if err != nil {
 			return nil, nil, err
 		}
-		if committed != nil && committed.Contribution != "" {
-			return nil, nil, fmt.Errorf("%s: contribution is machine-local; set it in %s instead", committedPath, LocalConfigFileName)
+		if committed != nil {
+			localOnly := committed.MachineLocalKeys()
+			if len(localOnly) > 0 {
+				return nil, nil, fmt.Errorf("%s: %s is machine-local; set it in %s instead", committedPath, strings.Join(localOnly, ", "), LocalConfigFileName)
+			}
 		}
 	}
 	committed = model.HonoredCommitted(committed)

@@ -83,6 +83,77 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 	}
 }
 
+// The refusal of a committed config beside graph_repo names, per key, the
+// file the key belongs in.
+func TestResolveProjectNamesWhereAMisplacedKeyBelongs(t *testing.T) {
+	const pointer = "graph_repo: example.test/acme/app-sdd\n"
+	cases := []struct {
+		name   string
+		config string
+		want   []string
+	}{
+		{
+			name:   "project_dir is read past",
+			config: pointer + "project_dir: ../project\n",
+		},
+		{
+			name:   "dialogue holding mode",
+			config: pointer + "dialogue:\n  mode: auto\n",
+			want:   []string{"{path} sets dialogue, which belongs only in a person's own config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo"},
+		},
+		{
+			name:   "llm",
+			config: pointer + "llm:\n  model: sonnet\n",
+			want:   []string{"{path} sets llm, which belongs in the graph repository's .sdd/config.yaml, or per person in .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo"},
+		},
+		{
+			name:   "inbound",
+			config: pointer + "inbound:\n  accept: true\n",
+			want:   []string{"{path} sets inbound, which belongs in the graph repository's .sdd/config.yaml, not in a repository with graph_repo"},
+		},
+		{
+			name:   "contribution",
+			config: pointer + "contribution: origin/main\n",
+			want:   []string{"{path}: contribution is machine-local; set it in config.local.yaml instead"},
+		},
+		{
+			name:   "an unknown key",
+			config: pointer + "colour: blue\n",
+			want:   []string{"{path} sets colour, which sdd does not know; if it is a project setting, it belongs in the graph repository's .sdd/config.yaml, not in a repository with graph_repo"},
+		},
+		{
+			name:   "several keys, one line each in file order",
+			config: "sessions:\n  retention: 14d\n" + pointer + "inbound:\n  accept: true\ndialogue:\n  mode: guided\n",
+			want: []string{
+				"{path} sets sessions, which belongs only in the user-global config, not in a repository with graph_repo",
+				"{path} sets inbound, which belongs in the graph repository's .sdd/config.yaml, not in a repository with graph_repo",
+				"{path} sets dialogue, which belongs only in a person's own config, .sdd/config.local.yaml or the user-global config, not in a repository with graph_repo",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work := filepath.Join(t.TempDir(), "work")
+			writeConfig(t, work, "config.yaml", tc.config)
+
+			_, err := meta.ResolveProject(work, func(id model.RepoID) (string, error) {
+				return filepath.Join(t.TempDir(), string(id)), nil
+			})
+
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("the pointer should be accepted: %v", err)
+				}
+				return
+			}
+			want := strings.ReplaceAll(strings.Join(tc.want, "\n"), "{path}", filepath.Join(work, ".sdd", "config.yaml"))
+			if err == nil || err.Error() != want {
+				t.Errorf("the refusal should name, per key, where it belongs, got:\n%v", err)
+			}
+		})
+	}
+}
+
 // A repository init switches to a graph repository resolves as that graph
 // repository's project while its config still names another.
 func TestResolveSwitchedProject(t *testing.T) {

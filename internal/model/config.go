@@ -196,6 +196,15 @@ type PerRepoConfig struct {
 	Contribution string `yaml:"contribution,omitempty"`
 }
 
+// MachineLocalKeys returns the keys c sets that only a machine-local config
+// may set.
+func (c *PerRepoConfig) MachineLocalKeys() []string {
+	if c.Contribution != "" {
+		return []string{"contribution"}
+	}
+	return nil
+}
+
 // LocalPointerKeys are the keys of a machine-local config that belong to
 // its own repository, which a graph move leaves in place: the repository's
 // own hooks.

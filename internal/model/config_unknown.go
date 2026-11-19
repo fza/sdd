@@ -46,19 +46,7 @@ func UnknownYAMLKeys(data []byte, t reflect.Type) ([]string, error) {
 	for _, leaf := range collectConfigLeaves(t, nil, nil) {
 		known[leaf.path] = true
 	}
-	// A struct-valued field contributes no leaf of its own, only its children,
-	// so `llm` is declared by virtue of `llm.provider`. A retired key's block
-	// is walked too, so a block t no longer declares still names the retired
-	// key itself.
-	branches := map[string]bool{}
-	for _, paths := range []iter.Seq[string]{maps.Keys(known), maps.Keys(RetiredConfigKeys)} {
-		for path := range paths {
-			segments := strings.Split(path, ".")
-			for i := 1; i < len(segments); i++ {
-				branches[strings.Join(segments[:i], ".")] = true
-			}
-		}
-	}
+	branches := configBranches(known)
 
 	var unknown []string
 	var walk func(node *yaml.Node, prefix string)
@@ -86,4 +74,22 @@ func UnknownYAMLKeys(data []byte, t reflect.Type) ([]string, error) {
 	}
 	walk(root.Content[0], "")
 	return unknown, nil
+}
+
+// configBranches returns the blocks on the way to the known leaves and the
+// retired keys. A struct-valued field contributes no leaf of its own, only its
+// children, so `llm` is declared by virtue of `llm.provider`. A retired key's
+// block counts too, so a block no longer declared still names the retired key
+// itself.
+func configBranches(known map[string]bool) map[string]bool {
+	branches := map[string]bool{}
+	for _, paths := range []iter.Seq[string]{maps.Keys(known), maps.Keys(RetiredConfigKeys)} {
+		for path := range paths {
+			segments := strings.Split(path, ".")
+			for i := 1; i < len(segments); i++ {
+				branches[strings.Join(segments[:i], ".")] = true
+			}
+		}
+	}
+	return branches
 }

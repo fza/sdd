@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -91,7 +90,7 @@ func resolveGraphRepo(read ReadFile, workRoot string, repoID model.RepoID, commi
 	if err != nil {
 		return Project{}, fmt.Errorf("graph_repo in %s: %w", SDDDir(workRoot), err)
 	}
-	err = requireOnlyKeys(read, committedPath, model.GraphRepoPointerKeys)
+	err = refuseMisplacedKeys(read, committedPath)
 	if err != nil {
 		return Project{}, err
 	}
@@ -119,7 +118,9 @@ func RefuseNestedGraphRepo(read ReadFile, project Project) error {
 	return fmt.Errorf("graph repository %s sets graph_repo %s in %s; a graph repository holds its graph itself: remove the key there, or name %s as graph_repo", project.GraphRepo, cfg.GraphRepo, path, cfg.GraphRepo)
 }
 
-func requireOnlyKeys(read ReadFile, path string, allowed []string) error {
+// refuseMisplacedKeys refuses a committed config beside graph_repo that sets
+// more than the pointer keys, one line per key naming where it belongs.
+func refuseMisplacedKeys(read ReadFile, path string) error {
 	data, err := read(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -127,20 +128,41 @@ func requireOnlyKeys(read ReadFile, path string, allowed []string) error {
 		}
 		return err
 	}
-	keys, err := model.TopLevelKeys(data)
+	misplaced, err := model.GraphRepoMisplacedKeys(data)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
-	}
-	var misplaced []string
-	for _, key := range keys {
-		if !slices.Contains(allowed, key) && !slices.Contains(model.IgnoredPointerKeys, key) {
-			misplaced = append(misplaced, key)
-		}
 	}
 	if len(misplaced) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s sets %s, but a repository with %s may set only %s; move the rest into the project's own .sdd/ config", path, strings.Join(misplaced, ", "), allowed[0], strings.Join(allowed, ", "))
+	lines := make([]string, 0, len(misplaced))
+	for _, key := range misplaced {
+		lines = append(lines, fmt.Sprintf("%s sets %s, %s", path, key.Key, placementText(key.Placement)))
+	}
+	return errors.New(strings.Join(lines, "\n"))
+}
+
+func placementText(p model.KeyPlacement) string {
+	const (
+		graphRepo = "the graph repository's .sdd/config.yaml"
+		local     = ".sdd/" + LocalConfigFileName
+		notHere   = ", not in a repository with graph_repo"
+	)
+	switch p.Place {
+	case model.PlaceRetired:
+		return "which sdd no longer uses: " + p.Reason
+	case model.PlaceGraphRepo:
+		return "which belongs in " + graphRepo + notHere
+	case model.PlaceTeamOrPerson:
+		return "which belongs in " + graphRepo + ", or per person in " + local + " or the user-global config" + notHere
+	case model.PlacePerson:
+		return "which belongs only in a person's own config, " + local + " or the user-global config" + notHere
+	case model.PlaceUserGlobal:
+		return "which belongs only in the user-global config" + notHere
+	case model.PlaceLocal:
+		return "which belongs only in " + local + notHere
+	}
+	return "which sdd does not know; if it is a project setting, it belongs in " + graphRepo + notHere
 }
 
 // ResolvedPath resolves symlinks in path, through its nearest existing
