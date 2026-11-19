@@ -85,9 +85,25 @@ func verifierReading(t *testing.T, x *deepExchange) string {
 	return reading.String()
 }
 
+const (
+	implicitHeading = "Shown to the capture and left unanswered (implicitly dismissed):"
+	hiddenHeading   = "Below the prefilter's threshold:"
+)
+
+// listedGroup returns the lines the reading's closing block lists under
+// heading, each between newlines; empty when the block has no such group.
+func listedGroup(reading, heading string) string {
+	_, group, ok := strings.Cut(reading, "\n"+heading)
+	if !ok {
+		return ""
+	}
+	group, _, _ = strings.Cut(group, "\n\n")
+	return group + "\n"
+}
+
 // Once the prefilter's calibration holds, the verifier gets the declared
 // target and the top-ranked entries as blocks and every entry scoring below
-// the threshold as one marked line in the closing block, the audit share
+// the threshold as one line in the closing block, the audit share
 // back among the ranked ones. Each pair is scored once: publish writes the
 // scores to the ledger.
 func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testing.T) {
@@ -107,10 +123,11 @@ func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testi
 		t.Fatalf("the reading should list the hidden entries in its closing block with their count:\n%s", reading)
 	}
 	var hidden, audited []string
+	unanswered := listedGroup(reading, implicitHeading)
 	for i := range 40 {
 		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
 		switch {
-		case strings.Contains(reading, "\n"+id+"  Low directive "+strconv.Itoa(i)+".  (implicitly dismissed)  (below the prefilter's threshold)"):
+		case strings.Contains(unanswered, "\n"+id+"  Low directive "+strconv.Itoa(i)+".\n"):
 			hidden = append(hidden, id)
 		case strings.Contains(reading, "ID: "+id):
 			audited = append(audited, id)
@@ -165,7 +182,7 @@ func TestCaptureDeep_AnUncalibratedReadingRanksByTheJudge(t *testing.T) {
 	if !strings.Contains(reading, "ID: "+laneRelevant) || len(scorer.Scored()) == 0 {
 		t.Fatalf("the judge should rank the reading and its top entry be served in full:\n%s", reading)
 	}
-	if strings.Count(reading, "## Listed, not served (") != 1 || strings.Contains(reading, "  (below the prefilter's threshold)") {
+	if strings.Count(reading, "## Listed, not served (") != 1 || strings.Contains(reading, hiddenHeading) {
 		t.Fatalf("an uncalibrated reading should list the rest in one closing block, none below a threshold:\n%s", reading)
 	}
 	if strings.Contains(reading, "ID: "+done) || !strings.Contains(reading, "\n"+done+"  A done the scorer rates highest.") {
@@ -209,7 +226,7 @@ func TestCaptureDeep_TheReadingsScoresAreNotPaidAgain(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepDispatch")
 	x := dispatchDeep(t, world, session, instance)
 	reading := verifierReading(t, x)
-	if !strings.Contains(reading, "## Listed, not served (") || !strings.Contains(reading, "  (below the prefilter's threshold)") {
+	if !strings.Contains(reading, "## Listed, not served (") || !strings.Contains(listedGroup(reading, hiddenHeading), "  Low directive ") {
 		t.Fatalf("the reading's scores should hide the low entries:\n%s", reading)
 	}
 	if extra := scorer.Scored()[paid:]; len(extra) != 0 {

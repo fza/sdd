@@ -129,8 +129,8 @@ func TestCaptureDismissals_DeepReadingMarksImplicitDismissals(t *testing.T) {
 	world, session := newDeepWorld(t, "dismissals-deep", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	if !strings.Contains(reading, "\n"+captureRef2ID+"  A signal no fixture session has read in full.  (implicitly dismissed)") {
-		t.Fatalf("the entry left unanswered should carry the implicit dismissal mark:\n%s", reading)
+	if !strings.Contains(listedGroup(reading, implicitHeading), "\n"+captureRef2ID+"  A signal no fixture session has read in full.\n") {
+		t.Fatalf("the entry left unanswered should be listed under the implicit dismissals:\n%s", reading)
 	}
 	if !strings.Contains(reading, "implicitly dismissed (shown, left unanswered") {
 		t.Fatalf("the verifier's instructions should describe the implicit role:\n%s", reading)
@@ -162,8 +162,9 @@ func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
 	}
 }
 
-// The deep reading's closing block marks an entry the drafter was shown and
-// left unanswered, keeping one line per entry.
+// The deep reading's closing block lists an entry the drafter was shown and
+// left unanswered under the implicit dismissals, keeping one line per entry,
+// even where it scored below the prefilter's threshold.
 func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	world, session := newDeepWorld(t, "dismissals-deep-lane", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
@@ -174,14 +175,15 @@ func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 	if !ok {
 		t.Fatalf("the calibrated reading should serve the one-line lane:\n%s", reading)
 	}
+	unanswered := listedGroup(lane, implicitHeading)
 	var marked int
 	for line := range strings.Lines(lane) {
 		id, title, isEntry := strings.Cut(strings.TrimSuffix(line, "\n"), "  ")
 		if !isEntry || !strings.HasPrefix(id, "20260603-") {
 			continue
 		}
-		if !strings.HasPrefix(title, "Low directive ") || !strings.Contains(title, ".  (implicitly dismissed)") {
-			t.Fatalf("a lane entry shown and left unanswered should carry the implicit mark on its line, got %q", line)
+		if !strings.HasPrefix(title, "Low directive ") || !strings.Contains(unanswered, "\n"+line) {
+			t.Fatalf("a lane entry shown and left unanswered should be listed under the implicit dismissals, got %q:\n%s", line, lane)
 		}
 		marked++
 	}

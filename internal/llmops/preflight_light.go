@@ -553,28 +553,54 @@ func DeepRankingNote(sources model.RankingSources, judge string, widened bool) s
 }
 
 // DeepListedBlock lists the entries the reading does not serve, one line
-// each in reading order, with the count and the call that opens one, and
-// the count of those past a listing ceiling. Every listed and counted line
-// of the reading is rendered here.
+// each in groups: the implicit dismissals, then those below the prefilter's
+// threshold, then the others, each under its heading and in reading order.
+// It ends with the count of those past a listing ceiling. Every listed and
+// counted line of the reading is rendered here.
 func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the first ones with the first sentence of their summary. An entry marked below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
+	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the higher-ranked ones with the first sentence of their summary, in rank order within each group. An entry below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
+	var implicit, hidden, other []string
 	for _, line := range lines {
 		e := line.Entry
 		text := model.EntryBrief(e)
 		if sentence := e.FirstSummarySentence(); line.Summary && e.Title != "" && sentence != "" {
 			text = e.Title + ": " + sentence
 		}
-		fmt.Fprintf(&b, "\n%s  %s", e.ID, text)
-		if line.Implicit {
-			fmt.Fprintf(&b, "  (%s)", model.LightRoleImplicit)
-		}
-		if line.Hidden {
-			b.WriteString("  (below the prefilter's threshold)")
+		text = e.ID + "  " + text
+		switch {
+		case line.Implicit:
+			implicit = append(implicit, text)
+		case line.Hidden:
+			hidden = append(hidden, text)
+		default:
+			other = append(other, text)
 		}
 	}
+	headed := len(implicit) > 0 || len(hidden) > 0
+	var groups []string
+	for _, group := range []struct {
+		heading string
+		lines   []string
+	}{
+		{"Shown to the capture and left unanswered (" + string(model.LightRoleImplicit) + "):", implicit},
+		{"Below the prefilter's threshold:", hidden},
+		{"Other listed entries:", other},
+	} {
+		if len(group.lines) == 0 {
+			continue
+		}
+		text := strings.Join(group.lines, "\n")
+		if headed {
+			text = group.heading + "\n" + text
+		}
+		groups = append(groups, text)
+	}
 	if counted > 0 {
-		fmt.Fprintf(&b, "\n%d more listed, open with search or show", counted)
+		groups = append(groups, fmt.Sprintf("%d more listed, open with search or show", counted))
+	}
+	if len(groups) > 0 {
+		b.WriteString("\n" + strings.Join(groups, "\n\n"))
 	}
 	return model.DeepReadingBlock{ID: DeepListedID, Text: b.String()}
 }

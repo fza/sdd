@@ -61,6 +61,10 @@ func TestAnEndedMoveServesWithinTheResultBound(t *testing.T) {
 		if n > 40 {
 			t.Fatal("the reading should end within 40 pages")
 		}
+		if strings.Contains(page.Instructions, "lanes of these instructions wait") {
+			call(t, cs, "next", map[string]any{"session": child, "instance": verify}, &page)
+			continue
+		}
 		call(t, cs, "next", map[string]any{"session": child, "instance": verify, "report": map[string]any{"chooser": "read", "choice": "more"}}, &page)
 	}
 	call(t, cs, "next", map[string]any{"session": child, "instance": verify, "report": map[string]any{"chooser": "read", "choice": "judge", "fields": map[string]any{"findings": []any{}}}}, &page)
