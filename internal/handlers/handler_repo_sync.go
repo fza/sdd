@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
@@ -57,11 +56,10 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	if err != nil {
 		return err
 	}
-	home, direct, err := h.project()
+	home, err := h.localRepoID()
 	if err != nil {
 		return err
 	}
-	inProject := home != "" || len(direct) > 0
 	targets := cmd.RepoIDs
 	mode := connectedSync{clone: true, explicit: true}
 	if !cmd.Due {
@@ -69,13 +67,11 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	}
 	switch {
 	case cmd.Due:
-		targets = direct
-		mode = connectedSync{timer: true}
-	case len(targets) == 0 && inProject:
-		targets = direct
-		if len(targets) == 0 {
-			return fmt.Errorf("%s declares no dependencies to sync", home)
+		targets, err = h.closureMembers(ctx)
+		if err != nil {
+			return err
 		}
+		mode = connectedSync{timer: true}
 	case len(targets) == 0:
 		for _, r := range cfg.Repos {
 			targets = append(targets, r.RepoID)
@@ -89,12 +85,8 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	slots := map[string]chan struct{}{}
 	var wg sync.WaitGroup
 	for i, repoID := range targets {
-		if inProject && repoID == home {
+		if home != "" && repoID == home {
 			outcomes[i] = h.syncOwnGraph(ctx, home, mode)
-			continue
-		}
-		if inProject && !slices.Contains(direct, repoID) {
-			outcomes[i] = &model.RepoSyncOutcome{RepoID: repoID, State: model.RepoRefused, Reason: model.NotDirectDependency(string(repoID), string(home)).Error()}
 			continue
 		}
 		repo, connected := cfg.Connected(repoID)
@@ -153,18 +145,33 @@ func (h *Handler) syncOwnGraph(ctx context.Context, home model.RepoID, mode conn
 	return &outcome
 }
 
-// project names the local repo and its direct dependencies; a handler built
-// without a Reader works outside any project and names neither.
-func (h *Handler) project() (home model.RepoID, direct []model.RepoID, err error) {
+// localRepoID names the local repo; a handler built without a Reader works
+// outside any project and names none.
+func (h *Handler) localRepoID() (model.RepoID, error) {
 	if h.reader == nil {
-		return "", nil, nil
+		return "", nil
 	}
-	home, err = h.reader.LocalRepoID()
+	return h.reader.LocalRepoID()
+}
+
+// closureMembers lists the repos the local repo's dependency closure reaches,
+// as their clones stand; none outside a project.
+func (h *Handler) closureMembers(ctx context.Context) ([]model.RepoID, error) {
+	if h.reader == nil {
+		return nil, nil
+	}
+	root, err := h.reader.LocalRepoID()
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	direct, err = h.reader.DirectDependencies()
-	return home, direct, err
+	var members []model.RepoID
+	for repoID, err := range model.DependencyClosure(ctx, root, model.DependencyResolverFunc[model.RepoID](h.reader.DeclaredDependencies)) {
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, repoID)
+	}
+	return members, nil
 }
 
 // syncConnected brings one connected repo's clone up to date as mode says;

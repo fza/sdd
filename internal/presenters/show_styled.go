@@ -267,23 +267,20 @@ func renderTreeItemStyled(w io.Writer, item types.ShownChainItem, primaryID stri
 // words are safe to bold wholesale.
 func styledQualifier(item types.ShownChainItem) string {
 	if item.UnresolvedRepo != "" {
-		return clrFaint.Render(unavailableMarker(item.UnresolvedRepo, item.UnresolvedReason))
+		return clrFaint.Render("[unresolved: repo " + item.UnresolvedRepo + "]")
 	}
 	kind := item.KindLabel
 	status := formatStatusTrailValue(item.DerivedStatus)
-	var qual string
 	switch {
 	case kind != "" && status != "":
-		qual = clrBody.Render("(") + clrQual.Render(kind) + clrBody.Render(", ") + clrQual.Render(status) + clrBody.Render(")")
+		return clrBody.Render("(") + clrQual.Render(kind) + clrBody.Render(", ") + clrQual.Render(status) + clrBody.Render(")")
 	case kind != "":
-		qual = clrBody.Render("(") + clrQual.Render(kind) + clrBody.Render(")")
+		return clrBody.Render("(") + clrQual.Render(kind) + clrBody.Render(")")
 	case status != "":
-		qual = clrBody.Render("(") + clrQual.Render(status) + clrBody.Render(")")
+		return clrBody.Render("(") + clrQual.Render(status) + clrBody.Render(")")
+	default:
+		return ""
 	}
-	if age := cloneAge(item.CloneFetched); age != "" {
-		qual = strings.TrimSpace(qual + " " + clrFaint.Render(age))
-	}
-	return qual
 }
 
 // isLiveStatus reports whether a node is still in play — an active decision, an

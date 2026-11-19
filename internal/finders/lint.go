@@ -1,6 +1,7 @@
 package finders
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -166,7 +167,7 @@ func (f *Finder) IndexLint(q query.IndexLintQuery, result *query.LintResult) {
 	f.repoIndexLint(result)
 }
 
-// repoIndexLint reports direct dependencies whose cache index was built
+// repoIndexLint reports dependency-closure repos whose cache index was built
 // under a fingerprint other than the shared (global) embedder — a drifted
 // repo re-embeds on the next cross-graph search; lint surfaces it so the cost
 // isn't a surprise.
@@ -182,12 +183,13 @@ func (f *Finder) repoIndexLint(result *query.LintResult) {
 	if err != nil {
 		return
 	}
-	direct, err := f.DirectDependencies()
+	// Lint carries no context; the walk only reads committed configs.
+	closure, err := f.DependencyClosure(context.Background(), query.DependencyClosureQuery{})
 	if err != nil {
 		return
 	}
 	fingerprint := emb.Fingerprint()
-	for _, repoID := range direct {
+	for _, repoID := range closure {
 		clone, connected, err := f.repos.Clone(repoID)
 		if err != nil || !connected || !clone.Cloned() {
 			continue
@@ -217,7 +219,7 @@ func (f *Finder) repoIndexLint(result *query.LintResult) {
 // entries are skipped: they are framework-shipped and never reference a
 // project's declared dependencies.
 func (f *Finder) validateCrossRepoDeps(graph *model.Graph) error {
-	deps, err := f.DirectDependencies()
+	deps, err := f.declaredDependencies()
 	if err != nil {
 		return err
 	}

@@ -19,8 +19,6 @@ type ProjectRuntime struct {
 	options ProjectRuntimeOptions
 	// connected is shared by the copies a read takes of the runtime.
 	connected *connectedFailures
-	// further holds the unresolved further-out refs its reads met.
-	further *furtherNotices
 	// rankings holds the deep reading's ranking passes, begun at gather.
 	rankings *rankingJobs
 }
@@ -72,9 +70,6 @@ type ProjectRuntimeOptions struct {
 	// Connected runs the sync rounds of the connected repositories the
 	// project reaches; nil syncs none.
 	Connected ConnectedSync
-	// Further resolves the refs a direct dependency holds into projects
-	// beyond the direct dependencies; nil leaves them unresolved.
-	Further FurtherRefs
 	// Hooks runs the hooks configured for the person running sdd at the
 	// engine's events in this project's sessions; nil runs none.
 	Hooks HookCommands
@@ -214,7 +209,7 @@ func (r *ProjectRuntime) backfillTitles(ctx context.Context, branch string, trig
 // failed.
 func (r *ProjectRuntime) syncNotice(ctx context.Context, branch, session string) string {
 	notices := make([]string, 0, 2)
-	for _, notice := range []string{r.graphSyncNotice(ctx, branch, session), r.connected.notice(), r.further.notice()} {
+	for _, notice := range []string{r.graphSyncNotice(ctx, branch, session), r.connected.notice()} {
 		if notice != "" {
 			notices = append(notices, notice)
 		}
@@ -367,7 +362,7 @@ func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
 			Graph:  options.Graph, Finalizers: options.Finalizers,
 		}
 	}
-	return &ProjectRuntime{options: options, connected: &connectedFailures{}, further: &furtherNotices{}, rankings: &rankingJobs{}}, nil
+	return &ProjectRuntime{options: options, connected: &connectedFailures{}, rankings: &rankingJobs{}}, nil
 }
 
 func (r *ProjectRuntime) Project() ProjectRef {

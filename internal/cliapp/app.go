@@ -861,23 +861,19 @@ func showCmd() *cli.Command {
 
 			// Cross-repo IDs read through the dependency caches; refresh them first.
 			if len(model.CrossRepoIDs(ids)) > 0 {
-				settle, err := refreshDependencies(ctx, cmd.ErrWriter, model.CrossRepoIDs(ids))
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
 				defer settle()
 				if err != nil {
 					return err
 				}
 			}
 
-			dir, err := resolveGraphDir(cmd)
+			g, err := loadGraph(cmd)
 			if err != nil {
 				return err
 			}
-			f, settleFurther, err := furtherReadFinder(ctx, cmd.ErrWriter)
-			defer settleFurther()
-			if err != nil {
-				return err
-			}
-			g, err := f.CurrentGraph(dir)
+
+			f, err := newReadFinder()
 			if err != nil {
 				return err
 			}
@@ -910,7 +906,6 @@ func showCmd() *cli.Command {
 				return err
 			}
 			full, summary := result.ServedIDs()
-			warnUnavailableRefs(ctx, g)
 			return session.logRead(ctx, "show", full, summary)
 		},
 	}

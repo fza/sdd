@@ -98,11 +98,6 @@ type ShownChainItem struct {
 	// UnresolvedRepo names the connected repo of a cross-repo item whose
 	// graph is not available locally.
 	UnresolvedRepo string
-	// UnresolvedReason says why an unresolved item beyond the direct
-	// dependencies stays unresolved; CloneFetched is when the clone a resolved
-	// item beyond them was read from last fetched.
-	UnresolvedReason string
-	CloneFetched     time.Time
 	// Brief is the no-repeat pointer text, as ShownEntry.Brief; empty for an
 	// unresolved or cross-repo item.
 	Brief string
