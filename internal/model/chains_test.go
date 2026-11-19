@@ -53,7 +53,7 @@ func TestActorChains_MergeJoinsSupersededChains(t *testing.T) {
 		t.Errorf("chain entries = %d, want 3", len(chains[0].Entries))
 	}
 	for _, e := range []*model.Entry{first, second, merger} {
-		for _, w := range e.Warnings {
+		for _, w := range g.WarningsFor(e) {
 			if w.Field == "canonical" {
 				t.Errorf("%s carries canonical warning %q", e.ID, w.Message)
 			}

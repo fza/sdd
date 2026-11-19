@@ -66,6 +66,9 @@ type ViewRequest struct {
 	// Budget bounds the view's scaling parts on the serve path; the zero
 	// value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ViewBudget
+	// DataOnly leaves ViewResult.Sections empty, for a caller that renders
+	// ViewSections itself.
+	DataOnly bool
 }
 
 type ViewResult struct {
@@ -103,6 +106,9 @@ type ShowRequest struct {
 	// Budget bounds each direction's chain expansion on the serve path; the
 	// zero value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ShowTreeBudget
+	// DataOnly leaves ShowResult.Entries empty, for a caller that renders
+	// Items itself.
+	DataOnly bool
 }
 
 type ShowResult struct {
@@ -131,6 +137,9 @@ type SearchRequest struct {
 	MaxCitations      int
 	Repos             []RepoID
 	AllRepos          bool
+	// DataOnly leaves SearchResult.Results empty, for a caller that renders
+	// Hits itself.
+	DataOnly bool
 }
 
 type SearchResult struct {

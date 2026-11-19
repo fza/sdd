@@ -38,6 +38,21 @@ type Graph struct {
 	repoID RepoID
 	// marks holds AgentMarks, derived once on first read.
 	marks *agentMarkCache
+	// warnings holds validation's findings per entry. They stay off the
+	// entries, which graphs built over cached snapshots share.
+	warnings map[*Entry][]Warning
+}
+
+func (g *Graph) warn(e *Entry, w ...Warning) {
+	if len(w) > 0 {
+		g.warnings[e] = append(g.warnings[e], w...)
+	}
+}
+
+// WarningsFor returns e's warnings in this graph: those found reading the
+// entry, then those validation found.
+func (g *Graph) WarningsFor(e *Entry) []Warning {
+	return slices.Concat(e.Warnings, g.warnings[e])
 }
 
 // nodeKeyFor is the graph-qualified identity of an entry for rendering and
@@ -91,6 +106,7 @@ func NewGraphWithLoadIssues(entries []*Entry, issues []LoadIssue) *Graph {
 		InboundRefs:  make(map[string][]InboundRef),
 		LoadIssues:   issues,
 		marks:        &agentMarkCache{},
+		warnings:     make(map[*Entry][]Warning),
 	}
 
 	for _, e := range entries {
@@ -759,12 +775,18 @@ func entryIDMatcher(input string) func(*Entry) bool {
 	}
 }
 
-// Lint returns all entries that have validation warnings.
-func (g *Graph) Lint() []*Entry {
-	var result []*Entry
+// LintedEntry is an entry with its warnings in one graph.
+type LintedEntry struct {
+	*Entry
+	Warnings []Warning
+}
+
+// Lint returns all entries that have warnings, in graph order.
+func (g *Graph) Lint() []LintedEntry {
+	var result []LintedEntry
 	for _, e := range g.Entries {
-		if len(e.Warnings) > 0 {
-			result = append(result, e)
+		if w := g.WarningsFor(e); len(w) > 0 {
+			result = append(result, LintedEntry{Entry: e, Warnings: w})
 		}
 	}
 	return result
@@ -787,7 +809,7 @@ func (g *Graph) Health() GraphHealth {
 		h.Issues = append(h.Issues, HealthIssue(issue))
 	}
 	for _, e := range g.Entries {
-		for _, w := range e.Warnings {
+		for _, w := range g.WarningsFor(e) {
 			h.Warnings++
 			h.Issues = append(h.Issues, HealthIssue{Ref: e.ID, Message: w.Message})
 		}
@@ -795,16 +817,14 @@ func (g *Graph) Health() GraphHealth {
 	return h
 }
 
-// validate checks all entries for integrity issues and populates their Warnings fields.
+// validate checks all entries for integrity issues and records them in the
+// graph (WarningsFor).
 // Runs per-entry checks first, then graph-level actor/role checks that
 // require the full graph context (chain membership, canonical history,
 // cross-chain invariants).
 func (g *Graph) validate() {
 	for _, e := range g.Entries {
-		e.resetGraphWarnings()
-	}
-	for _, e := range g.Entries {
-		ValidateEntry(e, g)
+		g.warn(e, ValidateEntry(e, g)...)
 	}
 	validateActorInvariant(g)
 	validateRoleOrphans(g)
@@ -857,7 +877,7 @@ func validateSupersedeForks(g *Graph) {
 			heads = append(heads, h)
 		}
 		sort.Strings(heads)
-		e.Warnings = append(e.Warnings, Warning{
+		g.warn(e, Warning{
 			Field:   "supersedes",
 			Value:   id,
 			Message: fmt.Sprintf("entry has %d active supersede heads (%s) — a live fork; head resolution is ambiguous until the branches converge or close", len(heads), strings.Join(heads, ", ")),
@@ -872,13 +892,13 @@ func validateActorInvariant(g *Graph) {
 	for _, c := range g.ActorChains() {
 		chains = append(chains, &c.CanonicalChain)
 	}
-	flagCanonicalReuse(chains, "actor-identity chains")
+	flagCanonicalReuse(g, chains, "actor-identity chains")
 }
 
 // flagCanonicalReuse warns on every entry whose canonical more than one of
 // the chains has held. Defense-in-depth against race conditions or
 // validator bypass — the pre-flight mechanical check is the first line.
-func flagCanonicalReuse(chains []*CanonicalChain, noun string) {
+func flagCanonicalReuse(g *Graph, chains []*CanonicalChain, noun string) {
 	owners := make(map[string]int)
 	for _, c := range chains {
 		for _, canonical := range c.CanonicalHistory {
@@ -888,7 +908,7 @@ func flagCanonicalReuse(chains []*CanonicalChain, noun string) {
 	for _, c := range chains {
 		for _, e := range c.Entries {
 			if n := owners[e.Canonical]; n > 1 {
-				e.Warnings = append(e.Warnings, Warning{
+				g.warn(e, Warning{
 					Field:   "canonical",
 					Value:   e.Canonical,
 					Message: fmt.Sprintf("canonical %q appears in %d %s (write-once invariant violated)", e.Canonical, n, noun),
@@ -916,7 +936,7 @@ func validateRoleOrphans(g *Graph) {
 		if g.ChainForCanonical(actor) != nil {
 			continue
 		}
-		e.Warnings = append(e.Warnings, Warning{
+		g.warn(e, Warning{
 			Field:   "actor",
 			Value:   actor,
 			Message: fmt.Sprintf("role actor %q does not match any actor-identity chain's canonical history (orphan role)", actor),
@@ -966,7 +986,7 @@ func validateParticipantCoverage(g *Graph) {
 			if _, ok := known[p]; ok {
 				continue
 			}
-			e.Warnings = append(e.Warnings, Warning{
+			g.warn(e, Warning{
 				Field:   "participants",
 				Value:   p,
 				Message: fmt.Sprintf("participant %q does not match any actor canonical or alias in the graph", p),
@@ -1000,7 +1020,7 @@ func validateAliasAmbiguity(g *Graph) {
 			if !slices.Contains(ids, a.ID) {
 				continue
 			}
-			a.Warnings = append(a.Warnings, Warning{
+			g.warn(a, Warning{
 				Field:   "aliases",
 				Value:   alias,
 				Message: fmt.Sprintf("alias %q is also declared by %d other active actor(s) — read-side disambiguation required", alias, len(ids)-1),
@@ -1009,29 +1029,31 @@ func validateAliasAmbiguity(g *Graph) {
 	}
 }
 
-// ValidateEntry checks a single entry for integrity issues and populates its Warnings field.
-// Used both at lint time (all entries) and at write time (new entry before commit).
+// ValidateEntry checks a single entry for integrity issues in g and returns
+// them; the entry is not changed.
 // Per-kind structural rules run through the construction model — the read side
 // projects the raw parsed form and keeps the findings that hold on historical
 // entries, so it never owns a per-kind rule of its own.
-func ValidateEntry(e *Entry, g *Graph) {
-	validateEdges(e, g)
+func ValidateEntry(e *Entry, g *Graph) []Warning {
+	warnings := validateEdges(e, g)
 	c, findings := ConstructFromEntry(e)
 	findings = append(findings, c.Validate(g)...)
-	e.Warnings = append(e.Warnings, ReadWarnings(findings)...)
-	validateAttachmentLinks(e)
+	warnings = append(warnings, ReadWarnings(findings)...)
+	return append(warnings, validateAttachmentLinks(e)...)
 }
 
 // validateEdges runs the graph-edge rules — refs, lifecycle IDs, and the
-// kind-conditional closes/supersedes semantics — populating e.Warnings.
-func validateEdges(e *Entry, g *Graph) {
-	validateRefs(e, g)
-	validateIDRefs(e, g, "closes", e.Closes)
-	validateIDRefs(e, g, "supersedes", e.Supersedes)
-	validateIDRefs(e, g, "approves", e.Approves)
-	validateApproves(e, g)
-	validateCloses(e, g)
-	validateSupersedes(e, g)
+// kind-conditional closes/supersedes semantics.
+func validateEdges(e *Entry, g *Graph) []Warning {
+	return slices.Concat(
+		validateRefs(e, g),
+		validateIDRefs(g, "closes", e.Closes),
+		validateIDRefs(g, "supersedes", e.Supersedes),
+		validateIDRefs(g, "approves", e.Approves),
+		validateApproves(e, g),
+		validateCloses(e, g),
+		validateSupersedes(e, g),
+	)
 }
 
 // ValidateForWrite runs the full write-path rule set on a construction: every
@@ -1042,13 +1064,11 @@ func validateEdges(e *Entry, g *Graph) {
 // caller to carry forward; its Warnings stay empty.
 func (c *EntryConstruction) ValidateForWrite(g *Graph) (*Entry, []Finding) {
 	e := c.Entry()
-	validateEdges(e, g)
-	validateAttachmentLinks(e)
-	findings := make([]Finding, 0, len(e.Warnings))
-	for _, w := range e.Warnings {
+	warnings := append(validateEdges(e, g), validateAttachmentLinks(e)...)
+	findings := make([]Finding, 0, len(warnings))
+	for _, w := range warnings {
 		findings = append(findings, Finding{Field: w.Field, Value: w.Value, Message: w.Message})
 	}
-	e.Warnings = nil
 	findings = append(findings, c.Validate(g)...)
 	return e, findings
 }
@@ -1059,11 +1079,12 @@ func (c *EntryConstruction) ValidateForWrite(g *Graph) (*Entry, []Finding) {
 // happens at capture against the cached remote graph). Dangling detection
 // for local refs honors the forward-class exemption (d-cpt-uh0): a
 // surfaces/required-by target may legitimately be absent at validation time.
-func validateRefs(e *Entry, g *Graph) {
+func validateRefs(e *Entry, g *Graph) []Warning {
+	var warnings []Warning
 	for _, ref := range e.Refs {
 		if IsCrossRepoID(ref.ID) {
 			if err := ValidateCrossRepoID(ref.ID); err != nil {
-				e.Warnings = append(e.Warnings, Warning{
+				warnings = append(warnings, Warning{
 					Field:   "refs",
 					Value:   ref.ID,
 					Message: fmt.Sprintf("malformed cross-repo ref in refs: %v", err),
@@ -1072,7 +1093,7 @@ func validateRefs(e *Entry, g *Graph) {
 			continue
 		}
 		if _, err := ParseID(ref.ID); err != nil {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "refs",
 				Value:   ref.ID,
 				Message: fmt.Sprintf("malformed ID in refs: %s", ref.ID),
@@ -1080,23 +1101,25 @@ func validateRefs(e *Entry, g *Graph) {
 			continue
 		}
 		if _, ok := g.ByID[ref.ID]; !ok && !IsForwardClassRefKind(ref.Kind) {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "refs",
 				Value:   ref.ID,
 				Message: fmt.Sprintf("dangling ref in refs: %s (entry not found)", ref.ID),
 			})
 		}
 	}
+	return warnings
 }
 
 // validateIDRefs checks that all IDs in the given field are well-formed and
 // exist in the graph. Used for the lifecycle fields (closes, supersedes),
 // which never cross the repo boundary — a cross-repo ID here is an error in
 // its own right, not a dangling ref.
-func validateIDRefs(e *Entry, g *Graph, field string, ids []string) {
+func validateIDRefs(g *Graph, field string, ids []string) []Warning {
+	var warnings []Warning
 	for _, id := range ids {
 		if IsCrossRepoID(id) {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   field,
 				Value:   id,
 				Message: fmt.Sprintf("cross-repo ID in %s: lifecycle edges never cross the repo boundary", field),
@@ -1105,7 +1128,7 @@ func validateIDRefs(e *Entry, g *Graph, field string, ids []string) {
 		}
 		_, err := ParseID(id)
 		if err != nil {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   field,
 				Value:   id,
 				Message: fmt.Sprintf("malformed ID in %s: %s", field, id),
@@ -1113,13 +1136,14 @@ func validateIDRefs(e *Entry, g *Graph, field string, ids []string) {
 			continue
 		}
 		if _, ok := g.ByID[id]; !ok {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   field,
 				Value:   id,
 				Message: fmt.Sprintf("dangling ref in %s: %s (entry not found)", field, id),
 			})
 		}
 	}
+	return warnings
 }
 
 // validateCloses checks the three closes refusals that hold whatever the
@@ -1129,7 +1153,8 @@ func validateIDRefs(e *Entry, g *Graph, field string, ids []string) {
 // only by supersession. Every other close is allowed. What makes a close
 // valid is the stated rationale, and pre-flight judges that, flagging a
 // weak one instead of blocking.
-func validateCloses(e *Entry, g *Graph) {
+func validateCloses(e *Entry, g *Graph) []Warning {
+	var warnings []Warning
 	for _, id := range e.Closes {
 		target, ok := g.ByID[id]
 		if !ok {
@@ -1140,7 +1165,7 @@ func validateCloses(e *Entry, g *Graph) {
 		// Reject any attempt to close one regardless of the closer's type —
 		// supersession is the only way to retire it (see DerivedStatus).
 		if target.IsSettled() {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "closes",
 				Value:   id,
 				Message: fmt.Sprintf("%s (closing %s)", SettledCloseRule, id),
@@ -1150,7 +1175,7 @@ func validateCloses(e *Entry, g *Graph) {
 
 		switch {
 		case e.Type == TypeSignal && (e.Kind == KindQuestion || e.Kind == KindActor || e.Kind == KindAnnotation):
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "closes",
 				Value:   id,
 				Message: fmt.Sprintf("%s (got %s signal closing %s %s)", SignalCloseRule, e.Kind, target.Type, id),
@@ -1167,17 +1192,19 @@ func validateCloses(e *Entry, g *Graph) {
 			if e.Kind == KindDirective {
 				continue
 			}
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "closes",
 				Value:   id,
 				Message: fmt.Sprintf("only a kind: directive decision may close another decision — use supersedes instead (%s closing decision %s)", e.Kind, id),
 			})
 		}
 	}
+	return warnings
 }
 
 // validateSupersedes checks that supersedes references point at the same entry type.
-func validateSupersedes(e *Entry, g *Graph) {
+func validateSupersedes(e *Entry, g *Graph) []Warning {
+	var warnings []Warning
 	for _, id := range e.Supersedes {
 		target, ok := g.ByID[id]
 		if !ok {
@@ -1185,7 +1212,7 @@ func validateSupersedes(e *Entry, g *Graph) {
 		}
 
 		if target.Override == OverrideClosed {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "supersedes",
 				Value:   id,
 				Message: fmt.Sprintf("supersede refused: %s declares override: closed — its content renders from the running version's declarations, so a superseding copy would freeze stale truth; narrow through project rules instead", id),
@@ -1193,13 +1220,14 @@ func validateSupersedes(e *Entry, g *Graph) {
 		}
 
 		if target.Type != e.Type {
-			e.Warnings = append(e.Warnings, Warning{
+			warnings = append(warnings, Warning{
 				Field:   "supersedes",
 				Value:   id,
 				Message: fmt.Sprintf("type mismatch in supersedes: %s supersedes %s %s (expected %s)", e.Type, target.Type, id, e.Type),
 			})
 		}
 	}
+	return warnings
 }
 
 // validateProcedureInvariant enforces write-once-across-chains for procedure
@@ -1209,7 +1237,7 @@ func validateProcedureInvariant(g *Graph) {
 	for _, c := range g.ProcedureChains() {
 		chains = append(chains, &c.CanonicalChain)
 	}
-	flagCanonicalReuse(chains, "procedure chains")
+	flagCanonicalReuse(g, chains, "procedure chains")
 }
 
 // validateProcedureForks flags procedure chains with more than one live head
@@ -1234,7 +1262,7 @@ func validateProcedureForks(g *Graph) {
 			winner = chain.Head.ID
 		}
 		for _, h := range chain.LiveHeads {
-			h.Warnings = append(h.Warnings, Warning{
+			g.warn(h, Warning{
 				Field:   "canonical",
 				Value:   h.Canonical,
 				Message: fmt.Sprintf("procedure chain is forked: %d live heads (%s); %s wins for execution (project head over base) — groom to resolve the fork deliberately", len(headIDs), strings.Join(headIDs, ", "), winner),

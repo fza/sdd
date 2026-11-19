@@ -123,3 +123,32 @@ func TestReadResultsCarryRenderedText(t *testing.T) {
 		t.Fatalf("search text should list the hit, got %q", search.Results)
 	}
 }
+
+func TestDataOnlyReadsLeaveTextUnrendered(t *testing.T) {
+	snapshot := acquiredSnapshot(t, "base", "r1", "Rendered body")
+	app := preparationApp(t, acquiredRuntime(t, "base", staticGraphStore{snapshot: snapshot}), nil, nil)
+	identity := sdd.RequestIdentity{Subject: "reader"}
+	const id = "20260101-100000-s-tac-aaa"
+
+	view, err := app.View(t.Context(), identity, "base", sdd.ViewRequest{Layout: "as-list", DataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Sections != "" || len(view.ViewSections) == 0 {
+		t.Fatalf("view: text %q with %d section(s), want no text beside the sections", view.Sections, len(view.ViewSections))
+	}
+	show, err := app.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{id}, DataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if show.Entries != "" || len(show.Items) == 0 {
+		t.Fatalf("show: text %q with %d item(s), want no text beside the items", show.Entries, len(show.Items))
+	}
+	search, err := app.Search(t.Context(), identity, "base", sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Terms: []string{"Rendered"}, DataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if search.Results != "" || len(search.Hits) == 0 {
+		t.Fatalf("search: text %q with %d hit(s), want no text beside the hits", search.Results, len(search.Hits))
+	}
+}

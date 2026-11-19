@@ -12,7 +12,8 @@ import (
 // before an ID is minted) and the resolved ./<shortname>/ form. References
 // inside code are documentation of the syntax, not a claim to carry the file,
 // so the scan reads past them (s-tac-ujs).
-func validateAttachmentLinks(e *Entry) {
+func validateAttachmentLinks(e *Entry) []Warning {
+	var warnings []Warning
 	prefixes := []string{"{{attachments}}/"}
 	if len(e.ID) >= 8 {
 		prefixes = append(prefixes, "./"+e.ID[6:]+"/") // DD-HHmmss-type-layer-suffix
@@ -39,7 +40,7 @@ func validateAttachmentLinks(e *Entry) {
 				filename = after[:end]
 			}
 			if filename != "" && !knownFiles[filename] {
-				e.Warnings = append(e.Warnings, Warning{
+				warnings = append(warnings, Warning{
 					Field:   "attachments",
 					Value:   prefix + filename,
 					Message: fmt.Sprintf("broken attachment link: %s%s (file not found in attachment directory)", prefix, filename),
@@ -48,6 +49,7 @@ func validateAttachmentLinks(e *Entry) {
 			off = start
 		}
 	}
+	return warnings
 }
 
 // maskCodeRegions blanks every byte inside a fenced code block, an indented

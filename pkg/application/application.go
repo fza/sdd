@@ -306,16 +306,19 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
 	full, summary := viewResult.ServedIDs()
-	return ViewResult{
+	result := ViewResult{
 		Project:           runtime.options.Project,
 		ViewSections:      sections,
-		Sections:          presenters.ViewText(sections, nil),
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
 		SummaryIDs:        summary,
 		bodiesOnly:        viewResult.BodiesOnly(),
-	}, nil
+	}
+	if !request.DataOnly {
+		result.Sections = presenters.ViewText(sections, nil)
+	}
+	return result, nil
 }
 
 func (a *Application) Show(ctx context.Context, identity RequestIdentity, project ProjectID, request ShowRequest) (result ShowResult, err error) {
@@ -353,11 +356,13 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	text, err := presenters.ShowText(items, nil)
-	if err != nil {
-		return ShowResult{}, err
+	show := ShowResult{Project: runtime.options.Project, Items: items}
+	if !request.DataOnly {
+		show.Entries, err = presenters.ShowText(items, nil)
+		if err != nil {
+			return ShowResult{}, err
+		}
 	}
-	show := ShowResult{Project: runtime.options.Project, Items: items, Entries: text}
 	show.FullIDs, show.SummaryIDs = showResult.ServedIDs()
 	return show, nil
 }
@@ -436,7 +441,9 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 			break
 		}
 	}
-	search.Results = presenters.SearchText(hits, search.Notices, nil)
+	if !request.DataOnly {
+		search.Results = presenters.SearchText(hits, search.Notices, nil)
+	}
 	search.EntryIDs = searchResult.ServedIDs()
 	return search, nil
 }

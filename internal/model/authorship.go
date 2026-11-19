@@ -90,12 +90,14 @@ const ApprovalRule = "approves is only valid on a settled directive: an approval
 
 // validateApproves checks that an approval vouches only for entries an agent
 // decided.
-func validateApproves(e *Entry, g *Graph) {
+func validateApproves(e *Entry, g *Graph) []Warning {
+	var warnings []Warning
 	for _, id := range e.Approves {
 		if target, ok := g.ByID[id]; ok && !target.AgentDecided() {
-			e.Warnings = append(e.Warnings, Warning{Field: "approves", Value: id, Message: fmt.Sprintf("approves %s, which a person decided: only an agent-decided entry is approved", id)})
+			warnings = append(warnings, Warning{Field: "approves", Value: id, Message: fmt.Sprintf("approves %s, which a person decided: only an agent-decided entry is approved", id)})
 		}
 	}
+	return warnings
 }
 
 // approvedEntries is the set of entries a live approval covers: a person's

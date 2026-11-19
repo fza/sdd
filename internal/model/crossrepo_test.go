@@ -152,10 +152,10 @@ func TestCrossRepoRefNotDanglingNotIndexed(t *testing.T) {
 	e := crossRepoTestEntry("20260602-130000-s-tac-src", []Ref{{ID: crossID, Kind: RefKindGroundedIn}}, nil, nil)
 	g := NewGraph([]*Entry{e})
 
-	if warns := warningsContaining(e.Warnings, "dangling"); len(warns) > 0 {
+	if warns := warningsContaining(g.WarningsFor(e), "dangling"); len(warns) > 0 {
 		t.Errorf("cross-repo ref flagged dangling: %v", warns)
 	}
-	if warns := warningsContaining(e.Warnings, "malformed"); len(warns) > 0 {
+	if warns := warningsContaining(g.WarningsFor(e), "malformed"); len(warns) > 0 {
 		t.Errorf("well-formed cross-repo ref flagged malformed: %v", warns)
 	}
 	if refs := g.RefsTo[crossID]; len(refs) > 0 {
@@ -165,10 +165,10 @@ func TestCrossRepoRefNotDanglingNotIndexed(t *testing.T) {
 
 func TestMalformedCrossRepoRefWarns(t *testing.T) {
 	e := crossRepoTestEntry("20260602-130000-s-tac-src", []Ref{{ID: "nohost:20260601-120000-s-tac-abc", Kind: RefKindGroundedIn}}, nil, nil)
-	NewGraph([]*Entry{e})
+	g := NewGraph([]*Entry{e})
 
-	if warns := warningsContaining(e.Warnings, "malformed cross-repo ref"); len(warns) != 1 {
-		t.Errorf("want 1 malformed cross-repo warning, got warnings: %v", e.Warnings)
+	if warns := warningsContaining(g.WarningsFor(e), "malformed cross-repo ref"); len(warns) != 1 {
+		t.Errorf("want 1 malformed cross-repo warning, got warnings: %v", g.WarningsFor(e))
 	}
 }
 
@@ -177,8 +177,8 @@ func TestCrossRepoLifecycleEdgesWarn(t *testing.T) {
 	e := crossRepoTestEntry("20260602-130000-s-tac-src", nil, []string{crossID}, []string{crossID})
 	g := NewGraph([]*Entry{e})
 
-	if warns := warningsContaining(e.Warnings, "lifecycle edges never cross"); len(warns) != 2 {
-		t.Errorf("want lifecycle warnings for closes and supersedes, got: %v", e.Warnings)
+	if warns := warningsContaining(g.WarningsFor(e), "lifecycle edges never cross"); len(warns) != 2 {
+		t.Errorf("want lifecycle warnings for closes and supersedes, got: %v", g.WarningsFor(e))
 	}
 	if ids := g.ClosedBy[crossID]; len(ids) > 0 {
 		t.Errorf("cross-repo close indexed in ClosedBy: %v", ids)
@@ -194,17 +194,17 @@ func TestForwardClassRefsExemptFromDangling(t *testing.T) {
 		{ID: missing, Kind: RefKindSurfaces},
 		{ID: missing, Kind: RefKindRequiredBy},
 	}, nil, nil)
-	NewGraph([]*Entry{e})
+	g := NewGraph([]*Entry{e})
 
-	if warns := warningsContaining(e.Warnings, "dangling"); len(warns) > 0 {
+	if warns := warningsContaining(g.WarningsFor(e), "dangling"); len(warns) > 0 {
 		t.Errorf("forward-class refs flagged dangling: %v", warns)
 	}
 
 	// A backward-class ref to the same missing target still warns.
 	e2 := crossRepoTestEntry("20260602-130001-s-tac-sr2", []Ref{{ID: missing, Kind: RefKindGroundedIn}}, nil, nil)
-	NewGraph([]*Entry{e2})
-	if warns := warningsContaining(e2.Warnings, "dangling"); len(warns) != 1 {
-		t.Errorf("backward-class dangling ref not flagged, warnings: %v", e2.Warnings)
+	g2 := NewGraph([]*Entry{e2})
+	if warns := warningsContaining(g2.WarningsFor(e2), "dangling"); len(warns) != 1 {
+		t.Errorf("backward-class dangling ref not flagged, warnings: %v", g2.WarningsFor(e2))
 	}
 }
 

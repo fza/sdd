@@ -182,16 +182,16 @@ func TestLint_ParticipantCoverage_UnknownSurfaces(t *testing.T) {
 	e := entry("20260410-130000-s-cpt-bbb",
 		withContent("observation"),
 		withParticipants("Claude"))
-	_ = NewGraph([]*Entry{a, e})
+	g := NewGraph([]*Entry{a, e})
 
 	found := false
-	for _, w := range e.Warnings {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == "participants" && w.Value == "Claude" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected participant-coverage warning for unknown canonical, got %+v", e.Warnings)
+		t.Errorf("expected participant-coverage warning for unknown canonical, got %+v", g.WarningsFor(e))
 	}
 }
 
@@ -207,9 +207,9 @@ func TestLint_ParticipantCoverage_ActiveChainResolves(t *testing.T) {
 	e := entry("20260410-130000-s-cpt-bbb",
 		withContent("observation"),
 		withParticipants("Christopher"))
-	_ = NewGraph([]*Entry{a, e})
+	g := NewGraph([]*Entry{a, e})
 
-	for _, w := range e.Warnings {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == "participants" {
 			t.Errorf("active-chain canonical must resolve without warning, got %+v", w)
 		}
@@ -225,9 +225,9 @@ func TestLint_ParticipantCoverage_ClosedChainResolves(t *testing.T) {
 	e := entry("20260410-140000-s-cpt-bbb",
 		withContent("observation referencing a retired actor"),
 		withParticipants("Christopher"))
-	_ = NewGraph([]*Entry{a, retire, e})
+	g := NewGraph([]*Entry{a, retire, e})
 
-	for _, w := range e.Warnings {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == "participants" {
 			t.Errorf("closed-chain canonical must still resolve without warning (write-once across chains), got %+v", w)
 		}
@@ -242,9 +242,9 @@ func TestLint_ParticipantCoverage_WithinChainHistoricalCanonicalResolves(t *test
 	e := entry("20260410-140000-s-cpt-ccc",
 		withContent("historical entry captured before typo fix"),
 		withParticipants("Chritopher"))
-	_ = NewGraph([]*Entry{a1, a2, e})
+	g := NewGraph([]*Entry{a1, a2, e})
 
-	for _, w := range e.Warnings {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == "participants" {
 			t.Errorf("historical canonical in chain history must resolve without warning, got %+v", w)
 		}
@@ -259,16 +259,16 @@ func TestLint_ParticipantCoverage_NoActorsSurfacesEverything(t *testing.T) {
 	e := entry("20260410-130000-s-cpt-bbb",
 		withContent("observation"),
 		withParticipants("Christopher"))
-	_ = NewGraph([]*Entry{e})
+	g := NewGraph([]*Entry{e})
 
 	found := false
-	for _, w := range e.Warnings {
+	for _, w := range g.WarningsFor(e) {
 		if w.Field == "participants" && w.Value == "Christopher" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("lint must surface unresolved participant even when no actors exist, got %+v", e.Warnings)
+		t.Errorf("lint must surface unresolved participant even when no actors exist, got %+v", g.WarningsFor(e))
 	}
 }
 
@@ -280,7 +280,7 @@ func TestLint_AliasAmbiguity_FlagsCollision(t *testing.T) {
 
 	flagged := 0
 	for _, a := range []*Entry{a1, a2} {
-		for _, w := range a.Warnings {
+		for _, w := range g.WarningsFor(a) {
 			if w.Field == "aliases" && w.Value == "Chris" {
 				flagged++
 			}
@@ -299,7 +299,7 @@ func TestLint_ActorInvariant_CrossChainReuse(t *testing.T) {
 
 	flagged := 0
 	for _, a := range []*Entry{a1, a2} {
-		for _, w := range a.Warnings {
+		for _, w := range g.WarningsFor(a) {
 			if w.Field == "canonical" && w.Value == "Christopher" {
 				flagged++
 			}
@@ -316,13 +316,13 @@ func TestLint_OrphanRole_FlagsUnresolvedActor(t *testing.T) {
 	_ = g
 
 	found := false
-	for _, w := range r.Warnings {
+	for _, w := range g.WarningsFor(r) {
 		if w.Field == "actor" && w.Value == "Ghost" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected orphan-role warning, got %+v", r.Warnings)
+		t.Errorf("expected orphan-role warning, got %+v", g.WarningsFor(r))
 	}
 }
 
@@ -339,13 +339,13 @@ func TestActorFrontmatter_MissingCanonical(t *testing.T) {
 	_ = g
 
 	found := false
-	for _, w := range a.Warnings {
+	for _, w := range g.WarningsFor(a) {
 		if w.Field == "canonical" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected missing-canonical warning, got %+v", a.Warnings)
+		t.Errorf("expected missing-canonical warning, got %+v", g.WarningsFor(a))
 	}
 }
 
@@ -362,13 +362,13 @@ func TestRoleFrontmatter_MissingActor(t *testing.T) {
 	_ = g
 
 	found := false
-	for _, w := range r.Warnings {
+	for _, w := range g.WarningsFor(r) {
 		if w.Field == "actor" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected missing-actor warning, got %+v", r.Warnings)
+		t.Errorf("expected missing-actor warning, got %+v", g.WarningsFor(r))
 	}
 }
 

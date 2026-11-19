@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/index"
@@ -28,8 +29,9 @@ func (gf *GraphFinder) Lint(_ query.LintQuery) (*query.LintResult, error) {
 		return nil, fmt.Errorf("graph is required")
 	}
 
-	validateSummaries(gf.graph)
-	if err := gf.finder.validateCrossRepoDeps(gf.graph); err != nil {
+	found := lintWarnings{}
+	validateSummaries(gf.graph, found)
+	if err := gf.finder.validateCrossRepoDeps(gf.graph, found); err != nil {
 		return nil, fmt.Errorf("lint: %w", err)
 	}
 
@@ -40,8 +42,8 @@ func (gf *GraphFinder) Lint(_ query.LintQuery) (*query.LintResult, error) {
 			EntryID: issue.Ref, Message: issue.Message,
 		})
 	}
-	for _, e := range gf.graph.Lint() {
-		for _, warning := range e.Warnings {
+	for _, e := range gf.graph.Entries {
+		for _, warning := range slices.Concat(gf.graph.WarningsFor(e), found[e]) {
 			result.Findings = append(result.Findings, query.LintFinding{
 				Category: "graph", Code: "warning", Severity: query.LintError,
 				EntryID: e.ID, Message: warning.Message,
@@ -56,6 +58,10 @@ func (gf *GraphFinder) Lint(_ query.LintQuery) (*query.LintResult, error) {
 	result.Findings = append(result.Findings, gf.procedureRuntimeFindings()...)
 	return result, nil
 }
+
+// lintWarnings holds the warnings only lint checks for, per entry, apart from
+// the graph, so a lint run leaves the graph unchanged.
+type lintWarnings map[*model.Entry][]model.Warning
 
 // credentialFindings reports every entry and attachment already holding a
 // credential, naming what to rotate. They are advisories: an entry cannot be
@@ -218,7 +224,7 @@ func (f *Finder) repoIndexLint(result *query.LintResult) {
 // per entry so the finding points at the exact entry and repo. Embedded base
 // entries are skipped: they are framework-shipped and never reference a
 // project's declared dependencies.
-func (f *Finder) validateCrossRepoDeps(graph *model.Graph) error {
+func (f *Finder) validateCrossRepoDeps(graph *model.Graph, found lintWarnings) error {
 	deps, err := f.declaredDependencies()
 	if err != nil {
 		return err
@@ -238,7 +244,7 @@ func (f *Finder) validateCrossRepoDeps(graph *model.Graph) error {
 				continue
 			}
 			seen[repoID] = true
-			entry.Warnings = append(entry.Warnings, model.Warning{
+			found[entry] = append(found[entry], model.Warning{
 				Field:   "refs",
 				Value:   string(repoID),
 				Message: fmt.Sprintf("cross-repo ref into %q, which is not a declared dependency in .sdd/config.yaml — declare it with `sdd repo add`, or the ref is stranded", repoID),
@@ -252,7 +258,7 @@ func (f *Finder) validateCrossRepoDeps(graph *model.Graph) error {
 // on-demand summary model (d-cpt-4qi) summaries carry no staleness tracking —
 // an entry's meaning is fixed at creation, so there is nothing to detect drift
 // against; lint only surfaces the absence of a summary.
-func validateSummaries(graph *model.Graph) {
+func validateSummaries(graph *model.Graph, found lintWarnings) {
 	for _, entry := range graph.Entries {
 		// Embedded base entries ship their summary with the binary — there
 		// is no file to regenerate.
@@ -260,7 +266,7 @@ func validateSummaries(graph *model.Graph) {
 			continue
 		}
 		if entry.Summary == "" {
-			entry.Warnings = append(entry.Warnings, model.Warning{
+			found[entry] = append(found[entry], model.Warning{
 				Field:   "summary",
 				Message: "missing summary (run sdd summarize to generate)",
 			})

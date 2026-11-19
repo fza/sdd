@@ -150,13 +150,13 @@ func TestValidateEntryFactIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			graph := NewGraph([]*Entry{tt.entry})
 			var found bool
-			for _, warning := range graph.ByID[tt.entry.ID].Warnings {
+			for _, warning := range graph.WarningsFor(graph.ByID[tt.entry.ID]) {
 				if warning.Field == "index" && strings.Contains(warning.Message, tt.want) {
 					found = true
 				}
 			}
 			if !found {
-				t.Fatalf("warnings = %+v, want index warning containing %q", tt.entry.Warnings, tt.want)
+				t.Fatalf("warnings = %+v, want index warning containing %q", graph.WarningsFor(tt.entry), tt.want)
 			}
 		})
 	}
@@ -183,8 +183,8 @@ body`)
 		t.Fatal(err)
 	}
 	graph := NewGraph([]*Entry{entry})
-	if len(graph.ByID[entry.ID].Warnings) == 0 || !strings.Contains(graph.ByID[entry.ID].Warnings[0].Message, "invalid character") {
-		t.Fatalf("warnings = %+v", graph.ByID[entry.ID].Warnings)
+	if len(graph.WarningsFor(graph.ByID[entry.ID])) == 0 || !strings.Contains(graph.WarningsFor(graph.ByID[entry.ID])[0].Message, "invalid character") {
+		t.Fatalf("warnings = %+v", graph.WarningsFor(graph.ByID[entry.ID]))
 	}
 }
 
@@ -284,13 +284,13 @@ func TestMalformedActiveEnrollmentExcludedWithParity(t *testing.T) {
 	}
 
 	var warned bool
-	for _, warning := range graph.ByID[malformed.ID].Warnings {
+	for _, warning := range graph.WarningsFor(graph.ByID[malformed.ID]) {
 		if warning.Field == "index" {
 			warned = true
 		}
 	}
 	if !warned {
-		t.Fatalf("malformed enrollment did not load with an index warning: %+v", graph.ByID[malformed.ID].Warnings)
+		t.Fatalf("malformed enrollment did not load with an index warning: %+v", graph.WarningsFor(graph.ByID[malformed.ID]))
 	}
 }
 

@@ -125,8 +125,8 @@ func TestGraphFinder_SourceParity(t *testing.T) {
 
 	// Same per-entry warnings (field + message), keyed by entry ID.
 	for id := range fsIDs {
-		fsW := warningStrings(fsGraph.ByID[id])
-		structW := warningStrings(structGraph.ByID[id])
+		fsW := warningStrings(fsGraph, fsGraph.ByID[id])
+		structW := warningStrings(structGraph, structGraph.ByID[id])
 		if strings.Join(fsW, "|") != strings.Join(structW, "|") {
 			t.Errorf("warnings mismatch for %s:\n  filesystem: %v\n  structured: %v", id, fsW, structW)
 		}
@@ -151,12 +151,13 @@ func entryIDSet(g *model.Graph) map[string]bool {
 	return out
 }
 
-func warningStrings(e *model.Entry) []string {
+func warningStrings(g *model.Graph, e *model.Entry) []string {
 	if e == nil {
 		return nil
 	}
-	out := make([]string, 0, len(e.Warnings))
-	for _, w := range e.Warnings {
+	warnings := g.WarningsFor(e)
+	out := make([]string, 0, len(warnings))
+	for _, w := range warnings {
 		out = append(out, w.Field+": "+w.Message)
 	}
 	return out

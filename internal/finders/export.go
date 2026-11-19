@@ -167,6 +167,7 @@ func (x exporter) entry(g *model.Graph, e *model.Entry, attachments []query.Expo
 		Heat:         model.HeatScore(g, e, x.decay, x.now),
 		InDegree:     int(model.InDegreeScore(g, e)),
 		Attachments:  attachments,
+		Warnings:     g.WarningsFor(e),
 	}
 	if key, ok := g.DisplayID(e.ID); ok && key != e.ID {
 		entry.FullID = key
