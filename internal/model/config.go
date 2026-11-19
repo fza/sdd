@@ -210,6 +210,10 @@ var LocalPointerKeys = []string{"hooks"}
 // it ships, and graph_dir, which ParseConfig ignores there.
 var GraphRepoPointerKeys = []string{"graph_repo", "graph_dir", "skill_scope", "supported_agents", "hooks"}
 
+// IgnoredPointerKeys are keys earlier builds wrote beside graph_repo that the
+// pointer check reads past instead of refusing.
+var IgnoredPointerKeys = []string{"project_dir"}
+
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
 func TopLevelKeys(data []byte) ([]string, error) {

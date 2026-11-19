@@ -133,7 +133,7 @@ func requireOnlyKeys(read ReadFile, path string, allowed []string) error {
 	}
 	var misplaced []string
 	for _, key := range keys {
-		if !slices.Contains(allowed, key) {
+		if !slices.Contains(allowed, key) && !slices.Contains(model.IgnoredPointerKeys, key) {
 			misplaced = append(misplaced, key)
 		}
 	}

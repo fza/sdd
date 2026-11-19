@@ -21,9 +21,13 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\ngraph_dir: .sdd/GRAPH-ELSEWHERE.md\nskill_scope: project\n"},
 		},
 		{
-			name:      "project_dir beside graph_repo",
-			work:      map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nproject_dir: ../project\n"},
-			wantError: "sets project_dir",
+			name: "project_dir beside graph_repo is read past",
+			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nproject_dir: ../project\n"},
+		},
+		{
+			name:      "another key beside graph_repo",
+			work:      map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nlanguage: de\n"},
+			wantError: "sets language",
 		},
 		{
 			name: "the local file may name the graph repository",
