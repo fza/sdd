@@ -32,3 +32,12 @@ func (s *failingRelevanceStore) Append(ctx context.Context, segment []byte) erro
 	}
 	return s.RelevanceStore.Append(ctx, segment)
 }
+
+// captureCompletionCount counts the publish's completions.
+type captureCompletionCount struct{ calls int }
+
+func (*captureCompletionCount) Name() string { return "capture-completion" }
+func (f *captureCompletionCount) Finalize(context.Context, sdd.AppliedMutation) error {
+	f.calls++
+	return nil
+}

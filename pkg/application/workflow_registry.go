@@ -560,11 +560,36 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
 	}
-	// A retry finds the entry an earlier attempt published under the same
-	// key, which the late-entries check would take for a late one.
-	published, err := w.app.entryPublicationExists(w.ctx, w.identity, target, draft.Publication, draft.EntryID)
+	entryID, written := ctx.Committed["entryId"].(string)
+	if !written {
+		entryID, err = w.publishDraft(ctx, draft)
+		if err != nil || entryID == "" {
+			return err
+		}
+	}
+	if err := w.storeCaptureRecheck(ctx, target.Project, entryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	if err := w.storeCaptureRelevance(ctx, target.Project, entryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	if err := w.releasePublished(ctx.Instance, draft.Attachments); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: freeing its staged attachments: %w", entryID, err)
+	}
+	w.session.LogRead("newEntry", []string{entryID}, nil)
+	return w.session.SinkErr()
+}
+
+// publishDraft publishes the draft and commits its entryId, so a retry after
+// a failure past the publish continues from the entry; it returns no ID when
+// entries landed before the write.
+func (w *WorkflowSession) publishDraft(ctx *engine.Context, draft EntryDraft) (string, error) {
+	// A retry whose earlier attempt published but never committed finds its
+	// entry under the same key, which the late-entries check would take for
+	// a late one.
+	published, err := w.app.entryPublicationExists(w.ctx, w.identity, draft.Target, draft.Publication, draft.EntryID)
 	if err != nil {
-		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
 	}
 	if !published {
 		// The write step's late-entries check, once more on a fresh graph right
@@ -575,32 +600,22 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 			return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
 		})
 		if err != nil {
-			return err
+			return "", err
 		}
 		if len(late) > 0 {
 			slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
-			return nil
+			return "", nil
 		}
 	}
-	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
+	result, err := w.app.CreateEntry(w.ctx, w.identity, draft.Target.Project, w.binding, draft)
 	if err != nil {
-		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
 	}
 	w.binding = result.Binding
-	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
-		return err
+	if err := ctx.Commit(map[string]any{"entryId": result.EntryID}); err != nil {
+		return "", fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
 	}
-	if err := w.storeCaptureRecheck(ctx, target.Project, result.EntryID); err != nil {
-		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
-	}
-	if err := w.storeCaptureRelevance(ctx, target.Project, result.EntryID); err != nil {
-		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
-	}
-	if err := w.releasePublished(ctx.Instance, draft.Attachments); err != nil {
-		return fmt.Errorf("newEntry: entry %s is written: freeing its staged attachments: %w", result.EntryID, err)
-	}
-	w.session.LogRead("newEntry", []string{result.EntryID}, nil)
-	return w.session.SinkErr()
+	return result.EntryID, nil
 }
 
 // wipTarget is the WIP marker's authority: the session's current branch,
