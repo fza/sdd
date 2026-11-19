@@ -104,6 +104,7 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	Titles    TitlesConfig    `yaml:"titles,omitempty"`
 	Secrets   SecretsConfig   `yaml:"secrets,omitempty"`
 	// Verify makes captures read the graph before they are written and checks
 	// every draft against that reading; DefaultVerifyMode unless a layer sets
@@ -271,6 +272,17 @@ const (
 
 func (SyncMode) AllowedValues() []string {
 	return closedValues(SyncModeManual, SyncModeAuto)
+}
+
+type TitlesConfig struct {
+	// Backfill lets session starts, engine calls, the serve timer and
+	// `sdd sync` title untitled entries, each with model calls and a commit;
+	// off unless a layer switches it on.
+	Backfill *bool `yaml:"backfill,omitempty"`
+}
+
+func (c TitlesConfig) Backfills() bool {
+	return c.Backfill != nil && *c.Backfill
 }
 
 // DialogueConfig holds how engine sessions treat the choices procedures put
@@ -827,6 +839,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
 	if overlay.Dialogue.Mode != "" {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
+	}
+	if overlay.Titles.Backfill != nil {
+		out.Titles.Backfill = overlay.Titles.Backfill
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	out.Verify = mergeVerifyConfig(base.Verify, overlay.Verify)

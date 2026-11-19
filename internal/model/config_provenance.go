@@ -45,6 +45,7 @@ var configDefaults = map[string]string{
 	"llm.extract_timeout":    DefaultLLMExtractTimeout.String(),
 	"llm.debug":              "false",
 	"dialogue.mode":          string(DialogueGuided),
+	"titles.backfill":        "false",
 	"verify.mode":            string(DefaultVerifyMode),
 	"verify.skip":            string(VerifierSkipFailure),
 	"verify.runner":          string(VerifierRunnerSubagent),

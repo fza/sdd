@@ -20,6 +20,7 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"LLM", func(c *model.PerRepoConfig) any { return &c.LLM }},
 		{"Embedding", func(c *model.PerRepoConfig) any { return &c.Embedding }},
 		{"Sync", func(c *model.PerRepoConfig) any { return &c.Sync }},
+		{"Titles", func(c *model.PerRepoConfig) any { return &c.Titles }},
 		{"Verify", func(c *model.PerRepoConfig) any { return &c.Verify }},
 		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
 		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
