@@ -14,10 +14,11 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
-// Prefilter defaults: a call is bounded by the pass deadline, and chat holds
-// a few calls in flight, each carrying a whole batch.
+// Prefilter defaults: a call is bounded well below gather's 45s pass deadline,
+// so a slow call leaves time to send its halves (relevance.Halving), and chat
+// holds a few calls in flight, each carrying a whole batch.
 const (
-	defaultPrefilterTimeout     = 45 * time.Second
+	defaultPrefilterTimeout     = 20 * time.Second
 	defaultChatConcurrency      = 8
 	defaultPrefilterKeyProvider = "opper"
 )
