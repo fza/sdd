@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -164,7 +165,7 @@ func TestPlacePrefiltered(t *testing.T) {
 	candidates := []model.GatherCandidate{entry("low"), entry("mid"), entry("high"), entry("unscored")}
 	scores := map[string]uint8{"low": 5, "mid": 100, "high": 250}
 
-	sorted := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9}, false)
+	sorted := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9}, false)
 	if len(sorted.Relevant) != 0 || len(sorted.SetAside) != 0 || len(sorted.ToJudge) != 4 {
 		t.Fatalf("placed %+v: uncalibrated scores should set nothing aside and serve nothing", sorted)
 	}
@@ -172,7 +173,7 @@ func TestPlacePrefiltered(t *testing.T) {
 		t.Fatalf("to judge %v should run by falling score, unscored last", ids(sorted.ToJudge))
 	}
 
-	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, false)
+	calibrated := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, false)
 	if len(calibrated.Relevant) != 1 || calibrated.Relevant[0].Entry.ID != "high" {
 		t.Fatalf("relevant %v should hold the high score", ids(calibrated.Relevant))
 	}
@@ -199,29 +200,92 @@ func TestPlacePrefiltered_TiersAnUncalibratedRanking(t *testing.T) {
 	}
 	candidates = append(candidates, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-a"}}, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-b"}})
 
-	placed := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, false)
-	if model.GatherJudgeRanked != 100 || model.GatherTitleListed != 300 {
-		t.Fatalf("tiers %d and %d, want 100 to judge and 300 by title", model.GatherJudgeRanked, model.GatherTitleListed)
+	placed := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{}, false)
+	if model.GatherJudgeRanked != 30 || model.GatherTitleListed != 300 {
+		t.Fatalf("tiers %d and %d, want 30 to judge and 300 by title", model.GatherJudgeRanked, model.GatherTitleListed)
 	}
 	judged := ids(placed.ToJudge)
-	if len(judged) != 102 || judged[0] != "c0000" || judged[99] != "c0099" || judged[100] != "unscored-a" || judged[101] != "unscored-b" {
-		t.Fatalf("%d to judge (%v ...): the top 100 by score and every unscored one", len(judged), judged[:3])
+	if len(judged) != 32 || judged[0] != "c0000" || judged[29] != "c0029" || judged[30] != "unscored-a" || judged[31] != "unscored-b" || placed.Ranked != 30 {
+		t.Fatalf("%d to judge (%v ...): the top 30 by score and every unscored one", len(judged), judged[:3])
 	}
-	if listed := ids(placed.Listed); len(listed) != 300 || listed[0] != "c0100" || listed[299] != "c0399" {
+	if listed := ids(placed.Listed); len(listed) != 300 || listed[0] != "c0030" || listed[299] != "c0329" {
 		t.Fatalf("%d listed: the next 300 by score go by title", len(listed))
 	}
-	if len(placed.Counted) != 50 || placed.Counted[0] != "c0400" {
+	if len(placed.Counted) != 120 || placed.Counted[0] != "c0330" {
 		t.Fatalf("%d counted: the rest past the title ceiling", len(placed.Counted))
 	}
 
-	widened := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, true)
-	if len(widened.ToJudge) != 202 || len(widened.Listed) != 250 || len(widened.Counted) != 0 {
+	widened := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{}, true)
+	if len(widened.ToJudge) != 62 || len(widened.Listed) != 300 || len(widened.Counted) != 90 {
 		t.Fatalf("%d to judge, %d listed, %d counted: a weak judge doubles the lines to judge", len(widened.ToJudge), len(widened.Listed), len(widened.Counted))
 	}
 
-	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, Stage: 0.90, SetAside: 0, Relevant: 2}, false)
+	calibrated := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{Valid: true, Stage: 0.90, SetAside: 0, Relevant: 2}, false)
 	if len(calibrated.ToJudge) != 452 || len(calibrated.Listed) != 0 || len(calibrated.Counted) != 0 {
 		t.Fatalf("%d to judge, %d listed: a calibrated judge's threshold draws the line, not the tiers", len(calibrated.ToJudge), len(calibrated.Listed))
+	}
+}
+
+// Candidates no judge scored rank by similarity to the draft, those it did
+// not reach last, and take the same cut as scored ones; without similarity
+// they hold no rank and all stay to judge.
+func TestPlacePrefiltered_RanksUnscoredBySimilarity(t *testing.T) {
+	candidates := []model.GatherCandidate{{Entry: &model.Entry{ID: "far"}}, {Entry: &model.Entry{ID: "mid"}}}
+	similarity := map[string]float64{}
+	for i := range 40 {
+		id := fmt.Sprintf("u%02d", i)
+		candidates = append(candidates, model.GatherCandidate{Entry: &model.Entry{ID: id}})
+		similarity[id] = float64(i) / 100
+	}
+	scores := map[string]uint8{"mid": 100}
+	for _, tc := range []struct {
+		name       string
+		thresholds model.RelevanceThresholds
+		first      string
+		judged     int
+	}{
+		{"uncalibrated", model.RelevanceThresholds{}, "mid", 30},
+		{"calibrated", model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, "mid", 31},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			placed := model.PlacePrefiltered(candidates, scores, similarity, tc.thresholds, false)
+			judged := ids(placed.ToJudge)
+			if len(judged) != tc.judged || judged[0] != tc.first || placed.Ranked != model.GatherJudgeRanked {
+				t.Fatalf("to judge %v: the scored band, then the most similar unscored up to the cut", judged)
+			}
+			if judged[1] != "u39" {
+				t.Fatalf("to judge %v: unscored lines should run by falling similarity", judged)
+			}
+			listed := ids(placed.Listed)
+			if len(listed) == 0 || listed[len(listed)-1] != "far" || listed[0] == "far" {
+				t.Fatalf("listed %v: the unscored past the cut go by title, the one similarity missed last", listed)
+			}
+		})
+	}
+
+	t.Run("no similarity", func(t *testing.T) {
+		placed := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{}, false)
+		if len(placed.ToJudge) != len(candidates) || len(placed.Listed) != 0 {
+			t.Fatalf("%d to judge, %d listed: unscored lines without similarity hold no rank and stay", len(placed.ToJudge), len(placed.Listed))
+		}
+	})
+}
+
+// Done entries rank after every open one, scored or not.
+func TestPlacePrefiltered_RanksDoneLast(t *testing.T) {
+	done := func(id string) model.GatherCandidate {
+		return model.GatherCandidate{Entry: &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindDone}}
+	}
+	open := func(id string) model.GatherCandidate {
+		return model.GatherCandidate{Entry: &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap}}
+	}
+	candidates := []model.GatherCandidate{done("done-scored"), done("done-unscored"), open("open-unscored"), open("open-scored")}
+	scores := map[string]uint8{"done-scored": 250, "open-scored": 10}
+	similarity := map[string]float64{"done-unscored": 0.9, "open-unscored": 0.1}
+
+	placed := model.PlacePrefiltered(candidates, scores, similarity, model.RelevanceThresholds{}, false)
+	if got := ids(placed.ToJudge); !slices.Equal(got, []string{"open-scored", "open-unscored", "done-scored", "done-unscored"}) {
+		t.Fatalf("to judge %v: open entries before done ones, scored before unscored", got)
 	}
 }
 

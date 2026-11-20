@@ -60,8 +60,25 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 	}); err != nil {
 		return err
 	}
+	// Neither query is serve-safe: each records its listing as a credited read.
+	if err := registry.RegisterQuery(engine.Query{
+		Doc: engine.FuncDoc{
+			Name:  "landedEntries",
+			Doc:   "The entries that landed since the capture's reading began and that no credited read listed, one brief line each, recorded as the capture's read of new entries.",
+			Reads: reads,
+		},
+		Bound: engine.QueryBound{Part: serveview.PartEntryList},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			evidence, applies, err := w.groundingEvidence(ctx, contextGraph(ctx))
+			if err != nil || !applies {
+				return "", err
+			}
+			return w.injectEntries(ctx, "inject:landedEntries", model.GroundingNew, evidence.Unlisted())
+		},
+	}); err != nil {
+		return err
+	}
 	return registry.RegisterQuery(engine.Query{
-		// Not serve-safe: it records the listing as a credited read.
 		Doc: engine.FuncDoc{
 			Name:  "lateEntries",
 			Doc:   "The entries that landed after the assemble check, one brief line each, recorded as the capture's late read.",
@@ -70,25 +87,34 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
 			late, err := w.lateEntries(ctx, contextGraph(ctx))
-			if err != nil || len(late) == 0 {
+			if err != nil {
 				return "", err
 			}
-			entries := make([]*model.Entry, 0, len(late))
-			for _, id := range late {
-				entries = append(entries, ctx.Graph.ByID[id])
-			}
-			err = w.session.Record(engine.Read{
-				Tool: "inject:lateEntries", Instance: ctx.Instance, Summary: late,
-				Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingLate, IDs: late}}, Shown: late},
-			})
-			if err != nil {
-				return nil, err
-			}
-			var rendered bytes.Buffer
-			presenters.RenderLateEntries(&rendered, ctx.Graph, entries, w.repeats())
-			return strings.TrimRight(rendered.String(), "\n"), nil
+			return w.injectEntries(ctx, "inject:lateEntries", model.GroundingLate, late)
 		},
 	})
+}
+
+// injectEntries renders ids as brief lines and records them as the capture's
+// credited read of mode; nothing for no ids.
+func (w *WorkflowSession) injectEntries(ctx *engine.Context, tool string, mode model.GroundingReadMode, ids []string) (any, error) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	entries := make([]*model.Entry, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, ctx.Graph.ByID[id])
+	}
+	err := w.session.Record(engine.Read{
+		Tool: tool, Instance: ctx.Instance, Summary: ids,
+		Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: mode, IDs: ids}}, Shown: ids},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var rendered bytes.Buffer
+	presenters.RenderLateEntries(&rendered, ctx.Graph, entries, w.repeats())
+	return strings.TrimRight(rendered.String(), "\n"), nil
 }
 
 // groundingEvidence returns the capture's grounding evidence over the graph

@@ -21,6 +21,9 @@ type ProjectRuntime struct {
 	connected *connectedFailures
 	// rankings holds the deep reading's ranking passes, begun at gather.
 	rankings *rankingJobs
+	// gatherJudging counts the gather judge passes running, which background
+	// calibration waits out before each request it sends.
+	gatherJudging *judgePasses
 }
 
 type ProjectRuntimeOptions struct {
@@ -362,7 +365,7 @@ func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
 			Graph:  options.Graph, Finalizers: options.Finalizers,
 		}
 	}
-	return &ProjectRuntime{options: options, connected: &connectedFailures{}, rankings: &rankingJobs{}}, nil
+	return &ProjectRuntime{options: options, connected: &connectedFailures{}, rankings: &rankingJobs{}, gatherJudging: newJudgePasses()}, nil
 }
 
 func (r *ProjectRuntime) Project() ProjectRef {

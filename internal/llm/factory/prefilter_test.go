@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
@@ -95,5 +96,28 @@ func TestNewPrefilter_RetriesAfterTheDelayA429AsksFor(t *testing.T) {
 	_, err = prefilter.Scorer.Score(t.Context(), relevance.Request{Subject: "draft", Candidates: []relevance.Candidate{{ID: "a", Text: "candidate"}}})
 	if err != nil || calls != 2 {
 		t.Fatalf("%d calls, error %v: the judge should call once more after the delay", calls, err)
+	}
+}
+
+// A call without a timeout set gives up well inside gather's 45s pass, so
+// halving a slow batch can still run within it.
+func TestNewPrefilter_DefaultCallTimeoutLeavesThePassTimeToHalve(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(40 * time.Second):
+			_, _ = io.WriteString(w, `{"results":[{"index":0,"relevance_score":0.5}]}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+	prefilter, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: model.PrefilterCohere, LLMConfig: model.LLMConfig{Endpoint: server.URL, APIKeys: map[string]string{"opper": "k"}}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err = prefilter.Scorer.Score(t.Context(), relevance.Request{Subject: "draft", Candidates: []relevance.Candidate{{ID: "a", Text: "candidate"}}})
+	if elapsed := time.Since(started); err == nil || elapsed > 25*time.Second {
+		t.Fatalf("after %s, error %v: a stalled call should end at its own timeout, below half the pass deadline", elapsed.Round(time.Second), err)
 	}
 }
