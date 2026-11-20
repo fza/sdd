@@ -167,6 +167,38 @@ func TestSchemaAnchorSitsInADescription(t *testing.T) {
 	}
 }
 
+// A schema whose tag sits in a description of one plain pair still takes its
+// follow-up prompts, from the other descriptions, each prompt once in the
+// whole schema, its answer on the prompt's own line.
+func TestSchemaAnchorTakesPromptsFromEveryDescription(t *testing.T) {
+	descriptions := map[string]string{
+		"draft":  "markdown body",
+		"layer":  "layer naming purpose; markdown words",
+		"topics": "topic labels grouping entries",
+		"refs":   "related entries cited inline",
+	}
+	properties := map[string]any{}
+	for name, desc := range descriptions {
+		properties[name] = map[string]any{"type": "string", "description": desc}
+	}
+	schema := map[string]any{"type": "object", "properties": properties}
+	whole := strings.Join([]string{descriptions["draft"], descriptions["layer"], descriptions["topics"], descriptions["refs"]}, "\n")
+	for seed := range uint64(40) {
+		anchor, ok := model.PlaceSchemaAnchor(schema, "zz99", seeded(seed))
+		if !ok {
+			t.Fatal("a schema with described properties should take an anchor")
+		}
+		if len(anchor.Challenges) != model.AnchorChallenges {
+			t.Fatalf("the anchor should take every follow-up prompt the schema offers, got %+v", anchor.Challenges)
+		}
+		for _, c := range anchor.Challenges {
+			if c.Prompt == "markdown" || !strings.Contains(whole, c.Prompt+" "+c.Answer) {
+				t.Fatalf("each prompt should occur once in the schema, its answer right after it, got %+v", c)
+			}
+		}
+	}
+}
+
 func TestProofParsingAndMatching(t *testing.T) {
 	cases := []struct {
 		in      string

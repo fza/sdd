@@ -142,9 +142,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				return nil, err
 			}
 			var repeats *presenters.Repeats
-			if w.framing {
-				w.laneFull = append(w.laneFull, result.FullIDs...)
-			} else {
+			if !w.framing {
 				repeats = w.repeats()
 			}
 			mark := w.session.PieceMark()

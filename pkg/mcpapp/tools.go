@@ -8,7 +8,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -204,7 +203,7 @@ type ServeResult struct {
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
-	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state this instance already collected; values persist across handover. Do not re-derive them"`
+	Collected        []string                `json:"collected,omitempty" jsonschema:"resume_session only: the state fields this instance already collected, by name; their values persist in the session store across handover. Do not re-derive them"`
 	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input. Follow each one's instructions"`
 	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
 	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
@@ -469,7 +468,7 @@ type ResultNotices struct {
 	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
-	Unproved    string `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by tag and name; prove each whose text you still see in held"`
+	Unproved    string `json:"unproved,omitempty" jsonschema:"on a result serving a piece: the pieces earlier results served in full that you have not proved since, entries left out, newest first, each by tag and name; prove each whose text you still see in held"`
 }
 
 func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
@@ -1279,33 +1278,10 @@ func emptyViewMessage(knownParticipants []string) string {
 	return msg
 }
 
-// Value-projection caps, derived from the calibrated serveview budget so the
-// wire surface and the engine share one upgrade knob (d-tac-qwc). Collected
-// and produced values are the session store projected onto a serve, so the
-// per-value cap is the store-value cap and the per-instance block cap is the
-// engine-written values cap.
-var (
-	// maxCollectedValueBytes caps a single projected collected or produced
-	// value. The values persist in full in the session store; the cap only
-	// bounds what the serve carries so a large reported judgment cannot blow
-	// the client's token budget.
-	maxCollectedValueBytes = serveview.Default().Cap(serveview.PartStoreValue).MaxBytes
-
-	// maxCollectedInstanceBytes caps the total value projection for one
-	// instance. Per-value capping alone lets a field-heavy instance stack many
-	// near-cap values into a payload that, across several resumed instances, can
-	// reach the ~10K-token output ceiling where Codex CLI truncates a tool result
-	// (s-tac-jom, s-tac-40d) — a silent cut is exactly what d-cpt-0tm forbids. The
-	// budget keeps whole, high-signal values in sorted-key order and replaces the
-	// rest with a labeled omission, so the resume serve stays comfortably under the
-	// host ceiling while every dropped value is named, never silently gone.
-	maxCollectedInstanceBytes = serveview.Default().Cap(serveview.PartProduced).MaxBytes
-
-	// maxLineListBytes caps the whole-line lists MCP responses carry (open
-	// threads, discarded threads, session rejections); cuts keep whole lines
-	// and name the remainder.
-	maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
-)
+// maxLineListBytes caps the whole-line lists MCP responses carry (open
+// threads, discarded threads, session rejections); cuts keep whole lines and
+// name the remainder.
+var maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
 
 // maxResumeOpenInstances caps how many open instances a resume projection
 // serves in full; the rest are named, each reachable through next.
@@ -1335,36 +1311,6 @@ func endedValues(values map[string]any) (map[string]string, []string) {
 	return out, omitted
 }
 
-// capValues renders each collected or produced value to a display string,
-// truncates any over-cap value, and enforces a per-instance total budget by
-// spending it on whole values in sorted-key order — anything past the budget
-// is replaced with an explicit omission notice, so a resuming agent sees the
-// compression rather than losing a field silently (d-cpt-0tm). Returns nil for
-// an empty projection so the field is omitted.
-func capValues(values map[string]any) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	out := make(map[string]string, len(values))
-	spent := 0
-	for _, name := range names {
-		value := capValue(collectedString(values[name]))
-		if spent+len(value) > maxCollectedInstanceBytes {
-			out[name] = "[collected value omitted here for size — persisted in full in the session store]"
-			continue
-		}
-		spent += len(value)
-		out[name] = value
-	}
-	return out
-}
-
 // collectedString renders a store value for the projection: strings pass
 // through; everything else is JSON-encoded so lists and scalars stay legible.
 // A marshal failure is stamped rather than silently rendered as Go syntax, so
@@ -1378,16 +1324,6 @@ func collectedString(v any) string {
 		return fmt.Sprintf("[!json-encode-error: %v] %v", err, v)
 	}
 	return string(b)
-}
-
-// capValue truncates an over-cap value on a rune boundary and appends
-// a notice naming the cap.
-func capValue(s string) string {
-	bounded := truncate.Bytes(s, maxCollectedValueBytes, "")
-	if bounded.Cut.Clean() {
-		return s
-	}
-	return fmt.Sprintf("%s\n\n[collected value truncated at %d of %d bytes — persisted in full, compressed here]", bounded.Text, bounded.Cut.KeptBytes, bounded.Cut.TotalBytes)
 }
 
 func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowArgs) (*mcp.CallToolResult, ShowResult, error) {
@@ -1707,23 +1643,25 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // serveResultBody converts the serve fields every landing shares —
 // instructions with per-lane dedup, the first keep lanes of them, chooser,
 // the first framing blocks of the framing, open threads; framing below zero
-// composes none, resent points at lanes sent before (composeInstructions).
-// Schema and vocabulary dedup live only in composeServe: a base mapping drops
-// those fields, and recording bytes never delivered would stub them for a
-// later serve that does deliver. It returns what it served.
-func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, resent bool, pageFull []string) (ServeResult, servedCount, error) {
+// composes none, and an ended move's serve none either; resent points at
+// lanes sent before, landing leaves out lanes served before
+// (composeInstructions). Schema and vocabulary dedup live only in
+// composeServe: a base mapping drops those fields, and recording bytes never
+// delivered would stub them for a later serve that does deliver. It returns
+// what it served.
+func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, resent, landing bool, pageFull []string) (ServeResult, servedCount, error) {
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
 		Step: serve.Step, Goal: serve.Goal, Missing: serve.Missing,
 		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
-		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
+		Collected: slices.Sorted(maps.Keys(serve.Collected)), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
 	if parked := serve.Parked; parked != nil {
 		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
 	}
 	var count servedCount
-	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, resent, pageFull)
+	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, resent, landing, pageFull)
 	var omitted []string
 	res.Produced, omitted = endedValues(serve.Produced)
 	if len(omitted) > 0 {
@@ -1740,7 +1678,7 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 	if serve.Waiting {
 		return res, count, nil
 	}
-	if framing >= 0 {
+	if framing >= 0 && !serve.Ended() {
 		blocks, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
 		if err != nil {
 			return ServeResult{}, servedCount{}, err
@@ -1974,7 +1912,7 @@ func recordDeferrals(ss *shellSession, instances []string, res any) error {
 // composeServe composes serve's whole result with what held names, and
 // returns what it served of serve's own.
 func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, servedCount, error) {
-	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, held.resent, pageFull)
+	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, held.resent, false, pageFull)
 	if err != nil {
 		return ServeResult{}, servedCount{}, err
 	}
@@ -2000,7 +1938,7 @@ func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		res.Instructions += "\n\n(the vocabulary table waits, as this result would run past its size bound. Call next with this instance and no report to have it before you act; it serves the step again)"
 	}
 	if serve.Base != nil {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingAll, false, nil)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingNone, false, true, nil)
 		if err != nil {
 			return ServeResult{}, servedCount{}, err
 		}
@@ -2020,7 +1958,7 @@ func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolReques
 	var base *BaseServe
 	keep := len(serve.InstructionLanes)
 	for ; ; keep-- {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingAll, false, pageFull)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingNone, false, true, pageFull)
 		if err != nil {
 			return nil, err
 		}

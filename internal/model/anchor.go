@@ -185,14 +185,17 @@ func (a Anchor) Render(text string) string {
 // holds a content word.
 func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anchor, bool) {
 	type spot struct {
-		path []string
-		text string
-		word textWord
+		path  []string
+		start int
+		word  textWord
 	}
 	var spots []spot
+	var joined strings.Builder
 	walkSchemaDescriptions(schema, nil, func(path []string, text string) {
+		start := joined.Len()
+		joined.WriteString(text + "\n")
 		for _, w := range contentWords(text) {
-			spots = append(spots, spot{path: path, text: text, word: w})
+			spots = append(spots, spot{path: path, start: start, word: w})
 		}
 	})
 	spots = preferPlainPlaces(spots, func(s spot) textWord { return s.word })
@@ -200,9 +203,40 @@ func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anc
 		return Anchor{}, false
 	}
 	s := spots[rnd.IntN(len(spots))]
-	// The challenges come from the description the tag sits in.
-	challenges := pickChallenges(s.text, CountWords(s.text), s.word.offset, AnchorChallenges)
+	// The challenges come from every description, nearest the tag first, each
+	// prompt once in the whole schema; a description ends its line, so no
+	// prompt's answer comes from the next one.
+	challenges := pickChallenges(joined.String(), schemaWords(schema), s.start+s.word.offset, AnchorChallenges)
 	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path, Challenges: challenges}, true
+}
+
+// schemaWords counts the letter runs of every key and string in schema.
+func schemaWords(schema map[string]any) WordCounts {
+	count := WordCounts{}
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			for word, n := range CountWords(v) {
+				count[word] += n
+			}
+		case map[string]any:
+			for key, item := range v {
+				walk(key)
+				walk(item)
+			}
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		case []string:
+			for _, item := range v {
+				walk(item)
+			}
+		}
+	}
+	walk(schema)
+	return count
 }
 
 // RenderSchema returns a copy of schema with the anchor's tag placed in the
