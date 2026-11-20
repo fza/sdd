@@ -329,38 +329,33 @@ func relevantThreshold(labels []RelevanceLabel) float64 {
 	return relevant
 }
 
-// The tiers of a capture's reading: ranked candidates past the first
-// GatherJudgeRanked are listed by title up to GatherTitleListed. The cut sits
-// below the deep reading's summary tier: every line to judge costs the
-// drafter a judgment.
+// The tiers of a capture's reading while its judge holds no recall stage.
+// They match the deep reading's summary and title tiers, so drafter and
+// verifier read the same cut of one ranking.
 const (
-	GatherJudgeRanked = 30
+	GatherJudgeRanked = DeepSummaryRanked
 	GatherTitleListed = DeepTitleListed
 )
 
 // Prefiltered is where a scored reading places its candidates: Listed go by
-// title below the lines to judge, Counted past the title ceiling. Ranked
-// counts the lines to judge that hold a rank.
+// title below the lines to judge, Counted past the title ceiling.
 type Prefiltered struct {
 	Relevant []GatherCandidate
 	ToJudge  []GatherCandidate
 	Listed   []GatherCandidate
 	Counted  []string
 	SetAside []string
-	Ranked   int
 }
 
 // PlacePrefiltered places candidates by their scores: with valid thresholds a
 // score at or above Relevant is served in full and one below SetAside set
-// aside; every other candidate stays to judge. Lines to judge run open
-// entries before done ones, then scored before unscored by falling score,
-// then unscored by falling similarity to the draft, those similarity did not
-// reach last. A candidate holds a rank when it is scored and the thresholds
-// are invalid, or unscored with similarity read (non-nil similarity). Ranked
-// candidates past the first GatherJudgeRanked, doubled when widened for a
-// weak judge, are listed by title up to GatherTitleListed and counted past
-// it; the others stay to judge.
-func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, similarity map[string]float64, thresholds RelevanceThresholds, widened bool) Prefiltered {
+// aside; every other candidate, scored or not, stays to judge, scored ones
+// first by falling score. Without valid thresholds nothing is set aside or
+// served, and the scored candidates past the first GatherJudgeRanked,
+// doubled when widened for a weak judge, are listed by title up to
+// GatherTitleListed and counted past it. An unscored candidate has no rank
+// and stays to judge.
+func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds, widened bool) Prefiltered {
 	var placed Prefiltered
 	for _, candidate := range candidates {
 		score, ok := scores[candidate.Entry.ID]
@@ -388,43 +383,31 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, sim
 		}
 		return 0
 	}
-	byRank := func(a, b GatherCandidate) int {
-		if c := cmp.Compare(rankLast(a.Entry.Kind == KindDone), rankLast(b.Entry.Kind == KindDone)); c != 0 {
-			return c
-		}
-		if c := byScore(a, b); c != 0 || a.Score != nil {
-			return c
-		}
-		similarA, nearA := similarity[a.Entry.ID]
-		similarB, nearB := similarity[b.Entry.ID]
-		if c := cmp.Compare(rankLast(!nearA), rankLast(!nearB)); c != 0 {
-			return c
-		}
-		return cmp.Compare(similarB, similarA)
-	}
-	slices.SortStableFunc(placed.ToJudge, byRank)
+	slices.SortStableFunc(placed.ToJudge, byScore)
 	slices.SortStableFunc(placed.Relevant, byScore)
 	slices.Sort(placed.SetAside)
-	limit := GatherJudgeRanked
-	if widened {
-		limit *= 2
-	}
-	var kept []GatherCandidate
-	for _, candidate := range placed.ToJudge {
-		ranked := candidate.Score != nil && !thresholds.Valid || candidate.Score == nil && similarity != nil
-		switch {
-		case !ranked:
-			kept = append(kept, candidate)
-		case placed.Ranked < limit:
-			kept = append(kept, candidate)
-			placed.Ranked++
-		case len(placed.Listed) < GatherTitleListed:
-			placed.Listed = append(placed.Listed, candidate)
-		default:
-			placed.Counted = append(placed.Counted, candidate.Entry.ID)
+	if !thresholds.Valid {
+		limit := GatherJudgeRanked
+		if widened {
+			limit *= 2
 		}
+		var kept []GatherCandidate
+		ranked := 0
+		for _, candidate := range placed.ToJudge {
+			switch {
+			case candidate.Score == nil || ranked < limit:
+				kept = append(kept, candidate)
+				if candidate.Score != nil {
+					ranked++
+				}
+			case len(placed.Listed) < GatherTitleListed:
+				placed.Listed = append(placed.Listed, candidate)
+			default:
+				placed.Counted = append(placed.Counted, candidate.Entry.ID)
+			}
+		}
+		placed.ToJudge = kept
 	}
-	placed.ToJudge = kept
 	return placed
 }
 

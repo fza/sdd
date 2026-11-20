@@ -65,8 +65,7 @@ type AutoCalibrationRequest struct {
 // stored as soon as it returns, so a server that quits loses no paid call
 // and the next one resumes with the pairs still unscored. Scoring toward the
 // next stage starts at once; once a stage is reached, every further request
-// waits for request.WaitIdle. No request is sent while a gather's judge pass
-// runs. One process runs at a time
+// waits for request.WaitIdle. One process runs at a time
 // (ProjectRuntimeOptions.CalibrationRuns). Starts, stages and failures go to
 // the log.
 func (a *Application) AutoCalibrate(ctx context.Context, identity RequestIdentity, project ProjectID, request AutoCalibrationRequest) {
@@ -258,10 +257,6 @@ dispatch:
 		case inFlight <- struct{}{}:
 		case <-ctx.Done():
 			break dispatch
-		}
-		if err := runtime.gatherJudging.wait(ctx); err != nil {
-			<-inFlight
-			break
 		}
 		wg.Add(1)
 		go func() {

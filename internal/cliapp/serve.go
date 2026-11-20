@@ -95,14 +95,6 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				defer close(calibrationDone)
 				runServedCalibration(timerCtx, application, identity, watch.served().access.project, activity)
 			}()
-			warmDone := make(chan struct{})
-			go func() {
-				defer close(warmDone)
-				err := application.WarmEmbedder(timerCtx, identity, watch.served().access.project)
-				if err != nil && timerCtx.Err() == nil {
-					slogutils.FromContext(ctx).Warn("the embedding model did not answer at serve start; gather fails until it does", "err", err)
-				}
-			}()
 			// A round in flight finishes before serve returns, so no merge
 			// outlives the process that held the sync lock, and no scoring
 			// call outlives the server.
@@ -110,7 +102,6 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				stopTimer()
 				<-timerDone
 				<-calibrationDone
-				<-warmDone
 			}()
 			var cacheNotice func(context.Context) string
 			if launchCachePrune != nil {

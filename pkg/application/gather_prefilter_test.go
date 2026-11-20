@@ -15,7 +15,6 @@ import (
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
-	"github.com/networkteam/sdd/pkg/llm/embed"
 	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -154,8 +153,8 @@ func TestGather_PrefilterOnlySortsUntilTheRecallBoundHolds(t *testing.T) {
 	if strings.Contains(result.Text, model.SetAsideFiltered) || len(result.FullIDs) != 0 {
 		t.Fatalf("an uncalibrated prefilter should set nothing aside and serve nothing in full:\n%s", result.Text)
 	}
-	if result.SummaryIDs[0] != gatherAlpha || slices.Contains(result.SummaryIDs, gatherBeta) || !strings.Contains(result.Text, "\n- "+gatherBeta+" — ") {
-		t.Fatalf("to judge %v should run by falling score, the lowest past the cut listed by title:\n%s", result.SummaryIDs, result.Text)
+	if !slices.Contains(result.SummaryIDs, gatherBeta) || result.SummaryIDs[0] != gatherAlpha || result.SummaryIDs[len(result.SummaryIDs)-1] != gatherBeta {
+		t.Fatalf("to judge %v should hold every candidate by falling score", result.SummaryIDs)
 	}
 	if !strings.Contains(result.Text, "prefilter: ok: judge "+gatherJudge+" scored ") {
 		t.Fatalf("the header and the lines should show the pass and its scores:\n%s", result.Text)
@@ -185,10 +184,10 @@ func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.GatherJudgeRanked {
 		t.Fatalf("%d shown: the top %d scored should stay to judge and the rest go unshown:\n%s", len(result.SummaryIDs), model.GatherJudgeRanked, result.Text)
 	}
-	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text, fmt.Sprintf("\n- %s — Ranked gap %d\n", last, model.GatherJudgeRanked+19)) {
+	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text, "\n- "+last+" — Ranked gap 119\n") {
 		t.Fatalf("the lower ranks should be listed by ID and title:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, fmt.Sprintf("the top %d ranked stay to judge, ", model.GatherJudgeRanked)) {
+	if !strings.Contains(result.Text, "so the top 100 scored stay to judge, ") {
 		t.Fatalf("the header should name the tiers:\n%s", result.Text)
 	}
 }
@@ -312,48 +311,6 @@ func setAsideLine(text, reason string) string {
 		}
 	}
 	return ""
-}
-
-// kappaEmbeddings points every text holding kappa one way and the rest
-// another, so similarity to a kappa draft ranks the kappa entries first.
-func kappaEmbeddings() embed.Embedder {
-	return embed.EmbedderFunc{Space: "test:kappa", Run: func(_ context.Context, request embed.Request) (embed.Result, error) {
-		result := embed.Result{Identity: pkgllm.Identity{Provider: "test", Model: "kappa"}}
-		for _, text := range request.Texts {
-			vector := []float32{0.05, 1}
-			if strings.Contains(strings.ToLower(text), "kappa") {
-				vector = []float32{1, 0.05}
-			}
-			result.Vectors = append(result.Vectors, vector)
-		}
-		return result, nil
-	}}
-}
-
-// A judge that answers nothing leaves the candidates unscored: they rank by
-// similarity to the draft and take the gather cut, and the header says so.
-func TestGather_UnscoredCandidatesRankBySimilarityAndTakeTheCut(t *testing.T) {
-	f := newGatherFixture(t)
-	f.prefilter = sdd.Prefilter{Scorer: &scriptedScorer{failAll: true}, Judge: gatherJudge}
-	for i := range model.GatherJudgeRanked + 10 {
-		f.write(t, fmt.Sprintf("20260103-%02d%02d00-s-tac-big", i/60, i%60), "gap", fmt.Sprintf("Big topic gap %d.", i), "topics:\n  - big\n")
-	}
-	const kappa = "20260103-235900-s-tac-kap"
-	f.write(t, kappa, "gap", "The kappa gap of the big topic.", "topics:\n  - big\n")
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 1, Prefilter: true, PrefilterFrom: 1}, kappaEmbeddings())
-	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about kappa.", Kind: "gap", Topics: []string{"big"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(result.Text, "prefilter: failed") || !strings.Contains(result.Text, "unscored lines rank by similarity to the draft") {
-		t.Fatalf("the header should name the failed pass and the similarity ranking:\n%s", result.Text)
-	}
-	if len(result.SummaryIDs) != model.GatherJudgeRanked || result.SummaryIDs[0] != kappa {
-		t.Fatalf("%d to judge, first %v: the most similar unscored lines up to the cut", len(result.SummaryIDs), result.SummaryIDs[:1])
-	}
-	if !strings.Contains(result.Text, "\n# listed by title (") {
-		t.Fatalf("the unscored lines past the cut should go by title:\n%s", result.Text)
-	}
 }
 
 func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {

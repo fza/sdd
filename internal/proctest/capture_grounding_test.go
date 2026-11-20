@@ -1,14 +1,12 @@
 // Capture under grounding enforcement: the assemble gate judges the capture's
-// credited gather reading and lists the entries landed since it began, the
-// write step answers entries that landed after the assemble check, and a
-// recorded bypass writes the entry with low confidence.
+// credited gather reading, the write step answers entries that landed after
+// it, and a recorded bypass writes the entry with low confidence.
 package proctest_test
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/pkg/llm"
 	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	"github.com/networkteam/sdd/pkg/local"
 )
@@ -86,10 +83,7 @@ func TestCaptureGrounding_VerdictNamesAListedEntry(t *testing.T) {
 	}
 }
 
-// An entry landed since the reading began holds assemble once: its serve
-// lists the entry as a brief line and counts it as read, so the next report
-// passes without another gather.
-func TestCaptureGrounding_EntryLandedSinceTheReadingIsListedAtAssemble(t *testing.T) {
+func TestCaptureGrounding_EntryLandedSinceTheReadingMustBeListed(t *testing.T) {
 	world, session := newGroundingWorld(t, "grounding-landed")
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
@@ -101,43 +95,14 @@ func TestCaptureGrounding_EntryLandedSinceTheReadingIsListedAtAssemble(t *testin
 
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "assemble")
-	if !strings.Contains(serve.Instructions, "Entries landed since your reading began") || !strings.Contains(serve.Instructions, landed.ID+" (gap tactical signal)") {
-		t.Fatalf("the assemble serve should list the landed entry as its brief line:\n%s", serve.Instructions)
-	}
-	if hasDiagnostic(serve, "landed since the reading began") {
-		t.Fatalf("a listed landed entry should hold no refusal, got %v", serve.Diagnostics)
+	requireDiagnostics(t, serve, "landed since the reading began", landed.ID, "call gather with instance "+instance)
+
+	gathered := session.Gather(t, instance)
+	if !strings.Contains(gathered.Text, "new since the reading began") || !strings.Contains(gathered.Text, landed.ID) {
+		t.Fatalf("a later gather should list the landed entry:\n%s", gathered.Text)
 	}
 	serve = session.Report(t, instance, map[string]any{"confidence": "medium"})
 	proctest.RequireStep(t, serve, "playback")
-}
-
-// Inside a reading already begun, gather with ids alone opens them and lists
-// what landed since, once, without the query writer, the searches or the judge.
-func TestCaptureGrounding_GatherWithIDsOpensWithoutRerunningTheReading(t *testing.T) {
-	scorer := &countingScorer{score: 0.25}
-	world, session := newCaptureWorld(t, "grounding-ids",
-		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, BriefAllBelow: 1, Prefilter: true, PrefilterFrom: 1}),
-		proctest.WithEmbedder(kappaEmbedder()), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
-	world.LLM.GatherQuery, world.LLM.GatherTerm = "fixture gap", "fixture"
-	instance := session.Start(t, "capture", nil).Instance
-	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "topics": []any{"cli/ux"}})
-	session.Gather(t, instance)
-	queries, scored := world.LLM.Calls(llm.PurposeGatherQuery), scorer.scored
-
-	landed := &model.Entry{ID: "20260602-090000-s-tac-lnd", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
-		Summary: "A gap that landed during the reading.", Content: "A gap that landed during the reading."}
-	proctest.WriteEntry(t, world.GraphDir, landed)
-	opened := session.Gather(t, instance, captureRef2ID)
-	if world.LLM.Calls(llm.PurposeGatherQuery) != queries || scorer.scored != scored {
-		t.Fatal("gather with ids alone should write no query and score no candidate")
-	}
-	if !slices.Equal(opened.FullIDs, []string{captureRef2ID}) || !slices.Equal(opened.SummaryIDs, []string{landed.ID}) || strings.Contains(opened.Text, "listing topic(") {
-		t.Fatalf("full %v, lines %v: only the opened entry in full and the landed one to judge:\n%s", opened.FullIDs, opened.SummaryIDs, opened.Text)
-	}
-	again := session.Gather(t, instance, captureRef2ID)
-	if len(again.SummaryIDs) != 0 {
-		t.Fatalf("lines %v: an entry a credited read listed is not listed again", again.SummaryIDs)
-	}
 }
 
 func TestCaptureGrounding_SeedsTheWidenReport(t *testing.T) {
