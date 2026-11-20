@@ -44,7 +44,7 @@ func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestI
 	if err != nil {
 		return "", err
 	}
-	return staged[0].Handle, nil
+	return staged.Files[0].Handle, nil
 }
 
 // EditStagedAttachment applies ordered exact search-replace pairs to the file

@@ -28,7 +28,8 @@ const workflowDelegateLaunchCode = "workflow_delegate_launch"
 // session, for a composition where sdd itself launches delegates instead of
 // the harness. It is called once the dispatching operation's own writes are
 // done: on the fork, and each time the dispatching move sends the delegate its
-// next input. It answers at once, taking the launch on or leaving it to the
+// next input, whichever call sends it; a launch that failed is asked for again
+// on the session's next operation. It answers at once, taking the launch on or leaving it to the
 // harness. sdd runs the round it took on in a process of its own
 // (RoundProcesses), which asks the launcher again for the round to run, so the
 // dispatching call never waits for a round: that move's next call picks the
@@ -507,20 +508,29 @@ func (w *WorkflowSession) delegateRunner(parent, procedure string) (string, erro
 	return "", nil
 }
 
-// filledDispatches composes the handoff for every delegate the current
-// operation sent its next input to.
-func (w *WorkflowSession) filledDispatches(ctx context.Context, identity RequestIdentity) ([]*WorkflowDispatch, error) {
+// settleDelegates is the tail of every operation that can advance a move:
+// it ends the delegates whose move ended, then launches, or composes the
+// handoff for, every live delegate the operation sent its next input to or
+// that is owed a round (roundOwed).
+func (w *WorkflowSession) settleDelegates(ctx context.Context, identity RequestIdentity) ([]*WorkflowDispatch, error) {
+	if err := w.concludeEndedForks(ctx, identity); err != nil {
+		return nil, err
+	}
 	filled := w.filled
 	w.filled = nil
 	var out []*WorkflowDispatch
-	for _, child := range filled {
-		procedure, parent := "", ""
-		for _, live := range w.session.LiveForks() {
-			if live.Fork.Child == child {
-				procedure, parent = live.Fork.Procedure, live.Instance
+	for _, live := range w.session.LiveForks() {
+		child := live.Fork.Child
+		if !slices.Contains(filled, child) {
+			owed, err := w.app.roundOwed(ctx, identity, SessionID(child.Session))
+			if err != nil {
+				return out, err
+			}
+			if !owed {
+				continue
 			}
 		}
-		dispatch, err := w.dispatchFor(ctx, identity, parent, child, procedure, false)
+		dispatch, err := w.dispatchFor(ctx, identity, live.Instance, child, live.Fork.Procedure, false)
 		if dispatch != nil {
 			out = append(out, dispatch)
 		}
@@ -994,6 +1004,42 @@ func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIden
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// roundOwed reports whether the child is owed a round its input's call did
+// not launch. Read from the child's log, it holds across a restart.
+func (a *Application) roundOwed(ctx context.Context, identity RequestIdentity, child SessionID) (bool, error) {
+	_, _, stored, err := a.resolveSession(ctx, identity, child)
+	if err != nil {
+		return false, err
+	}
+	return owesRound(stored.Events)
+}
+
+// owesRound holds for a child sdd launched rounds for that received input
+// after its last round's outcome and has no round pending. A child without a
+// launched round is the harness's to drive.
+func owesRound(events []StoredEvent) (bool, error) {
+	log, err := delegateRoundsOf(events)
+	if err != nil || len(log.starts) == 0 || log.pending() != nil {
+		return false, err
+	}
+	received, outcome := -1, -1
+	for i, stored := range events {
+		switch stored.Code {
+		case workflowDelegateLaunchCode:
+			outcome = i
+		case WorkflowEventCode:
+			var event engine.Event
+			if err := json.Unmarshal(stored.Payload, &event); err != nil {
+				return false, fmt.Errorf("decoding a delegate session event: %w", err)
+			}
+			if event.Event == engine.EventReceived {
+				received = i
+			}
+		}
+	}
+	return received > outcome, nil
 }
 
 // idleDelegates ends each verify delegate a gate with a delegateEnded route

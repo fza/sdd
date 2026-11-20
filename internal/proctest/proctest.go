@@ -638,11 +638,18 @@ func (s *Session) StageErr(t *testing.T, filename string, content []byte) (sdd.S
 // StageItem stages one file of any source.
 func (s *Session) StageItem(t *testing.T, item sdd.StageItem) (sdd.StagedFile, error) {
 	t.Helper()
-	staged, err := s.WF.StageAttachments(t.Context(), s.World.Identity, []sdd.StageItem{item})
+	staged, err := s.StageItems(t, item)
 	if err != nil {
 		return sdd.StagedFile{}, err
 	}
-	return staged[0], nil
+	return staged.Files[0], nil
+}
+
+// StageItems stages items in one call, answering the staged files and the
+// dispatches the call owes.
+func (s *Session) StageItems(t *testing.T, items ...sdd.StageItem) (sdd.StageResult, error) {
+	t.Helper()
+	return s.WF.StageAttachments(t.Context(), s.World.Identity, items)
 }
 
 // StartChild starts a procedure under a spawning parent, so a dispatch seed

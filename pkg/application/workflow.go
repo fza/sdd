@@ -853,7 +853,8 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			return w.operationOutcome(err)
 		}
 	}
-	if err := w.concludeEndedForks(ctx, identity); err != nil {
+	dispatches, err := w.settleDelegates(ctx, identity)
+	if err != nil {
 		return nil, err
 	}
 	result, err := w.publicServe(serve)
@@ -863,12 +864,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if settled != "" {
 		result.Instructions = strings.TrimSpace(result.Instructions + "\n\n" + settled)
 	}
-	result.Dispatches, err = w.filledDispatches(ctx, identity)
+	result.Dispatches = dispatches
 	if forked != nil {
 		result.Dispatches = append([]*WorkflowDispatch{forked}, result.Dispatches...)
-	}
-	if err != nil {
-		return result, err
 	}
 	if serve.Status != engine.StatusRunning {
 		if serve.Instance == w.task {

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,27 +35,38 @@ type stageWrite struct {
 	content []byte
 }
 
+// StageResult is what a staging call answers: one file per staged item, in
+// call order, and the handoff for each delegate a capture the staging
+// re-advanced sent its next input.
+type StageResult struct {
+	Files      []StagedFile
+	Dispatches []*WorkflowDispatch
+}
+
 // StageAttachments stages items in call order, one result per item. Every item
 // is checked before anything is written, and one failing item refuses the call
 // with nothing staged. A write failing after the check stops the call: the
 // files staged before it stay staged, and the error says which they are and
 // whether the failing item was staged. A running capture taking its body from
-// a staged handle gets the new body and hash.
-func (w *WorkflowSession) StageAttachments(ctx context.Context, identity RequestIdentity, items []StageItem) ([]StagedFile, error) {
+// a staged handle gets the new body and hash, and advances on them.
+func (w *WorkflowSession) StageAttachments(ctx context.Context, identity RequestIdentity, items []StageItem) (StageResult, error) {
 	w.setOperation(ctx, identity)
 	writes, err := w.checkStageItems(ctx, identity, items)
 	if err != nil {
-		return nil, err
+		return StageResult{}, err
 	}
-	results := make([]StagedFile, 0, len(writes))
+	result := StageResult{Files: make([]StagedFile, 0, len(writes))}
+	var stageErr error
 	for i, write := range writes {
 		staged, done, err := w.stage(ctx, identity, write)
 		if err != nil {
-			return results, stageWriteError(i, write.name, done, results, err)
+			stageErr = stageWriteError(i, write.name, done, result.Files, err)
+			break
 		}
-		results = append(results, staged)
+		result.Files = append(result.Files, staged)
 	}
-	return results, nil
+	result.Dispatches, err = w.settleDelegates(ctx, identity)
+	return result, errors.Join(stageErr, err)
 }
 
 func (w *WorkflowSession) checkStageItems(ctx context.Context, identity RequestIdentity, items []StageItem) ([]stageWrite, error) {
