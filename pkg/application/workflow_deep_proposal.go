@@ -1,6 +1,7 @@
 package application
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -11,10 +12,13 @@ import (
 
 const commandAcceptDeepProposal = "acceptDeepProposal"
 
-// applyDeepProposal writes the deep verifier's proposal into an accept that
-// reports no draft field, as the fields the proposal changes, so the engine
-// validates and writes them like reported ones and the answer's log holds
-// them. An accept reporting draft fields is left to match the proposal.
+// applyDeepProposal merges the deep verifier's proposal into an accept's
+// fields, so the engine validates and writes them like reported ones and the
+// answer's log holds them: the fields the proposal changes take its values,
+// and the reported ones stand beside them. A reported field the proposal
+// changes otherwise is refused. A proposal rewriting the body writes it
+// inline, the reported bodyPatch applied over it, and drops a staged body's
+// handle, so a confirm never reads the staged file back over it.
 func (w *WorkflowSession) applyDeepProposal(request WorkflowAdvanceRequest) error {
 	inst, ok := w.session.Instance(request.Instance)
 	if !ok || inst.Status != engine.StatusRunning {
@@ -26,14 +30,6 @@ func (w *WorkflowSession) applyDeepProposal(request WorkflowAdvanceRequest) erro
 	if option == nil || option.Call != commandAcceptDeepProposal {
 		return nil
 	}
-	fields, _ := request.Report["fields"].(map[string]any)
-	collected := make([]string, 0, len(option.Collect))
-	for _, field := range option.Collect {
-		collected = append(collected, field.Name)
-		if _, reported := fields[field.Name]; reported {
-			return nil
-		}
-	}
 	proposal, _ := workflowStoreString(inst.Store, fieldDeepProposal)
 	changed, err := deepProposalFields(inst.Store, proposal)
 	if err != nil {
@@ -42,21 +38,85 @@ func (w *WorkflowSession) applyDeepProposal(request WorkflowAdvanceRequest) erro
 	if len(changed) == 0 {
 		return nil
 	}
-	if _, rewritten := changed[fieldBody]; rewritten && inst.Store.Has(fieldBodyHandle) {
-		bound, _ := workflowStoreString(inst.Store, fieldBodyHandle)
-		return fmt.Errorf("the body comes from the staged file %q: stage the proposal's body there with stage_attachment, then accept", bound)
-	}
 	for _, name := range slices.Sorted(maps.Keys(changed)) {
-		if !slices.Contains(collected, name) {
+		if !slices.ContainsFunc(option.Collect, func(field engine.CollectField) bool { return field.Name == name }) {
 			return fmt.Errorf("the proposal changes %s, which accept cannot write: contest the finding whose edit changes it, or escalate", name)
 		}
 	}
+	fields, _ := request.Report["fields"].(map[string]any)
 	if fields == nil {
 		fields = map[string]any{}
 		request.Report["fields"] = fields
 	}
-	maps.Copy(fields, changed)
+	for _, name := range slices.Sorted(maps.Keys(changed)) {
+		reported, ok := fields[name]
+		if !ok {
+			fields[name] = changed[name]
+			continue
+		}
+		same, err := sameDraftValue(reported, changed[name])
+		if err != nil {
+			return err
+		}
+		if !same && name == fieldBody {
+			return fmt.Errorf("accept reports body, which the proposal rewrites: edit the passages its hunks leave alone with %s, or contest the finding whose edit changes it", fieldBodyPatch)
+		}
+		if !same {
+			return fmt.Errorf("accept reports %s otherwise than the proposal writes it: leave %s out to take the proposal's, or contest the finding whose edit changes it", name, name)
+		}
+	}
+	if _, rewritten := changed[fieldBody]; !rewritten {
+		return nil
+	}
+	if handle, _ := fields[fieldBodyHandle].(string); handle != "" {
+		return fmt.Errorf("accept names the staged body %q, which the proposal rewrites: edit the passages its hunks leave alone with %s, or contest the finding whose edit changes it", handle, fieldBodyPatch)
+	}
+	if patch, ok := fields[fieldBodyPatch]; ok {
+		body, err := mergeDeepBodyPatch(inst.Store, patch)
+		if err != nil {
+			return fmt.Errorf("field %s: %w: contest the finding to change its hunk", fieldBodyPatch, err)
+		}
+		fields[fieldBody] = body
+		delete(fields, fieldBodyPatch)
+	}
+	if inst.Store.Has(fieldBodyHandle) {
+		fields[fieldBodyHandle] = nil
+	}
 	return nil
+}
+
+// mergeDeepBodyPatch applies a reported bodyPatch over the body of the
+// proposal the store's exchange built.
+func mergeDeepBodyPatch(store *engine.Store, patch any) (string, error) {
+	raw, err := json.Marshal(patch)
+	if err != nil {
+		return "", err
+	}
+	var edits []model.DeepEdit
+	err = json.Unmarshal(raw, &edits)
+	if err != nil {
+		return "", fmt.Errorf("not a list of {old, new} pairs: %w", err)
+	}
+	changes, err := deepProposalChanges(store)
+	if err != nil {
+		return "", err
+	}
+	base, _ := workflowStoreString(store, fieldDeepBase)
+	return model.MergeDeepBody(base, changes, edits)
+}
+
+// deepProposalChanges derives the proposal's changes from the exchange's
+// findings and the verifier's responses.
+func deepProposalChanges(store *engine.Store) ([]model.DeepChange, error) {
+	findings, err := storeDeep[model.DeepFinding](store, fieldDeepFindings)
+	if err != nil {
+		return nil, err
+	}
+	history, err := storeDeep[model.DeepResponse](store, fieldDeepHistory)
+	if err != nil {
+		return nil, err
+	}
+	return model.DeepChanges(findings, history), nil
 }
 
 // deepProposalFields returns the draft fields proposal sets otherwise than

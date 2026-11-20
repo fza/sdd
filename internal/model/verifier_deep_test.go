@@ -56,6 +56,45 @@ func TestBuildDeepProposal_RefusesNonMatchingAndOverlappingEdits(t *testing.T) {
 	}
 }
 
+func TestMergeDeepBody(t *testing.T) {
+	changes := []model.DeepChange{
+		{Finding: "f1", Edits: []model.DeepEdit{{Old: "two share a name", New: "two share a file name"}}},
+		{Finding: "f2", Edits: []model.DeepEdit{{Old: "\"tactical\"", New: "\"operational\""}}},
+	}
+	tests := []struct {
+		name    string
+		edits   []model.DeepEdit
+		want    string
+		refusal string
+	}{
+		{name: "no edit", want: "The capture writer drops the second attachment.\nIt happens when two share a file name.\n"},
+		{name: "edits beside the hunks", edits: []model.DeepEdit{{Old: "The capture writer", New: "The attachment writer"}, {Old: "It happens", New: "It happens only"}},
+			want: "The attachment writer drops the second attachment.\nIt happens only when two share a file name.\n"},
+		{name: "an edit against the proposal's text", edits: []model.DeepEdit{{Old: "a file name.", New: "a file name, case folded."}}, refusal: "pair 1 edits text f1's edit changes"},
+		{name: "an edit inside a hunk after an earlier edit moved it", edits: []model.DeepEdit{{Old: "The capture writer", New: "The capture writer, through which every import of an entry runs,"}, {Old: "share a file", New: "hold a file"}}, refusal: "pair 2 edits text f1's edit changes"},
+		{name: "an edit of text a hunk rewrote", edits: []model.DeepEdit{{Old: "share a name", New: "collide"}}, refusal: "pair 1: old text is not in the proposal's body"},
+		{name: "an edit matching twice", edits: []model.DeepEdit{{Old: "ha", New: "a"}}, refusal: "pair 1: old text matches the proposal's body 2 times"},
+		{name: "an empty old text", edits: []model.DeepEdit{{Old: "", New: "x"}}, refusal: "pair 1: old text is empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := model.MergeDeepBody(deepBase, changes, tt.edits)
+			if tt.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.refusal) {
+					t.Fatalf("the edits should be refused by name, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if body != tt.want {
+				t.Fatalf("the body should carry the proposal with the edits beside it, got %q", body)
+			}
+		})
+	}
+}
+
 func TestDeepChanges_FollowTheLatestResponse(t *testing.T) {
 	findings := []model.DeepFinding{
 		deepFinding("contradicts", model.DeepEdit{Old: "drops", New: "loses"}),
