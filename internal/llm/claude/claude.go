@@ -2,6 +2,7 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -154,7 +155,17 @@ func (r *Runner) invoke(ctx context.Context, prompt string, extra ...string) (cl
 	// Go sets PWD itself only for a nil Env.
 	cmd.Env = append(env, "PWD="+workDir)
 	cmd.Stdin = strings.NewReader(prompt)
-	out, runErr := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	release, runErr := startCall(ctx, cmd)
+	if runErr == nil {
+		runErr = cmd.Wait()
+		release()
+	}
+	if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
+		exitErr.Stderr = stderr.Bytes()
+	}
+	out := stdout.Bytes()
 	if runErr != nil && ctx.Err() != nil {
 		return claudeResponse{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p: %w", ctx.Err())}
 	}

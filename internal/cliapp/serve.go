@@ -29,6 +29,7 @@ import (
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/llm/claude"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -66,12 +67,16 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 		),
 		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
+			children := claude.NewChildren()
+			ctx = claude.WithChildren(ctx, children)
+			kill := func(context.Context) { killServedChildren(ctx, children) }
+			defer kill(ctx)
 			watch, err := newServedWatch(ctx, cmd)
 			if err != nil {
 				return err
 			}
 			watch.guards = append(watch.guards, (&strayGuard{}).check)
-			application, identity, err := buildServedApplication(ctx, cmd, watch)
+			application, identity, err := buildServedApplication(ctx, cmd, watch, kill)
 			if err != nil {
 				return err
 			}
@@ -113,6 +118,23 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				},
 			})
 		})),
+	}
+}
+
+// childrenKillWait bounds how long serve waits for the claude CLI calls it
+// killed to return.
+const childrenKillWait = 3 * time.Second
+
+// killServedChildren kills the claude CLI calls still running under serve,
+// as its application shuts down and once more as serve returns. Their
+// process groups outlive serve otherwise.
+func killServedChildren(ctx context.Context, children *claude.Children) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), childrenKillWait)
+	defer cancel()
+	err := children.Kill(ctx)
+	if err != nil {
+		// Logged, not returned: a cancelled serve reports only that it was cancelled.
+		slogutils.FromContext(ctx).Error(fmt.Sprintf("killing the claude CLI calls still running: %v", err))
 	}
 }
 
@@ -555,12 +577,12 @@ func newServedWatch(ctx context.Context, cmd *cli.Command) (*configWatch, error)
 
 // buildServedApplication composes the application whose every call resolves
 // against the project watch serves at that moment.
-func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
+func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *configWatch, onShutdown func(context.Context)) (*sdd.Application, sdd.RequestIdentity, error) {
 	processes, err := newRoundProcesses(cmd)
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}, RoundProcesses: processes})
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}, RoundProcesses: processes, OnShutdown: onShutdown})
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}

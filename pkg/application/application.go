@@ -51,6 +51,10 @@ type ApplicationOptions struct {
 	// RoundProcesses runs the rounds sdd launches, and checks and stops them
 	// later; a DelegateLauncher needs it.
 	RoundProcesses RoundProcesses
+	// OnShutdown runs as Shutdown begins, before it waits for the background
+	// work: the composition ends there what it started beside the
+	// application, such as LLM CLI processes that work still waits on.
+	OnShutdown func(context.Context)
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -68,6 +72,7 @@ type Application struct {
 	processes     RoundProcesses
 	background    background
 	refreshes     refreshes
+	onShutdown    func(context.Context)
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -100,6 +105,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		entrySuffix:   suffix,
 		launcher:      options.DelegateLauncher,
 		processes:     options.RoundProcesses,
+		onShutdown:    options.OnShutdown,
 	}, nil
 }
 

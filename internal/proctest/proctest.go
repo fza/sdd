@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -389,9 +390,10 @@ type World struct {
 	// Rounds runs the rounds a world with a delegate launcher launches.
 	Rounds *test.RoundProcesses
 
-	options  sdd.ApplicationOptions
-	sessions *test.ProcessSessions
-	dropped  map[string]bool
+	options        sdd.ApplicationOptions
+	runtimeOptions sdd.ProjectRuntimeOptions
+	sessions       *test.ProcessSessions
+	dropped        map[string]bool
 }
 
 // DropBranch removes a registered branch's checkout: from here every read,
@@ -419,7 +421,9 @@ func (w *World) SetParticipant(name string) {
 }
 
 type accessResolver struct {
-	runtime     *sdd.ProjectRuntime
+	// runtime is swapped by Restart while the application it replaces may
+	// still read it.
+	runtime     atomic.Pointer[sdd.ProjectRuntime]
 	participant string
 	dialogue    sdd.Dialogue
 }
@@ -437,11 +441,11 @@ func (r *accessResolver) ResolveParticipant(context.Context, sdd.Principal, sdd.
 }
 
 func (r *accessResolver) ListProjects(context.Context, sdd.Principal) (sdd.ProjectList, error) {
-	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: r.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
+	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: r.runtime.Load().Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
 
 func (r *accessResolver) ResolveProject(context.Context, sdd.Principal, sdd.ProjectID, sdd.Access) (*sdd.ProjectRuntime, error) {
-	return r.runtime, nil
+	return r.runtime.Load(), nil
 }
 
 func (*accessResolver) AuthorizeSession(ctx context.Context, request sdd.SessionAccessRequest) error {
@@ -514,9 +518,11 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped}
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped, runtimeOptions: options}
+	resolver := &accessResolver{participant: cfg.participant, dialogue: cfg.dialogue}
+	resolver.runtime.Store(runtime)
 	world.options = sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+		Access: resolver, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
 	}
 	if cfg.launcher != nil {
 		world.Rounds = test.NewRoundProcesses(t)
@@ -527,13 +533,18 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	return world
 }
 
-// Restart replaces the world's application with a fresh one over the same
-// stores, as a server that started anew; the one it replaces writes nothing
-// more.
+// Restart replaces the world's application and project runtime with fresh
+// ones over the same stores, as a server that started anew, holding nothing
+// in memory; the application it replaces writes nothing more.
 func (w *World) Restart(t *testing.T) {
 	t.Helper()
 	if w.sessions != nil {
 		w.sessions.Kill()
+		runtime, err := sdd.NewProjectRuntime(w.runtimeOptions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.options.Access.(*accessResolver).runtime.Store(runtime)
 	}
 	w.sessions = &test.ProcessSessions{SessionStore: w.options.Sessions}
 	options := w.options

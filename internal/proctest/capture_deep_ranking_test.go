@@ -2,6 +2,7 @@ package proctest_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/llm/claude"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -261,5 +264,120 @@ func TestCaptureDeep_AWeakJudgeWidensTheReading(t *testing.T) {
 	blocks := func(reading string) int { return strings.Count(reading, "---\n\nID: ") }
 	if got := blocks(weak) - blocks(sound); got != model.DeepTopRanked {
 		t.Fatalf("the weak judge's reading serves %d more entries in full, want %d", got, model.DeepTopRanked)
+	}
+}
+
+// storedEvents reads the session's log as the store holds it.
+func storedEvents(t *testing.T, world *proctest.World, session sdd.SessionID) []sdd.StoredEvent {
+	t.Helper()
+	stored, err := world.Sessions.Load(t.Context(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stored.Events
+}
+
+// awaitRankingRecord waits until the session's log holds what a background
+// ranking pass scored.
+func awaitRankingRecord(t *testing.T, world *proctest.World, session sdd.SessionID) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.ContainsFunc(storedEvents(t, world, session), func(e sdd.StoredEvent) bool { return e.Code == "workflow_ranking_scores" }) {
+		if time.Now().After(deadline) {
+			t.Fatal("a finished background ranking pass should keep its scores in the session's log before the deep reading collects them")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// verifyScoreReads counts the reads that credit the instance with the
+// verifier's ranking scores.
+func verifyScoreReads(t *testing.T, world *proctest.World, session sdd.SessionID) int {
+	t.Helper()
+	reads := 0
+	for _, stored := range storedEvents(t, world, session) {
+		if stored.Code != "workflow_event" {
+			continue
+		}
+		var event struct {
+			Event string `json:"event"`
+			Data  struct {
+				Tool      string `json:"tool"`
+				Grounding struct {
+					Prefilter *model.PrefilterPayload `json:"prefilter"`
+				} `json:"grounding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(stored.Payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "read" && event.Data.Tool == "verify" && event.Data.Grounding.Prefilter != nil {
+			reads++
+		}
+	}
+	return reads
+}
+
+// What a background ranking pass scored outlives the server that ran it: a
+// server started anew ranks the deep reading with those scores, credits them
+// once and pays no pair again.
+func TestCaptureDeep_ABackgroundRankingOutlivesARestart(t *testing.T) {
+	host := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: hostJudge}}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
+	awaitRankingRecord(t, world, session.ID)
+	paid := len(host.Scored())
+
+	world.Restart(t)
+	session, _ = world.Resume(t, session.ID, "claude-code")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	proctest.RequireStep(t, serve, "deepDispatch")
+	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
+	if !strings.Contains(reading, "Ranking source: judge "+hostJudge+", ") {
+		t.Fatalf("the reading's header should name the judge whose recorded scores rank it:\n%s", reading)
+	}
+	if !strings.Contains(reading, "ID: "+laneRelevant) {
+		t.Fatalf("the entry the recorded scores rate relevant should be served in full:\n%s", reading)
+	}
+	if scored := host.Scored(); len(scored) != paid {
+		t.Fatalf("the judge scored %v after the restart: the recorded scores should rank the reading", scored[paid:])
+	}
+	if reads := verifyScoreReads(t, world, session.ID); reads != 1 {
+		t.Fatalf("the reading credited the ranking scores %d times: once is enough", reads)
+	}
+}
+
+// Shutdown ends a background ranking pass still waiting on its judge: the
+// claude CLI call it runs is killed with its process group, not left behind
+// once the server exits.
+func TestCaptureDeep_ShutdownEndsABackgroundRankingsCLI(t *testing.T) {
+	cli := test.NewHangingCLI(t, "claude")
+	judge, err := llmops.NewChatJudge(claude.NewRunner("sonnet", "", model.ClaudeCLICredentialsLogin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: judge, Judge: hostJudge}}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
+	group := cli.Leader(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := world.App.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !test.GroupGone(group) {
+		if time.Now().After(deadline) {
+			t.Fatal("the ranking pass's claude CLI outlived the application's shutdown")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

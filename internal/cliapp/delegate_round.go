@@ -124,7 +124,7 @@ func delegateRoundCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			application, identity, err := buildServedApplication(ctx, cmd, watch)
+			application, identity, err := buildServedApplication(ctx, cmd, watch, nil)
 			if err != nil {
 				return err
 			}
