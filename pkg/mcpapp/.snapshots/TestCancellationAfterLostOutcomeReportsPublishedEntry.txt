@@ -67,20 +67,6 @@ report_schema:
             - medium
             - low
           type: string
-        correctedSummary:
-          anyOf:
-            -
-              type: string
-            -
-              type: null
-          description: corrected summary on drift
-        fidelityNote:
-          anyOf:
-            -
-              type: string
-            -
-              type: null
-          description: one-line fidelity note
         intent:
           anyOf:
             -
@@ -124,9 +110,6 @@ report_schema:
           items:
             type: string
           type: array
-      takes_all_but:
-        - correctedSummary
-        - fidelityNote
       type: object
     userWords:
       description: the user's own message verbatim, never yours

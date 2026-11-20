@@ -465,12 +465,12 @@ func TestDeepReadingPagesPackBriefsIntoTheRoomLeft(t *testing.T) {
 	}{
 		{
 			name: "without rules",
-			want: [][]string{{"t", "b1", "b2", "b3"}, {"b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11"}, {"b12"}},
+			want: [][]string{{"t", "b1", "b2", "b3", "b4"}, {"b5", "b6", "b7", "b8", "b9", "b10", "b11", "b12"}},
 		},
 		{
 			name:  "with rules",
 			rules: rules,
-			want:  [][]string{{"t", "b1", "b2", "b3"}, nil, {"b4", "b5", "b6", "b7"}, {"b8", "b9", "b10", "b11", "b12"}},
+			want:  [][]string{{"t", "b1", "b2", "b3", "b4"}, nil, {"b5", "b6", "b7", "b8"}, {"b9", "b10", "b11", "b12"}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

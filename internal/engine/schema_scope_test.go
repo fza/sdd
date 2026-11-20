@@ -98,35 +98,3 @@ func TestReportSchemaLeavesOutFieldsNoReportFills(t *testing.T) {
 		t.Error("an answer schema should leave out the workflow while the draft is no procedure")
 	}
 }
-
-// The procedure's report fields hold every field a step's report takes, its
-// answer fields every field a chooser option collects, and neither a field
-// only a delivery fills, so every step schema draws its properties from one
-// block.
-func TestReportFieldsHoldEveryFieldAReportTakes(t *testing.T) {
-	spec := delegateSpec(t, "scoped", "move", schemaScopeMachine)
-	report, answer := spec.ReportFields(nil), spec.AnswerFields(nil)
-	for name, fields := range map[string]map[string]any{"entryKind": report, "goal": report, "verdict": answer} {
-		if _, ok := fields[name]; !ok {
-			t.Errorf("the fields should hold %s, which a report or an answer takes", name)
-		}
-	}
-	for _, fields := range []map[string]any{report, answer} {
-		for _, absent := range []string{"received", "workflow"} {
-			if _, ok := fields[absent]; ok {
-				t.Errorf("the fields should leave out %s, which no report fills here", absent)
-			}
-		}
-	}
-	draft := schemaProperties(t, spec.ReportSchemaForStep(spec.StepByID["draft"], nil))
-	closing, _ := schemaProperties(t, spec.AnswerSchemaForStep(spec.StepByID["close"], model.DialogueGuided, nil))["fields"].(map[string]any)
-	for _, tc := range []struct {
-		props, fields map[string]any
-	}{{draft, report}, {schemaProperties(t, closing), answer}} {
-		for name := range tc.props {
-			if _, ok := tc.fields[name]; !ok {
-				t.Errorf("a step schema's field %s should come from its procedure's block", name)
-			}
-		}
-	}
-}

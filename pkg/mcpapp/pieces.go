@@ -3,7 +3,6 @@ package mcpapp
 import (
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -207,62 +206,36 @@ func framingWaitLine(waiting []string, lanesWait bool) string {
 	return fmt.Sprintf("(%d framing blocks wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
 }
 
-// serveReportSchema serves a step's report schema: the required list, any
-// chooser envelope and which fields the step takes inline, the properties
-// block of every field the procedure's reports take, or its chooser answers,
-// as a piece of its own (20260827-224111-s-tac-vz9), so every step of the
-// procedure shares it. The block serves as its pointer when the call holds
-// it, else with its tag in one description.
+// serveReportSchema serves a step's report schema: the required list and any
+// chooser envelope inline, the properties block of the state fields it takes
+// as a piece of its own (20260827-224111-s-tac-vz9), whose tag holds each of
+// its fields too. The block serves as its pointer when the call holds it, or
+// holds every field it takes through the blocks earlier steps served, so a
+// step taking fewer fields than one before needs no block of its own; else
+// it serves in full with its tag in one description.
 func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]any, error) {
 	path, ok := fieldsAt(serve.ReportSchema)
 	if !ok {
 		return serve.ReportSchema, nil
 	}
 	fields := schemaAt(serve.ReportSchema, path)
-	own := fields["properties"].(map[string]any)
-	block := own
-	if serve.ReportFields != nil {
-		block = maps.Clone(serve.ReportFields)
-		maps.Copy(block, own)
-	}
 	name := serve.Procedure + " report fields"
-	if len(path) > 0 {
-		name = serve.Procedure + " answer fields"
-	}
-	piece, tagged, err := ss.root.ServeSchema(name, block)
+	piece, err := ss.root.ServeSchema(name, serve.Procedure+" field ", fields["properties"].(map[string]any))
 	if err != nil {
 		return nil, err
 	}
 	served := maps.Clone(fields)
-	takes(served, own, block)
-	if piece.Held {
-		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold %s; prove it from the full schema, never from here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
-	} else {
-		served["properties"] = tagged
+	if !piece.Held {
+		served["properties"] = piece.Schema
+		return withSchemaAt(serve.ReportSchema, path, served), nil
 	}
+	held := make([]string, 0, len(piece.Tags))
+	for _, tag := range piece.Tags {
+		held = append(held, heldName("these "+name, tag.Tag, tag.Next))
+	}
+	delete(served, "properties")
+	served["held_properties"] = fmt.Sprintf("you hold %s; prove it from the full schema, never from here; list the tag in reread to have them again, or resume_session re-serves them in full", strings.Join(held, ", "))
 	return withSchemaAt(serve.ReportSchema, path, served), nil
-}
-
-// takes names on node the fields of block the step takes, own, where they
-// are fewer than block holds: the shorter list of those it takes or of those
-// it leaves out.
-func takes(node, own, block map[string]any) {
-	taken, left := []string{}, []string{}
-	for _, name := range slices.Sorted(maps.Keys(block)) {
-		if _, ok := own[name]; ok {
-			taken = append(taken, name)
-		} else {
-			left = append(left, name)
-		}
-	}
-	switch {
-	case len(left) == 0:
-	case len(taken) <= len(left):
-		node["takes_only"] = taken
-	default:
-		node["takes_all_but"] = left
-	}
 }
 
 // fieldsAt is the path to the node whose properties are a schema's state

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -76,21 +78,66 @@ func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPi
 	return ServedPiece{Tag: served.Anchor.Tag, Text: served.Anchor.Render(text)}
 }
 
-// ServeSchema serves a report schema named name; in full it returns a copy
-// carrying the tag in one of its descriptions.
-func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (ServedPiece, map[string]any, error) {
-	raw, err := json.Marshal(schema)
+// ServedSchema is how a call serves a report schema's properties block: when
+// Held, under the Tags the call holds its fields by; otherwise Schema is the
+// block with its fresh tag in one of its descriptions.
+type ServedSchema struct {
+	Held   bool
+	Tags   []HeldTag
+	Schema map[string]any
+}
+
+// HeldTag is a tag a pointer rests on, Next naming the word whose follower
+// its next proof names.
+type HeldTag struct {
+	Tag, Next string
+}
+
+// ServeSchema serves the properties block of a report schema named name,
+// each field a piece named field prefix and its name that the block's tag
+// holds too. The block serves as its pointer while the call holds it, or
+// holds every field it has through blocks served before.
+func (w *WorkflowSession) ServeSchema(name, prefix string, properties map[string]any) (ServedSchema, error) {
+	block, err := schemaPiece(name, properties)
 	if err != nil {
-		return ServedPiece{}, nil, fmt.Errorf("encoding the %s report schema: %w", name, err)
+		return ServedSchema{}, err
 	}
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil,
+	fields := make([]engine.Piece, 0, len(properties))
+	for _, field := range slices.Sorted(maps.Keys(properties)) {
+		piece, err := schemaPiece(prefix+field, properties[field])
+		if err != nil {
+			return ServedSchema{}, err
+		}
+		fields = append(fields, piece)
+	}
+	if _, held := w.session.Holds(block); held {
+		served := w.session.Point(block)
+		return ServedSchema{Held: true, Tags: []HeldTag{{Tag: served.Tag, Next: served.Next}}}, nil
+	}
+	if len(fields) > 0 && !slices.ContainsFunc(fields, func(p engine.Piece) bool { _, held := w.session.Holds(p); return !held }) {
+		var tags []HeldTag
+		for _, field := range fields {
+			served := w.session.Point(field)
+			if !slices.ContainsFunc(tags, func(t HeldTag) bool { return t.Tag == served.Tag }) {
+				tags = append(tags, HeldTag{Tag: served.Tag, Next: served.Next})
+			}
+		}
+		return ServedSchema{Held: true, Tags: tags}, nil
+	}
+	served := w.session.ServePiece(block, fields,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-			return model.PlaceSchemaAnchor(schema, tag, rnd)
+			return model.PlaceSchemaAnchor(properties, tag, rnd)
 		})
-	if served.Held {
-		return ServedPiece{Held: true, Tag: served.Tag, Next: served.Next}, nil, nil
+	return ServedSchema{Schema: served.Anchor.RenderSchema(properties)}, nil
+}
+
+// schemaPiece is the piece a schema value serves as, keyed by its encoding.
+func schemaPiece(name string, value any) (engine.Piece, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return engine.Piece{}, fmt.Errorf("encoding the %s schema: %w", name, err)
 	}
-	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
+	return engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil
 }
 
 // ServeMark marks the pieces the call has served so far.

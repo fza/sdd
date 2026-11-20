@@ -141,7 +141,6 @@ type WorkflowServe struct {
 	Instructions     string
 	Missing          []string
 	ReportSchema     map[string]any
-	ReportFields     map[string]any
 	PendingChooser   *WorkflowChooser
 	PendingOperation *WorkflowPendingOperation
 	Cancellation     *WorkflowCancellation
@@ -1823,12 +1822,6 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
 		Framing:          slices.Clone(serve.Framing),
 		PlaysBack:        serve.PlaysBack,
-	}
-	if inst, ok := w.session.Instance(serve.Instance); ok && len(serve.ReportSchema) > 0 {
-		result.ReportFields = inst.Spec.ReportFields(inst.Store)
-		if serve.Chooser != nil {
-			result.ReportFields = inst.Spec.AnswerFields(inst.Store)
-		}
 	}
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
 		result.PendingOperation = pending
