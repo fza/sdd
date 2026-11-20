@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -65,7 +66,7 @@ func (w *WorkflowSession) FailedProofs() []FailedProof {
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers),
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: textHash(text)}, w.entryPieces(covers),
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(text, tag, rnd)
 		})
@@ -110,7 +111,7 @@ func (w *WorkflowSession) FollowDeferral(instance string) {
 // piece named name at the instance's step, when the call would serve text,
 // its content now, in full all the same.
 func (w *WorkflowSession) Resent(instance, name, text string) (string, bool) {
-	return w.session.Resent(instance, engine.Piece{Name: name, Hash: contentHash(text)})
+	return w.session.Resent(instance, engine.Piece{Name: name, Hash: textHash(text)})
 }
 
 // EndDeferral ends the instance's deferral, as a serve of it settles it.
@@ -141,6 +142,24 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 		return ""
 	}
 	return text
+}
+
+// Changed reports whether text, served once per change under name, would
+// serve: its content differs from the last the session served under name,
+// the call rereads name or serves everything in full. It records nothing.
+func (w *WorkflowSession) Changed(name, text string) bool {
+	return w.session.Changed(engine.Piece{Name: name, Hash: textHash(text)})
+}
+
+// ServeChanged is Changed recording that the call serves text under name.
+func (w *WorkflowSession) ServeChanged(name, text string) bool {
+	return w.session.ServeChanged(engine.Piece{Name: name, Hash: textHash(text)})
+}
+
+// PieceServedBefore reports whether the session served text under name in full
+// before, unless the call rereads name or serves everything in full.
+func (w *WorkflowSession) PieceServedBefore(name, text string) bool {
+	return w.session.ServedBefore(engine.Piece{Name: name, Hash: textHash(text)})
 }
 
 // HoldsEntry reports whether the call holds the entry in full, with the tag
@@ -175,17 +194,28 @@ type UnprovedPiece struct {
 }
 
 // Unproved lists the pieces earlier calls served in full that no call proved
-// since, newest first, capped. A finished session lists none.
+// since, newest first, capped, entries left out: an agent proves those where
+// a read serves them again. A finished session lists none, and so does a call
+// that served no piece.
 func (w *WorkflowSession) Unproved() []UnprovedPiece {
-	if w.Finished() {
+	if w.Finished() || !w.session.ServesPieces() {
 		return nil
 	}
-	listed := w.session.Unproved()
+	listed := w.session.UnprovedExcept(isEntryPiece)
 	pieces := make([]UnprovedPiece, 0, len(listed))
 	for _, piece := range listed {
 		pieces = append(pieces, UnprovedPiece{Name: piece.Name, Tag: piece.Tag})
 	}
 	return pieces
+}
+
+// isEntryPiece reports whether a piece is an entry, named by its ID.
+func isEntryPiece(name string) bool {
+	if _, id, cross := model.SplitCrossRepoID(name); cross {
+		name = id
+	}
+	_, err := model.ParseID(name)
+	return err == nil && !strings.ContainsRune(name, ' ')
 }
 
 // DropProved keeps what the call's proofs proved out of the record, for a
@@ -243,6 +273,11 @@ func (w *WorkflowSession) entryPieces(ids []string) []engine.Piece {
 	}
 	return pieces
 }
+
+// textHash keys a text piece on its content without the tags placed in it:
+// an entry it carries takes a fresh tag in each serve, which changes nothing
+// the agent holds.
+func textHash(text string) string { return contentHash(model.StripAnchorTags(text)) }
 
 func contentHash(text string) string {
 	sum := sha256.Sum256([]byte(text))

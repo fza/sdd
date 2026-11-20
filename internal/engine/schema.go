@@ -67,6 +67,51 @@ func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 	return schema
 }
 
+// ReportFields is the schema of every state field some step report of the
+// procedure takes, by name: the one properties block every report schema of
+// the procedure draws its fields from, so it reads the same at each step. A
+// procedure-spec field shows only while the draft in store is a procedure.
+func (s *Spec) ReportFields(store *Store) map[string]any {
+	return s.fieldSchemas(store, func(add func(string)) {
+		for _, step := range s.Steps {
+			for _, cf := range step.Collect {
+				add(cf.Name)
+			}
+		}
+		for name, decl := range s.State {
+			if !decl.HostSet && !s.DeliveryOnly(name) && !s.singleOptionField(name) {
+				add(name)
+			}
+		}
+	})
+}
+
+// AnswerFields is ReportFields for chooser answers: every field some option
+// collects.
+func (s *Spec) AnswerFields(store *Store) map[string]any {
+	return s.fieldSchemas(store, func(add func(string)) {
+		for _, step := range s.Steps {
+			for _, o := range step.Options {
+				for _, cf := range o.Collect {
+					add(cf.Name)
+				}
+			}
+		}
+	})
+}
+
+// fieldSchemas is the schema of each declared field names adds.
+func (s *Spec) fieldSchemas(store *Store, names func(add func(string))) map[string]any {
+	procedure := draftIsProcedure(store)
+	fields := map[string]any{}
+	names(func(name string) {
+		if decl, ok := s.State[name]; ok && (decl.Type.Base != TypeProcedureSpec || procedure) {
+			fields[name] = schemaForState(decl)
+		}
+	})
+	return fields
+}
+
 // collectSchema is ReportSchemaForStep cut to the fields the step collects.
 func (s *Spec) collectSchema(step *Step, store *Store) map[string]any {
 	schema := s.ReportSchemaForStep(step, store)

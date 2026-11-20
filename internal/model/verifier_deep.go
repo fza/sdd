@@ -35,9 +35,9 @@ const DeepPageChars = MaxResultChars - 6000
 
 // DeepFirstPageChars bounds the reading's first page tighter: the
 // resume_session that serves it first carries, within MaxServeChars, the
-// session head, the rules lane and the report schema in full, about 7000
-// characters.
-const DeepFirstPageChars = MaxServeChars - 7500
+// session head, the rules lane and the report schema, its procedure's whole
+// answer fields block, in full, about 8000 characters.
+const DeepFirstPageChars = MaxServeChars - 8500
 
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
 

@@ -332,3 +332,35 @@ func TestReportSchemaFieldsServeOnceAcrossSteps(t *testing.T) {
 		t.Fatalf("the contract step should serve its own required list inline, got %v", contract.ReportSchema["required"])
 	}
 }
+
+// Chooser steps whose options collect different fields share the
+// procedure's answer fields block (20260827-224111-s-tac-vz9): the later
+// step serves it as its pointer and names inline which fields it takes.
+func TestAnswerFieldsServeOnceAcrossChoosers(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": assembleReport()}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the draft should reach the playback, at %s", serve.Step)
+	}
+	requireFullReportSchema(t, "playback", serve.ReportSchema)
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{
+		"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it",
+	}}, &serve)
+	if serve.Step != "verifySummary" {
+		t.Fatalf("the confirmed draft should reach the summary check, at %s", serve.Step)
+	}
+	requireStubReportSchema(t, "summary check", serve.ReportSchema)
+	fields := schemaFields(serve.ReportSchema)
+	if msg, _ := fields["held_properties"].(string); !strings.Contains(msg, "capture answer fields") {
+		t.Fatalf("the pointer should name the procedure's answer fields, got %q", msg)
+	}
+	taken, _ := fields["takes_only"].([]any)
+	if !slices.Contains(taken, any("fidelityNote")) || slices.Contains(taken, any("body")) {
+		t.Fatalf("the summary check should name the fields its options take, got %v", fields)
+	}
+}

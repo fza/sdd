@@ -3,6 +3,7 @@ package mcpapp
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -41,7 +42,7 @@ func heldName(name, tag, next string) string {
 	return model.TagName(tag) + " for " + name
 }
 
-const unprovedLead = "Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the full text you were served, never a word of this line, as tag:word; never guess a word. The pieces: "
+const unprovedLead = "Unproved pieces, newest first; prove each you still see in held: "
 
 // unprovedLine names the pieces of list, newest first, as many as fit room
 // characters of a result, the instruction to prove them leading.
@@ -85,13 +86,14 @@ func heldLine(names []string) string {
 // call rereads it or proves it wrong, so lanes that wait take the room. A lane
 // carrying an entry of pageFull, those the verify reading page served whole,
 // holds that entry too. The lanes past keep wait, named with the call that
-// serves them. It returns how many lanes it served in full.
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, resent bool, pageFull []string) (string, int) {
+// serves them. A landing on the session shell leaves out, unproved, the lanes
+// the session served before. It returns how many lanes it served in full.
+func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, resent, landing bool, pageFull []string) (string, int) {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
 		return serve.Instructions, 0
 	}
-	var fresh, held, waiting, pointed []string
+	var fresh, held, waiting, pointed, landed []string
 	for i, lane := range lanes {
 		name := "lane " + lane.Name
 		if i >= keep {
@@ -101,6 +103,10 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 		// A playback recorded delivered holds the draft itself, never its pointer.
 		if serve.PlaysBack && lane.Name == types.DraftLane {
 			fresh = append(fresh, lane.Text)
+			continue
+		}
+		if landing && ss.root.PieceServedBefore(name, lane.Text) {
+			landed = append(landed, lane.Name)
 			continue
 		}
 		if resent {
@@ -118,12 +124,15 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 		fresh = append(fresh, served.Text)
 	}
 	full := len(fresh)
-	if len(fresh) == 0 && len(waiting) == 0 {
+	if len(fresh) == 0 && len(waiting) == 0 && len(landed) == 0 {
 		fresh = append(fresh, fmt.Sprintf("(you hold the step %s instructions — follow them; goal: %s)", serve.Step, serve.Goal))
 	}
 	text := strings.Join(fresh, "\n\n")
 	if len(held) > 0 {
 		text += "\n\n" + heldLine(held)
+	}
+	if len(landed) > 0 {
+		text += fmt.Sprintf("\n\n(lanes %s: as served earlier in this session; call next with this instance and no report to have them again)", strings.Join(landed, ", "))
 	}
 	if len(pointed) > 0 {
 		text += fmt.Sprintf("\n\n(%s: sent in the result before, they serve as pointers so the lanes that waited fit, whatever this call proved or reread; once no lane waits, a reread has them in full)", strings.Join(pointed, ", "))
@@ -144,20 +153,25 @@ func carried(ids []string, text string) []string {
 	return in
 }
 
-// composeFraming serves the framing blocks per block: a graph write that
-// changes one block (the recent-moves lane) re-serves that block alone, never
-// the stable aspirations or directives (I6). A block the call holds is left
-// out, as the agent named it itself, except for the next proof its pointer
-// asks for (heldLine). A block holds the entries it carries in full; a
-// block is never cut for them. Only the first keep blocks serve; the rest
-// wait, as instruction lanes do past the result bound.
+// composeFraming serves each framing block once per change of its content,
+// with no tag to prove: a graph write that changes one block (the recent-moves
+// lane) re-serves that block alone, never the stable aspirations or
+// directives (I6). The blocks unchanged since served are named in one line
+// with the way back. A block is never cut for the entries it carries. Only
+// the first keep changed blocks serve; the rest wait, as instruction lanes do
+// past the result bound.
 func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
 	var (
-		result       framingServed
-		served, held []string
+		result            framingServed
+		served, unchanged []string
 	)
 	for _, block := range blocks {
 		if block.Text == "" {
+			continue
+		}
+		name := "framing " + block.Name
+		if !ss.root.Changed(name, block.Text) {
+			unchanged = append(unchanged, block.Name)
 			continue
 		}
 		result.blocks++
@@ -165,25 +179,19 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framin
 			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
-		name := "framing " + block.Name
-		piece := ss.root.ServeText(name, block.Text, ss.root.FramingFullIDs(block.Text))
-		switch {
-		case !piece.Held:
-			served = append(served, piece.Text)
-		case piece.Next != "":
-			held = append(held, heldName(name, piece.Tag, piece.Next))
-		}
+		ss.root.ServeChanged(name, block.Text)
+		served = append(served, block.Text)
 	}
 	result.fresh = len(served)
-	if len(held) > 0 {
-		served = append(served, heldLine(held))
+	if len(unchanged) > 0 {
+		served = append(served, fmt.Sprintf("(framing unchanged since served: %s; list \"framing <name>\" in reread, or call resume_session, to have a block again)", strings.Join(unchanged, ", ")))
 	}
 	result.text = strings.Join(served, "\n\n")
 	return result
 }
 
 // framingServed is a composed framing: its text, the blocks that wait, how
-// many blocks it served in full and how many the framing has.
+// many changed blocks it served in full and how many changed.
 type framingServed struct {
 	text          string
 	waiting       []string
@@ -199,30 +207,62 @@ func framingWaitLine(waiting []string, lanesWait bool) string {
 	return fmt.Sprintf("(%d framing blocks wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
 }
 
-// serveReportSchema serves a step's report schema: the required list and any
-// chooser envelope inline, the properties block of the state fields it takes
-// as a piece of its own (20260827-224111-s-tac-vz9), so steps that differ
-// only in what they require share it. The block serves as its pointer when
-// the call holds it, else with its tag in one description.
+// serveReportSchema serves a step's report schema: the required list, any
+// chooser envelope and which fields the step takes inline, the properties
+// block of every field the procedure's reports take, or its chooser answers,
+// as a piece of its own (20260827-224111-s-tac-vz9), so every step of the
+// procedure shares it. The block serves as its pointer when the call holds
+// it, else with its tag in one description.
 func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]any, error) {
 	path, ok := fieldsAt(serve.ReportSchema)
 	if !ok {
 		return serve.ReportSchema, nil
 	}
 	fields := schemaAt(serve.ReportSchema, path)
+	own := fields["properties"].(map[string]any)
+	block := own
+	if serve.ReportFields != nil {
+		block = maps.Clone(serve.ReportFields)
+		maps.Copy(block, own)
+	}
 	name := serve.Procedure + " report fields"
-	piece, tagged, err := ss.root.ServeSchema(name, fields["properties"].(map[string]any))
+	if len(path) > 0 {
+		name = serve.Procedure + " answer fields"
+	}
+	piece, tagged, err := ss.root.ServeSchema(name, block)
 	if err != nil {
 		return nil, err
 	}
 	served := maps.Clone(fields)
+	takes(served, own, block)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold %s — prove the tag with the word its next proof asks for, else the word after the tag, in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
+		served["held_properties"] = fmt.Sprintf("you hold %s; prove it from the full schema, never from here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
 	} else {
 		served["properties"] = tagged
 	}
 	return withSchemaAt(serve.ReportSchema, path, served), nil
+}
+
+// takes names on node the fields of block the step takes, own, where they
+// are fewer than block holds: the shorter list of those it takes or of those
+// it leaves out.
+func takes(node, own, block map[string]any) {
+	taken, left := []string{}, []string{}
+	for _, name := range slices.Sorted(maps.Keys(block)) {
+		if _, ok := own[name]; ok {
+			taken = append(taken, name)
+		} else {
+			left = append(left, name)
+		}
+	}
+	switch {
+	case len(left) == 0:
+	case len(taken) <= len(left):
+		node["takes_only"] = taken
+	default:
+		node["takes_all_but"] = left
+	}
 }
 
 // fieldsAt is the path to the node whose properties are a schema's state
