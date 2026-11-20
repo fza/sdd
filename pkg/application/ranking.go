@@ -74,10 +74,42 @@ type rankingPass struct {
 	deadline time.Time
 }
 
-// start scores the candidates no pass of key's job covers yet in the
-// background, within timeout from now. The pass outlives ctx's
-// cancellation: the request that starts it returns before it ends.
-func (j *rankingJobs) start(ctx context.Context, key rankingKey, judge Prefilter, subject string, candidates []relevance.Candidate, timeout time.Duration) {
+// rankingRun is one pass a job owes: it scores pending, at most until the
+// pass's deadline.
+type rankingRun struct {
+	job     *rankingJob
+	pass    rankingPass
+	judge   Prefilter
+	subject string
+	pending []relevance.Candidate
+	timeout time.Duration
+}
+
+// score runs the pass and returns what it scored, which collect then finds
+// in the job.
+func (r *rankingRun) score(ctx context.Context) scoredPairs {
+	defer close(r.pass.done)
+	scored := scoreCandidates(ctx, r.judge, r.subject, r.pending, r.timeout)
+	r.job.mu.Lock()
+	defer r.job.mu.Unlock()
+	maps.Copy(r.job.scored.fresh, scored.fresh)
+	r.job.scored.oversize += scored.oversize
+	r.job.scored.unanswered += scored.unanswered
+	for _, failure := range scored.failures {
+		if !slices.Contains(r.job.scored.failures, failure) {
+			r.job.scored.failures = append(r.job.scored.failures, failure)
+		}
+	}
+	return scored
+}
+
+// abandon ends a pass that never runs.
+func (r *rankingRun) abandon() { close(r.pass.done) }
+
+// begin claims the candidates no pass of key's job covers yet as one pass,
+// within timeout from now, and returns it to run; nil when every candidate
+// is covered.
+func (j *rankingJobs) begin(key rankingKey, judge Prefilter, subject string, candidates []relevance.Candidate, timeout time.Duration) *rankingRun {
 	j.mu.Lock()
 	now := time.Now()
 	if j.jobs == nil {
@@ -101,24 +133,11 @@ func (j *rankingJobs) start(ctx context.Context, key rankingKey, judge Prefilter
 		}
 	}
 	if len(pending) == 0 {
-		return
+		return nil
 	}
 	pass := rankingPass{done: make(chan struct{}), deadline: now.Add(timeout)}
 	job.passes = append(job.passes, pass)
-	go func() {
-		defer close(pass.done)
-		scored := scoreCandidates(context.WithoutCancel(ctx), judge, subject, pending, timeout)
-		job.mu.Lock()
-		defer job.mu.Unlock()
-		maps.Copy(job.scored.fresh, scored.fresh)
-		job.scored.oversize += scored.oversize
-		job.scored.unanswered += scored.unanswered
-		for _, failure := range scored.failures {
-			if !slices.Contains(job.scored.failures, failure) {
-				job.scored.failures = append(job.scored.failures, failure)
-			}
-		}
-	}()
+	return &rankingRun{job: job, pass: pass, judge: judge, subject: subject, pending: pending, timeout: timeout}
 }
 
 // collect waits for every pass of key's job, each at most until its

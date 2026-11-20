@@ -1,6 +1,9 @@
 package application
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -36,6 +39,9 @@ type rankingPlan struct {
 	input    model.VerifierReading
 	slots    []model.VerifierSlot
 	unscored []string
+	// recorded are the entries whose score only a background pass's record
+	// holds (rankedScores), not yet the reading.
+	recorded []string
 }
 
 // planRanking places an instance's reading by the scores its ranking judge
@@ -57,11 +63,24 @@ func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store
 	}
 	draft := w.draftFromStore(store)
 	plan.subject = model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
-	held, _ := credited.Scores(plan.judge.Judge, model.RelevanceSubjectHash(plan.subject))
+	subject := model.RelevanceSubjectHash(plan.subject)
+	held, _ := credited.Scores(plan.judge.Judge, subject)
 	reading := captureReadingOf(store, credited)
 	plan.input = model.VerifierReading{Listed: reading.listed, Full: reading.full, Verdicts: storeVerdictIDs(store), Scores: maps.Clone(held), Thresholds: thresholds}
 	if plan.input.Scores == nil {
 		plan.input.Scores = map[string]uint8{}
+	}
+	if plan.judge.Scorer != nil {
+		ranked, err := w.rankedScores(instance, plan.judge.Judge, subject)
+		if err != nil {
+			return rankingPlan{}, err
+		}
+		for id, score := range ranked {
+			if _, ok := plan.input.Scores[id]; !ok {
+				plan.input.Scores[id] = score
+				plan.recorded = append(plan.recorded, id)
+			}
+		}
 	}
 	if plan.judge.Judge != "" {
 		plan.input.Widened = model.JudgeRankingHealth(ledger.Labels(plan.judge.Judge)).Weak()
@@ -90,8 +109,100 @@ func (w *WorkflowSession) startRanking(instance string, plan rankingPlan) error 
 		e := plan.graph.ByID[id]
 		candidates = append(candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(plan.graph, e), Line: model.EntryRankingLine(e)})
 	}
-	plan.runtime.rankings.start(w.ctx, w.rankingKey(instance, plan), plan.judge, plan.subject, candidates, plan.runtime.rankingTimeout())
+	run := plan.runtime.rankings.begin(w.rankingKey(instance, plan), plan.judge, plan.subject, candidates, plan.runtime.rankingTimeout())
+	if run == nil {
+		return nil
+	}
+	// The pass outlives the request that starts it, which returns first.
+	ctx, release := w.app.background.detached(w.ctx)
+	identity, session := w.identity, w.ID()
+	payload := model.PrefilterPayload{Judge: plan.judge.Judge, Forward: plan.judge.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(plan.subject)}
+	started := w.app.background.start(func() {
+		defer release()
+		payload.Scores = run.score(ctx).fresh
+		// What a pass cut short by Shutdown scored is kept too.
+		err := w.app.recordRanking(context.WithoutCancel(ctx), identity, session, rankingRecord{Instance: instance, Prefilter: payload})
+		if err != nil {
+			slogutils.FromContext(ctx).Error("keeping the scores of a background ranking pass in the session failed; a server started anew scores them again", "session", session, "instance", instance, "error", err)
+		}
+	})
+	if !started {
+		release()
+		run.abandon()
+	}
 	return nil
+}
+
+// workflowRankingCode records what a background ranking pass scored, so a
+// server started anew finds it (rankedScores). It is no engine event: the
+// pass ends outside the call driving its instance, which an engine event on
+// that instance would refuse as a conflict (catchUp).
+const workflowRankingCode = "workflow_ranking_scores"
+
+type rankingRecord struct {
+	Instance  string                 `json:"instance"`
+	Prefilter model.PrefilterPayload `json:"prefilter"`
+}
+
+// recordRanking appends record to the session unless it scored nothing or
+// the session ended.
+func (a *Application) recordRanking(ctx context.Context, identity RequestIdentity, session SessionID, record rankingRecord) error {
+	if len(record.Prefilter.Scores) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	// Each call of the session appends to it meanwhile.
+	const attempts = 3
+	for attempt := 1; ; attempt++ {
+		_, _, stored, err := a.resolveSession(ctx, identity, session)
+		if err != nil {
+			return err
+		}
+		if stored.Metadata.Ended != nil {
+			return nil
+		}
+		metadata := stored.Metadata
+		metadata.UpdatedAt = a.now().UTC().Round(0)
+		_, err = a.sessions.Append(ctx, session, stored.Version, SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: workflowRankingCode, Payload: payload}}})
+		if attempt < attempts && isSessionConflict(err) {
+			continue
+		}
+		return err
+	}
+}
+
+// rankedScores are the scores the background ranking passes of instance
+// recorded for judge against subject, the highest per entry.
+func (w *WorkflowSession) rankedScores(instance, judge, subject string) (map[string]uint8, error) {
+	_, _, stored, err := w.app.resolveSession(w.ctx, w.identity, w.ID())
+	if err != nil {
+		return nil, err
+	}
+	scores := map[string]uint8{}
+	for _, event := range stored.Events {
+		if event.Code != workflowRankingCode {
+			continue
+		}
+		if !SupportedSessionCodecVersion(event.CodecVersion) {
+			return nil, &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported ranking record codec", Version: event.CodecVersion}
+		}
+		var record rankingRecord
+		if err := json.Unmarshal(event.Payload, &record); err != nil {
+			return nil, fmt.Errorf("decoding a ranking record: %w", err)
+		}
+		if record.Instance != instance || model.CanonicalJudge(record.Prefilter.Judge) != model.CanonicalJudge(judge) || record.Prefilter.Subject != subject {
+			continue
+		}
+		for id, score := range record.Prefilter.Scores {
+			if held, ok := scores[id]; !ok || score > held {
+				scores[id] = score
+			}
+		}
+	}
+	return scores, nil
 }
 
 // rankInBackground starts ranking a capture's reading once its draft and
@@ -133,20 +244,31 @@ func (w *WorkflowSession) verifierPlacement(ctx *engine.Context) (verifierPlaced
 		return verifierPlaced{}, err
 	}
 	logger := slogutils.FromContext(w.ctx)
-	if len(plan.unscored) > 0 && plan.judge.Scorer != nil {
-		if err := w.startRanking(ctx.Instance, plan); err != nil {
-			return verifierPlaced{}, err
+	if plan.judge.Scorer != nil {
+		fresh := map[string]uint8{}
+		for _, id := range plan.recorded {
+			fresh[id] = plan.input.Scores[id]
 		}
-		scored := plan.runtime.rankings.collect(w.ctx, w.rankingKey(ctx.Instance, plan))
-		if scored.unanswered > 0 || scored.oversize > 0 || scored.late {
-			logger.Warn("the ranking judge left entries of the verifier's reading unscored; they rank by similarity to the draft", "judge", plan.judge.Judge, "unanswered", scored.unanswered, "oversize", scored.oversize, "past the time limit", scored.late, "failures", scored.failures)
+		if len(plan.unscored) > 0 {
+			if err := w.startRanking(ctx.Instance, plan); err != nil {
+				return verifierPlaced{}, err
+			}
+			scored := plan.runtime.rankings.collect(w.ctx, w.rankingKey(ctx.Instance, plan))
+			if scored.unanswered > 0 || scored.oversize > 0 || scored.late {
+				logger.Warn("the ranking judge left entries of the verifier's reading unscored; they rank by similarity to the draft", "judge", plan.judge.Judge, "unanswered", scored.unanswered, "oversize", scored.oversize, "past the time limit", scored.late, "failures", scored.failures)
+			}
+			for id, score := range scored.fresh {
+				if _, held := plan.input.Scores[id]; !held {
+					fresh[id] = score
+				}
+			}
 		}
-		if len(scored.fresh) > 0 {
-			payload := &model.PrefilterPayload{Judge: plan.judge.Judge, Forward: plan.judge.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(plan.subject), Scores: scored.fresh}
+		if len(fresh) > 0 {
+			payload := &model.PrefilterPayload{Judge: plan.judge.Judge, Forward: plan.judge.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(plan.subject), Scores: fresh}
 			if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: model.ReadPayload{Prefilter: payload}}); err != nil {
 				return verifierPlaced{}, err
 			}
-			maps.Copy(plan.input.Scores, scored.fresh)
+			maps.Copy(plan.input.Scores, fresh)
 			plan.slots = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
 		}
 	}
