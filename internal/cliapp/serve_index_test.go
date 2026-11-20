@@ -18,11 +18,13 @@ import (
 
 // fakeOllama is an Ollama-compatible embedding server (POST /api/embed). It
 // returns deterministic vectors per input text, stable across servers so a
-// warm store never needs re-embedding, and records every input it saw.
+// warm store never needs re-embedding, and records every input it saw but
+// the warm-up probe a server sends at start, which it counts apart.
 type fakeOllama struct {
 	mu     sync.Mutex
 	inputs []string
 	calls  int
+	probes int
 }
 
 func (f *fakeOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +41,12 @@ func (f *fakeOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
-	f.calls++
-	f.inputs = append(f.inputs, req.Input...)
+	if len(req.Input) == 1 && req.Input[0] == "grounding reachability probe" {
+		f.probes++
+	} else {
+		f.calls++
+		f.inputs = append(f.inputs, req.Input...)
+	}
 	f.mu.Unlock()
 	embeddings := make([][]float32, len(req.Input))
 	for i, text := range req.Input {
@@ -58,7 +64,7 @@ func (f *fakeOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (f *fakeOllama) reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.inputs, f.calls = nil, 0
+	f.inputs, f.calls, f.probes = nil, 0, 0
 }
 
 func (f *fakeOllama) snapshot() (calls int, inputs []string) {
@@ -131,13 +137,14 @@ func TestServeReusesPersistentIndexAcrossRestarts(t *testing.T) {
 	f.singleIndexStore(t)
 }
 
-// assertWarm asserts a server made exactly one embedding call carrying one
+// assertWarm asserts a server sent its warm-up probe and made exactly one
+// other embedding call carrying one
 // input, the query, and embedded no document.
 func assertWarm(t *testing.T, ollama *fakeOllama, label string) {
 	t.Helper()
 	calls, inputs := ollama.snapshot()
-	if calls != 1 || len(inputs) != 1 {
-		t.Errorf("%s: %d embed calls with inputs %v; want one call with the query only", label, calls, inputs)
+	if calls != 1 || len(inputs) != 1 || ollama.warmUps() != 1 {
+		t.Errorf("%s: %d embed calls with inputs %v, %d warm-ups: the query alone, after one warm-up probe", label, calls, inputs, ollama.warmUps())
 	}
 }
 
@@ -203,4 +210,10 @@ func manifestEntryCount(t *testing.T, storeDir string) int {
 		t.Fatalf("load manifest at %s: %v", storeDir, err)
 	}
 	return len(manifest.Entries)
+}
+
+func (f *fakeOllama) warmUps() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.probes
 }
