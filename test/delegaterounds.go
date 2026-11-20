@@ -50,13 +50,13 @@ func NewScriptedLauncher(t testing.TB, runner string) *ScriptedLauncher {
 	return l
 }
 
-func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
+func (l *ScriptedLauncher) LaunchDelegate(ctx context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
 	if launch.Runner == "" && l.LeaveUnconfigured {
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
 	l.mu.Lock()
 	refusal := l.refusal
-	if refusal == nil {
+	if refusal == nil && !inRoundProcess(ctx) {
 		l.launches = append(l.launches, launch)
 	}
 	l.mu.Unlock()
@@ -89,7 +89,8 @@ func (l *ScriptedLauncher) Refuse(err error) {
 	l.refusal = err
 }
 
-// Launches lists every launch the launcher took on, in order.
+// Launches lists every launch the launcher took on, in order. A round's
+// process asking again for the round it runs is no launch.
 func (l *ScriptedLauncher) Launches() []sdd.DelegateLaunch {
 	l.mu.Lock()
 	defer l.mu.Unlock()

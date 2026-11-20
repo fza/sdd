@@ -96,7 +96,7 @@ func (p *RoundProcesses) Start(ctx context.Context, round sdd.LaunchedRound) (sd
 	if err != nil {
 		return sdd.RoundProcess{}, err
 	}
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	runCtx, cancel := context.WithCancel(context.WithValue(context.WithoutCancel(ctx), roundProcessKey{}, true))
 	process.cancel = cancel
 	identity := p.identity
 	p.running.Add(1)
@@ -108,6 +108,15 @@ func (p *RoundProcesses) Start(ctx context.Context, round sdd.LaunchedRound) (sd
 		process.err, process.gone = err, true
 	}()
 	return process.process, nil
+}
+
+// roundProcessKey marks the context a round's process runs in, which in a real
+// composition is another process with a launcher of its own.
+type roundProcessKey struct{}
+
+func inRoundProcess(ctx context.Context) bool {
+	marked, _ := ctx.Value(roundProcessKey{}).(bool)
+	return marked
 }
 
 func (p *RoundProcesses) Alive(_ context.Context, process sdd.RoundProcess) (bool, error) {

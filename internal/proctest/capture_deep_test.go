@@ -904,6 +904,9 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 		t.Fatalf("the serve should name the launch it fell back to and hand over no handle, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
+	if launches := launcher.Launches(); len(launches) != 1 {
+		t.Fatalf("the round's process asking for its round should launch nothing more, got %+v", launches)
+	}
 	if strings.Contains(round.Round.Prompt, string(session.ID)) {
 		t.Fatal("the launched prompt never carries the capture's session handle")
 	}
