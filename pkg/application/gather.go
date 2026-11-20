@@ -3,16 +3,19 @@ package application
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
@@ -86,6 +89,9 @@ type GatherRequest struct {
 	// client is the session's MCP client, which picks the ranking judge
 	// (rankingJudge); empty for a reading without one.
 	client string
+	// openOnly serves the opened entries and those landed since the reading
+	// that no credited read listed, with no search, listing or judge call.
+	openOnly bool
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -160,6 +166,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	var reads []model.GroundingRead
 	switch {
+	case request.openOnly:
 	case len(live) < policy.BriefAllBelow:
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
@@ -189,6 +196,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			"sdd: gather needs the draft: the graph holds %d live entries, at or above verify.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
 	}
 	landed := request.since.Since(liveIDs)
+	if request.openOnly {
+		landed = slices.DeleteFunc(landed, request.reading.IsListed)
+	}
 	if len(landed) > 0 {
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingNew, IDs: landed})
 	}
@@ -215,14 +225,27 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		held, _ = request.reading.Scores(judge, model.RelevanceSubjectHash(subject))
 	}
 
-	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held)
-	if err != nil {
-		return GatherResult{}, err
+	pass := prefilterPass{status: model.PrefilterOff, note: "ids only: no search, listing or judge call", scores: held}
+	var similarity map[string]float64
+	similarityNote := ""
+	if !request.openOnly {
+		end := runtime.gatherJudging.begin()
+		pass, err = runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held)
+		end()
+		if err != nil {
+			return GatherResult{}, err
+		}
+		// An all-briefs reading runs no search, similarity included.
+		if len(live) >= policy.BriefAllBelow {
+			similarity, similarityNote = unscoredSimilarity(ctx, runtime, subject, split.Undecided, pass.scores)
+		}
 	}
-	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds, model.JudgeRankingHealth(ledger.Labels(judge)).Weak())
+	placed := model.PlacePrefiltered(split.Undecided, pass.scores, similarity, thresholds, model.JudgeRankingHealth(ledger.Labels(judge)).Weak())
+	notes := slices.DeleteFunc([]string{pass.note, similarityNote}, func(note string) bool { return note == "" })
 	if len(placed.Listed)+len(placed.Counted) > 0 {
-		pass.note += fmt.Sprintf("; below its first recall stage, so the top %d scored stay to judge, %d more go by title and %d are counted", len(placed.ToJudge)-unscored(placed.ToJudge), len(placed.Listed), len(placed.Counted))
+		notes = append(notes, fmt.Sprintf("the top %d ranked stay to judge, %d more go by title and %d are counted", placed.Ranked, len(placed.Listed), len(placed.Counted)))
 	}
+	pass.note = strings.Join(notes, "; ")
 	seed := model.NewCorpusMark(liveIDs).Hash
 	if request.since != nil {
 		seed = request.since.Hash
@@ -351,26 +374,86 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 	return reads, nil
 }
 
+// The reachability probe gather embeds before any search: its text, and its
+// time limit, long enough for a cold model load and short against
+// embedding.timeout.
+const (
+	embedProbeText    = "grounding reachability probe"
+	embedProbeTimeout = 30 * time.Second
+)
+
 // checkEmbedder fails fast when no embedding model is configured or the
-// configured one does not answer.
+// configured one does not answer within embedProbeTimeout, naming the model
+// and its host.
 func checkEmbedder(ctx context.Context, runtime *ProjectRuntime) error {
 	if runtime.options.Embedder == nil || runtime.options.SearchIndex == nil {
 		return &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: gather needs an embedding model for its semantic search: configure embedding.provider"}
 	}
-	if _, err := runtime.options.Embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{"grounding reachability probe"}}); err != nil {
-		return fmt.Errorf("sdd: gather: the embedding model does not answer: %w", err)
+	probe, cancel := context.WithTimeout(ctx, embedProbeTimeout)
+	defer cancel()
+	_, err := runtime.options.Embedder.Embed(probe, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{embedProbeText}})
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		return fmt.Errorf("sdd: gather: the embedding model%s did not answer within %s: %w", embedderAt(err), embedProbeTimeout, err)
+	}
+	return fmt.Errorf("sdd: gather: the embedding model%s does not answer: %w", embedderAt(err), err)
+}
+
+// embedderAt names the model and host an embedding error is attributed to,
+// with a leading space; empty when it carries none.
+func embedderAt(err error) string {
+	attributed, ok := errors.AsType[*llm.Error](err)
+	if !ok || attributed.Identity.Model == "" {
+		return ""
+	}
+	at := " " + attributed.Identity.Provider + "/" + attributed.Identity.Model
+	if attributed.Identity.Host != "" {
+		at += " at " + attributed.Identity.Host
+	}
+	return at
+}
+
+// WarmEmbedder embeds gather's reachability probe once, so a local model is
+// loaded before the first capture reads; nothing without an embedding model.
+func (a *Application) WarmEmbedder(ctx context.Context, identity RequestIdentity, project ProjectID) error {
+	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
+	if err != nil {
+		return err
+	}
+	if runtime.options.Embedder == nil {
+		return nil
+	}
+	_, err = runtime.options.Embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{embedProbeText}})
+	if err != nil {
+		return fmt.Errorf("sdd: warming the embedding model%s: %w", embedderAt(err), err)
 	}
 	return nil
 }
 
-func unscored(candidates []model.GatherCandidate) int {
-	n := 0
+// unscoredSimilarity is the similarity to the draft of the candidates no
+// score answers, which ranks them (model.PlacePrefiltered), and the note
+// naming it; nil when no candidate is unscored, no embedder answers or the
+// index reaches none of them.
+func unscoredSimilarity(ctx context.Context, runtime *ProjectRuntime, subject string, candidates []model.GatherCandidate, scores map[string]uint8) (map[string]float64, string) {
+	var ids []string
 	for _, candidate := range candidates {
-		if candidate.Score == nil {
-			n++
+		if _, scored := scores[candidate.Entry.ID]; !scored {
+			ids = append(ids, candidate.Entry.ID)
 		}
 	}
-	return n
+	if len(ids) == 0 || strings.TrimSpace(subject) == "" || runtime.options.Embedder == nil {
+		return nil, ""
+	}
+	similarity, err := runtime.draftSimilarity(ctx, subject, ids)
+	if err != nil {
+		return nil, fmt.Sprintf("similarity to the draft failed (%v): the %d unscored lines keep the order the reads found them in", err, len(ids))
+	}
+	if len(similarity) == 0 {
+		return nil, ""
+	}
+	return similarity, fmt.Sprintf("the %d unscored lines rank by similarity to the draft", len(ids))
 }
 
 func uniqueIDs(ids []string) []string {

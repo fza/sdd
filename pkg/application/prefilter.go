@@ -22,6 +22,50 @@ const (
 	prefilterDeadline = 45 * time.Second
 )
 
+// judgePasses counts judge passes in flight; wait blocks until none runs.
+type judgePasses struct {
+	mu      sync.Mutex
+	running int
+	idle    chan struct{}
+}
+
+func newJudgePasses() *judgePasses {
+	idle := make(chan struct{})
+	close(idle)
+	return &judgePasses{idle: idle}
+}
+
+// begin counts a pass until the returned end runs.
+func (p *judgePasses) begin() (end func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running == 0 {
+		p.idle = make(chan struct{})
+	}
+	p.running++
+	return sync.OnceFunc(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.running--
+		if p.running == 0 {
+			close(p.idle)
+		}
+	})
+}
+
+// wait returns once no pass runs, or with ctx's error.
+func (p *judgePasses) wait(ctx context.Context) error {
+	p.mu.Lock()
+	idle := p.idle
+	p.mu.Unlock()
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Prefilter is the composed relevance scorer of a project and the judge
 // calibration keys its labels on; a nil Scorer leaves the prefilter off.
 type Prefilter struct {

@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -255,4 +257,63 @@ func TestGroundingStatus_NamesTheBackgroundRun(t *testing.T) {
 	if !strings.Contains(status.Text, "auto:    running in `sdd serve` since 2026-11-18 09:30 UTC: 80 pairs scored, stage 0.95 held") {
 		t.Fatalf("status should name the running calibration:\n%s", status.Text)
 	}
+}
+
+// gatherHeldScorer holds every request about the gather draft until release
+// closes, signalling arrived once, and passes the rest to the scripted scorer.
+type gatherHeldScorer struct {
+	*scriptedScorer
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func (s *gatherHeldScorer) Score(ctx context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	if strings.Contains(request.Subject, "gather draft") {
+		select {
+		case s.arrived <- struct{}{}:
+		default:
+		}
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return llmrelevance.Result{}, ctx.Err()
+		}
+	}
+	return s.scriptedScorer.Score(ctx, request)
+}
+
+// Background calibration sends no request while a gather's judge pass runs,
+// and resumes once it ended.
+func TestAutoCalibrate_WaitsOutAGathersJudgePass(t *testing.T) {
+	f := newAutoFixture(t)
+	scorer := &gatherHeldScorer{scriptedScorer: &scriptedScorer{}, arrived: make(chan struct{}, 1), release: make(chan struct{})}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge}
+	policy := prefilterPolicy(1)
+	policy.AutoCalibrate = true
+	application := f.app(t, policy, nil)
+	gathered := make(chan error, 1)
+	go func() {
+		_, err := application.Gather(t.Context(), updateIdentity, gatherProject, sdd.GatherRequest{SyncMode: sdd.SearchSyncAll, Draft: "A gather draft about alpha."})
+		gathered <- err
+	}()
+	select {
+	case <-scorer.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the gather should ask its judge")
+	}
+
+	startAutoCalibrate(t, application, sdd.AutoCalibrationRequest{})
+	time.Sleep(500 * time.Millisecond)
+	if scorer.calls() != 0 {
+		t.Fatalf("%d calibration calls while the gather's judge pass ran: none should be sent", scorer.calls())
+	}
+	close(scorer.release)
+	if err := <-gathered; err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "calibration resumes", func() bool {
+		scorer.mu.Lock()
+		defer scorer.mu.Unlock()
+		return slices.ContainsFunc(scorer.requests, func(r llmrelevance.Request) bool { return strings.Contains(r.Subject, "The decision") })
+	})
 }
