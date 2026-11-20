@@ -24,6 +24,7 @@ type ScriptedLauncher struct {
 	LeaveUnconfigured bool
 
 	mu       sync.Mutex
+	refusal  error
 	launches []sdd.DelegateLaunch
 	rounds   chan *ScriptedRound
 	stop     chan struct{}
@@ -54,8 +55,14 @@ func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.Delegate
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
 	l.mu.Lock()
-	l.launches = append(l.launches, launch)
+	refusal := l.refusal
+	if refusal == nil {
+		l.launches = append(l.launches, launch)
+	}
 	l.mu.Unlock()
+	if refusal != nil {
+		return sdd.DelegateRun{}, refusal
+	}
 	round := func(ctx context.Context, round sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
 		r := &ScriptedRound{Launch: launch, Round: round, end: make(chan roundEnd, 1)}
 		select {
@@ -73,6 +80,13 @@ func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.Delegate
 		}
 	}
 	return sdd.DelegateRun{Runner: l.Reports, Round: round}, nil
+}
+
+// Refuse fails every launch with err until it is called again with nil.
+func (l *ScriptedLauncher) Refuse(err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.refusal = err
 }
 
 // Launches lists every launch the launcher took on, in order.

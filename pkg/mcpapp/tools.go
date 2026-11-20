@@ -229,6 +229,17 @@ type DispatchResult struct {
 	Runner         string `json:"runner,omitempty" jsonschema:"set when sdd launched the delegate itself: the runner its round runs with, in the background"`
 }
 
+func dispatchResults(dispatches []*sdd.WorkflowDispatch) []DispatchResult {
+	var out []DispatchResult
+	for _, dispatch := range dispatches {
+		out = append(out, DispatchResult{
+			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
+		})
+	}
+	return out
+}
+
 // BaseServe is the session shell's serve as nested into landing responses
 // (move completion, abandon). Same shape as ServeResult minus the nesting
 // field — the shell never lands on itself, and the omission keeps the JSON
@@ -321,6 +332,16 @@ type StageAttachmentResult struct {
 	Handle string `json:"handle,omitempty" jsonschema:"the one file's handle, on a call naming name beside session instead of files"`
 	// Files is a pointer so the result stays comparable; StagedFiles reads it.
 	Files *[]StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+	// Dispatches is a pointer for the same reason; StageDispatches reads it.
+	Dispatches *[]DispatchResult `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate a capture this staging re-advanced sent its next input. Follow each one's instructions"`
+}
+
+// StageDispatches returns the handoffs Dispatches points at.
+func (r StageAttachmentResult) StageDispatches() []DispatchResult {
+	if r.Dispatches == nil {
+		return nil
+	}
+	return *r.Dispatches
 }
 
 // StagedFiles returns the per-file results Files points at.
@@ -1053,11 +1074,14 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
-	files := make([]StagedFileResult, 0, len(staged))
-	for _, file := range staged {
+	files := make([]StagedFileResult, 0, len(staged.Files))
+	for _, file := range staged.Files {
 		files = append(files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
 	}
 	result := StageAttachmentResult{Files: &files}
+	if dispatches := dispatchResults(staged.Dispatches); len(dispatches) > 0 {
+		result.Dispatches = &dispatches
+	}
 	if oneFile && len(files) == 1 {
 		result.Handle = files[0].Handle
 	}
@@ -1712,12 +1736,7 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		}
 		res.PendingChooser = chooser
 	}
-	for _, dispatch := range serve.Dispatches {
-		res.Dispatches = append(res.Dispatches, DispatchResult{
-			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
-			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
-		})
-	}
+	res.Dispatches = dispatchResults(serve.Dispatches)
 	if serve.Waiting {
 		return res, count, nil
 	}
