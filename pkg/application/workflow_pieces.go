@@ -6,9 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"slices"
-	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -68,7 +65,7 @@ func (w *WorkflowSession) FailedProofs() []FailedProof {
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: textHash(text)}, w.entryPieces(covers),
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers),
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(text, tag, rnd)
 		})
@@ -78,66 +75,21 @@ func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPi
 	return ServedPiece{Tag: served.Anchor.Tag, Text: served.Anchor.Render(text)}
 }
 
-// ServedSchema is how a call serves a report schema's properties block: when
-// Held, under the Tags the call holds its fields by; otherwise Schema is the
-// block with its fresh tag in one of its descriptions.
-type ServedSchema struct {
-	Held   bool
-	Tags   []HeldTag
-	Schema map[string]any
-}
-
-// HeldTag is a tag a pointer rests on, Next naming the word whose follower
-// its next proof names.
-type HeldTag struct {
-	Tag, Next string
-}
-
-// ServeSchema serves the properties block of a report schema named name,
-// each field a piece named field prefix and its name that the block's tag
-// holds too. The block serves as its pointer while the call holds it, or
-// holds every field it has through blocks served before.
-func (w *WorkflowSession) ServeSchema(name, prefix string, properties map[string]any) (ServedSchema, error) {
-	block, err := schemaPiece(name, properties)
+// ServeSchema serves a report schema named name; in full it returns a copy
+// carrying the tag in one of its descriptions.
+func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (ServedPiece, map[string]any, error) {
+	raw, err := json.Marshal(schema)
 	if err != nil {
-		return ServedSchema{}, err
+		return ServedPiece{}, nil, fmt.Errorf("encoding the %s report schema: %w", name, err)
 	}
-	fields := make([]engine.Piece, 0, len(properties))
-	for _, field := range slices.Sorted(maps.Keys(properties)) {
-		piece, err := schemaPiece(prefix+field, properties[field])
-		if err != nil {
-			return ServedSchema{}, err
-		}
-		fields = append(fields, piece)
-	}
-	if _, held := w.session.Holds(block); held {
-		served := w.session.Point(block)
-		return ServedSchema{Held: true, Tags: []HeldTag{{Tag: served.Tag, Next: served.Next}}}, nil
-	}
-	if len(fields) > 0 && !slices.ContainsFunc(fields, func(p engine.Piece) bool { _, held := w.session.Holds(p); return !held }) {
-		var tags []HeldTag
-		for _, field := range fields {
-			served := w.session.Point(field)
-			if !slices.ContainsFunc(tags, func(t HeldTag) bool { return t.Tag == served.Tag }) {
-				tags = append(tags, HeldTag{Tag: served.Tag, Next: served.Next})
-			}
-		}
-		return ServedSchema{Held: true, Tags: tags}, nil
-	}
-	served := w.session.ServePiece(block, fields,
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-			return model.PlaceSchemaAnchor(properties, tag, rnd)
+			return model.PlaceSchemaAnchor(schema, tag, rnd)
 		})
-	return ServedSchema{Schema: served.Anchor.RenderSchema(properties)}, nil
-}
-
-// schemaPiece is the piece a schema value serves as, keyed by its encoding.
-func schemaPiece(name string, value any) (engine.Piece, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return engine.Piece{}, fmt.Errorf("encoding the %s schema: %w", name, err)
+	if served.Held {
+		return ServedPiece{Held: true, Tag: served.Tag, Next: served.Next}, nil, nil
 	}
-	return engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil
+	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
 }
 
 // ServeMark marks the pieces the call has served so far.
@@ -158,7 +110,7 @@ func (w *WorkflowSession) FollowDeferral(instance string) {
 // piece named name at the instance's step, when the call would serve text,
 // its content now, in full all the same.
 func (w *WorkflowSession) Resent(instance, name, text string) (string, bool) {
-	return w.session.Resent(instance, engine.Piece{Name: name, Hash: textHash(text)})
+	return w.session.Resent(instance, engine.Piece{Name: name, Hash: contentHash(text)})
 }
 
 // EndDeferral ends the instance's deferral, as a serve of it settles it.
@@ -189,24 +141,6 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 		return ""
 	}
 	return text
-}
-
-// Changed reports whether text, served once per change under name, would
-// serve: its content differs from the last the session served under name,
-// the call rereads name or serves everything in full. It records nothing.
-func (w *WorkflowSession) Changed(name, text string) bool {
-	return w.session.Changed(engine.Piece{Name: name, Hash: textHash(text)})
-}
-
-// ServeChanged is Changed recording that the call serves text under name.
-func (w *WorkflowSession) ServeChanged(name, text string) bool {
-	return w.session.ServeChanged(engine.Piece{Name: name, Hash: textHash(text)})
-}
-
-// PieceServedBefore reports whether the session served text under name in full
-// before, unless the call rereads name or serves everything in full.
-func (w *WorkflowSession) PieceServedBefore(name, text string) bool {
-	return w.session.ServedBefore(engine.Piece{Name: name, Hash: textHash(text)})
 }
 
 // HoldsEntry reports whether the call holds the entry in full, with the tag
@@ -241,28 +175,17 @@ type UnprovedPiece struct {
 }
 
 // Unproved lists the pieces earlier calls served in full that no call proved
-// since, newest first, capped, entries left out: an agent proves those where
-// a read serves them again. A finished session lists none, and so does a call
-// that served no piece.
+// since, newest first, capped. A finished session lists none.
 func (w *WorkflowSession) Unproved() []UnprovedPiece {
-	if w.Finished() || !w.session.ServesPieces() {
+	if w.Finished() {
 		return nil
 	}
-	listed := w.session.UnprovedExcept(isEntryPiece)
+	listed := w.session.Unproved()
 	pieces := make([]UnprovedPiece, 0, len(listed))
 	for _, piece := range listed {
 		pieces = append(pieces, UnprovedPiece{Name: piece.Name, Tag: piece.Tag})
 	}
 	return pieces
-}
-
-// isEntryPiece reports whether a piece is an entry, named by its ID.
-func isEntryPiece(name string) bool {
-	if _, id, cross := model.SplitCrossRepoID(name); cross {
-		name = id
-	}
-	_, err := model.ParseID(name)
-	return err == nil && !strings.ContainsRune(name, ' ')
 }
 
 // DropProved keeps what the call's proofs proved out of the record, for a
@@ -320,11 +243,6 @@ func (w *WorkflowSession) entryPieces(ids []string) []engine.Piece {
 	}
 	return pieces
 }
-
-// textHash keys a text piece on its content without the tags placed in it:
-// an entry it carries takes a fresh tag in each serve, which changes nothing
-// the agent holds.
-func textHash(text string) string { return contentHash(model.StripAnchorTags(text)) }
 
 func contentHash(text string) string {
 	sum := sha256.Sum256([]byte(text))

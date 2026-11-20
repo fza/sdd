@@ -194,9 +194,6 @@ func (s *WorkflowServe) ComposeInstructions(unitText string) string {
 	return engine.ComposeInstructions(unitText, s.Diagnostics)
 }
 
-// Ended reports whether the serve's instance no longer runs.
-func (s *WorkflowServe) Ended() bool { return s.Status != string(engine.StatusRunning) }
-
 type WorkflowInstanceSummary struct {
 	Instance  string
 	Procedure string
@@ -282,8 +279,12 @@ type WorkflowSession struct {
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string
-	// framing is set while the framing lanes render, which never cut an entry.
-	framing bool
+	// laneFull collects the entries the framing lane in render serves in full;
+	// framingFull keeps them per block of the last Framing call. framing is
+	// set while the lanes render.
+	laneFull    []string
+	framingFull map[string][]string
+	framing     bool
 	// stepFull collects the entries the verify reading page serves whole, until
 	// TakeStepFullIDs hands them on.
 	stepFull []string
@@ -1382,12 +1383,14 @@ func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.Se
 		return nil, nil
 	}
 	var lanes []types.ServeLane
+	w.framingFull = map[string][]string{}
 	w.framing = true
-	defer func() { w.framing = false }()
+	defer func() { w.laneFull, w.framing = nil, false }()
 	for _, call := range inst.Spec.Framing {
 		if !wants(call.EffectiveID()) {
 			continue
 		}
+		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
 			return nil, fmt.Errorf("framing lane %s: %w", call.Fn, err)
@@ -1401,9 +1404,18 @@ func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.Se
 		}
 		if text = strings.TrimSpace(text); text != "" {
 			lanes = append(lanes, types.ServeLane{Name: call.EffectiveID(), Text: text})
+			if cut == nil && len(w.laneFull) > 0 {
+				w.framingFull[text] = w.laneFull
+			}
 		}
 	}
 	return lanes, nil
+}
+
+// FramingFullIDs returns the entries a block of the last Framing call served
+// in full, whole: a lane cut for size names none.
+func (w *WorkflowSession) FramingFullIDs(block string) []string {
+	return w.framingFull[block]
 }
 
 // TakeStepFullIDs returns the entries the verify reading page served whole

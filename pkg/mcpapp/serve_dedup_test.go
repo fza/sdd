@@ -332,32 +332,3 @@ func TestReportSchemaFieldsServeOnceAcrossSteps(t *testing.T) {
 		t.Fatalf("the contract step should serve its own required list inline, got %v", contract.ReportSchema["required"])
 	}
 }
-
-// A step whose fields an earlier step's block served whole needs no block of
-// its own: the block's tag holds each field it served, so the playback's
-// answer serves as a pointer resting on the draft's tag, and the summary
-// check, whose options take fields no block served, serves in full.
-func TestReportSchemaFieldsHeldThroughAnEarlierBlock(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
-	cs := connect(t, env.srv)
-	session := openSession(t, cs).Session
-
-	var serve mcpserver.ServeResult
-	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
-	requireFullReportSchema(t, "draft", serve.ReportSchema)
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": assembleReport()}, &serve)
-	if serve.Step != "playback" {
-		t.Fatalf("the draft should reach the playback, at %s", serve.Step)
-	}
-	requireStubReportSchema(t, "playback", serve.ReportSchema)
-	if msg, _ := schemaFields(serve.ReportSchema)["held_properties"].(string); !strings.Contains(msg, "you hold tag ") {
-		t.Fatalf("the pointer should name the tag it rests on, got %q", msg)
-	}
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{
-		"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it",
-	}}, &serve)
-	if serve.Step != "verifySummary" {
-		t.Fatalf("the confirmed draft should reach the summary check, at %s", serve.Step)
-	}
-	requireFullReportSchema(t, "summary check", serve.ReportSchema)
-}

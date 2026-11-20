@@ -30,9 +30,8 @@ type agentMemory struct {
 	mu   sync.Mutex
 	held map[string]string
 	// texts holds, per tag, the result text it came in, where the agent looks
-	// up a next proof, and results the whole result, where it looks next: a
-	// schema's next proof may name a word of another description.
-	texts, results map[string]string
+	// up a next proof.
+	texts map[string]string
 	// forget drops every proof before the next call, as a lossy compaction
 	// would.
 	forget bool
@@ -44,7 +43,7 @@ type agentMemory struct {
 const guideExampleProof = "gn9p:first"
 
 func newAgentMemory() *agentMemory {
-	return &agentMemory{held: map[string]string{}, texts: map[string]string{}, results: map[string]string{}}
+	return &agentMemory{held: map[string]string{}, texts: map[string]string{}}
 }
 
 func untagged(res *mcp.CallToolResult) error {
@@ -96,7 +95,7 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 				continue
 			}
 			m.held[proof.Tag] = proof.Word
-			m.texts[proof.Tag], m.results[proof.Tag] = text.Text, text.Text
+			m.texts[proof.Tag] = text.Text
 			for _, field := range fields {
 				if strings.Contains(field, model.AnchorMark(proof.Tag)) {
 					m.texts[proof.Tag] = field
@@ -105,8 +104,6 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 		}
 		for _, next := range nextProof.FindAllStringSubmatch(text.Text, -1) {
 			if answer, ok := wordAfter(m.texts[next[1]], next[1], next[2]); ok {
-				m.held[next[1]] = answer
-			} else if answer, ok := wordAfter(m.results[next[1]], next[1], next[2]); ok {
 				m.held[next[1]] = answer
 			}
 		}

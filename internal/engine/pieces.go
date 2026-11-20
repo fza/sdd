@@ -103,8 +103,6 @@ type pieceCall struct {
 	// seq orders the pieces and pointers the call serves, so a mark
 	// withdraws both.
 	seq int
-	// serves reports that the call served a piece, in full or as its pointer.
-	serves bool
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
@@ -164,7 +162,6 @@ func (s *Session) Point(p Piece) Served {
 	if !ok {
 		return Served{}
 	}
-	s.call.serves = true
 	if !proved {
 		return Served{Held: true, Tag: tag}
 	}
@@ -253,7 +250,6 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 	if served := s.Point(p); served.Held {
 		return served
 	}
-	s.call.serves = true
 	tag := s.freshTag()
 	anchor, ok := place(tag, s.random())
 	if !ok {
@@ -285,51 +281,12 @@ func (s *Session) ServeChanged(p Piece) bool {
 		}
 		return false
 	}
-	if !s.Changed(p) {
+	if last == p.Hash && !s.call.full {
 		return false
 	}
 	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true, seq: s.nextSeq()})
 	return true
 }
-
-// Changed reports whether ServeChanged would serve p, recording nothing: its
-// content differs from the last the session served under p.Name, the call
-// lists p.Name in reread or serves every piece in full. Content the call
-// served already counts as served.
-func (s *Session) Changed(p Piece) bool {
-	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
-		return !slices.ContainsFunc(s.call.pending, func(sent pendingAnchor) bool { return sent.changed && sent.piece == p })
-	}
-	last := s.changed[p.Name]
-	for _, sent := range s.call.pending {
-		if sent.changed && sent.piece.Name == p.Name {
-			last = sent.piece.Hash
-		}
-	}
-	return last != p.Hash
-}
-
-// ServedBefore reports whether the session served p in full under a tag
-// before, this call included, unless the call lists p.Name in reread or
-// serves every piece in full.
-func (s *Session) ServedBefore(p Piece) bool {
-	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
-		return false
-	}
-	if _, ok := s.call.issued[p]; ok {
-		return true
-	}
-	for _, issued := range s.anchors {
-		if issued.piece == p {
-			return true
-		}
-	}
-	return false
-}
-
-// ServesPieces reports whether the call in flight served a piece, in full or
-// as its pointer.
-func (s *Session) ServesPieces() bool { return s.call.serves }
 
 // PieceMark marks the pieces and pointers the call has served so far.
 func (s *Session) PieceMark() int { return s.call.seq }
@@ -697,15 +654,9 @@ type unprovedServe struct {
 // in full again is listed only under its newest tag, and not while the call
 // in flight is the one that served it again.
 func (s *Session) Unproved() []UnprovedPiece {
-	return s.UnprovedExcept(nil)
-}
-
-// UnprovedExcept is Unproved leaving out the pieces skip names, before the
-// cap.
-func (s *Session) UnprovedExcept(skip func(name string) bool) []UnprovedPiece {
 	serves := make([]unprovedServe, 0, len(s.unproved))
 	for _, serve := range s.unproved {
-		if serve.seq > s.call.since || s.call.proved[serve.piece] || s.servesAgain(serve.piece) || skip != nil && skip(serve.piece.Name) {
+		if serve.seq > s.call.since || s.call.proved[serve.piece] || s.servesAgain(serve.piece) {
 			continue
 		}
 		serves = append(serves, serve)

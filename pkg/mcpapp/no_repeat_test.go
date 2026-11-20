@@ -34,8 +34,8 @@ import (
 //	  late entries   pointer for a held entry: TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer (proctest)
 //	  verify pages   the deep verifier's reading holds what each page serves in full:
 //	                 TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull (proctest)
-//	  framing lanes  once per change, untagged, holding no entry, never cut:
-//	                 TestFramingHoldsNoEntryItServed, TestFramingLaneDedupAfterWrite,
+//	  framing lanes  hold the entries they serve whole, never cut (per-lane dedup):
+//	                 TestNoRepeatAfterFramingServedInFull, TestNoRepeatFramingHoldsOnlyWhatItServed,
 //	                 TestFramingServesHeldEntriesInFull (application)
 //	  fact index, procedure list, recheck items: ID and title or brief rows, no
 //	                 more than a pointer carries, deduplicated as lanes; not cut
@@ -175,20 +175,51 @@ func TestNoRepeatInjectedEntryChains(t *testing.T) {
 	})
 }
 
-// A framing block serves once per change with no tag to prove, so it holds
-// none of the entries it serves whole: a later show of the working principles
-// the door served serves them in full.
-func TestFramingHoldsNoEntryItServed(t *testing.T) {
+// An entry a framing lane served in full is held: the working principles the
+// door serves print as their pointer on a later show.
+func TestNoRepeatAfterFramingServedInFull(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	var shown mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{principlesFactID}}, &shown)
+	if !strings.Contains(shown.Entries, principlesFactID+" — ") || !strings.Contains(shown.Entries, pointerMark) {
+		t.Fatalf("a show of the principles the door served should serve the pointer:\n%s", shown.Entries)
+	}
+}
+
+// A framing lane holds only the entries it served whole: one the lane's size
+// budget left to a pull serves in full on show.
+func TestNoRepeatFramingHoldsOnlyWhatItServed(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	served, dropped := "20260811-090000-s-prc-ona", "20260811-090001-s-prc-onb"
+	for _, id := range []string{served, dropped} {
+		path := filepath.Join(graphDir, "2026/08/"+strings.TrimPrefix(id, "202608")+".md")
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := strings.Repeat("**Ask before assuming.** This project's own posture, authored locally at length.\n\n", 80)
+		fact := "---\ntype: signal\nlayer: process\nkind: fact\nconfidence: high\ntopics:\n    - principles/interactive\nsummary: A house rule of this project.\n---\n\n# House rules\n\n" + body
+		err = os.WriteFile(path, []byte(fact), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := newTestServer(t, nil, graphDir, "")
+	cs := connect(t, env.srv)
 	door := openSessionWhole(t, cs)
-	if !strings.Contains(door.Framing, "`"+principlesFactID+"`") {
-		t.Fatalf("the door should serve the principles in its framing:\n%s", door.Framing)
+	if !strings.Contains(door.Framing, "`"+served+"`") || strings.Contains(door.Framing, "`"+dropped+"`") || !strings.Contains(door.Framing, "withheld for size, 1 whole") || !strings.Contains(door.Framing, "- "+dropped+" — ") {
+		t.Fatalf("the principles lane should serve one house rule and leave the other to a pull:\n%s", door.Framing)
 	}
 	var shown mcpserver.ShowResult
-	call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{principlesFactID}}, &shown)
-	if strings.Contains(shown.Entries, pointerMark) {
-		t.Fatalf("a show of an entry only the framing served should serve it in full:\n%s", shown.Entries)
+	call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{served}}, &shown)
+	if !strings.Contains(shown.Entries, pointerMark) {
+		t.Fatalf("the house rule the lane served should serve the pointer:\n%s", shown.Entries)
+	}
+	call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{dropped}}, &shown)
+	if strings.Contains(shown.Entries, pointerMark) || !strings.Contains(shown.Entries, "Ask before assuming") {
+		t.Fatalf("the house rule the lane left out should serve in full:\n%s", shown.Entries)
 	}
 }
 

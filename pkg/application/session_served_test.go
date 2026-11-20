@@ -84,33 +84,3 @@ func TestBeginCallRefusesAMalformedProof(t *testing.T) {
 		t.Error("a held item that is not tag:word should be refused")
 	}
 }
-
-// A text piece keys on its content without the tags placed in it: a lane
-// carrying an entry, which takes a fresh tag each serve, still holds once
-// proved.
-func TestServeTextHoldsALaneWhoseCarriedTagChanged(t *testing.T) {
-	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
-	identity := sdd.RequestIdentity{Subject: "christopher"}
-	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lane := func(tag string) string {
-		return servedLane + " The overview follows: " + model.AnchorMark(tag) + " Entries record decisions."
-	}
-	proof := proofOf(t, w.ServeText("lane typeSystem", lane("ab12"), nil))
-	err = w.RecordAnchors(t.Context(), identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = w.BeginCall([]string{proof}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !w.ServeText("lane typeSystem", lane("cd34"), nil).Held {
-		t.Error("a lane differing only in a carried entry's tag should serve as its pointer once proved")
-	}
-	if w.ServeText("lane typeSystem", lane("cd34")+" Changed.", nil).Held {
-		t.Error("a lane whose words changed should serve in full")
-	}
-}
