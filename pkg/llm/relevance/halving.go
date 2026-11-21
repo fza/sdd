@@ -9,10 +9,13 @@ import (
 )
 
 // BatchSizes remembers, by key, the batch size a Halving scorer starts at.
-// Lower keeps the smaller of the held size and size; nothing raises it.
+// Lower keeps the smaller of the held size and size. Raise sets size while
+// from is still held, so of the requests that answered at one size one
+// raise lands, and none over a size lowered meanwhile.
 type BatchSizes interface {
 	Size(key string) (int, bool)
 	Lower(key string, size int) error
+	Raise(key string, from, size int) error
 }
 
 // MemoryBatchSizes is a BatchSizes held in memory, so a size lasts as long
@@ -41,13 +44,25 @@ func (m *MemoryBatchSizes) Lower(key string, size int) error {
 	return nil
 }
 
+func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if held, ok := m.sizes[key]; ok && held == from {
+		m.sizes[key] = size
+	}
+	return nil
+}
+
 // Halving scores a request in batches of the size sizes holds for key, the
 // inner MaxBatch while it holds none. A batch whose answer breaks
 // (llm.MalformedAnswerError), lacks a score (CheckResult) or runs out the
 // inner call's deadline while ctx lives is scored again in halves, down to
 // one candidate per call, and the half is remembered, so the next request
 // starts there. Any other failure, or one of a single candidate, fails the
-// request. MaxBatch reports the size the next request starts at.
+// request. A request no batch of which broke, with a batch of the
+// remembered size among them, doubles that size up to the inner MaxBatch,
+// so a failure that passed does not pin it; a size that breaks again halves
+// again. MaxBatch reports the size the next request starts at.
 func Halving(s Scorer, sizes BatchSizes, key string) Scorer {
 	return halving{Scorer: s, sizes: sizes, key: key}
 }
@@ -66,21 +81,41 @@ func (h halving) MaxBatch() int {
 }
 
 func (h halving) Score(ctx context.Context, request Request) (Result, error) {
+	held, remembered := h.sizes.Size(h.key)
 	size := h.MaxBatch()
 	if size <= 0 {
 		size = len(request.Candidates)
 	}
-	return h.split(ctx, request, size)
+	broke := false
+	result, err := h.split(ctx, request, size, &broke)
+	if err != nil {
+		return Result{}, err
+	}
+	if grown := h.grown(held); remembered && !broke && len(request.Candidates) >= held && grown > held {
+		err = h.sizes.Raise(h.key, held, grown)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	return result, nil
+}
+
+// grown is twice size, at most the inner MaxBatch where it bounds a call.
+func (h halving) grown(size int) int {
+	if limit := h.Scorer.MaxBatch(); limit > 0 {
+		return min(2*size, limit)
+	}
+	return 2 * size
 }
 
 // split scores request in consecutive batches of size, or of the smaller
-// size an earlier batch's halving left.
-func (h halving) split(ctx context.Context, request Request, size int) (Result, error) {
+// size an earlier batch's halving left, and sets broke once a batch broke.
+func (h halving) split(ctx context.Context, request Request, size int, broke *bool) (Result, error) {
 	out := Result{Scores: make([]float64, 0, len(request.Candidates))}
 	for start := 0; start < len(request.Candidates); start += size {
 		size = min(size, h.MaxBatch())
 		batch := Request{Subject: request.Subject, Candidates: request.Candidates[start:min(start+size, len(request.Candidates))]}
-		result, err := h.batch(ctx, batch)
+		result, err := h.batch(ctx, batch, broke)
 		if err != nil {
 			return Result{}, err
 		}
@@ -92,7 +127,7 @@ func (h halving) split(ctx context.Context, request Request, size int) (Result, 
 }
 
 // batch scores request in one call, and in halves once that call breaks.
-func (h halving) batch(ctx context.Context, request Request) (Result, error) {
+func (h halving) batch(ctx context.Context, request Request, broke *bool) (Result, error) {
 	result, err := h.Scorer.Score(ctx, request)
 	if err == nil {
 		err = CheckResult(request, result)
@@ -105,11 +140,12 @@ func (h halving) batch(ctx context.Context, request Request) (Result, error) {
 	if n == 1 || ctx.Err() != nil || !halvable(err) {
 		return Result{}, err
 	}
+	*broke = true
 	half := n / 2
 	if err := h.sizes.Lower(h.key, half); err != nil {
 		return Result{}, err
 	}
-	return h.split(ctx, request, half)
+	return h.split(ctx, request, half, broke)
 }
 
 // halvable is a failure a smaller batch may not repeat: a broken answer or a

@@ -12,7 +12,8 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// memorySizes is relevance.MemoryBatchSizes failing every Lower with err.
+// memorySizes is relevance.MemoryBatchSizes failing every Lower and Raise
+// with err.
 type memorySizes struct {
 	relevance.MemoryBatchSizes
 	err error
@@ -23,6 +24,13 @@ func (m *memorySizes) Lower(key string, size int) error {
 		return m.err
 	}
 	return m.MemoryBatchSizes.Lower(key, size)
+}
+
+func (m *memorySizes) Raise(key string, from, size int) error {
+	if m.err != nil {
+		return m.err
+	}
+	return m.MemoryBatchSizes.Raise(key, from, size)
 }
 
 func remembering(key string, size int) *memorySizes {
@@ -174,7 +182,7 @@ func (s *slowScorer) Score(ctx context.Context, request relevance.Request) (rele
 }
 
 // A failure a smaller batch would repeat, one of a single candidate, and a
-// size that cannot be remembered fail the request.
+// size that cannot be remembered or raised fail the request.
 func TestHalving_FailsWhatHalvingCannotMend(t *testing.T) {
 	down := errors.New("connection refused")
 	inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 0, fail: down}
@@ -202,5 +210,123 @@ func TestHalving_FailsWhatHalvingCannotMend(t *testing.T) {
 	_, err = relevance.Halving(brittle, &memorySizes{err: unstored}, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(4)})
 	if !errors.Is(err, unstored) {
 		t.Fatalf("a size that cannot be remembered should fail the request, got %v", err)
+	}
+
+	unraised := remembering(halvingKey, 4)
+	unraised.err = unstored
+	_, err = relevance.Halving(&brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 100}, unraised, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(4)})
+	if !errors.Is(err, unstored) {
+		t.Fatalf("a size that cannot be raised should fail the request, got %v", err)
+	}
+}
+
+// A request whose calls all answer, one of them at the remembered size,
+// doubles that size up to the inner MaxBatch, so a failure that passed does
+// not pin it; a request that halved leaves the half standing.
+func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
+	cases := []struct {
+		name       string
+		remembered int
+		// limit is the largest batch the inner scorer answers.
+		limit int
+		// requests are the candidates of each request in turn, after the
+		// size remembered once each returned, 0 for none.
+		requests []int
+		after    []int
+	}{
+		{"a clean request at the remembered size doubles it", 12, 100, []int{30}, []int{24}},
+		{"each clean request takes one step", 12, 100, []int{30, 60, 60}, []int{24, 48, 96}},
+		{"doubling stops at the inner MaxBatch", 60, 100, []int{100, 100}, []int{100, 100}},
+		{"a request smaller than the remembered size proves nothing", 12, 100, []int{8}, []int{12}},
+		{"a request that halved leaves the half standing", 8, 4, []int{16}, []int{4}},
+		{"a size that fails again halves again", 4, 4, []int{8, 8, 8}, []int{8, 4, 8}},
+		{"nothing remembered leaves nothing to grow", 0, 100, []int{100}, []int{0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: tc.limit, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+			sizes := &memorySizes{}
+			if tc.remembered > 0 {
+				sizes = remembering(halvingKey, tc.remembered)
+			}
+			scorer := relevance.Halving(inner, sizes, halvingKey)
+			for i, n := range tc.requests {
+				request := relevance.Request{Candidates: manyCandidates(n)}
+				result, err := scorer.Score(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := relevance.CheckResult(request, result); err != nil {
+					t.Fatal(err)
+				}
+				if size, _ := sizes.Size(halvingKey); size != tc.after[i] {
+					t.Fatalf("request %d of %d candidates left size %d, want %d (calls of %v)", i+1, n, size, tc.after[i], inner.sizes())
+				}
+			}
+		})
+	}
+}
+
+// Raise lands only on the size still held.
+func TestMemoryBatchSizes_RaisesTheSizeStillHeld(t *testing.T) {
+	cases := []struct {
+		name string
+		held int
+		from int
+		want int
+	}{
+		{"the size still held", 4, 4, 8},
+		{"a size lowered meanwhile", 2, 4, 2},
+		{"no size held", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sizes := &relevance.MemoryBatchSizes{}
+			if tc.held > 0 {
+				if err := sizes.Lower(halvingKey, tc.held); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := sizes.Raise(halvingKey, tc.from, 8); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := sizes.Size(halvingKey); got != tc.want {
+				t.Errorf("size %d, want %d: a raise should land only on the size it answered at", got, tc.want)
+			}
+		})
+	}
+}
+
+// meddlingScorer runs meanwhile before its call number at, as another
+// request sharing the sizes would.
+type meddlingScorer struct {
+	relevance.Scorer
+	calls     int
+	at        int
+	meanwhile func()
+}
+
+func (m *meddlingScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	m.calls++
+	if m.calls == m.at {
+		m.meanwhile()
+	}
+	return m.Scorer.Score(ctx, request)
+}
+
+// A request one batch of which broke raises nothing, even where another
+// request raised the size back to the one it started at.
+func TestHalving_ARequestThatBrokeRaisesNothing(t *testing.T) {
+	sizes := remembering(halvingKey, 8)
+	inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 4, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+	other := &meddlingScorer{Scorer: inner, at: 5, meanwhile: func() { _ = sizes.Raise(halvingKey, 4, 8) }}
+	if _, err := relevance.Halving(other, sizes, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(16)}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{8, 4, 4, 4, 4}; !slices.Equal(inner.sizes(), want) {
+		t.Fatalf("calls of %v, want %v", inner.sizes(), want)
+	}
+	if size, _ := sizes.Size(halvingKey); size != 8 {
+		t.Errorf("size %d: the request that broke at 8 should leave the other request's 8 standing", size)
 	}
 }
