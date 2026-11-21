@@ -29,8 +29,10 @@ type scriptedScorer struct {
 	fail    map[string]bool
 	slow    map[string]bool
 	failAll bool
-	// short answers one score fewer than asked.
+	// short answers one score fewer than asked, in every call or, with a
+	// limit, in a call of more candidates than it.
 	short    bool
+	limit    int
 	maxBatch int
 	requests []llmrelevance.Request
 }
@@ -61,7 +63,7 @@ func (s *scriptedScorer) Score(ctx context.Context, request llmrelevance.Request
 		}
 		result.Scores = append(result.Scores, score)
 	}
-	if s.short {
+	if s.short && len(request.Candidates) > s.limit {
 		result.Scores = result.Scores[:len(result.Scores)-1]
 	}
 	return result, nil

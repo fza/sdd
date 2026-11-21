@@ -94,6 +94,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink, sizes releva
 		if sizes == nil {
 			sizes = &relevance.MemoryBatchSizes{}
 		}
+		// Outermost, where relevance.ScoreWithFar finds it.
 		scorer = relevance.Halving(scorer, sizes, judge)
 	}
 	return Prefilter{Scorer: scorer, Judge: judge}, nil

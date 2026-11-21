@@ -89,7 +89,7 @@ type rankingRun struct {
 // in the job.
 func (r *rankingRun) score(ctx context.Context) scoredPairs {
 	defer close(r.pass.done)
-	scored := scoreCandidates(ctx, r.judge, r.subject, r.pending, r.timeout)
+	scored := scoreCandidates(ctx, r.judge, r.subject, r.pending, nil, r.timeout)
 	r.job.mu.Lock()
 	defer r.job.mu.Unlock()
 	maps.Copy(r.job.scored.fresh, scored.fresh)

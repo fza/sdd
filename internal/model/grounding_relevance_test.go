@@ -89,6 +89,48 @@ func TestCaptureRelevance_GivesEveryShownEntryOneState(t *testing.T) {
 	}
 }
 
+// An audit sample of a far floor set-aside carries the floor bit beside the
+// audit bit, from the capture and from the verifier alike; a candidate
+// below the floor that was no sample carries neither.
+func TestRelevanceRecords_MarkAuditSamplesOfTheFloor(t *testing.T) {
+	const (
+		entry     = "20261110-120000-d-tac-new"
+		floored   = "20261101-120000-s-tac-flr"
+		threshold = "20261102-120000-s-tac-thr"
+		unsampled = "20261103-120000-s-tac-uns"
+		opened    = "20261104-120000-s-tac-opn"
+	)
+	reading := &model.Reading{}
+	reading.Fold(model.ReadPayload{
+		Reads: []model.GroundingRead{{Mode: model.GroundingBriefs, IDs: []string{floored, threshold, unsampled, opened}}},
+		Shown: []string{floored, threshold},
+		Prefilter: &model.PrefilterPayload{Judge: "j", Subject: "s", Scores: map[string]uint8{floored: 3, threshold: 2, unsampled: 1, opened: 1},
+			Below: []string{floored, unsampled, opened}, Audit: []string{floored, threshold}},
+	})
+	batch, err := model.CaptureRelevance(entry, reading, []string{floored, unsampled}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.ReaderRecord{
+		{Pair: model.NewRelevancePair(entry, floored), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}},
+		{Pair: model.NewRelevancePair(entry, unsampled), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}},
+		{Pair: model.NewRelevancePair(entry, threshold), Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Audit: true}},
+	}
+	if !slices.Equal(batch.Readers, want) {
+		t.Fatalf("records %+v\nwant %+v", batch.Readers, want)
+	}
+	findings := []model.DeepFinding{{Verdict: "rests on both", Basis: []string{floored, threshold, opened}}}
+	got := model.VerifierRelevance(entry, reading, findings, []string{opened})
+	want = []model.ReaderRecord{
+		{Pair: model.NewRelevancePair(entry, floored), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}},
+		{Pair: model.NewRelevancePair(entry, threshold), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true}},
+		{Pair: model.NewRelevancePair(entry, opened), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("records %+v\nwant %+v", got, want)
+	}
+}
+
 func TestRefPairs_PairsEachEntryWithWhatItAnswers(t *testing.T) {
 	const (
 		old    = "20260101-000000-d-tac-old"

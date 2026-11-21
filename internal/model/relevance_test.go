@@ -35,6 +35,9 @@ func TestReaderVerdictJoin_TheImplicitDismissalRanksLowest(t *testing.T) {
 	if got := implicit.Join(model.ReaderVerdict{}); got.Code != model.ReaderImplicit {
 		t.Errorf("join with no answer = %+v: the implicit dismissal should stay", got)
 	}
+	if got := implicit.Join(model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}); !got.Floor || !got.Join(implicit).Floor {
+		t.Errorf("join with a floor sample = %+v: the floor bit should stay, in either order", got)
+	}
 	flipped := implicit.Join(model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true})
 	if flipped.Code != model.ReaderImplicit || !flipped.Flipped || !flipped.Audit {
 		t.Errorf("join with a flip = %+v: the implicit record should carry the flip", flipped)

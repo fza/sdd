@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -55,7 +56,8 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 			gather.Topics = draft.Topics
 		}
 		gather.Kind = draft.Kind
-		gather.Answered = append(captureAnswered(inst.Store), storeVerdictIDs(inst.Store)...)
+		gather.References = captureAnswered(inst.Store)
+		gather.Answered = append(slices.Clone(gather.References), storeVerdictIDs(inst.Store)...)
 		gather.since = inst.Reading().Corpus
 		gather.reading = inst.Reading()
 	}

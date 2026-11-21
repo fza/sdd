@@ -132,6 +132,7 @@ const (
 	SetAsideRetired  = "not live (closed, superseded or retired)"
 	SetAsideJudged   = "judged not relevant before (relevance ledger)"
 	SetAsideFiltered = "set aside by the prefilter (score below its calibrated threshold)"
+	SetAsideFloor    = "set aside by the far floor (rated no higher than entries far from the draft in the same call)"
 )
 
 // GatherCandidates folds the reads into the candidates to judge: each live

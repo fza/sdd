@@ -301,3 +301,75 @@ func TestRankingHealth(t *testing.T) {
 		t.Fatalf("health %+v: 19 of 20 positives at the line clears the bar", sound)
 	}
 }
+
+// floorLabels returns count audit labels of far floor set-asides, misses of
+// them referenced.
+func floorLabels(count, misses int) []model.RelevanceLabel {
+	labels := driftLabels(count, misses)[189:]
+	for i := range labels {
+		labels[i].Floor = true
+	}
+	return labels
+}
+
+func TestJudgeFloorHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		labels          []model.RelevanceLabel
+		misses, counted int
+		off             bool
+	}{
+		{name: "no audit label", labels: labelsWith(189, 0, 0)},
+		{name: "misses in too few labels", labels: floorLabels(49, 10), misses: 10, counted: 49},
+		{name: "misses at the limit", labels: floorLabels(100, 2), misses: 2, counted: 100},
+		{name: "misses above the limit", labels: floorLabels(100, 3), misses: 3, counted: 100, off: true},
+		{name: "misses among unanswered samples weigh more", labels: implicitAudit(floorLabels(100, 2)), misses: 2, counted: 100, off: true},
+		{name: "misses of the threshold's set-asides", labels: driftLabels(100, 10)},
+		{name: "misses older than the window", labels: floorLabels(model.DriftWindow+50, 3), counted: model.DriftWindow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			health := model.JudgeFloorHealth(tc.labels)
+			if health.Misses != tc.misses || health.Counted != tc.counted || health.Off != tc.off {
+				t.Fatalf("health %+v: the floor reads the latest audit labels of its own set-asides alone", health)
+			}
+		})
+	}
+}
+
+// A referenced audit sample of a far floor set-aside counts against the
+// floor, never against the calibrated threshold.
+func TestDriftRule_LeavesTheFloorsSetAsidesOut(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	labels := append(labelsWith(189, 0, 0), floorLabels(100, 10)...)
+	if _, due := model.DriftStepDue(labels, nil, "j", now); due {
+		t.Fatal("misses of the floor should step no threshold down")
+	}
+	if misses, counted := model.DriftWindowMisses(labels); misses != 0 || counted != 0 {
+		t.Fatalf("drift window %d of %d: the floor's audit labels should stay out of it", misses, counted)
+	}
+	report := model.NewRelevanceLedger().Calibration("j", false)
+	if report.Floor.Off || report.Floor.Counted != 0 {
+		t.Fatalf("floor %+v of an empty ledger: the floor should be on", report.Floor)
+	}
+}
+
+func TestCalibration_ReportsTheFloor(t *testing.T) {
+	var batch model.RelevanceBatch
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	for i := range 60 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), fmt.Sprintf("20260601-%06d-d-tac-sub", i))
+		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true, Floor: true}
+		if i < 2 {
+			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}
+		}
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 10}})
+	}
+	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	if report.Floor.Misses != 2 || report.Floor.Counted != 60 || !report.Floor.Off {
+		t.Fatalf("floor %+v: two referenced of sixty audited floor set-asides should turn the floor off", report.Floor)
+	}
+	if report.AuditMisses != 0 || report.AuditCounted != 0 {
+		t.Fatalf("audit %d of %d: the threshold's window should hold none of them", report.AuditMisses, report.AuditCounted)
+	}
+}

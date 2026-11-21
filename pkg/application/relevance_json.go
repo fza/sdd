@@ -25,6 +25,7 @@ type relevanceJSON struct {
 	Code         string   `json:"code,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
 	Audit        bool     `json:"audit,omitempty"`
+	Floor        bool     `json:"floor,omitempty"`
 	Source       string   `json:"source,omitempty"`
 	OpenedHidden bool     `json:"opened_hidden,omitempty"`
 	Flipped      bool     `json:"flipped,omitempty"`
@@ -58,7 +59,7 @@ func ExportRelevanceJSON(ctx context.Context, store RelevanceStore, w io.Writer)
 	encoder.SetEscapeHTML(false)
 	for _, record := range batch.Readers {
 		line := relevanceJSON{Type: "reader", A: record.Pair.A, B: record.Pair.B, Code: record.Verdict.Code.String(),
-			Reason: model.VerdictReasonCode(record.Verdict.Reason), Audit: record.Verdict.Audit, OpenedHidden: record.Verdict.OpenedHidden, Flipped: record.Verdict.Flipped}
+			Reason: model.VerdictReasonCode(record.Verdict.Reason), Audit: record.Verdict.Audit, Floor: record.Verdict.Floor, OpenedHidden: record.Verdict.OpenedHidden, Flipped: record.Verdict.Flipped}
 		if record.Verdict.Source != model.SourceLive {
 			line.Source = record.Verdict.Source.String()
 		}
@@ -158,7 +159,7 @@ func addRelevanceJSON(batch *model.RelevanceBatch, record relevanceJSON) error {
 			}
 			relations |= bit
 		}
-		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Relations: relations, Source: source, OpenedHidden: record.OpenedHidden, Flipped: record.Flipped}})
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Floor: record.Floor, Relations: relations, Source: source, OpenedHidden: record.OpenedHidden, Flipped: record.Flipped}})
 	case "score":
 		p, err := pair()
 		if err != nil {

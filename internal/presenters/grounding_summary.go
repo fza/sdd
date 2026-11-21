@@ -40,6 +40,9 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 		drift = fmt.Sprintf("stepped %s, last on %s to %.3f", times, last.At.UTC().Format("2006-01-02"), model.ScoreValue(last.SetAside))
 	}
 	fmt.Fprintf(w, "drift:   %s · lowers the threshold when audited entries keep turning out relevant (more than %.0f%% of the window)\n", drift, model.DriftMissShare*100)
+	fmt.Fprintf(w, "floor:   %s · sets aside what the judge rates no higher than entries far from the draft in the same call\n", floorState(report.Floor))
+	fmt.Fprintf(w, "%s%s of the last %s audited entries it set aside turned out referenced (window %d, off above %.0f%% of at least %d)\n",
+		indent, thousands(report.Floor.Misses), thousands(report.Floor.Counted), model.DriftWindow, model.DriftMissShare*100, model.DriftMinimum)
 	fmt.Fprintf(w, "judge:   %s (%s)\n", report.Judge, origin)
 	var state []string
 	if report.Unscored > 0 {
@@ -71,6 +74,14 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 	case report.Unscored > 0:
 		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding update`\n", indent)
 	}
+}
+
+// floorState names whether the far floor sets aside for the judge.
+func floorState(floor model.FloorHealth) string {
+	if floor.Off {
+		return "off, its audit showed too many misses"
+	}
+	return "on"
 }
 
 // thresholdsText names a calibrated report's thresholds, its verbs ending in

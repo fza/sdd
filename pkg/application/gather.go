@@ -68,6 +68,10 @@ type GatherRequest struct {
 	// Answered names entries the capture already answered (its refs and
 	// verdicts), which gather sets aside instead of asking again.
 	Answered []string
+	// References names the entries the draft references (refs, supersedes,
+	// closes): what the far floor keeps its far entries away from
+	// (model.FarFloor). Without them a Subject's own references stand in.
+	References []string
 	// Subject names an existing entry the reading grounds: its body, kind
 	// and topics stand in for an empty draft, and the relevance ledger's
 	// stored verdicts against it answer repeat pairs without a new judgment.
@@ -148,6 +152,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			return GatherResult{}, fmt.Errorf("sdd: gather: subject %s does not resolve", request.Subject)
 		}
 		request.Subject = subject.ID
+		if len(request.References) == 0 {
+			request.References = slices.Concat(model.RefIDs(subject.Refs), subject.Supersedes, subject.Closes)
+		}
 		if strings.TrimSpace(request.Draft) == "" {
 			request.Draft, request.Kind = subject.Content, string(subject.Kind)
 			if len(request.Topics) == 0 {
@@ -208,18 +215,35 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
 	}
+	labels := ledger.Labels(judge)
 	var held map[string]uint8
+	var floor *model.FarFloor
+	below := map[string]bool{}
 	subject := ""
 	if strings.TrimSpace(request.Draft) != "" {
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
-		held, _ = request.reading.Scores(judge, model.RelevanceSubjectHash(subject))
+		key := model.RelevanceSubjectHash(subject)
+		held, _ = request.reading.Scores(judge, key)
+		for _, id := range request.reading.BelowFloor(judge, key) {
+			below[id] = true
+		}
+		if prefilter.Scorer != nil && !model.JudgeFloorHealth(labels).Off {
+			listed := slices.Concat(request.Answered, request.References, opened, []string{request.Subject})
+			for _, read := range reads {
+				listed = append(listed, read.IDs...)
+			}
+			floor = model.NewFarFloor(graph, live, model.FarDraft{Subject: key, Topics: request.Topics, References: request.References}, listed)
+		}
 	}
 
-	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held)
+	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held, floor)
 	if err != nil {
 		return GatherResult{}, err
 	}
-	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds, model.JudgeRankingHealth(ledger.Labels(judge)).Weak())
+	for _, id := range pass.below {
+		below[id] = true
+	}
+	placed := model.PlacePrefiltered(split.Undecided, pass.scores, below, thresholds, model.JudgeRankingHealth(labels).Weak())
 	if len(placed.Listed)+len(placed.Counted) > 0 {
 		pass.note += fmt.Sprintf("; below its first recall stage, so the top %d scored stay to judge, %d more go by title and %d are counted", len(placed.ToJudge)-unscored(placed.ToJudge), len(placed.Listed), len(placed.Counted))
 	}
@@ -227,9 +251,27 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if request.since != nil {
 		seed = request.since.Hash
 	}
-	audit, filtered := model.AuditSample(placed.SetAside, seed)
+	audit, kept := model.AuditSample(slices.Concat(placed.SetAside, placed.BelowFloor), seed)
+	var filtered, floored []string
+	for _, id := range kept {
+		if below[id] {
+			floored = append(floored, id)
+		} else {
+			filtered = append(filtered, id)
+		}
+	}
 	if len(filtered) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: filtered})
+	}
+	if len(floored) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFloor, IDs: floored})
+	}
+	if pass.floored || len(floored) > 0 {
+		clause := fmt.Sprintf("the far floor set aside %d", len(floored))
+		if pass.note != "" {
+			clause = "; " + clause
+		}
+		pass.note += clause
 	}
 	var samples []model.GatherCandidate
 	for _, candidate := range split.Undecided {
@@ -277,7 +319,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Audit: audit}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: audit}
 	}
 	return result, nil
 }

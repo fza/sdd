@@ -37,7 +37,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport, auto Groundi
 	if report.Thresholds.Valid {
 		fmt.Fprintf(w, "thresholds: %s\n", thresholdsText(report, ""))
 	} else {
-		fmt.Fprintln(w, "thresholds: none yet, below the first recall stage: the prefilter ranks and sets nothing aside")
+		fmt.Fprintln(w, "thresholds: none yet, below the first recall stage: the prefilter ranks, and only the far floor sets aside")
 	}
 	fmt.Fprintf(w, "auto: %s\n", autoCalibrationLine(auto))
 	if !report.Thresholds.Valid && auto.Run == nil {
@@ -55,6 +55,8 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport, auto Groundi
 	}
 	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
 		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
+	fmt.Fprintf(w, "far floor: %s; %d referenced of the latest %d audit labels of its set-asides (window %d, minimum %d, off above %.0f%%)\n",
+		floorState(report.Floor), report.Floor.Misses, report.Floor.Counted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
 	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no drift effect)\n", report.OpenedHidden)
 	if len(report.Steps) == 0 {
 		fmt.Fprintln(w, "drift steps: none")

@@ -165,7 +165,7 @@ func TestPlacePrefiltered(t *testing.T) {
 	candidates := []model.GatherCandidate{entry("low"), entry("mid"), entry("high"), entry("unscored")}
 	scores := map[string]uint8{"low": 5, "mid": 100, "high": 250}
 
-	sorted := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9}, false)
+	sorted := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{SetAside: 0.5, Relevant: 0.9}, false)
 	if len(sorted.Relevant) != 0 || len(sorted.SetAside) != 0 || len(sorted.ToJudge) != 4 {
 		t.Fatalf("placed %+v: uncalibrated scores should set nothing aside and serve nothing", sorted)
 	}
@@ -173,7 +173,7 @@ func TestPlacePrefiltered(t *testing.T) {
 		t.Fatalf("to judge %v should run by falling score, unscored last", ids(sorted.ToJudge))
 	}
 
-	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, false)
+	calibrated := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, false)
 	if len(calibrated.Relevant) != 1 || calibrated.Relevant[0].Entry.ID != "high" {
 		t.Fatalf("relevant %v should hold the high score", ids(calibrated.Relevant))
 	}
@@ -200,7 +200,7 @@ func TestPlacePrefiltered_TiersAnUncalibratedRanking(t *testing.T) {
 	}
 	candidates = append(candidates, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-a"}}, model.GatherCandidate{Entry: &model.Entry{ID: "unscored-b"}})
 
-	placed := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, false)
+	placed := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{}, false)
 	if model.GatherJudgeRanked != 100 || model.GatherTitleListed != 300 {
 		t.Fatalf("tiers %d and %d, want 100 to judge and 300 by title", model.GatherJudgeRanked, model.GatherTitleListed)
 	}
@@ -215,12 +215,12 @@ func TestPlacePrefiltered_TiersAnUncalibratedRanking(t *testing.T) {
 		t.Fatalf("%d counted: the rest past the title ceiling", len(placed.Counted))
 	}
 
-	widened := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{}, true)
+	widened := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{}, true)
 	if len(widened.ToJudge) != 202 || len(widened.Listed) != 250 || len(widened.Counted) != 0 {
 		t.Fatalf("%d to judge, %d listed, %d counted: a weak judge doubles the lines to judge", len(widened.ToJudge), len(widened.Listed), len(widened.Counted))
 	}
 
-	calibrated := model.PlacePrefiltered(candidates, scores, model.RelevanceThresholds{Valid: true, Stage: 0.90, SetAside: 0, Relevant: 2}, false)
+	calibrated := model.PlacePrefiltered(candidates, scores, nil, model.RelevanceThresholds{Valid: true, Stage: 0.90, SetAside: 0, Relevant: 2}, false)
 	if len(calibrated.ToJudge) != 452 || len(calibrated.Listed) != 0 || len(calibrated.Counted) != 0 {
 		t.Fatalf("%d to judge, %d listed: a calibrated judge's threshold draws the line, not the tiers", len(calibrated.ToJudge), len(calibrated.Listed))
 	}
@@ -351,7 +351,7 @@ func TestPlacePrefiltered_SetsAsideBeforeItServesInFull(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			placed := model.PlacePrefiltered([]model.GatherCandidate{{Entry: &model.Entry{ID: "c"}}}, map[string]uint8{"c": tc.score}, thresholds, false)
+			placed := model.PlacePrefiltered([]model.GatherCandidate{{Entry: &model.Entry{ID: "c"}}}, map[string]uint8{"c": tc.score}, nil, thresholds, false)
 			if got := len(placed.SetAside) == 1; got != tc.setAside {
 				t.Fatalf("placed %+v: a score below the set-aside threshold, and only that, should be set aside", placed)
 			}

@@ -23,6 +23,8 @@ func TestRenderGroundingSummary_Uncalibrated(t *testing.T) {
 		"audit:   3% of the entries the threshold hides are shown to the verifier anyway, to catch a threshold that hides too much\n" +
 		"         0 of the last 0 audited entries turned out referenced (window 200, needs 50 before it judges)\n" +
 		"drift:   none · lowers the threshold when audited entries keep turning out relevant (more than 2% of the window)\n" +
+		"floor:   on · sets aside what the judge rates no higher than entries far from the draft in the same call\n" +
+		"         0 of the last 0 audited entries it set aside turned out referenced (window 200, off above 2% of at least 50)\n" +
 		"judge:   chat:claude-haiku-5-5 (default on a Claude host; `llm_prefilter` would replace it)\n" +
 		"         2,412 pairs unscored · no recall stage yet (bound 0.00) · stage 0.90 needs ~35 more referenced pairs · no threshold yet\n" +
 		"auto:    off (verify.auto_calibrate)\n" +
@@ -40,11 +42,14 @@ func TestRenderGroundingSummary_Calibrated(t *testing.T) {
 		Judge: "cohere:rerank-v3.5", RecallBound: 0.9512, PositiveWeight: 80, AuditMisses: 3, AuditCounted: 120,
 		Thresholds: model.RelevanceThresholds{Valid: true, Stage: 0.95, SetAside: 0.12, Relevant: 0.7},
 		Steps:      []model.DriftStep{{At: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC), SetAside: 30}},
+		Floor:      model.FloorHealth{Misses: 2, Counted: 60, Off: true},
 	}, "set by `llm_prefilter`", presenters.GroundingAuto{On: true})
 	for _, want := range []string{
 		"labels:  1,234,567 pairs",
-		"         3 of the last 120 audited entries",
+		"         3 of the last 120 audited entries turned out",
 		"drift:   stepped once, last on 2026-11-01 to 0.118 · ",
+		"floor:   off, its audit showed too many misses · ",
+		"         2 of the last 60 audited entries it set aside turned out referenced",
 		"judge:   cohere:rerank-v3.5 (set by `llm_prefilter`)\n         stage 0.95 of 0.90, 0.95, 0.98 (bound 0.95) · stage 0.98 needs ~109 more referenced pairs · sets aside below 0.120, serves in full from 0.700\n",
 		"auto:    on (verify.auto_calibrate): `sdd serve` scores unscored labelled pairs in the background until the top stage holds\n",
 	} {

@@ -182,14 +182,16 @@ func ParseReaderSource(s string) (ReaderSource, error) {
 
 // ReaderVerdict is a reader's record of one pair: the lattice code, the
 // reason byte of a set-aside, whether the candidate was an audit sample of
-// the prefilter's set-asides, the strain relation bits, the source, and
-// whether the deep verifier opened the entry its reading hid without a
-// finding resting on it (OpenedHidden, counted apart from every label), and
-// whether a later entry flipped an implicit dismissal to bearing (Flipped).
+// the prefilter's set-asides, and one the far floor had set aside (Floor),
+// the strain relation bits, the source, whether the deep verifier opened
+// the entry its reading hid without a finding resting on it (OpenedHidden,
+// counted apart from every label), and whether a later entry flipped an
+// implicit dismissal to bearing (Flipped).
 type ReaderVerdict struct {
 	Code         ReaderCode
 	Reason       uint8
 	Audit        bool
+	Floor        bool
 	Relations    uint8
 	Source       ReaderSource
 	OpenedHidden bool
@@ -202,7 +204,7 @@ type ReaderVerdict struct {
 // and repeat.
 func (v ReaderVerdict) Join(o ReaderVerdict) ReaderVerdict {
 	out := ReaderVerdict{
-		Audit: v.Audit || o.Audit, Relations: v.Relations | o.Relations, Source: min(v.Source, o.Source),
+		Audit: v.Audit || o.Audit, Floor: v.Floor || o.Floor, Relations: v.Relations | o.Relations, Source: min(v.Source, o.Source),
 		OpenedHidden: v.OpenedHidden || o.OpenedHidden, Flipped: v.Flipped || o.Flipped,
 	}
 	switch {

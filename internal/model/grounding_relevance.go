@@ -10,7 +10,8 @@ import (
 // supersede and close is referenced; every verdict sets its entries aside
 // with its code, as opened when the reading served them in full; every
 // other entry the reading showed is opened when served in full, else
-// dismissed implicitly; an audit sample carries the audit bit; every
+// dismissed implicitly; an audit sample carries the audit bit, and the floor
+// bit when the far floor had set it aside (Reading.audited); every
 // prefilter score the reading holds, from the latest draft its judge scored
 // against, is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
@@ -24,7 +25,7 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			continue
 		}
 		seen[id] = true
-		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: ReaderReferenced, Audit: reading.audit[id]}})
+		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: reading.audited(id, ReaderVerdict{Code: ReaderReferenced})})
 	}
 	for _, verdict := range verdicts {
 		reason, err := VerdictReasonByte(verdict.Code)
@@ -40,7 +41,7 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			if reading.full[id] {
 				code = ReaderOpened
 			}
-			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason, Audit: reading.audit[id]}})
+			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: reading.audited(id, ReaderVerdict{Code: code, Reason: reason})})
 		}
 	}
 	for _, id := range reading.Shown() {
@@ -51,7 +52,7 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 		if reading.full[id] {
 			code = ReaderOpened
 		}
-		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Audit: reading.audit[id]}})
+		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: reading.audited(id, ReaderVerdict{Code: code})})
 	}
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
@@ -104,7 +105,8 @@ func SplitByLedger(candidates []GatherCandidate, subject string, ledger *Relevan
 // published capture: the entry each
 // finding rests on is referenced from the entry written, as an audit sample
 // when the reading showed it as one or when the verifier opened it from the
-// entries its reading hid, a miss for the drift rule. A hidden entry opened
+// entries its reading hid, a miss for the drift rule, or for the far floor
+// that had set it aside. A hidden entry opened
 // with no finding resting on it only carries the OpenedHidden flag.
 func VerifierRelevance(entryID string, reading *Reading, findings []DeepFinding, openedHidden []string) []ReaderRecord {
 	var records []ReaderRecord
@@ -115,8 +117,8 @@ func VerifierRelevance(entryID string, reading *Reading, findings []DeepFinding,
 				continue
 			}
 			seen[id] = true
-			audit := (reading != nil && reading.audit[id]) || slices.Contains(openedHidden, id)
-			records = append(records, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: ReaderReferenced, Audit: audit}})
+			verdict := reading.audited(id, ReaderVerdict{Code: ReaderReferenced, Audit: slices.Contains(openedHidden, id)})
+			records = append(records, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: verdict})
 		}
 	}
 	for _, id := range openedHidden {

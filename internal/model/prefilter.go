@@ -35,6 +35,9 @@ type PrefilterPayload struct {
 	Forward bool             `json:"forward,omitempty"`
 	Subject string           `json:"subject,omitempty"`
 	Scores  map[string]uint8 `json:"scores,omitempty"`
+	// Below names the candidates of Scores the far floor put below it
+	// (FarFloor.Below), the verdict of the call that scored each.
+	Below []string `json:"below,omitempty"`
 	// Audit names the set-aside candidates shown blind as lines to judge.
 	Audit []string `json:"audit,omitempty"`
 }
@@ -47,11 +50,13 @@ func RelevanceSubjectHash(subject string) string {
 }
 
 // readingScores is the reading's fold of one judge's prefilter scores, all
-// against the latest draft it scored.
+// against the latest draft it scored, and the candidates among them below
+// the far floor.
 type readingScores struct {
 	forward bool
 	subject string
 	scores  map[string]uint8
+	below   map[string]bool
 }
 
 // Scores returns the scores judge gave inside the reading against the draft
@@ -65,6 +70,35 @@ func (r *Reading) Scores(judge, subject string) (map[string]uint8, bool) {
 	return held.scores, held.forward
 }
 
+// BelowFloor returns the candidates judge's scores inside the reading put
+// below the far floor against the draft subject keys, sorted.
+func (r *Reading) BelowFloor(judge, subject string) []string {
+	if r == nil || r.scores[judge] == nil || r.scores[judge].subject != subject || len(r.scores[judge].below) == 0 {
+		return nil
+	}
+	return sortedKeys(r.scores[judge].below)
+}
+
+// audited returns verdict with the audit bit of a candidate the reading
+// showed blind as an audit sample, and the floor bit of an audit sample the
+// far floor had set aside.
+func (r *Reading) audited(id string, verdict ReaderVerdict) ReaderVerdict {
+	if r == nil {
+		return verdict
+	}
+	verdict.Audit = verdict.Audit || r.audit[id]
+	if !verdict.Audit {
+		return verdict
+	}
+	for _, held := range r.scores {
+		verdict.Floor = verdict.Floor || held.below[id]
+	}
+	return verdict
+}
+
+// foldPrefilter joins one read's scores and far floor verdicts. A score
+// folds to the highest; a verdict stands as first given, so no later
+// judgment of a candidate moves it across the floor.
 func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	if p == nil || p.Judge == "" {
 		return
@@ -75,7 +109,7 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	judge := CanonicalJudge(p.Judge)
 	held := r.scores[judge]
 	if held == nil || held.subject != p.Subject {
-		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}}
+		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}, below: map[string]bool{}}
 		r.scores[judge] = held
 	}
 	if r.audit == nil {
@@ -83,6 +117,11 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	}
 	for _, id := range p.Audit {
 		r.audit[id] = true
+	}
+	for _, id := range p.Below {
+		if _, scored := held.scores[id]; !scored {
+			held.below[id] = true
+		}
 	}
 	for id, score := range p.Scores {
 		if current, ok := held.scores[id]; !ok || score > current {
@@ -133,13 +172,15 @@ const (
 )
 
 // RelevanceLabel is one judged pair a judge scored: the reader's answer as a
-// calibration label with the judge's score and the label's weight.
+// calibration label with the judge's score and the label's weight. Floor
+// marks an audit sample of a far floor set-aside.
 type RelevanceLabel struct {
 	Pair   RelevancePair
 	Score  uint8
 	Kind   string
 	Reason string
 	Audit  bool
+	Floor  bool
 	Source ReaderSource
 	Weight float64
 }
@@ -196,7 +237,7 @@ func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
 			continue
 		}
 		verdict := l.readers[pair]
-		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Source: verdict.Source, Weight: LabelWeight(verdict)})
+		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Floor: verdict.Floor, Source: verdict.Source, Weight: LabelWeight(verdict)})
 	}
 	return labels
 }
@@ -226,8 +267,8 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 }
 
 // RecallStages are the Wilson lower bounds (95%) of weighted recall a
-// judge's thresholds rest on, rising. Below the first a judge sets nothing
-// aside.
+// judge's thresholds rest on, rising. Below the first a judge has no
+// threshold, and only the far floor sets aside.
 func RecallStages() []float64 {
 	return []float64{0.90, 0.95, RecallFloor}
 }
@@ -360,24 +401,27 @@ const (
 )
 
 // Prefiltered is where a scored reading places its candidates: Listed go by
-// title below the lines to judge, Counted past the title ceiling.
+// title below the lines to judge, Counted past the title ceiling. BelowFloor
+// are set aside by the far floor, SetAside by the calibrated threshold.
 type Prefiltered struct {
-	Relevant []GatherCandidate
-	ToJudge  []GatherCandidate
-	Listed   []GatherCandidate
-	Counted  []string
-	SetAside []string
+	Relevant   []GatherCandidate
+	ToJudge    []GatherCandidate
+	Listed     []GatherCandidate
+	Counted    []string
+	SetAside   []string
+	BelowFloor []string
 }
 
-// PlacePrefiltered places candidates by their scores: with valid thresholds a
-// score below SetAside is set aside and any other at or above Relevant
-// served in full; every other candidate, scored or not, stays to judge,
-// scored ones first by falling score. Without valid thresholds nothing is
-// set aside or served, and the scored candidates past the first
-// GatherJudgeRanked, doubled when widened for a weak judge, are listed by
-// title up to GatherTitleListed and counted past it. An unscored candidate
-// has no rank and stays to judge.
-func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds, widened bool) Prefiltered {
+// PlacePrefiltered places candidates by their scores. A candidate in
+// belowFloor is set aside, with and without valid thresholds. Of the
+// others, with valid thresholds a score below SetAside is set aside and any
+// other at or above Relevant served in full; every other candidate, scored
+// or not, stays to judge, scored ones first by falling score. Without valid
+// thresholds no score sets aside or serves, and the scored candidates past
+// the first GatherJudgeRanked, doubled when widened for a weak judge, are
+// listed by title up to GatherTitleListed and counted past it. An unscored
+// candidate has no rank and stays to judge.
+func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, belowFloor map[string]bool, thresholds RelevanceThresholds, widened bool) Prefiltered {
 	var placed Prefiltered
 	for _, candidate := range candidates {
 		score, ok := scores[candidate.Entry.ID]
@@ -386,6 +430,8 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thr
 			candidate.Score = &value
 		}
 		switch {
+		case belowFloor[candidate.Entry.ID]:
+			placed.BelowFloor = append(placed.BelowFloor, candidate.Entry.ID)
 		case ok && thresholds.Valid && ScoreValue(score) < thresholds.SetAside:
 			placed.SetAside = append(placed.SetAside, candidate.Entry.ID)
 		case ok && thresholds.Valid && ScoreValue(score) >= thresholds.Relevant:
@@ -408,6 +454,7 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thr
 	slices.SortStableFunc(placed.ToJudge, byScore)
 	slices.SortStableFunc(placed.Relevant, byScore)
 	slices.Sort(placed.SetAside)
+	slices.Sort(placed.BelowFloor)
 	if !thresholds.Valid {
 		limit := GatherJudgeRanked
 		if widened {

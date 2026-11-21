@@ -37,13 +37,18 @@ type prefilterPass struct {
 	// placement uses, those the reading already held included.
 	fresh  map[string]uint8
 	scores map[string]uint8
+	// below are the candidates of fresh the far floor put below it, sorted;
+	// floored reports that the pass's calls carried the far entries.
+	below   []string
+	floored bool
 }
 
 // runPrefilter rates the candidates not yet scored in the reading once
 // they reach verify.prefilter_from. Every candidate a call left
 // unanswered (provider down, deadline, unreadable answer) stays to judge
-// unscored, and the pass names it.
-func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8) (prefilterPass, error) {
+// unscored, and the pass names it. With a floor every call carries its far
+// entries, and the pass names the candidates it put below (model.FarFloor).
+func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8, floor *model.FarFloor) (prefilterPass, error) {
 	pass := prefilterPass{status: model.PrefilterOff, scores: map[string]uint8{}, fresh: map[string]uint8{}}
 	for id, score := range held {
 		pass.scores[id] = score
@@ -71,9 +76,17 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 		}
 	}
 	pass.status = model.PrefilterOK
-	scored := scoreCandidates(ctx, prefilter, subject, pending, prefilterDeadline)
+	scored := scoreCandidates(ctx, prefilter, subject, pending, farCandidates(g, floor), prefilterDeadline)
 	pass.fresh = scored.fresh
 	maps.Copy(pass.scores, scored.fresh)
+	pass.floored = scored.floored
+	for _, candidate := range candidates {
+		mark, marked := scored.marks[candidate.Entry.ID]
+		if marked && floor.Below(candidate, mark.score, mark.floor) {
+			pass.below = append(pass.below, candidate.Entry.ID)
+		}
+	}
+	slices.Sort(pass.below)
 	var notes []string
 	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs; lines to judge run by falling score", prefilter.Judge, len(pass.fresh), len(pending)))
 	if scored.oversize > 0 {
@@ -93,21 +106,51 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 // scoredPairs is what one scoring of pending candidates got: a score byte
 // per answered candidate, how many were too long for one call, and how many
 // calls left unanswered with their distinct failures; late marks a ranking
-// collected before every pass ended.
+// collected before every pass ended. floored reports that every call
+// carried the far entries; marks then hold each answered candidate's score
+// beside the floor its own call measured.
 type scoredPairs struct {
 	fresh      map[string]uint8
+	marks      map[string]floorMark
+	floored    bool
 	oversize   int
 	unanswered int
 	failures   []string
 	late       bool
 }
 
+// floorMark is a candidate's score and the median score its call gave the
+// far entries.
+type floorMark struct {
+	score, floor float64
+}
+
+// farCandidates are the far entries of floor as a judge call carries them,
+// in the form of every other candidate; none without a floor.
+func farCandidates(g *model.Graph, floor *model.FarFloor) []relevance.Candidate {
+	if floor == nil {
+		return nil
+	}
+	far := make([]relevance.Candidate, 0, len(floor.Far))
+	for _, e := range floor.Far {
+		far = append(far, relevance.Candidate{ID: e.ID, Text: model.EntryRelevanceText(g, e), Line: model.EntryRankingLine(e)})
+	}
+	return far
+}
+
 // scoreCandidates rates pending against subject in filled calls, at most
 // prefilterInFlight at once and within deadline. A failed call leaves its
-// candidates unscored; the result names it.
-func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate, deadline time.Duration) scoredPairs {
-	scored := scoredPairs{fresh: map[string]uint8{}}
-	batches, oversize := relevance.Plan(prefilter.Scorer, subject, pending)
+// candidates unscored; the result names it. Every call carries far beside
+// its candidates (relevance.ScoreWithFar), unless the scorer's calls have
+// no room for them.
+func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending, far []relevance.Candidate, deadline time.Duration) scoredPairs {
+	scored := scoredPairs{fresh: map[string]uint8{}, marks: map[string]floorMark{}}
+	batches, oversize, room := relevance.PlanWithFar(prefilter.Scorer, subject, pending, far)
+	if !room {
+		far = nil
+		batches, oversize = relevance.Plan(prefilter.Scorer, subject, pending)
+	}
+	scored.floored = len(far) > 0 && len(batches) > 0
 	scored.oversize = len(oversize)
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -120,7 +163,7 @@ func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, p
 			for _, index := range batch {
 				request.Candidates = append(request.Candidates, pending[index])
 			}
-			result, err := prefilter.Scorer.Score(ctx, request)
+			result, err := relevance.ScoreWithFar(ctx, prefilter.Scorer, request, far)
 			if err == nil {
 				err = relevance.CheckResult(request, result)
 			}
@@ -135,6 +178,9 @@ func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, p
 			}
 			for i, candidate := range request.Candidates {
 				scored.fresh[candidate.ID] = model.ScoreByte(result.Scores[i])
+				if len(far) > 0 {
+					scored.marks[candidate.ID] = floorMark{score: result.Scores[i], floor: result.Floor[i]}
+				}
 			}
 			return nil
 		})

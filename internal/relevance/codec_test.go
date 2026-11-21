@@ -109,6 +109,18 @@ func TestEncodeDecode_KeepsTheReplaySourceAndTheOpeningFlag(t *testing.T) {
 	}
 }
 
+func TestEncodeDecode_KeepsTheFloorBit(t *testing.T) {
+	batch := sampleBatch()
+	batch.Readers[1].Verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}
+	got, err := relevance.Decode(relevance.Encode(batch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Readers[1].Verdict != batch.Readers[1].Verdict || got.Readers[0].Verdict.Floor {
+		t.Fatalf("readers %+v should keep the floor bit on its own record alone", got.Readers)
+	}
+}
+
 func TestEncodeDecode_KeepsTheImplicitCodeAndTheFlip(t *testing.T) {
 	batch := sampleBatch()
 	batch.Readers[1].Verdict = model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true, Audit: true}
