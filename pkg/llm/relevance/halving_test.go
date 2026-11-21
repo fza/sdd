@@ -33,9 +33,9 @@ func (m *memorySizes) Raise(key string, from, size int) error {
 	return m.MemoryBatchSizes.Raise(key, from, size)
 }
 
-func remembering(key string, size int) *memorySizes {
+func remembering(size int) *memorySizes {
 	sizes := &memorySizes{}
-	_ = sizes.MemoryBatchSizes.Lower(key, size)
+	_ = sizes.MemoryBatchSizes.Lower(halvingKey, size)
 	return sizes
 }
 
@@ -119,7 +119,7 @@ func TestHalving_HalvesABrokenBatchAndRemembersTheSize(t *testing.T) {
 // A remembered size is where the next run starts.
 func TestHalving_StartsAtTheRememberedSize(t *testing.T) {
 	inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 100}
-	scorer := relevance.Halving(inner, remembering(halvingKey, 12), halvingKey)
+	scorer := relevance.Halving(inner, remembering(12), halvingKey)
 	if scorer.MaxBatch() != 12 {
 		t.Fatalf("MaxBatch = %d, want the remembered 12", scorer.MaxBatch())
 	}
@@ -212,7 +212,7 @@ func TestHalving_FailsWhatHalvingCannotMend(t *testing.T) {
 		t.Fatalf("a size that cannot be remembered should fail the request, got %v", err)
 	}
 
-	unraised := remembering(halvingKey, 4)
+	unraised := remembering(4)
 	unraised.err = unstored
 	_, err = relevance.Halving(&brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 100}, unraised, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(4)})
 	if !errors.Is(err, unstored) {
@@ -247,7 +247,7 @@ func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 			inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: tc.limit, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
 			sizes := &memorySizes{}
 			if tc.remembered > 0 {
-				sizes = remembering(halvingKey, tc.remembered)
+				sizes = remembering(tc.remembered)
 			}
 			scorer := relevance.Halving(inner, sizes, halvingKey)
 			for i, n := range tc.requests {
@@ -317,7 +317,7 @@ func (m *meddlingScorer) Score(ctx context.Context, request relevance.Request) (
 // A request one batch of which broke raises nothing, even where another
 // request raised the size back to the one it started at.
 func TestHalving_ARequestThatBrokeRaisesNothing(t *testing.T) {
-	sizes := remembering(halvingKey, 8)
+	sizes := remembering(8)
 	inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 4, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
 	other := &meddlingScorer{Scorer: inner, at: 5, meanwhile: func() { _ = sizes.Raise(halvingKey, 4, 8) }}
 	if _, err := relevance.Halving(other, sizes, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(16)}); err != nil {
