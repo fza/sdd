@@ -119,7 +119,7 @@ func (h halving) grown(size int) int {
 // size an earlier batch's halving left, and sets broke once a batch broke.
 func (h halving) split(ctx context.Context, request Request, far []Candidate, size int, broke *bool) (Result, error) {
 	out := Result{Scores: make([]float64, 0, len(request.Candidates))}
-	room := size
+	var room int
 	for start := 0; start < len(request.Candidates); start += room {
 		size = min(size, h.MaxBatch())
 		room = size
