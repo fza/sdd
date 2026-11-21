@@ -221,3 +221,27 @@ func TestScoreWithFar_HalvingSplitsARequestPastItsRememberedSize(t *testing.T) {
 		t.Fatalf("floors %v: each candidate should carry the floor of its own call", result.Floor)
 	}
 }
+
+// A request whose call fills the remembered size only with its far
+// candidates counted is one that answered at that size, and doubles it.
+func TestScoreWithFar_HalvingCountsTheFarCandidatesTowardsARaise(t *testing.T) {
+	inner := &callScorer{maxBatch: 100}
+	sizes := remembering(8)
+	scorer := relevance.Halving(inner, sizes, halvingKey)
+	_, err := relevance.ScoreWithFar(t.Context(), scorer, relevance.Request{Subject: "subject", Candidates: manyCandidates(6)}, farCandidates(1, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, _ := sizes.Size(halvingKey)
+	if held != 16 {
+		t.Fatalf("remembered size %d: a call of eight lines that answered should double the size", held)
+	}
+}
+
+func TestScoreWithFar_RefusesAnAnswerShortOfAScore(t *testing.T) {
+	scorer := &callScorer{limit: 2}
+	_, err := relevance.ScoreWithFar(t.Context(), scorer, relevance.Request{Subject: "subject", Candidates: manyCandidates(3)}, farCandidates(1, 1, 1))
+	if err == nil {
+		t.Fatal("an answer one score short should fail the call: no score can be told from a far one")
+	}
+}
