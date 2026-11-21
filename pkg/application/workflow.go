@@ -2008,23 +2008,13 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 		project, client = w.startProject, w.startClient
 		w.startProject, w.startClient = "", nil
 	}
-	events, err := sinkEvents(event, project, client)
-	if err != nil {
-		return 0, err
-	}
-	err = w.appendStoredEventsOnce(events)
-	if isSessionConflict(err) {
-		err = w.catchUp(&event)
-		if err == nil {
-			events, err = sinkEvents(event, project, client)
-		}
-		if err == nil {
-			err = w.appendStoredEventsOnce(events)
-		}
-	}
-	if isSessionConflict(err) {
-		return 0, fmt.Errorf("%w; %s", err, reorientSuffix)
-	}
+	var events []StoredEvent
+	// A catch-up moves the event's sequence, so each try encodes it anew.
+	err := w.appendCaughtUp(&event, func() ([]StoredEvent, error) {
+		var err error
+		events, err = sinkEvents(event, project, client)
+		return events, err
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -2072,14 +2062,43 @@ func (w *WorkflowSession) appendStoredEvent(code string, payload json.RawMessage
 }
 
 // appendStoredEvents appends events no engine state depends on, catching up
-// first when another attach of the session wrote meanwhile.
+// when another attach of the session wrote meanwhile (appendCaughtUp).
 func (w *WorkflowSession) appendStoredEvents(events []StoredEvent) error {
-	err := w.appendStoredEventsOnce(events)
-	if isSessionConflict(err) {
-		err = w.catchUp(nil)
-		if err == nil {
-			err = w.appendStoredEventsOnce(events)
+	return w.appendCaughtUp(nil, func() ([]StoredEvent, error) { return events, nil })
+}
+
+// sessionCatchUps bounds how often one append catches up with the other
+// writers of its session before it surfaces the conflict. A catch-up folds
+// all that landed before it, so the next one is owed only to yet another
+// append landing between that fold and the retry: eight in a row is past
+// what the parallel calls of one client stack up, and the bound keeps a
+// writer that never stops from holding a call forever.
+const sessionCatchUps = 8
+
+// appendCaughtUp appends what encode returns and, each time another writer
+// of the session got ahead, catches up (catchUp) and tries again, at most
+// sessionCatchUps times. pending is the engine event the append carries, nil
+// for none: a catch-up that finds its instance changed ends the tries as the
+// conflict it is.
+func (w *WorkflowSession) appendCaughtUp(pending *engine.Event, encode func() ([]StoredEvent, error)) error {
+	events, err := encode()
+	if err != nil {
+		return err
+	}
+	err = w.appendStoredEventsOnce(events)
+	for range sessionCatchUps {
+		if !isSessionConflict(err) {
+			return err
 		}
+		err = w.catchUp(pending)
+		if err != nil {
+			break
+		}
+		events, err = encode()
+		if err != nil {
+			return err
+		}
+		err = w.appendStoredEventsOnce(events)
 	}
 	if isSessionConflict(err) {
 		return fmt.Errorf("%w; %s", err, reorientSuffix)
