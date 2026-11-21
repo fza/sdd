@@ -10,13 +10,20 @@ import (
 
 // BatchSizes remembers, by key, the batch size a Halving scorer starts at.
 // Lower keeps the smaller of the held size and size. Raise sets size while
-// from is still held, so of the requests that answered at one size one
-// raise lands, and none over a size lowered meanwhile.
+// from is still held, so of the calls that answered at one size one raise
+// lands, and none over a size lowered meanwhile. A store that outlasts its
+// process hands the next one no size below MinCarriedBatch.
 type BatchSizes interface {
 	Size(key string) (int, bool)
 	Lower(key string, size int) error
 	Raise(key string, from, size int) error
 }
+
+// MinCarriedBatch is the smallest size a store hands a new process. A
+// smaller one splits a pass into more calls than its deadline has time
+// for, so the pass ends with few calls answered or none and the size does
+// not grow back; the new process starts at the scorer's MaxBatch instead.
+const MinCarriedBatch = 10
 
 // MemoryBatchSizes is a BatchSizes held in memory, so a size lasts as long
 // as the process.
@@ -59,10 +66,12 @@ func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
 // inner call's deadline while ctx lives is scored again in halves, down to
 // one candidate per call, and the half is remembered, so the next request
 // starts there. Any other failure, or one of a single candidate, fails the
-// request. A request no batch of which broke, with a batch of the
-// remembered size among them, doubles that size up to the inner MaxBatch,
-// so a failure that passed does not pin it; a size that breaks again halves
-// again. MaxBatch reports the size the next request starts at.
+// request. A call answered at the remembered size doubles that size at
+// once, up to the inner MaxBatch, whatever the request's other calls do, so
+// a failure that passed does not pin it. A request raises nothing once one
+// of its batches broke: its halves would raise the size straight back to
+// the one that broke. A size that breaks again halves again. MaxBatch
+// reports the size the next request starts at.
 func Halving(s Scorer, sizes BatchSizes, key string) Scorer {
 	return halving{Scorer: s, sizes: sizes, key: key}
 }
@@ -88,31 +97,25 @@ func (h halving) Score(ctx context.Context, request Request) (Result, error) {
 // far candidates a call carries, which leave its own candidates that much
 // less room, at least one.
 func (h halving) score(ctx context.Context, request Request, far []Candidate) (Result, error) {
-	held, remembered := h.sizes.Size(h.key)
 	size := h.MaxBatch()
 	if size <= 0 {
 		size = len(request.Candidates) + len(far)
 	}
 	broke := false
-	result, err := h.split(ctx, request, far, size, &broke)
-	if err != nil {
-		return Result{}, err
-	}
-	if grown := h.grown(held); remembered && !broke && len(request.Candidates)+len(far) >= held && grown > held {
-		err = h.sizes.Raise(h.key, held, grown)
-		if err != nil {
-			return Result{}, err
-		}
-	}
-	return result, nil
+	return h.split(ctx, request, far, size, &broke)
 }
 
-// grown is twice size, at most the inner MaxBatch where it bounds a call.
-func (h halving) grown(size int) int {
+// grow doubles the size remembered as from, up to the inner MaxBatch where
+// it bounds a call.
+func (h halving) grow(from int) error {
+	size := 2 * from
 	if limit := h.Scorer.MaxBatch(); limit > 0 {
-		return min(2*size, limit)
+		size = min(size, limit)
 	}
-	return 2 * size
+	if size <= from {
+		return nil
+	}
+	return h.sizes.Raise(h.key, from, size)
 }
 
 // split scores request in consecutive batches of size, or of the smaller
@@ -139,16 +142,24 @@ func (h halving) split(ctx context.Context, request Request, far []Candidate, si
 	return out, nil
 }
 
-// batch scores request in one call, and in halves once that call breaks.
+// batch scores request in one call, and in halves once that call breaks. A
+// call answered at the size remembered as it started grows that size.
 func (h halving) batch(ctx context.Context, request Request, far []Candidate, broke *bool) (Result, error) {
 	call, isFar := request, []bool(nil)
 	if len(far) > 0 {
 		call, isFar = withFar(request, far)
 	}
+	held, _ := h.sizes.Size(h.key)
 	result, err := h.Scorer.Score(ctx, call)
 	if err == nil {
 		err = CheckResult(call, result)
 		if err == nil {
+			if !*broke && len(call.Candidates) >= held {
+				err = h.grow(held)
+				if err != nil {
+					return Result{}, err
+				}
+			}
 			if len(far) > 0 {
 				result = withoutFar(result, isFar)
 			}

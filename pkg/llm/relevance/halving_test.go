@@ -3,6 +3,7 @@ package relevance_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -220,9 +221,173 @@ func TestHalving_FailsWhatHalvingCannotMend(t *testing.T) {
 	}
 }
 
-// A request whose calls all answer, one of them at the remembered size,
-// doubles that size up to the inner MaxBatch, so a failure that passed does
-// not pin it; a request that halved leaves the half standing.
+// watchingScorer notes the size sizes holds as each call starts, fails the
+// calls fail names and, while a call lower names runs, lowers the size as
+// another request would; calls count from 1.
+type watchingScorer struct {
+	fixedScorer
+	sizes *memorySizes
+	fail  map[int]error
+	lower map[int]int
+	held  []int
+}
+
+func (w *watchingScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	size, _ := w.sizes.Size(halvingKey)
+	w.held = append(w.held, size)
+	call := len(w.held)
+	if lowered, ok := w.lower[call]; ok {
+		_ = w.sizes.MemoryBatchSizes.Lower(halvingKey, lowered)
+	}
+	err := w.fail[call]
+	if err != nil {
+		return relevance.Result{}, err
+	}
+	return w.fixedScorer.Score(ctx, request)
+}
+
+// One call answered at the remembered size doubles it at once, whatever the
+// request's later calls do; a call of a request that broke raises nothing.
+func TestHalving_GrowsOnceACallAnswersAtTheRememberedSize(t *testing.T) {
+	down := errors.New("connection refused")
+	broken := &llm.MalformedAnswerError{Err: errors.New("unparsable")}
+	cases := []struct {
+		name       string
+		remembered int
+		candidates int
+		far        int
+		// fail is the failure of a call, lower the size another request
+		// lowers to while a call runs, by the call's number from 1.
+		fail  map[int]error
+		lower map[int]int
+		// unstorable fails every Lower and Raise the request asks for.
+		unstorable bool
+		err        error
+		// held is the remembered size as each call starts.
+		held  []int
+		after int
+	}{
+		{name: "the first answered call doubles it while later calls are still to run", remembered: 12, candidates: 30, held: []int{12, 24, 24}, after: 24},
+		{name: "a later call failing the request leaves the doubled size", remembered: 12, candidates: 30, fail: map[int]error{3: down}, err: down, held: []int{12, 24, 24}, after: 24},
+		{name: "a later call that breaks halves from its own size", remembered: 12, candidates: 30, fail: map[int]error{2: broken}, held: []int{12, 24, 6, 6, 6}, after: 6},
+		{name: "a first call that fails leaves the size", remembered: 12, candidates: 30, fail: map[int]error{1: down}, err: down, held: []int{12}, after: 12},
+		{name: "calls after a break raise nothing", remembered: 12, candidates: 30, fail: map[int]error{1: broken}, held: []int{12, 6, 6, 6, 6, 6}, after: 6},
+		{name: "a call below the remembered size raises nothing", remembered: 12, candidates: 8, held: []int{12}, after: 12},
+		{name: "a size lowered while the call ran stays", remembered: 12, candidates: 12, lower: map[int]int{1: 6}, held: []int{12}, after: 6},
+		{name: "a call answered at the inner MaxBatch asks for no raise", remembered: 100, candidates: 100, unstorable: true, held: []int{100}, after: 100},
+		{name: "far candidates count towards the size of a call", remembered: 8, candidates: 12, far: 3, held: []int{8, 16, 16}, after: 16},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sizes := remembering(tc.remembered)
+			if tc.unstorable {
+				sizes.err = errors.New("disk full")
+			}
+			inner := &watchingScorer{fixedScorer: fixedScorer{maxBatch: 100}, sizes: sizes, fail: tc.fail, lower: tc.lower}
+			request := relevance.Request{Candidates: manyCandidates(tc.candidates)}
+			_, err := relevance.ScoreWithFar(t.Context(), relevance.Halving(inner, sizes, halvingKey), request, farCandidates(make([]int, tc.far)...))
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("error %v, want %v", err, tc.err)
+			}
+			if !slices.Equal(inner.held, tc.held) {
+				t.Errorf("calls started at the remembered sizes %v, want %v", inner.held, tc.held)
+			}
+			if size, _ := sizes.Size(halvingKey); size != tc.after {
+				t.Errorf("the request left size %d, want %d", size, tc.after)
+			}
+		})
+	}
+}
+
+// gatedScorer holds the first call starting with a gated candidate until
+// its gate takes the call's outcome, nil for an answer; every other call
+// answers at once.
+type gatedScorer struct {
+	fixedScorer
+	entered chan struct{}
+	gates   map[string]chan error
+}
+
+func (g *gatedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	id := request.Candidates[0].ID
+	g.mu.Lock()
+	gate, ok := g.gates[id]
+	delete(g.gates, id)
+	g.mu.Unlock()
+	if ok {
+		g.entered <- struct{}{}
+		err := <-gate
+		if err != nil {
+			return relevance.Result{}, err
+		}
+	}
+	return g.fixedScorer.Score(ctx, request)
+}
+
+// A request's first call answering at the remembered size doubles it while
+// the request's next call and another request's call still run, and those,
+// however they end, raise nothing more.
+func TestHalving_GrowsWhileOtherCallsStillRun(t *testing.T) {
+	down := errors.New("connection refused")
+	cases := []struct {
+		name string
+		// other is how the other request's call ends, later how the
+		// request's own next call does; nil for an answer.
+		other, later error
+		// otherErr and err are what the other request and the request
+		// return.
+		otherErr, err error
+		after         int
+	}{
+		{name: "both answer", after: 24},
+		{name: "the other request fails", other: down, otherErr: down, after: 24},
+		{name: "the other request breaks", other: &llm.MalformedAnswerError{Err: errors.New("unparsable")}, after: 6},
+		{name: "the request's next call fails", later: down, err: down, after: 24},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sizes := remembering(12)
+			first, next, other := make(chan error), make(chan error), make(chan error)
+			inner := &gatedScorer{fixedScorer: fixedScorer{maxBatch: 100}, entered: make(chan struct{}), gates: map[string]chan error{"request-0": first, "request-12": next, "other-0": other}}
+			scorer := relevance.Halving(inner, sizes, halvingKey)
+			ended := map[string]chan error{"request": make(chan error, 1), "other": make(chan error, 1)}
+			for name, candidates := range map[string]int{"request": 24, "other": 12} {
+				request := relevance.Request{Candidates: make([]relevance.Candidate, candidates)}
+				for i := range request.Candidates {
+					request.Candidates[i].ID = fmt.Sprintf("%s-%d", name, i)
+				}
+				go func() {
+					_, err := scorer.Score(t.Context(), request)
+					ended[name] <- err
+				}()
+			}
+			<-inner.entered
+			<-inner.entered
+
+			first <- nil
+			<-inner.entered
+			if size, _ := sizes.Size(halvingKey); size != 24 {
+				t.Fatalf("size %d with one call answered and two still running: the answer should have doubled it", size)
+			}
+
+			other <- tc.other
+			if err := <-ended["other"]; !errors.Is(err, tc.otherErr) {
+				t.Fatalf("the other request returned %v, want %v", err, tc.otherErr)
+			}
+			next <- tc.later
+			if err := <-ended["request"]; !errors.Is(err, tc.err) {
+				t.Fatalf("the request returned %v, want %v", err, tc.err)
+			}
+			if size, _ := sizes.Size(halvingKey); size != tc.after {
+				t.Errorf("the calls left size %d, want %d", size, tc.after)
+			}
+		})
+	}
+}
+
+// Request after request the remembered size doubles up to the inner
+// MaxBatch, so a failure that passed does not pin it; a request that halved
+// leaves the half standing.
 func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -234,8 +399,8 @@ func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 		requests []int
 		after    []int
 	}{
-		{"a clean request at the remembered size doubles it", 12, 100, []int{30}, []int{24}},
-		{"each clean request takes one step", 12, 100, []int{30, 60, 60}, []int{24, 48, 96}},
+		{"a request answered at the remembered size doubles it", 12, 100, []int{30}, []int{24}},
+		{"each request takes one step", 12, 100, []int{30, 60, 60}, []int{24, 48, 96}},
 		{"doubling stops at the inner MaxBatch", 60, 100, []int{100, 100}, []int{100, 100}},
 		{"a request smaller than the remembered size proves nothing", 12, 100, []int{8}, []int{12}},
 		{"a request that halved leaves the half standing", 8, 4, []int{16}, []int{4}},

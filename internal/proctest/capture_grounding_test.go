@@ -361,8 +361,8 @@ func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) 
 }
 
 // The prefilter's scores ride the capture's reading: a later gather reuses
-// them instead of scoring again, and publish stores them keyed to the new
-// entry; a failed pass stores none.
+// them instead of scoring again, orders its lines by them, and publish
+// stores them keyed to the new entry; a failed pass stores none.
 func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -383,9 +383,12 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 			if first == 0 {
 				t.Fatal("the prefilter should rate the reading's candidates")
 			}
-			session.Gather(t, instance)
+			again := session.Gather(t, instance)
 			if !tc.fail && scorer.scored != first {
 				t.Fatalf("a second gather scored %d more candidates: the reading's scores should be reused", scorer.scored-first)
+			}
+			if strings.Contains(again.Text, "lines to judge run by falling score") == tc.fail {
+				t.Fatalf("the second gather should name the order by score only over the scores the reading holds:\n%s", again.Text)
 			}
 			serve = session.Report(t, instance, captureDraft())
 			proctest.RequireStep(t, serve, "playback")
