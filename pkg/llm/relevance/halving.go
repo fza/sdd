@@ -11,12 +11,19 @@ import (
 // BatchSizes remembers, by key, the batch size a Halving scorer starts at.
 // Lower keeps the smaller of the held size and size. Raise sets size while
 // from is still held, so of the calls that answered at one size one raise
-// lands, and none over a size lowered meanwhile.
+// lands, and none over a size lowered meanwhile. A store that outlasts its
+// process hands the next one no size below MinCarriedBatch.
 type BatchSizes interface {
 	Size(key string) (int, bool)
 	Lower(key string, size int) error
 	Raise(key string, from, size int) error
 }
+
+// MinCarriedBatch is the smallest size a store hands a new process. A
+// smaller one splits a pass into more calls than its deadline has time
+// for, so the pass ends with few calls answered or none and the size does
+// not grow back; the new process starts at the scorer's MaxBatch instead.
+const MinCarriedBatch = 10
 
 // MemoryBatchSizes is a BatchSizes held in memory, so a size lasts as long
 // as the process.
