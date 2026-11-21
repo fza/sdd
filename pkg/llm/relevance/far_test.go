@@ -222,8 +222,8 @@ func TestScoreWithFar_HalvingSplitsARequestPastItsRememberedSize(t *testing.T) {
 	}
 }
 
-// A request whose call fills the remembered size only with its far
-// candidates counted is one that answered at that size, and doubles it.
+// A call that fills the remembered size only with its far candidates
+// counted is one that answered at that size, and doubles it.
 func TestScoreWithFar_HalvingCountsTheFarCandidatesTowardsARaise(t *testing.T) {
 	inner := &callScorer{maxBatch: 100}
 	sizes := remembering(8)
