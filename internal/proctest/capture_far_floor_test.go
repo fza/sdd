@@ -157,3 +157,105 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 		t.Fatalf("floor health %+v: the referenced sample should count against the floor", misses)
 	}
 }
+
+// A verdict the reading holds gives way to what the floor never overrides: a
+// reference the draft adds next to the candidate, and a floor its judge's
+// audit turned off since.
+func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOff(t *testing.T) {
+	const judge = "test:scripted"
+	gap := func(id, text string, refs ...string) *model.Entry {
+		e := &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Summary: text, Content: text}
+		for _, ref := range refs {
+			e.Refs = append(e.Refs, model.Ref{ID: ref, Kind: model.RefKindAddresses, Desc: "bears on it"})
+		}
+		return e
+	}
+	pairs := make([][2]string, 3)
+	var entries []*model.Entry
+	for i := range pairs {
+		pairs[i] = [2]string{fmt.Sprintf("20260201-1000%02d-s-tac-omg", 2*i), fmt.Sprintf("20260201-1000%02d-s-tac-omg", 2*i+1)}
+		entries = append(entries, gap(pairs[i][0], fmt.Sprintf("An omega gap number %d.", 2*i)), gap(pairs[i][1], fmt.Sprintf("An omega gap number %d.", 2*i+1), pairs[i][0]))
+	}
+	for i := range 3 {
+		entries = append(entries, gap(fmt.Sprintf("20260202-1000%02d-s-tac-far", i), fmt.Sprintf("A far gap number %d.", i)))
+	}
+	for _, tc := range []struct {
+		name  string
+		after func(t *testing.T, store *local.MemoryRelevanceStore, session *proctest.Session, instance string, draft map[string]any, target string)
+		check func(t *testing.T, second sdd.GatherResult, neighbour string, other [2]string)
+	}{
+		{
+			name: "a reference the draft adds",
+			after: func(t *testing.T, _ *local.MemoryRelevanceStore, session *proctest.Session, instance string, draft map[string]any, target string) {
+				session.LogRead(t, "show", []string{target}, nil)
+				draft["refs"] = append(draft["refs"].([]any), map[string]any{"id": target, "kind": "addresses", "desc": "bears on it"})
+				session.Report(t, instance, draft)
+			},
+			check: func(t *testing.T, second sdd.GatherResult, neighbour string, other [2]string) {
+				setAside := floorLine(second.Text)
+				if strings.Contains(setAside, neighbour) || !slices.Contains(second.SummaryIDs, neighbour) {
+					t.Fatalf("the candidate next to the new reference should return to the lines to judge:\n%s", second.Text)
+				}
+				if !strings.Contains(setAside, other[0]) || !strings.Contains(setAside, other[1]) {
+					t.Fatalf("a candidate far from the new reference should keep its verdict:\n%s", second.Text)
+				}
+			},
+		},
+		{
+			name: "a floor turned off",
+			after: func(t *testing.T, store *local.MemoryRelevanceStore, _ *proctest.Session, _ string, _ map[string]any, _ string) {
+				var misses model.RelevanceBatch
+				topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+				for i := range 60 {
+					pair := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-aud", i), fmt.Sprintf("20250601-%06d-d-tac-sub", i))
+					verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true, Floor: true}
+					if i < 2 {
+						verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}
+					}
+					misses.Readers = append(misses.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+					misses.Scores = append(misses.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 5}})
+				}
+				if err := store.Append(t.Context(), relevance.Encode(misses)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, second sdd.GatherResult, _ string, _ [2]string) {
+				if floorLine(second.Text) != "" || len(second.SummaryIDs) != 2*len(pairs) {
+					t.Fatalf("a floor that is off should set nothing aside, held verdicts included:\n%s", second.Text)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := local.NewMemoryRelevanceStore()
+			scorer := &test.ScriptedScorer{Default: 0.1}
+			world, session := newCaptureWorld(t, "grounding-floor-held",
+				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
+				proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}),
+				proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
+			world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+			instance := session.Start(t, "capture", nil).Instance
+			draft := captureDraft()
+			draft["body"] = "A tactical gap: the fixture observes something about omega."
+			session.Report(t, instance, draft)
+
+			first := session.Gather(t, instance)
+			if strings.Count(floorLine(first.Text), "-s-tac-omg") != 2*len(pairs)-1 || len(first.SummaryIDs) != 1 {
+				t.Fatalf("every candidate rated at the floor should be set aside by it, one of them shown blind:\n%s", first.Text)
+			}
+			var free [][2]string
+			for _, pair := range pairs {
+				if !slices.Contains(pair[:], first.SummaryIDs[0]) {
+					free = append(free, pair)
+				}
+			}
+			scored := len(scorer.Scored())
+			tc.after(t, store, session, instance, draft, free[0][0])
+			second := session.Gather(t, instance)
+			if len(scorer.Scored()) != scored {
+				t.Fatalf("the second gather scored %d more lines: the reading's scores should be reused", len(scorer.Scored())-scored)
+			}
+			tc.check(t, second, free[0][1], free[1])
+		})
+	}
+}

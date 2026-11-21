@@ -216,3 +216,43 @@ func TestReadingBelowFloor_KeepsTheFirstVerdict(t *testing.T) {
 		t.Fatalf("below the floor %v without a reading", got)
 	}
 }
+
+// A verdict the reading holds stands while its candidate is no neighbour of
+// a reference and one read finds it: a reference the draft adds later, or a
+// second read, takes the candidate back above the floor.
+func TestStandingBelowFloor(t *testing.T) {
+	entries := []*model.Entry{farEntry("ref", nil), farEntry("hop1", nil, "ref"), farEntry("hop2", nil, "hop1"), farEntry("hop3", nil, "hop2"), farEntry("plain", nil)}
+	graph := model.NewGraph(entries)
+	one, two := []string{"semantic"}, []string{"semantic", "keyword(x)"}
+	held := []string{"hop1", "hop2", "hop3", "plain", "gone"}
+	for _, tc := range []struct {
+		name       string
+		references []string
+		foundBy    map[string][]string
+		standing   []string
+	}{
+		{name: "no reference", standing: []string{"hop1", "hop2", "hop3", "plain"}},
+		{name: "a reference two hops from two of them", references: []string{"ref"}, standing: []string{"hop3", "plain"}},
+		{name: "a second read", foundBy: map[string][]string{"plain": two}, standing: []string{"hop1", "hop2", "hop3"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var candidates []model.GatherCandidate
+			for _, id := range []string{"hop1", "hop2", "hop3", "plain"} {
+				foundBy := one
+				if tc.foundBy[id] != nil {
+					foundBy = tc.foundBy[id]
+				}
+				candidates = append(candidates, model.GatherCandidate{Entry: graph.ByID[id], FoundBy: foundBy})
+			}
+			standing := model.StandingBelowFloor(graph, tc.references, candidates, held)
+			var got []string
+			for id := range standing {
+				got = append(got, id)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.standing) {
+				t.Fatalf("standing %v: a held verdict stands only for a candidate the floor does not spare", got)
+			}
+		})
+	}
+}

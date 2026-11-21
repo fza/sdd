@@ -224,10 +224,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
 		key := model.RelevanceSubjectHash(subject)
 		held, _ = request.reading.Scores(judge, key)
-		for _, id := range request.reading.BelowFloor(judge, key) {
-			below[id] = true
-		}
+		// A floor that went off sets nothing aside, verdicts held from before included.
 		if prefilter.Scorer != nil && !model.JudgeFloorHealth(labels).Off {
+			below = model.StandingBelowFloor(graph, request.References, split.Undecided, request.reading.BelowFloor(judge, key))
 			listed := slices.Concat(request.Answered, request.References, opened, []string{request.Subject})
 			for _, read := range reads {
 				listed = append(listed, read.IDs...)

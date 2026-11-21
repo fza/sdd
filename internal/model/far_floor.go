@@ -82,10 +82,29 @@ func NewFarFloor(g *Graph, population []*Entry, draft FarDraft, listed []string)
 // candidate within FarFloorHops of an entry the draft references, or found
 // by two or more reads, never does.
 func (f *FarFloor) Below(candidate GatherCandidate, score, floor float64) bool {
-	if f == nil || score > floor {
-		return false
+	return f != nil && score <= floor && !floorSpares(f.near, candidate)
+}
+
+// StandingBelowFloor returns the verdicts of held, the candidates a reading
+// holds below the floor, that still stand for candidates: one the floor now
+// spares (FarFloor.Below), by a reference the draft added or a second read
+// that found it, is none of them.
+func StandingBelowFloor(g *Graph, references []string, candidates []GatherCandidate, held []string) map[string]bool {
+	standing := map[string]bool{}
+	if len(held) == 0 {
+		return standing
 	}
-	return !f.near[candidate.Entry.ID] && len(candidate.FoundBy) < 2
+	near := withinRefHops(g, references, FarFloorHops)
+	for _, candidate := range candidates {
+		if slices.Contains(held, candidate.Entry.ID) && !floorSpares(near, candidate) {
+			standing[candidate.Entry.ID] = true
+		}
+	}
+	return standing
+}
+
+func floorSpares(near map[string]bool, candidate GatherCandidate) bool {
+	return near[candidate.Entry.ID] || len(candidate.FoundBy) >= 2
 }
 
 func inTopicAreas(g *Graph, e *Entry, areas map[string]bool) bool {
