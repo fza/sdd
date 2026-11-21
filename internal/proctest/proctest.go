@@ -211,7 +211,7 @@ type config struct {
 	ranking     sdd.Ranking
 	events      sdd.EventStore
 	embedder    embed.Embedder
-	sessions    func(sdd.SessionStore) sdd.SessionStore
+	staged      func(sdd.StagedBlobStore) sdd.StagedBlobStore
 }
 
 // Option configures NewWorld.
@@ -306,10 +306,10 @@ func WithRanking(ranking sdd.Ranking) Option {
 	return func(c *config) { c.ranking = ranking }
 }
 
-// WithSessionStore has the application work on view's view of the world's
-// session store; World.Sessions stays the store itself.
-func WithSessionStore(view func(sdd.SessionStore) sdd.SessionStore) Option {
-	return func(c *config) { c.sessions = view }
+// WithStagedStore has the application work on view's view of the world's
+// staged store; World.Staged stays the store itself.
+func WithStagedStore(view func(sdd.StagedBlobStore) sdd.StagedBlobStore) Option {
+	return func(c *config) { c.staged = view }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -389,6 +389,8 @@ type World struct {
 	GraphDir string
 	// StagedBlobDir holds the staged attachments, <subject>/<session>/ below.
 	StagedBlobDir string
+	// Staged is the staged store over StagedBlobDir.
+	Staged *localadapter.FilesystemStagedBlobStore
 	// Sessions is the session store the application appends to.
 	Sessions sdd.SessionStore
 	// SessionsDir holds the session logs Sessions writes, <session>.jsonl.
@@ -525,15 +527,15 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped, runtimeOptions: options}
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Staged: blobs, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped, runtimeOptions: options}
 	resolver := &accessResolver{participant: cfg.participant, dialogue: cfg.dialogue}
 	resolver.runtime.Store(runtime)
-	var viewed sdd.SessionStore = sessions
-	if cfg.sessions != nil {
-		viewed = cfg.sessions(sessions)
+	var staged sdd.StagedBlobStore = blobs
+	if cfg.staged != nil {
+		staged = cfg.staged(blobs)
 	}
 	world.options = sdd.ApplicationOptions{
-		Access: resolver, Sessions: viewed, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+		Access: resolver, Sessions: sessions, StagedBlobs: staged, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
 	}
 	if cfg.launcher != nil {
 		world.Rounds = test.NewRoundProcesses(t)

@@ -121,9 +121,9 @@ func (w *WorkflowSession) startRanking(instance string, plan rankingPlan) error 
 		defer release()
 		payload.Scores = run.score(ctx).fresh
 		// What a pass cut short by Shutdown scored is kept too.
-		err := w.app.recordRanking(context.WithoutCancel(ctx), identity, session, rankingRecord{Instance: instance, Prefilter: payload})
+		err := w.app.keepRanking(context.WithoutCancel(ctx), identity, session, instance, payload)
 		if err != nil {
-			slogutils.FromContext(ctx).Error("keeping the scores of a background ranking pass in the session failed; a server started anew scores them again", "session", session, "instance", instance, "error", err)
+			slogutils.FromContext(ctx).Error("keeping the scores of a background ranking pass failed; a later reading scores them again", "session", session, "instance", instance, "error", err)
 		}
 	})
 	if !started {
@@ -133,45 +133,35 @@ func (w *WorkflowSession) startRanking(instance string, plan rankingPlan) error 
 	return nil
 }
 
-// workflowRankingCode records what a background ranking pass scored, so a
-// server started anew finds it (rankedScores). It is no engine event: the
-// pass ends outside the call driving its instance, which an engine event on
-// that instance would refuse as a conflict (catchUp).
-const workflowRankingCode = "workflow_ranking_scores"
-
-type rankingRecord struct {
-	Instance  string                 `json:"instance"`
-	Prefilter model.PrefilterPayload `json:"prefilter"`
-}
-
-// recordRanking appends record to the session unless it scored nothing or
-// the session ended.
-func (a *Application) recordRanking(ctx context.Context, identity RequestIdentity, session SessionID, record rankingRecord) error {
-	if len(record.Prefilter.Scores) == 0 {
+// keepRanking keeps what a background pass scored for instance in the
+// ranking store (RankingStore), so a later reading and a server started anew
+// find it (rankedScores), unless it scored nothing or the session ended.
+func (a *Application) keepRanking(ctx context.Context, identity RequestIdentity, session SessionID, instance string, scored model.PrefilterPayload) error {
+	if len(scored.Scores) == 0 {
 		return nil
 	}
-	payload, err := json.Marshal(record)
+	_, _, stored, err := a.resolveSession(ctx, identity, session)
 	if err != nil {
 		return err
 	}
-	// Each call of the session appends to it meanwhile.
-	const attempts = 3
-	for attempt := 1; ; attempt++ {
-		_, _, stored, err := a.resolveSession(ctx, identity, session)
-		if err != nil {
-			return err
-		}
-		if stored.Metadata.Ended != nil {
-			return nil
-		}
-		metadata := stored.Metadata
-		metadata.UpdatedAt = a.now().UTC().Round(0)
-		_, err = a.sessions.Append(ctx, session, stored.Version, SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: workflowRankingCode, Payload: payload}}})
-		if attempt < attempts && isSessionConflict(err) {
-			continue
-		}
+	if stored.Metadata.Ended != nil {
+		return nil
+	}
+	record, err := json.Marshal(scored)
+	if err != nil {
 		return err
 	}
+	return a.rankings.AppendRanking(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: session}, instance, record)
+}
+
+// workflowRankingCode marks a ranking record a session's log may hold. No
+// call writes one; rankedScores reads those a log holds.
+const workflowRankingCode = "workflow_ranking_scores"
+
+// loggedRanking is the payload of a workflowRankingCode event.
+type loggedRanking struct {
+	Instance  string                 `json:"instance"`
+	Prefilter model.PrefilterPayload `json:"prefilter"`
 }
 
 // rankedScores are the scores the background ranking passes of instance
@@ -181,7 +171,7 @@ func (w *WorkflowSession) rankedScores(instance, judge, subject string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	scores := map[string]uint8{}
+	var recorded []model.PrefilterPayload
 	for _, event := range stored.Events {
 		if event.Code != workflowRankingCode {
 			continue
@@ -189,14 +179,33 @@ func (w *WorkflowSession) rankedScores(instance, judge, subject string) (map[str
 		if !SupportedSessionCodecVersion(event.CodecVersion) {
 			return nil, &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported ranking record codec", Version: event.CodecVersion}
 		}
-		var record rankingRecord
-		if err := json.Unmarshal(event.Payload, &record); err != nil {
+		var logged loggedRanking
+		err := json.Unmarshal(event.Payload, &logged)
+		if err != nil {
 			return nil, fmt.Errorf("decoding a ranking record: %w", err)
 		}
-		if record.Instance != instance || model.CanonicalJudge(record.Prefilter.Judge) != model.CanonicalJudge(judge) || record.Prefilter.Subject != subject {
+		if logged.Instance == instance {
+			recorded = append(recorded, logged.Prefilter)
+		}
+	}
+	kept, err := w.app.rankings.Rankings(w.ctx, SessionRef{Subject: stored.Metadata.Subject, Session: w.ID()}, instance)
+	if err != nil {
+		return nil, fmt.Errorf("reading the ranking records of %s: %w", instance, err)
+	}
+	for _, record := range kept {
+		var scored model.PrefilterPayload
+		err := json.Unmarshal(record, &scored)
+		if err != nil {
+			return nil, fmt.Errorf("decoding a ranking record: %w", err)
+		}
+		recorded = append(recorded, scored)
+	}
+	scores := map[string]uint8{}
+	for _, scored := range recorded {
+		if model.CanonicalJudge(scored.Judge) != model.CanonicalJudge(judge) || scored.Subject != subject {
 			continue
 		}
-		for id, score := range record.Prefilter.Scores {
+		for id, score := range scored.Scores {
 			if held, ok := scores[id]; !ok || score > held {
 				scores[id] = score
 			}

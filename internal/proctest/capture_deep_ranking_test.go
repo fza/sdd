@@ -277,17 +277,31 @@ func storedEvents(t *testing.T, world *proctest.World, session sdd.SessionID) []
 	return stored.Events
 }
 
-// awaitRankingRecord waits until the session's log holds what a background
-// ranking pass scored.
-func awaitRankingRecord(t *testing.T, world *proctest.World, session sdd.SessionID) {
+// rankingRecords reads what the staged store holds of instance's background
+// ranking passes.
+func rankingRecords(t *testing.T, world *proctest.World, session sdd.SessionID, instance string) []json.RawMessage {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !slices.ContainsFunc(storedEvents(t, world, session), func(e sdd.StoredEvent) bool { return e.Code == "workflow_ranking_scores" }) {
-		if time.Now().After(deadline) {
-			t.Fatal("a finished background ranking pass should keep its scores in the session's log before the deep reading collects them")
-		}
-		time.Sleep(10 * time.Millisecond)
+	records, err := world.Staged.Rankings(t.Context(), sdd.SessionRef{Subject: world.Identity.Subject, Session: session}, instance)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return records
+}
+
+// awaitRankingRecord waits until the staged store holds what a background
+// ranking pass of instance scored.
+func awaitRankingRecord(t *testing.T, world *proctest.World, session sdd.SessionID, instance string) {
+	t.Helper()
+	test.Eventually(t, "keeping a finished background ranking pass's scores in the staged store", func() bool {
+		return len(rankingRecords(t, world, session, instance)) > 0
+	})
+}
+
+// loggedRankingRecord reports whether the session's log holds a ranking
+// record.
+func loggedRankingRecord(t *testing.T, world *proctest.World, session sdd.SessionID) bool {
+	t.Helper()
+	return slices.ContainsFunc(storedEvents(t, world, session), func(e sdd.StoredEvent) bool { return e.Code == "workflow_ranking_scores" })
 }
 
 // verifyScoreReads counts the reads that credit the instance with the
@@ -329,12 +343,23 @@ func TestCaptureDeep_ABackgroundRankingOutlivesARestart(t *testing.T) {
 	instance := serve.Instance
 	session.Gather(t, instance)
 	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
-	awaitRankingRecord(t, world, session.ID)
+	awaitRankingRecord(t, world, session.ID, instance)
+	if loggedRankingRecord(t, world, session.ID) {
+		t.Fatal("the pass's scores should stay off the session's log, which only the calls driving the session write")
+	}
 	paid := len(host.Scored())
 
 	world.Restart(t)
 	session, _ = world.Resume(t, session.ID, "claude-code")
-	serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	requireRecordedRanking(t, world, session, instance, host, paid)
+}
+
+// requireRecordedRanking confirms the playback and requires the deep reading
+// to rank with the scores recorded before, crediting them once and asking
+// the judge about nothing past the paid asks.
+func requireRecordedRanking(t *testing.T, world *proctest.World, session *proctest.Session, instance string, judge *test.ScriptedScorer, paid int) {
+	t.Helper()
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "write it")
 	proctest.RequireStep(t, serve, "deepDispatch")
 	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
 	if !strings.Contains(reading, "Ranking source: judge "+hostJudge+", ") {
@@ -343,11 +368,82 @@ func TestCaptureDeep_ABackgroundRankingOutlivesARestart(t *testing.T) {
 	if !strings.Contains(reading, "ID: "+laneRelevant) {
 		t.Fatalf("the entry the recorded scores rate relevant should be served in full:\n%s", reading)
 	}
-	if scored := host.Scored(); len(scored) != paid {
+	if scored := judge.Scored(); len(scored) != paid {
 		t.Fatalf("the judge scored %v after the restart: the recorded scores should rank the reading", scored[paid:])
 	}
 	if reads := verifyScoreReads(t, world, session.ID); reads != 1 {
 		t.Fatalf("the reading credited the ranking scores %d times: once is enough", reads)
+	}
+}
+
+// A ranking record held by the session's log ranks the deep reading as one
+// held by the staged store does: a log with such records stays readable.
+func TestCaptureDeep_ARankingRecordOfTheSessionLogRanksTheReading(t *testing.T) {
+	host := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: hostJudge}}))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
+	awaitRankingRecord(t, world, session.ID, instance)
+	paid := len(host.Scored())
+
+	var logged []sdd.StoredEvent
+	for _, record := range rankingRecords(t, world, session.ID, instance) {
+		payload, err := json.Marshal(map[string]any{"instance": instance, "prefilter": record})
+		if err != nil {
+			t.Fatal(err)
+		}
+		logged = append(logged, sdd.StoredEvent{CodecVersion: sdd.SessionCodecVersion, Code: "workflow_ranking_scores", Payload: payload})
+	}
+	stored, err := world.Sessions.Load(t.Context(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = world.Sessions.Append(t.Context(), session.ID, stored.Version, sdd.SessionAppend{Events: logged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = world.Staged.DeleteStaged(t.Context(), sdd.SessionRef{Subject: world.Identity.Subject, Session: session.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	world.Restart(t)
+	session, _ = world.Resume(t, session.ID, "claude-code")
+	requireRecordedRanking(t, world, session, instance, host, paid)
+}
+
+// With a staged store that lacks the ranking part the scores of a background
+// pass live in the server's memory: a server started anew asks the judge
+// again, and nothing reaches the staged store.
+func TestCaptureDeep_WithoutARankingStoreARestartScoresAgain(t *testing.T) {
+	host := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRanking(sdd.Ranking{ClaudeHost: sdd.Prefilter{Scorer: host, Judge: hostJudge}}),
+		proctest.WithStagedStore(func(store sdd.StagedBlobStore) sdd.StagedBlobStore { return test.BlobsOnly{StagedBlobStore: store} }))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, captureDraft()), "playback")
+	awaitScored(t, host)
+	paid := len(host.Scored())
+
+	world.Restart(t)
+	session, _ = world.Resume(t, session.ID, "claude-code")
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	proctest.RequireStep(t, serve, "deepDispatch")
+	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
+	if !strings.Contains(reading, "ID: "+laneRelevant) {
+		t.Fatalf("the entry the judge rates relevant should be served in full:\n%s", reading)
+	}
+	if scored := host.Scored(); len(scored) == paid {
+		t.Fatal("a server started anew should ask the judge again: nothing kept the first pass's scores")
+	}
+	if records := rankingRecords(t, world, session.ID, instance); len(records) != 0 {
+		t.Fatalf("the staged store should hold no ranking record, got %d", len(records))
+	}
+	if loggedRankingRecord(t, world, session.ID) {
+		t.Fatal("the pass's scores should stay off the session's log")
 	}
 }
 

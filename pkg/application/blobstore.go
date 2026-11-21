@@ -2,7 +2,10 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"slices"
+	"sync"
 )
 
 // SessionRef addresses one session inside a subject's namespace. Staged blobs
@@ -36,6 +39,56 @@ type StagedBlobStore interface {
 // already gone.
 type StagedBlobDeleter interface {
 	DeleteBlob(context.Context, SessionRef, string) error
+}
+
+// RankingStore is the optional part of a StagedBlobStore that keeps what the
+// background ranking passes of a session's captures scored: one JSON record
+// a pass, under the instance it ranked for, until DeleteStaged. The passes
+// end outside the calls that write the session's log, so their records stay
+// off it. Rankings returns an instance's records in no order, none for an
+// instance without any. With a store that lacks the part the application
+// keeps the records in memory, and a server started anew scores the entries
+// again.
+type RankingStore interface {
+	AppendRanking(ctx context.Context, ref SessionRef, instance string, record json.RawMessage) error
+	Rankings(ctx context.Context, ref SessionRef, instance string) ([]json.RawMessage, error)
+}
+
+// memoryRankings adds the RankingStore part to a staged store without it.
+type memoryRankings struct {
+	StagedBlobStore
+	mu      sync.Mutex
+	records map[SessionRef]map[string][]json.RawMessage
+}
+
+func (m *memoryRankings) AppendRanking(_ context.Context, ref SessionRef, instance string, record json.RawMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.records == nil {
+		m.records = map[SessionRef]map[string][]json.RawMessage{}
+	}
+	if m.records[ref] == nil {
+		m.records[ref] = map[string][]json.RawMessage{}
+	}
+	m.records[ref][instance] = append(m.records[ref][instance], slices.Clone(record))
+	return nil
+}
+
+func (m *memoryRankings) Rankings(_ context.Context, ref SessionRef, instance string) ([]json.RawMessage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.records[ref][instance]), nil
+}
+
+func (m *memoryRankings) DeleteStaged(ctx context.Context, ref SessionRef) error {
+	m.mu.Lock()
+	delete(m.records, ref)
+	m.mu.Unlock()
+	return m.StagedBlobStore.DeleteStaged(ctx, ref)
+}
+
+func (m *memoryRankings) DeleteBlob(ctx context.Context, ref SessionRef, id string) error {
+	return deleteBlob(ctx, m.StagedBlobStore, ref, id)
 }
 
 // deleteBlob removes one blob when the store can, and keeps it otherwise.

@@ -3,6 +3,7 @@ package cliapp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -348,4 +349,12 @@ func (b servedBlobs) DeleteStaged(ctx context.Context, ref sdd.SessionRef) error
 
 func (b servedBlobs) DeleteBlob(ctx context.Context, ref sdd.SessionRef, id string) error {
 	return b.store(ctx).DeleteBlob(ctx, ref, id)
+}
+
+func (b servedBlobs) AppendRanking(ctx context.Context, ref sdd.SessionRef, instance string, record json.RawMessage) error {
+	return b.store(ctx).AppendRanking(ctx, ref, instance, record)
+}
+
+func (b servedBlobs) Rankings(ctx context.Context, ref sdd.SessionRef, instance string) ([]json.RawMessage, error) {
+	return b.store(ctx).Rankings(ctx, ref, instance)
 }

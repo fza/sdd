@@ -65,6 +65,7 @@ type Application struct {
 	access        AccessResolver
 	sessions      SessionStore
 	blobs         StagedBlobStore
+	rankings      RankingStore
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
@@ -96,10 +97,17 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	if suffix == nil {
 		suffix = model.RandomSuffix
 	}
+	blobs := options.StagedBlobs
+	rankings, ok := blobs.(RankingStore)
+	if !ok {
+		memory := &memoryRankings{StagedBlobStore: blobs}
+		blobs, rankings = memory, memory
+	}
 	return &Application{
 		access:        options.Access,
 		sessions:      legacyEndStore{options.Sessions},
-		blobs:         options.StagedBlobs,
+		blobs:         blobs,
+		rankings:      rankings,
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
