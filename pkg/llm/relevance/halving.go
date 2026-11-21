@@ -81,17 +81,24 @@ func (h halving) MaxBatch() int {
 }
 
 func (h halving) Score(ctx context.Context, request Request) (Result, error) {
+	return h.score(ctx, request, nil)
+}
+
+// score is Score with far in every call (ScoreWithFar). A size counts the
+// far candidates a call carries, which leave its own candidates that much
+// less room, at least one.
+func (h halving) score(ctx context.Context, request Request, far []Candidate) (Result, error) {
 	held, remembered := h.sizes.Size(h.key)
 	size := h.MaxBatch()
 	if size <= 0 {
-		size = len(request.Candidates)
+		size = len(request.Candidates) + len(far)
 	}
 	broke := false
-	result, err := h.split(ctx, request, size, &broke)
+	result, err := h.split(ctx, request, far, size, &broke)
 	if err != nil {
 		return Result{}, err
 	}
-	if grown := h.grown(held); remembered && !broke && len(request.Candidates) >= held && grown > held {
+	if grown := h.grown(held); remembered && !broke && len(request.Candidates)+len(far) >= held && grown > held {
 		err = h.sizes.Raise(h.key, held, grown)
 		if err != nil {
 			return Result{}, err
@@ -110,16 +117,22 @@ func (h halving) grown(size int) int {
 
 // split scores request in consecutive batches of size, or of the smaller
 // size an earlier batch's halving left, and sets broke once a batch broke.
-func (h halving) split(ctx context.Context, request Request, size int, broke *bool) (Result, error) {
+func (h halving) split(ctx context.Context, request Request, far []Candidate, size int, broke *bool) (Result, error) {
 	out := Result{Scores: make([]float64, 0, len(request.Candidates))}
-	for start := 0; start < len(request.Candidates); start += size {
+	room := size
+	for start := 0; start < len(request.Candidates); start += room {
 		size = min(size, h.MaxBatch())
-		batch := Request{Subject: request.Subject, Candidates: request.Candidates[start:min(start+size, len(request.Candidates))]}
-		result, err := h.batch(ctx, batch, broke)
+		room = size
+		if len(far) > 0 {
+			room = max(size-len(far), 1)
+		}
+		batch := Request{Subject: request.Subject, Candidates: request.Candidates[start:min(start+room, len(request.Candidates))]}
+		result, err := h.batch(ctx, batch, far, broke)
 		if err != nil {
 			return Result{}, err
 		}
 		out.Scores = append(out.Scores, result.Scores...)
+		out.Floor = append(out.Floor, result.Floor...)
 		out.Identity = result.Identity
 		addUsage(&out.Usage, result.Usage)
 	}
@@ -127,11 +140,18 @@ func (h halving) split(ctx context.Context, request Request, size int, broke *bo
 }
 
 // batch scores request in one call, and in halves once that call breaks.
-func (h halving) batch(ctx context.Context, request Request, broke *bool) (Result, error) {
-	result, err := h.Scorer.Score(ctx, request)
+func (h halving) batch(ctx context.Context, request Request, far []Candidate, broke *bool) (Result, error) {
+	call, isFar := request, []bool(nil)
+	if len(far) > 0 {
+		call, isFar = withFar(request, far)
+	}
+	result, err := h.Scorer.Score(ctx, call)
 	if err == nil {
-		err = CheckResult(request, result)
+		err = CheckResult(call, result)
 		if err == nil {
+			if len(far) > 0 {
+				result = withoutFar(result, isFar)
+			}
 			return result, nil
 		}
 		err = &llm.MalformedAnswerError{Err: err}
@@ -141,11 +161,11 @@ func (h halving) batch(ctx context.Context, request Request, broke *bool) (Resul
 		return Result{}, err
 	}
 	*broke = true
-	half := n / 2
+	half := n/2 + len(far)
 	if err := h.sizes.Lower(h.key, half); err != nil {
 		return Result{}, err
 	}
-	return h.split(ctx, request, half, broke)
+	return h.split(ctx, request, far, half, broke)
 }
 
 // halvable is a failure a smaller batch may not repeat: a broken answer or a

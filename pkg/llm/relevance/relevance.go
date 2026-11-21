@@ -43,9 +43,12 @@ type Request struct {
 }
 
 // Result carries one score in [0, 1] per candidate, in request order, and
-// what served the call.
+// what served the call. Floor, set by ScoreWithFar alone, holds per
+// candidate the median score its own call gave the far candidates, the lower
+// middle of an even count.
 type Result struct {
 	Scores   []float64
+	Floor    []float64
 	Identity llm.Identity
 	Usage    llm.Usage
 }
@@ -88,21 +91,28 @@ func CheckResult(request Request, result Result) error {
 // oversize instead, by index; nothing is cut. Batches hold candidate indexes
 // in request order.
 func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize []int) {
+	return plan(scorer, subject, candidates, 0, 0)
+}
+
+// plan is Plan with every call holding reserved candidates of
+// reservedTokens beside its own.
+func plan(scorer Scorer, subject string, candidates []Candidate, reserved, reservedTokens int) (batches [][]int, oversize []int) {
 	maxBatch, maxTokens, maxPair := scorer.MaxBatch(), scorer.MaxInputTokens(), scorer.MaxPairTokens()
 	subjectTokens := EstimateTokens(subject)
+	base := subjectTokens + reservedTokens
 	var current []int
-	tokens := subjectTokens
+	tokens := base
 	for i, candidate := range candidates {
 		cost := EstimateTokens(candidate.Text)
-		if maxTokens > 0 && subjectTokens+cost > maxTokens || maxPair > 0 && subjectTokens+cost > maxPair {
+		if maxTokens > 0 && base+cost > maxTokens || maxPair > 0 && subjectTokens+cost > maxPair {
 			oversize = append(oversize, i)
 			continue
 		}
-		full := maxBatch > 0 && len(current) == maxBatch
+		full := maxBatch > 0 && len(current) == maxBatch-reserved
 		over := maxTokens > 0 && tokens+cost > maxTokens
 		if len(current) > 0 && (full || over) {
 			batches = append(batches, current)
-			current, tokens = nil, subjectTokens
+			current, tokens = nil, base
 		}
 		current = append(current, i)
 		tokens += cost
