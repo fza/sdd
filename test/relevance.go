@@ -21,20 +21,31 @@ var SegmentBeforeSource []byte
 type ScriptedScorer struct {
 	Scores  map[string]float64
 	Default float64
+	// Batch is the most candidates one call takes; zero for no limit.
+	Batch int
+	// Script, when set, runs ahead of each call's answer, where it may wait;
+	// an error it returns fails the call.
+	Script func(context.Context, relevance.Request) error
 
 	mu       sync.Mutex
 	requests []relevance.Request
 }
 
 func (s *ScriptedScorer) Direction() relevance.Direction { return relevance.Both }
-func (s *ScriptedScorer) MaxBatch() int                  { return 0 }
+func (s *ScriptedScorer) MaxBatch() int                  { return s.Batch }
 func (s *ScriptedScorer) MaxInputTokens() int            { return 0 }
 func (s *ScriptedScorer) MaxPairTokens() int             { return 0 }
 
-func (s *ScriptedScorer) Score(_ context.Context, request relevance.Request) (relevance.Result, error) {
+func (s *ScriptedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.requests = append(s.requests, request)
+	s.mu.Unlock()
+	if s.Script != nil {
+		err := s.Script(ctx, request)
+		if err != nil {
+			return relevance.Result{}, err
+		}
+	}
 	result := relevance.Result{Identity: llm.Identity{Provider: "test", Model: "scripted"}}
 	for _, candidate := range request.Candidates {
 		score, ok := s.Scores[candidate.ID]

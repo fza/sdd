@@ -211,6 +211,7 @@ type config struct {
 	ranking     sdd.Ranking
 	events      sdd.EventStore
 	embedder    embed.Embedder
+	sessions    func(sdd.SessionStore) sdd.SessionStore
 }
 
 // Option configures NewWorld.
@@ -303,6 +304,12 @@ func WithPrefilter(prefilter sdd.Prefilter) Option {
 // WithRanking gives the world's project the deep reading's ranking.
 func WithRanking(ranking sdd.Ranking) Option {
 	return func(c *config) { c.ranking = ranking }
+}
+
+// WithSessionStore has the application work on view's view of the world's
+// session store; World.Sessions stays the store itself.
+func WithSessionStore(view func(sdd.SessionStore) sdd.SessionStore) Option {
+	return func(c *config) { c.sessions = view }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -521,8 +528,12 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped, runtimeOptions: options}
 	resolver := &accessResolver{participant: cfg.participant, dialogue: cfg.dialogue}
 	resolver.runtime.Store(runtime)
+	var viewed sdd.SessionStore = sessions
+	if cfg.sessions != nil {
+		viewed = cfg.sessions(sessions)
+	}
 	world.options = sdd.ApplicationOptions{
-		Access: resolver, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+		Access: resolver, Sessions: viewed, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
 	}
 	if cfg.launcher != nil {
 		world.Rounds = test.NewRoundProcesses(t)
