@@ -32,9 +32,9 @@ func entryIDs(entries []*model.Entry) []string {
 	return ids
 }
 
-// Three entries qualify in every case: other topics, no topic, and three
-// reference hops from the draft's reference. Each case adds one entry a rule
-// keeps out.
+// Two entries are far in every case, of another topic and of none, one short
+// of a floor. Each case adds entries: one more far entry gives the floor,
+// an entry a rule keeps out gives none.
 func TestNewFarFloor_PicksOnlyEntriesFarFromTheDraft(t *testing.T) {
 	const reference = "ref"
 	draft := model.FarDraft{Subject: "subject", Topics: []string{"cli/ux"}, References: []string{reference}}
@@ -43,12 +43,10 @@ func TestNewFarFloor_PicksOnlyEntriesFarFromTheDraft(t *testing.T) {
 			farEntry(reference, nil),
 			farEntry("hop1", nil, reference),
 			farEntry("hop2", nil, "hop1"),
-			farEntry("far-hop3", nil, "hop2"),
 			farEntry("far-topic", []string{"docs/site"}),
 			farEntry("far-plain", nil),
 		}
 	}
-	far := []string{"far-hop3", "far-plain", "far-topic"}
 	annotation := &model.Entry{ID: "note", Type: model.TypeSignal, Kind: model.KindAnnotation, Refs: []model.Ref{{ID: "annotated"}}, AnnotationTopics: []model.AnnotationTopic{{Label: "cli/notes"}}}
 	closing := farEntry("closing", nil)
 	closing.Closes = []string{reference}
@@ -60,8 +58,9 @@ func TestNewFarFloor_PicksOnlyEntriesFarFromTheDraft(t *testing.T) {
 		name   string
 		extra  []*model.Entry
 		listed []string
+		far    []string
 	}{
-		{name: "the far entries alone"},
+		{name: "an entry three hops from the reference", extra: []*model.Entry{farEntry("far-hop3", nil, "hop2")}, far: []string{"far-hop3", "far-plain", "far-topic"}},
 		{name: "an entry of the draft's topic", extra: []*model.Entry{farEntry("same-topic", []string{"cli/ux"})}},
 		{name: "an entry of the draft's topic area", extra: []*model.Entry{farEntry("same-area", []string{"docs", "CLI/output"})}},
 		{name: "an entry an annotation puts in the area", extra: []*model.Entry{farEntry("annotated", nil), annotation}},
@@ -74,10 +73,11 @@ func TestNewFarFloor_PicksOnlyEntriesFarFromTheDraft(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			entries := append(base(), tc.extra...)
 			floor := model.NewFarFloor(model.NewGraph(entries), entries, draft, append([]string{reference}, tc.listed...))
-			if floor == nil {
-				t.Fatal("three entries far from the draft should give a floor")
+			var got []string
+			if floor != nil {
+				got = entryIDs(floor.Far)
 			}
-			if got := entryIDs(floor.Far); !slices.Equal(got, far) {
+			if !slices.Equal(got, tc.far) {
 				t.Fatalf("far entries %v: only entries outside the draft's topic areas, its references' neighbourhood and the gather's list qualify", got)
 			}
 		})

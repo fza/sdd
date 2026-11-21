@@ -23,6 +23,54 @@ func floorLine(text string) string {
 	return ""
 }
 
+// A candidate next to an entry the draft references never falls below the
+// floor; one next to an entry the draft only dismisses does, like any other.
+func TestCaptureGrounding_FarFloorSparesTheNeighbourhoodOfReferencesAlone(t *testing.T) {
+	const (
+		dismissed     = "20260201-100000-s-tac-dis"
+		nearReference = "20260201-100001-s-tac-nrf"
+		nearDismissed = "20260201-100002-s-tac-nds"
+	)
+	gap := func(id, text string, refs ...string) *model.Entry {
+		e := &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Summary: text, Content: text}
+		for _, ref := range refs {
+			e.Refs = append(e.Refs, model.Ref{ID: ref, Kind: model.RefKindAddresses, Desc: "bears on it"})
+		}
+		return e
+	}
+	entries := []*model.Entry{
+		gap(dismissed, "A gap the draft dismisses."),
+		gap(nearReference, "An omega gap next to the reference.", captureRefID),
+		gap(nearDismissed, "An omega gap next to the dismissed one.", dismissed),
+	}
+	for i := range 2 {
+		entries = append(entries, gap(fmt.Sprintf("20260201-1001%02d-s-tac-omg", i), fmt.Sprintf("An omega gap number %d.", i)))
+	}
+	for i := range 3 {
+		entries = append(entries, gap(fmt.Sprintf("20260202-1000%02d-s-tac-far", i), fmt.Sprintf("A far gap number %d.", i)))
+	}
+	world, session := newCaptureWorld(t, "grounding-floor-near",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: &test.ScriptedScorer{Default: 0.1}, Judge: "test:scripted"}),
+		proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
+	world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+	instance := session.Start(t, "capture", nil).Instance
+	session.Gather(t, instance, dismissed)
+	draft := captureDraft()
+	draft["body"] = "A tactical gap: the fixture observes something about omega."
+	draft["verdicts"] = []any{map[string]any{"ids": []any{dismissed}, "code": model.VerdictCovered}}
+	session.Report(t, instance, draft)
+
+	gathered := session.Gather(t, instance)
+	setAside := floorLine(gathered.Text)
+	if !slices.Contains(gathered.SummaryIDs, nearReference) || strings.Contains(setAside, nearReference) {
+		t.Fatalf("a candidate next to the draft's reference should stay to judge:\n%s", gathered.Text)
+	}
+	if strings.Count(setAside, "20260201-") != 2 || len(gathered.SummaryIDs) != 2 {
+		t.Fatalf("the candidate next to the dismissed entry should fall below the floor with the two plain ones, one of the three shown blind:\n%s", gathered.Text)
+	}
+}
+
 // A capture's far floor verdicts ride its reading: a later gather of the
 // same draft scores nothing again and sets the same candidates aside. A
 // set-aside the audit showed blind and the draft then references reaches

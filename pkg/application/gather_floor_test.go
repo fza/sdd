@@ -164,6 +164,26 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 	}
 }
 
+// A reading that grounds an existing entry reads that entry's own
+// references: a candidate next to one of them never falls below the floor.
+func TestGather_FarFloorReadsASubjectsOwnReferences(t *testing.T) {
+	const subject = "20260103-100009-d-tac-sub"
+	scorer := &scriptedScorer{}
+	f := floorFixture(t, scorer, 3)
+	f.write(t, subject, "directive", "A subject directive about omega.", "intent: pending\ntopics:\n  - cli/ux\nrefs:\n  - "+floorReference+"\n")
+	result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), sdd.GatherRequest{Subject: subject, Terms: []string{"omega"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scorer.requests) != 1 || !slices.Equal(farIn(scorer.requests[0]), floorFar) {
+		t.Fatalf("%d calls: the subject's topic and reference should give the reading a floor", len(scorer.requests))
+	}
+	floored := setAsideLine(result.Text, model.SetAsideFloor)
+	if strings.Contains(floored, floorNear) || strings.Count(floored, "20260103-") != 1 {
+		t.Fatalf("the candidate next to the subject's reference should stay above the floor, which sets aside the two low-rated ones but for an audit line:\n%s", result.Text)
+	}
+}
+
 // A call the judge breaks on is scored again in halves, and each half
 // carries the far entries too.
 func TestGather_FarFloorRidesEveryPartOfAHalvedCall(t *testing.T) {
