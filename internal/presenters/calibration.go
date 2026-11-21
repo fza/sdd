@@ -35,7 +35,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport, auto Groundi
 	}
 	fmt.Fprintf(w, "recall stages %s: %s\n", stageList(), stage)
 	if report.Thresholds.Valid {
-		fmt.Fprintf(w, "thresholds: set aside below %.3f, serve in full from %.3f\n", report.Thresholds.SetAside, report.Thresholds.Relevant)
+		fmt.Fprintf(w, "thresholds: %s\n", thresholdsText(report, ""))
 	} else {
 		fmt.Fprintln(w, "thresholds: none yet, below the first recall stage: the prefilter ranks and sets nothing aside")
 	}

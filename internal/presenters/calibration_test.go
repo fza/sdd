@@ -1,0 +1,71 @@
+package presenters_test
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
+)
+
+// Both statuses name the labels each threshold rests on once replayed
+// labels take part in the calibration, and say so when no score is served
+// in full.
+func TestGroundingStatus_NamesTheLabelsEachThresholdRestsOn(t *testing.T) {
+	cases := []struct {
+		name       string
+		report     model.CalibrationReport
+		thresholds model.RelevanceThresholds
+		verbose    string
+		summary    string
+	}{
+		{"live labels alone name no labels",
+			model.CalibrationReport{Live: 80},
+			model.RelevanceThresholds{SetAside: 0.12, Relevant: 0.7},
+			"thresholds: set aside below 0.120, serve in full from 0.700\n",
+			" · sets aside below 0.120, serves in full from 0.700\n"},
+		{"replayed labels left out name no labels",
+			model.CalibrationReport{Live: 80, Replay: 60, ReplayExcluded: true},
+			model.RelevanceThresholds{SetAside: 0.12, Relevant: 0.7},
+			"thresholds: set aside below 0.120, serve in full from 0.700\n",
+			" · sets aside below 0.120, serves in full from 0.700\n"},
+		{"the cut over all labels beside the live serve-in-full threshold",
+			model.CalibrationReport{Live: 80, Replay: 60},
+			model.RelevanceThresholds{SetAside: 0.2, Relevant: 0.7},
+			"thresholds: set aside below 0.200 (all labels), serve in full from 0.700 (live labels)\n",
+			" · sets aside below 0.200 (all labels), serves in full from 0.700 (live labels)\n"},
+		{"the lower cut of the live labels",
+			model.CalibrationReport{Live: 80, Replay: 60},
+			model.RelevanceThresholds{SetAside: 0.078, SetAsideLive: true, Relevant: 0.7},
+			"thresholds: set aside below 0.078 (live labels), serve in full from 0.700 (live labels)\n",
+			" · sets aside below 0.078 (live labels), serves in full from 0.700 (live labels)\n"},
+		{"no score served in full",
+			model.CalibrationReport{Live: 2, Replay: 60},
+			model.RelevanceThresholds{SetAside: 0.2, Relevant: 2},
+			"thresholds: set aside below 0.200 (all labels), serve nothing in full (live labels)\n",
+			" · sets aside below 0.200 (all labels), serves nothing in full (live labels)\n"},
+		{"no score served in full by live labels alone",
+			model.CalibrationReport{Live: 40},
+			model.RelevanceThresholds{SetAside: 0.2, Relevant: 2},
+			"thresholds: set aside below 0.200, serve nothing in full\n",
+			" · sets aside below 0.200, serves nothing in full\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := tc.report
+			report.Judge = "j"
+			report.Thresholds = tc.thresholds
+			report.Thresholds.Valid, report.Thresholds.Stage = true, 0.95
+			var verbose, summary bytes.Buffer
+			presenters.RenderCalibration(&verbose, report, presenters.GroundingAuto{})
+			if !strings.Contains(verbose.String(), tc.verbose) {
+				t.Errorf("the verbose status lacks %q:\n%s", tc.verbose, verbose.String())
+			}
+			presenters.RenderGroundingSummary(&summary, model.LabelTally{}, report, "set by `llm_prefilter`", presenters.GroundingAuto{})
+			if !strings.Contains(summary.String(), tc.summary) {
+				t.Errorf("the status lacks %q:\n%s", tc.summary, summary.String())
+			}
+		})
+	}
+}

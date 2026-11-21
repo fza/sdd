@@ -164,6 +164,7 @@ func TestRelevanceLedgerLookup(t *testing.T) {
 			Scores:  []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}},
 		}, calibrated, model.RelevanceRelevant},
 		{"a low score sets aside", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}}}, calibrated, model.RelevanceNotRelevant},
+		{"a score below both thresholds is set aside", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}}}, model.RelevanceThresholds{Valid: true, SetAside: 0.2, Relevant: 0.012}, model.RelevanceNotRelevant},
 		{"a high score is relevant", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 200}}}}, calibrated, model.RelevanceRelevant},
 		{"a middle score stays to judge", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 100}}}}, calibrated, model.RelevanceUndecided},
 		{"uncalibrated scores decide nothing", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}}}, model.RelevanceThresholds{}, model.RelevanceUndecided},

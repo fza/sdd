@@ -211,6 +211,9 @@ func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 	if both.Thresholds.Stage != model.RecallFloor || both.Positive != 210 || both.Live != 150 || both.Replay != 60 || both.ReplayExcluded {
 		t.Fatalf("report %+v should calibrate on both sources and count each", both)
 	}
+	if both.Thresholds.SetAside != model.ScoreValue(200) || both.Thresholds.Relevant != model.ScoreValue(220) {
+		t.Fatalf("thresholds %+v should set aside below the lowest reference of either source and serve in full from the live ones", both.Thresholds)
+	}
 	live := ledger.Calibration("j", true)
 	if live.Thresholds.Stage != 0.95 || live.Positive != 150 || live.Live != 150 || live.Replay != 60 || !live.ReplayExcluded {
 		t.Fatalf("report %+v should read the live labels alone and still count the replayed ones", live)

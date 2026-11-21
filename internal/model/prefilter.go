@@ -263,14 +263,39 @@ func NextStage(stage float64) float64 {
 
 // Calibrate computes a judge's thresholds from its labels, each counted by
 // its weight (WilsonLowerWeighted), at the highest recall stage the
-// positive labels hold (StageHeld): the set-aside threshold is the highest
+// positive labels hold (StageHeld). The set-aside threshold is the highest
 // score that keeps the lower bound of weighted recall over the positive
-// labels at that stage; the relevant threshold the lowest score at and
-// above which the weighted positive share's lower bound reaches
-// RelevantPrecision. Below the first stage the thresholds are invalid and
-// decide nothing. Drift steps cap the set-aside threshold; it never rises
-// above a step.
+// labels at that stage (setAsideCut), or the lower cut of the live labels
+// once they hold a stage alone: a replayed reference is an easier positive
+// than an entry a live reading had to find. The relevant threshold is the
+// lowest score, never below the set-aside threshold, at and above which
+// the lower bound of the weighted positive share of the live labels
+// reaches RelevantPrecision: replayed labels are positives only, so
+// counting them would hold that share at every score. Below the first
+// stage the thresholds are invalid and decide nothing. Drift steps cap the
+// set-aside threshold; it never rises above a step.
 func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
+	stage, setAside := setAsideCut(labels)
+	if stage == 0 {
+		return RelevanceThresholds{}
+	}
+	live := LiveLabels(labels)
+	fromLive := false
+	if liveStage, cut := setAsideCut(live); liveStage > 0 && cut < setAside {
+		setAside, fromLive = cut, true
+	}
+	for _, step := range steps {
+		if step.Judge == judge && step.SetAside < setAside {
+			setAside = step.SetAside
+		}
+	}
+	return RelevanceThresholds{Valid: true, Stage: stage, SetAside: ScoreValue(setAside), SetAsideLive: fromLive, Relevant: relevantThreshold(live, setAside)}
+}
+
+// setAsideCut is the highest recall stage the positive labels hold and the
+// highest score that keeps the lower bound of their weighted recall at it;
+// stage 0 holds no cut.
+func setAsideCut(labels []RelevanceLabel) (stage float64, cut uint8) {
 	var positives []RelevanceLabel
 	total := 0.0
 	for _, label := range labels {
@@ -279,12 +304,11 @@ func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) Relevan
 			total += label.Weight
 		}
 	}
-	stage := StageHeld(total)
+	stage = StageHeld(total)
 	if stage == 0 {
-		return RelevanceThresholds{}
+		return 0, 0
 	}
 	slices.SortStableFunc(positives, func(a, b RelevanceLabel) int { return cmp.Compare(a.Score, b.Score) })
-	setAside := -1
 	missed := 0.0
 	for i, positive := range positives {
 		if WilsonLowerWeighted(total-missed, total) < stage {
@@ -294,27 +318,25 @@ func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) Relevan
 		if i > 0 && positive.Score == positives[i-1].Score {
 			continue
 		}
-		setAside = int(positive.Score)
+		cut = positive.Score
 	}
-	if setAside < 0 {
-		return RelevanceThresholds{}
-	}
-	for _, step := range steps {
-		if step.Judge == judge && int(step.SetAside) < setAside {
-			setAside = int(step.SetAside)
-		}
-	}
-	return RelevanceThresholds{Valid: true, Stage: stage, SetAside: ScoreValue(uint8(setAside)), Relevant: relevantThreshold(labels)}
+	return stage, cut
 }
 
-func relevantThreshold(labels []RelevanceLabel) float64 {
+// noRelevantThreshold lies above every score: nothing is served in full.
+const noRelevantThreshold = 2.0
+
+func relevantThreshold(labels []RelevanceLabel, floor uint8) float64 {
 	judged := slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool {
 		return label.Kind != LabelPositive && label.Kind != LabelNegative
 	})
 	slices.SortFunc(judged, func(a, b RelevanceLabel) int { return cmp.Compare(b.Score, a.Score) })
-	relevant := 2.0
+	relevant := noRelevantThreshold
 	positive, weight := 0.0, 0.0
 	for i, label := range judged {
+		if label.Score < floor {
+			break
+		}
 		weight += label.Weight
 		if label.Kind == LabelPositive {
 			positive += label.Weight
@@ -348,13 +370,13 @@ type Prefiltered struct {
 }
 
 // PlacePrefiltered places candidates by their scores: with valid thresholds a
-// score at or above Relevant is served in full and one below SetAside set
-// aside; every other candidate, scored or not, stays to judge, scored ones
-// first by falling score. Without valid thresholds nothing is set aside or
-// served, and the scored candidates past the first GatherJudgeRanked,
-// doubled when widened for a weak judge, are listed by title up to
-// GatherTitleListed and counted past it. An unscored candidate has no rank
-// and stays to judge.
+// score below SetAside is set aside and any other at or above Relevant
+// served in full; every other candidate, scored or not, stays to judge,
+// scored ones first by falling score. Without valid thresholds nothing is
+// set aside or served, and the scored candidates past the first
+// GatherJudgeRanked, doubled when widened for a weak judge, are listed by
+// title up to GatherTitleListed and counted past it. An unscored candidate
+// has no rank and stays to judge.
 func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds, widened bool) Prefiltered {
 	var placed Prefiltered
 	for _, candidate := range candidates {
@@ -364,10 +386,10 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thr
 			candidate.Score = &value
 		}
 		switch {
-		case ok && thresholds.Valid && ScoreValue(score) >= thresholds.Relevant:
-			placed.Relevant = append(placed.Relevant, candidate)
 		case ok && thresholds.Valid && ScoreValue(score) < thresholds.SetAside:
 			placed.SetAside = append(placed.SetAside, candidate.Entry.ID)
+		case ok && thresholds.Valid && ScoreValue(score) >= thresholds.Relevant:
+			placed.Relevant = append(placed.Relevant, candidate)
 		default:
 			placed.ToJudge = append(placed.ToJudge, candidate)
 		}

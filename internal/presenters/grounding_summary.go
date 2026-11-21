@@ -56,7 +56,7 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 		state = append(state, "top stage")
 	}
 	if report.Thresholds.Valid {
-		state = append(state, fmt.Sprintf("sets aside below %.3f, serves in full from %.3f", report.Thresholds.SetAside, report.Thresholds.Relevant))
+		state = append(state, thresholdsText(report, "s"))
 	} else {
 		state = append(state, "no threshold yet")
 	}
@@ -71,6 +71,25 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 	case report.Unscored > 0:
 		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding update`\n", indent)
 	}
+}
+
+// thresholdsText names a calibrated report's thresholds, its verbs ending in
+// s, and the labels each rests on (model.Calibrate) once replayed ones take
+// part in the calibration.
+func thresholdsText(report model.CalibrationReport, s string) string {
+	thresholds := report.Thresholds
+	setAside, relevant := "", ""
+	if report.Replay > 0 && !report.ReplayExcluded {
+		setAside, relevant = " (all labels)", " (live labels)"
+		if thresholds.SetAsideLive {
+			setAside = relevant
+		}
+	}
+	serve := fmt.Sprintf("serve%s in full from %.3f", s, thresholds.Relevant)
+	if !thresholds.ServesInFull() {
+		serve = "serve" + s + " nothing in full"
+	}
+	return fmt.Sprintf("set%s aside below %.3f%s, %s%s", s, thresholds.SetAside, setAside, serve, relevant)
 }
 
 // stageList names the recall stages, rising.
