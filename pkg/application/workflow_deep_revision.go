@@ -109,7 +109,7 @@ func (w *WorkflowSession) delegateWaits(child engine.Link) (bool, error) {
 // deepRevisionPages renders a revision's reading: first the revised draft,
 // its refs' fit and its changed passages, then the entries read since the
 // verifier last read, which held names.
-func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, number int, held deepHeld) ([]model.DeepReadingPage, error) {
+func deepRevisionPages(ctx *engine.Context, base string, number int, held deepHeld, placed verifierPlaced) ([]model.DeepReadingPage, error) {
 	refFit, err := deepRefFit(ctx)
 	if err != nil {
 		return nil, err
@@ -120,8 +120,8 @@ func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, nu
 	lead.WriteString(refFit)
 	lead.WriteString(preflightRaised(ctx.Store))
 	lead.WriteString("\n## Changed since your last findings\n\n" + revisionPassages(ctx.Store, base))
-	pages, _, err := w.deepReading(ctx, lead.String(), nil, held)
-	return pages, err
+	pages, _ := deepReading(ctx, lead.String(), nil, held, placed)
+	return pages, nil
 }
 
 // revisionPassages renders the passages of base that changed since the

@@ -442,7 +442,16 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	if fresh != "" {
 		writes[fieldDeepFresh] = fresh
 	}
-	pages, held, err := w.deepPages(ctx, base)
+	// One placement serves every rendering of the round: another would start
+	// a ranking pass over what the first left unscored.
+	var placed verifierPlaced
+	if ctx.Graph != nil {
+		placed, err = w.verifierPlacement(ctx)
+		if err != nil {
+			return fmt.Errorf("prepareDeep: %w", err)
+		}
+	}
+	pages, held, err := deepPages(ctx, base, placed)
 	if err != nil {
 		return fmt.Errorf("prepareDeep: %w", err)
 	}
@@ -460,7 +469,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		taken, _ := ctx.Store.Get(fieldDeepRevisions)
 		number := deepRoundCount(taken) + 1
 		writes[fieldDeepRevisions] = number
-		revision, err := w.deepRevisionPages(ctx, base, number, previous)
+		revision, err := deepRevisionPages(ctx, base, number, previous, placed)
 		if err != nil {
 			return fmt.Errorf("prepareDeep: %w", err)
 		}
@@ -570,7 +579,7 @@ func checkoutFile(checkout fs.FS, path string) (string, bool, error) {
 // deepPages renders the verifier's whole reading, led by the draft document,
 // its refs' fit, what pre-flight raised and the changed passages since the
 // last verdict, and names the entries it serves.
-func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld, error) {
+func deepPages(ctx *engine.Context, base string, placed verifierPlaced) ([]model.DeepReadingPage, deepHeld, error) {
 	refFit, err := deepRefFit(ctx)
 	if err != nil {
 		return nil, deepHeld{}, err
@@ -587,7 +596,8 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.D
 			}
 		}
 	}
-	return w.deepReading(ctx, lead.String(), preflightRules(ctx.Store), deepHeld{})
+	pages, served := deepReading(ctx, lead.String(), preflightRules(ctx.Store), deepHeld{}, placed)
+	return pages, served, nil
 }
 
 // deepHeld names the entries a verifier's reading served in full and those it
@@ -630,14 +640,14 @@ func preflightRaised(store *engine.Store) string {
 	return b.String()
 }
 
-// deepReading pages lead and rules with the entries verifierPlacement serves
-// in full, then the briefs, each set-aside with its code, a closed brief
-// beside its closer short, then one closing block listing the rest; it
-// leaves out what skip holds already, and names what it serves.
-func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld, error) {
+// deepReading pages lead and rules with the entries placed serves in full,
+// then the briefs, each set-aside with its code, a closed brief beside its
+// closer short, then one closing block listing the rest; it leaves out what
+// skip holds already, and names what it serves.
+func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld, placed verifierPlaced) ([]model.DeepReadingPage, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
-		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}, nil
+		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}
 	}
 	heldFull := map[string]bool{}
 	for _, id := range skip.Full {
@@ -690,10 +700,6 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			}
 		}
 	}
-	placed, err := w.verifierPlacement(ctx)
-	if err != nil {
-		return nil, deepHeld{}, err
-	}
 	slots := placed.slots
 	lead += llmops.DeepRankingNote(model.VerifierRankingSources(slots, placed.input), placed.judge, placed.input.Widened)
 	var lines []llmops.DeepListedLine
@@ -738,7 +744,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 	if len(lines) > 0 || counted > 0 {
 		rest = append(rest, llmops.DeepListedBlock(lines, counted))
 	}
-	return model.DeepReadingPages(lead, rules, first, rest), served, nil
+	return model.DeepReadingPages(lead, rules, first, rest), served
 }
 
 func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {

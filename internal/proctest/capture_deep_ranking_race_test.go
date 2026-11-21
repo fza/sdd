@@ -3,6 +3,7 @@ package proctest_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -107,5 +108,19 @@ func TestCaptureDeep_ARevisionAdvancesWhileItsRankingPassesEnd(t *testing.T) {
 	awaitRankingRecord(t, world, session, capture.instance)
 	if loggedRankingRecord(t, world, session) {
 		t.Fatal("a ranking pass's scores should stay off the session's log")
+	}
+}
+
+// A revision's round builds its reading once, whichever pages it renders
+// from it: the entries the pass begun as assemble passed left unscored go to
+// the judge in no second pass of the same round.
+func TestCaptureDeep_ARevisionRanksItsReadingOnce(t *testing.T) {
+	capture := revisedBesideRanking(t, "deep-ranking-once")
+	proctest.RequireStep(t, capture.serve, "deepWait")
+	asked := capture.asked()
+	for _, id := range []string{raceSecond, raceLate} {
+		if n := len(asked) - len(slices.DeleteFunc(slices.Clone(asked), func(other string) bool { return other == id })); n != 1 {
+			t.Fatalf("the round asked the judge about %s %d times: one pass is all it starts", id, n)
+		}
 	}
 }
