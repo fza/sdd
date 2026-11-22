@@ -364,39 +364,6 @@ type RegistryArgs struct {
 	Class   string `json:"class,omitempty" jsonschema:"filter: predicate, query, or command"`
 }
 
-// Notices holds what the host tells the agent beside a result, at most one
-// notice per kind, each kind omitted when empty.
-type Notices struct {
-	Config string `json:"config,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values"`
-	Sync   string `json:"sync,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says"`
-}
-
-func (n Notices) texts() []string {
-	var texts []string
-	for _, text := range []string{n.Config, n.Sync} {
-		if text != "" {
-			texts = append(texts, text)
-		}
-	}
-	return texts
-}
-
-// NoticesField carries a result's notices, the field omitted when none is set.
-type NoticesField struct {
-	Notices Notices `json:"notices,omitzero" jsonschema:"what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error"`
-}
-
-// setNotices sets each kind notices carries, keeping a kind the handler set
-// itself, such as the sync notice of a teardown.
-func (f *NoticesField) setNotices(notices Notices) {
-	if notices.Config != "" {
-		f.Notices.Config = notices.Config
-	}
-	if notices.Sync != "" {
-		f.Notices.Sync = notices.Sync
-	}
-}
-
 type RegistryFuncResult struct {
 	Name   string   `json:"name"`
 	Class  string   `json:"class"`
