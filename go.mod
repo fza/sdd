@@ -97,4 +97,4 @@ require (
 // source and honor replace; only `go install pkg@version` (which sdd does not
 // use) would break. Remove this directive once the change lands upstream and
 // bump the require above to the released teilomillet/gollm version.
-replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20261115173200-56055fc21e3a
+replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20261115215633-2c02f3cb25d7
