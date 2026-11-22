@@ -443,12 +443,12 @@ func TestInit_RepeatIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestInit_UpgradeFromTopLevelStamps covers an upgrade over installs whose
-// Claude render carries its stamps as top-level frontmatter keys and ships the
-// German vocabulary reference: init reads those stamps, refreshes the unedited
-// SKILL.md with stamps under metadata: without asking, keeps the Codex render
-// current, and prunes the vocabulary reference the bundle no longer ships.
-func TestInit_UpgradeFromTopLevelStamps(t *testing.T) {
+// TestInit_UpgradePrunesTheVocabularyReference covers an upgrade over installs
+// that ship the German vocabulary reference beside a current SKILL.md, stamped
+// at the top level for Claude and under metadata: for Codex: init keeps both
+// renders current and prunes the vocabulary reference the bundle no longer
+// ships.
+func TestInit_UpgradePrunesTheVocabularyReference(t *testing.T) {
 	tmp := t.TempDir()
 	h := initExistingWithAgents(t, tmp, model.AgentClaude, model.AgentCodex)
 
@@ -461,7 +461,7 @@ func TestInit_UpgradeFromTopLevelStamps(t *testing.T) {
 		t.Fatalf("expected the bundle to open with SKILL.md, got %s", embedded.RelPath)
 	}
 	hash := model.ComputeSkillHash(embedded.Content)
-	topLevel := strings.Replace(string(embedded.Content), "\n---\n", "\nsdd-content-hash: "+hash+"\nsdd-version: v0.1.0\n---\n", 1)
+	topLevel := strings.Replace(string(embedded.Content), "\n---\n", "\nsdd-content-hash: "+hash+"\nsdd-version: v0.2.0\n---\n", 1)
 	claudeSkill := filepath.Join(tmp, ".claude/skills/sdd/SKILL.md")
 	if err := os.WriteFile(claudeSkill, []byte(topLevel), 0o644); err != nil {
 		t.Fatal(err)
@@ -494,23 +494,19 @@ func TestInit_UpgradeFromTopLevelStamps(t *testing.T) {
 		modified = append(modified, r.SkippedModified...)
 		modified = append(modified, r.Overwritten...)
 	}
-	if !slices.Contains(refreshed, claudeSkill) {
-		t.Errorf("unedited top-level-stamped SKILL.md should be refreshed, got refreshed=%v", refreshed)
+	if len(refreshed) != 0 {
+		t.Errorf("no file should be refreshed, got %v", refreshed)
 	}
 	if len(modified) != 0 {
 		t.Errorf("no file should be treated as modified, got %v", modified)
 	}
-	if !slices.Contains(current, codexSkill) {
-		t.Errorf("codex SKILL.md should stay current, got current=%v", current)
+	for _, skill := range []string{claudeSkill, codexSkill} {
+		if !slices.Contains(current, skill) {
+			t.Errorf("%s should stay current, got current=%v", skill, current)
+		}
 	}
-
-	data := readFile(t, claudeSkill)
-	sf := model.ParseSkillFile(claudeSkill, data)
-	if sf.StampsTopLevel || sf.StoredHash != hash || sf.StoredVersion != "v0.2.0" {
-		t.Errorf("refreshed SKILL.md should carry fresh stamps under metadata, got version=%q hash=%q topLevel=%v", sf.StoredVersion, sf.StoredHash, sf.StampsTopLevel)
-	}
-	if strings.Contains(string(data), "\nsdd-version:") || strings.Contains(string(data), "\nsdd-content-hash:") {
-		t.Errorf("refreshed SKILL.md still carries a top-level stamp:\n%.400s", data)
+	if got := string(readFile(t, claudeSkill)); got != topLevel {
+		t.Errorf("the Claude SKILL.md should keep its top-level stamps, got:\n%.400s", got)
 	}
 
 	for _, p := range vocabularies {
@@ -540,7 +536,7 @@ func TestInit_PostUpgradeRefreshesDriftedPristine(t *testing.T) {
 
 	oldContent := []byte("---\nname: " + entry.Skill + "\n---\nprior bundle body\n")
 	oldHash := model.ComputeSkillHash(oldContent)
-	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, "v0.1.0", oldHash)
+	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, model.AgentClaude, "v0.1.0", oldHash)
 	if err != nil {
 		t.Fatal(err)
 	}
