@@ -21,6 +21,12 @@ type shellSession struct {
 	// pageReads holds, per tool, the full reads of its paged result waiting
 	// on the pages not yet served.
 	pageReads map[string]pageRead
+	// call is the callKey of the call in flight; pagedCall is the callKey of
+	// the call before it when that call's answer was paged. repeatsPaged is
+	// set while the call in flight repeats it.
+	call         string
+	pagedCall    string
+	repeatsPaged bool
 }
 
 type pageRead struct {

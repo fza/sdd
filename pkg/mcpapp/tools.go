@@ -579,6 +579,9 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		workflow.CutRepeats()
 		ss.root = workflow
 	}
+	ss.call = callKey(req)
+	ss.repeatsPaged = ss.call != "" && ss.call == ss.pagedCall
+	ss.pagedCall = ""
 	if ss.root.Finished() {
 		ss.mu.Unlock()
 		s.sessions.evict(id)

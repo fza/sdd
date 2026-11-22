@@ -136,6 +136,48 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 	t.Logf("largest results: %v", bound.largest)
 }
 
+// A paged read called again without page right after its paged answer serves
+// page 1 again, opening with a line that says so and names page 2.
+func TestARepeatedPagedCallSaysItServesPageOneAgain(t *testing.T) {
+	dir, ids, _ := largeGraph(t)
+	cs, _ := boundedConnect(t, newTestServer(t, nil, dir, "").srv, false)
+	session := openSession(t, cs).Session
+	const again = "(page 1 again: call show with the same arguments and page 2 for the rest)\n\n"
+	args := map[string]any{"session": session, "ids": ids[:30]}
+	show := func() string {
+		t.Helper()
+		entries, _ := callRaw(t, cs, "show", args)["entries"].(string)
+		return entries
+	}
+
+	first := show()
+	if strings.HasPrefix(first, "(page 1 again") || !strings.Contains(first, "page 2 for the next") {
+		t.Fatalf("the first call should serve page 1 plainly, got %.200q", first)
+	}
+	repeated := show()
+	if !strings.HasPrefix(repeated, again) || !strings.HasPrefix(strings.TrimPrefix(repeated, again), first[:strings.Index(first, "\n")]) ||
+		!strings.Contains(repeated, "page 2 for the next") {
+		t.Fatalf("the repeated call should open with the page-1-again line, then page 1, got %.200q", repeated)
+	}
+	args["page"] = 2
+	if page := show(); strings.Contains(page, "page 1 again") {
+		t.Errorf("a later page should not carry the line, got %.200q", page)
+	}
+	delete(args, "page")
+	if repeated := show(); !strings.HasPrefix(repeated, again) {
+		t.Errorf("the call repeated after a later page should carry the line, got %.200q", repeated)
+	}
+
+	callRaw(t, cs, "show", map[string]any{"session": session, "ids": ids[:1]})
+	if fresh := show(); strings.HasPrefix(fresh, "(page 1 again") {
+		t.Errorf("a call with another call between should serve page 1 plainly, got %.200q", fresh)
+	}
+	args["ids"] = ids[1:31]
+	if other := show(); strings.HasPrefix(other, "(page 1 again") {
+		t.Errorf("a call with other arguments should serve page 1 plainly, got %.200q", other)
+	}
+}
+
 // boundedClient connects to a server over graphDir through a client that
 // lists its proofs and fails the test on every result past the bound.
 func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedResults) {

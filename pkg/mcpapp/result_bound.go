@@ -40,7 +40,32 @@ func pagedText(ss *shellSession, tool, text string) string {
 		ss.pages = map[string][]string{}
 	}
 	ss.pages[tool] = model.SplitServed(text, textBudget-500)
-	return pageText(ss, tool, 1)
+	page := pageText(ss, tool, 1)
+	if ss.repeatsPaged {
+		page = fmt.Sprintf("(page 1 again: call %s with the same arguments and page 2 for the rest)\n\n%s", tool, page)
+	}
+	ss.pagedCall = ss.call
+	return page
+}
+
+// callKey is what a repeat of req shares with it: the tool and its arguments
+// but page and the proofs, which change between repeats.
+func callKey(req *mcp.CallToolRequest) string {
+	if req == nil || req.Params == nil {
+		return ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return ""
+	}
+	for _, field := range []string{"page", "held", "reread"} {
+		delete(args, field)
+	}
+	key, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	return req.Params.Name + string(key)
 }
 
 // pagedRead is pagedText for a read that logs the entries it serves: a paged
@@ -87,6 +112,7 @@ func heldPage(ss *shellSession, tool string, page int) (string, error) {
 	if page > len(ss.pages[tool]) {
 		return "", toolError("no page %d of a %s result is held: call %s again without page", page, tool, tool)
 	}
+	ss.pagedCall = ss.call
 	return pageText(ss, tool, page), nil
 }
 
