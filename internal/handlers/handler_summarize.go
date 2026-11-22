@@ -246,8 +246,8 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
 		slices.Sort(commitPaths)
-		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
-			return errors.Join(runErr, commitFailure(err, msg, commitPaths))
+		if err := h.commitWritten(ctx, msg, commitPaths); err != nil {
+			return errors.Join(runErr, err)
 		}
 	}
 	return runErr
@@ -328,8 +328,8 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: summarize %s (manual)", entry.ID)
-		if err := h.commitGraph(ctx, msg, filePath); err != nil {
-			return commitFailure(err, msg, []string{filePath})
+		if err := h.commitWritten(ctx, msg, []string{filePath}); err != nil {
+			return err
 		}
 	}
 
@@ -340,6 +340,16 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 		cmd.OnTitled(entry.ID, entry.Title)
 	}
 	return nil
+}
+
+// commitWritten commits the entry files a run wrote as commitGraph does; only
+// a commit that did not land names them as uncommitted.
+func (h *Handler) commitWritten(ctx context.Context, msg string, paths []string) error {
+	err := h.commitUnderGraphLock(ctx, msg, paths...)
+	if err != nil {
+		return commitFailure(err, msg, paths)
+	}
+	return h.afterGraphCommit(ctx, msg)
 }
 
 // commitFailure names the entry files a failed commit left on disk and the
