@@ -49,14 +49,14 @@ var questionForms = []struct {
 		if at < 0 {
 			return "", false
 		}
-		return firstWords(text[at+len(p[0]):], 1)
+		return wordsAfter(text[at+len(p[0]):], 1)
 	}},
 	{regexp.MustCompile(`^2 words after "(.+)"\?$`), func(text string, p []string) (string, bool) {
 		at := strings.Index(text, p[0])
 		if at < 0 {
 			return "", false
 		}
-		return firstWords(text[at+len(p[0]):], 2)
+		return wordsAfter(text[at+len(p[0]):], 2)
 	}},
 	{regexp.MustCompile(`^2 words before "(.+)"\?$`), func(text string, p []string) (string, bool) {
 		at := strings.Index(text, p[0])
@@ -141,6 +141,23 @@ func boundaryAfter(text string, i int) bool {
 
 func firstWords(s string, n int) (string, bool) {
 	words := wordsOf(s)
+	if len(words) < n {
+		return "", false
+	}
+	return strings.Join(words[:n], " "), true
+}
+
+// wordsAfter is firstWords for s that starts inside a line, where a number
+// such as the "1." ending a sentence is a word, not a list marker.
+func wordsAfter(s string, n int) (string, bool) {
+	line, rest, _ := strings.Cut(s, "\n")
+	var words []string
+	for _, field := range strings.Fields(line) {
+		if word := strings.TrimFunc(field, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }); word != "" {
+			words = append(words, word)
+		}
+	}
+	words = append(words, wordsOf(rest)...)
 	if len(words) < n {
 		return "", false
 	}
