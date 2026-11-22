@@ -5,8 +5,6 @@
 package factory
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,7 +47,7 @@ func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 			timeout = d
 		}
 	}
-	b := bound{timeout: timeout}
+	b := bound{timeout: timeout, setting: "llm.timeout"}
 	for _, opt := range opts {
 		opt(&b)
 	}
@@ -59,13 +57,6 @@ func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 // Option adjusts the runner New composes.
 type Option func(*bound)
 
-// bound is the per-call timeout and the flag that set it; no flag means
-// llm.timeout or the provider default.
-type bound struct {
-	timeout time.Duration
-	flag    string
-}
-
 // WithTimeoutFlag bounds each call by d in place of llm.timeout, for the
 // command-line flag named flag that set it; a zero d leaves the bound as is.
 func WithTimeoutFlag(flag string, d time.Duration) Option {
@@ -74,26 +65,6 @@ func WithTimeoutFlag(flag string, d time.Duration) Option {
 			b.timeout, b.flag = d, flag
 		}
 	}
-}
-
-func (b bound) hint() string {
-	if b.flag != "" {
-		return fmt.Sprintf("no answer within --%s (%s); raise it with `--%s <duration>`", b.flag, b.timeout, b.flag)
-	}
-	return fmt.Sprintf("no answer within llm.timeout (%s); raise it with `sdd config set llm.timeout <duration>`", b.timeout)
-}
-
-// namedTimeout names what set the bound of a call that ran out of it: the
-// error otherwise reaches a CLI user or an MCP agent with no hint how to
-// raise it. A deadline the caller set itself is passed through.
-func namedTimeout(r llm.Runner, b bound) llm.Runner {
-	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
-		result, err := r.Run(ctx, req)
-		if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("%w: %s", err, b.hint())
-		}
-		return result, err
-	})
 }
 
 // compose builds the provider adapter and its rate-limit wrap — everything
