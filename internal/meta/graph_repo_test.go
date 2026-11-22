@@ -139,6 +139,43 @@ func TestResolveSwitchedProject(t *testing.T) {
 	}
 }
 
+func TestRefuseNestedGraphRepo(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/app-sdd")
+	cases := []struct {
+		name      string
+		clone     string
+		graphRepo model.RepoID
+		wantError bool
+	}{
+		{name: "a graph repository holding its graph", clone: "graph_dir: graph\nrepo_id: example.test/acme/app-sdd\n", graphRepo: repoID},
+		{name: "a graph repository not cloned yet", graphRepo: repoID},
+		{name: "a graph repository naming another one", clone: "graph_repo: example.test/acme/next-sdd\n", graphRepo: repoID, wantError: true},
+		{name: "a project of its own", clone: "graph_repo: example.test/acme/next-sdd\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			clone := filepath.Join(root, "clone")
+			if tc.clone != "" {
+				writeConfig(t, clone, "config.yaml", tc.clone)
+			}
+			project := meta.Project{Root: clone, WorkRoot: filepath.Join(root, "code"), GraphRepo: tc.graphRepo}
+
+			err := meta.RefuseNestedGraphRepo(project)
+
+			if !tc.wantError {
+				if err != nil {
+					t.Fatalf("the project should be accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), string(repoID)) || !strings.Contains(err.Error(), filepath.Join(clone, ".sdd", "config.yaml")) {
+				t.Errorf("the refusal should name the graph repository and its config file: %v", err)
+			}
+		})
+	}
+}
+
 func TestProjectLocalLayerFile(t *testing.T) {
 	cases := []struct {
 		name    string

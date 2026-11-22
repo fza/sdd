@@ -181,7 +181,7 @@ func TopLevelKeys(data []byte) ([]string, error) {
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
 // graph_repo: the pointer keys, project_dir for older builds and graph_dir for
-// the guard against stock sdd.
+// the guard against builds without graph_repo, which ParseConfig ignores there.
 var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
 
 // SyncConfig is the `sync` block. Default and Hosts are the git limits per
@@ -422,11 +422,15 @@ func (rc RetryConfig) Resolved() (maxAttempts int, baseDelay, maxDelay time.Dura
 }
 
 // ParseConfig unmarshals YAML bytes into a PerRepoConfig. Empty input is
-// valid and yields a zero-valued config.
+// valid and yields a zero-valued config. A config naming a graph_repo reads
+// without its graph_dir: the graph repository's own config names the folder.
 func ParseConfig(data []byte) (*PerRepoConfig, error) {
 	var cfg PerRepoConfig
 	if err := UnmarshalYAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if cfg.GraphRepo != "" {
+		cfg.GraphDir = ""
 	}
 	return &cfg, nil
 }

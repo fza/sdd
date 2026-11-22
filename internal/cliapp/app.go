@@ -1513,6 +1513,10 @@ func resolveProject() (meta.Project, error) {
 		if err != nil {
 			return meta.Project{}, err
 		}
+		err = meta.RefuseNestedGraphRepo(project)
+		if err != nil {
+			return meta.Project{}, err
+		}
 	}
 	err = requireGraphInsideRepository(project)
 	if err != nil {

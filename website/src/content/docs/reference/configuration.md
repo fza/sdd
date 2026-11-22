@@ -109,6 +109,7 @@ sdd init --graph-repo git@github.com:acme/app-sdd.git
 - The clone belongs to sdd. Before every sync round and every push, sdd restores the tracked files, removes untracked ones and drops commits it did not write, so a hand edit there is lost. The file `SDD_MANAGED__EDITS_ARE_DISCARDED.md` at the clone's root says so.
 - The local layer is the code repository's `.sdd/config.local.yaml`. It may set any key, and `sdd config set --local` writes there, never into the clone.
 - `graph_repo` wins over a `project_dir` beside it, and sdd ignores the `graph_dir` beside it. An sdd version without `graph_repo` reads that `graph_dir` as the graph folder and finds a file, so every capture fails with `not a directory` and writes nothing.
+- A graph repository whose own config sets `graph_repo` is an error: sdd names the key and the file, and works on neither.
 - A graph repository set up through `--graph-repo` or `--project-dir` gets `graph_dir: graph`. A recorded `graph_dir` is always kept.
 - The clone [syncs on its own](#sync). When the upstream branch was force-pushed, the clone follows it and never force-pushes back. Entries the new upstream lacks are set aside under `.git/sdd-set-aside/` in the clone. One whose references all resolve and that passes pre-flight's mechanical checks returns on its own; for the rest, the sync notice names how to capture each again or discard it.
 
