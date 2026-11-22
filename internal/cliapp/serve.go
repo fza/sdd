@@ -76,12 +76,14 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				},
 			},
 		),
-		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withShutdownWindow(shutdownWindow, withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
-			children := claude.NewChildren()
-			ctx = claude.WithChildren(ctx, children)
+			children := servedChildren(ctx)
 			kill := func(context.Context) { killServedChildren(ctx, children) }
-			defer kill(ctx)
+			defer func() {
+				enterServeStage(ctx, "killing the claude CLI calls still running")
+				kill(ctx)
+			}()
 			watch, err := newServedWatch(ctx, cmd)
 			if err != nil {
 				return err
@@ -119,8 +121,11 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			// call outlives the server.
 			defer func() {
 				stopTimer()
+				enterServeStage(ctx, "waiting for the sync round in flight")
 				<-timerDone
+				enterServeStage(ctx, "waiting for the background calibration")
 				<-calibrationDone
+				enterServeStage(ctx, "waiting for the embedding model's warm-up")
 				<-warmDone
 			}()
 			var cacheNotice func(context.Context) string
@@ -128,6 +133,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				go runCachePruneTimer(timerCtx, launchCachePrune)
 				cacheNotice = serveCacheNotice
 			}
+			enterServeStage(ctx, "closing the MCP connection and the work its calls started")
 			return runMCPServerWith(ctx, cmd, mcpserver.Options{
 				Application:     application,
 				LocalIdentity:   identity,
@@ -138,7 +144,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 					return watch.admit(ctx)
 				},
 			})
-		})),
+		}))),
 	}
 }
 

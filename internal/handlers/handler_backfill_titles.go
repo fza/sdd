@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/networkteam/slogutils"
@@ -69,6 +70,10 @@ func (h *Handler) BackfillTitles(ctx context.Context, cmd *command.BackfillTitle
 		return h.recordTitlesFailed(ctx, "no LLM is configured")
 	}
 	err := h.Summarize(ctx, &command.SummarizeCmd{Backfill: true})
+	if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+		// A stop is no failure of the titles: the next run titles the rest.
+		return ctx.Err()
+	}
 	if err != nil {
 		slogutils.FromContext(ctx).Warn("title backfill failed", "err", err)
 		return h.recordTitlesFailed(ctx, "a title call or its commit failed")
