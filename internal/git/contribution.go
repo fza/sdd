@@ -14,7 +14,10 @@ import (
 // branch of the checkout at dir: ref is the configured upstream ref,
 // defaultBranch the repository's default branch.
 func CheckContribution(ctx context.Context, dir, ref, defaultBranch string) error {
-	branch, err := currentBranch(ctx, dir)
+	branch, err := currentBranch(gitIn(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
+	if errExitCode(err) == 1 {
+		branch, err = "", nil // detached HEAD
+	}
 	if err != nil {
 		return err
 	}
@@ -41,18 +44,6 @@ func CheckContribution(ctx context.Context, dir, ref, defaultBranch string) erro
 
 func gitIn(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-}
-
-func currentBranch(ctx context.Context, dir string) (string, error) {
-	out, err := gitIn(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("git symbolic-ref: %w", err)
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 func isAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, error) {
