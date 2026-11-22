@@ -22,6 +22,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `participant`, `llm.*`, `embedding.*`, `sync.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
+| `events` | Project | The team's choice. sdd ignores it in the local file and in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 
 :::caution[Keep API keys out of the project file]
@@ -120,6 +121,22 @@ Default rate limits:
 | `embedding.rate_limit_rps` | `5` for `text-embedding-3` models, `3` for other `openai` models | Maximum requests per second to `openai`. `ollama` has no limit. |
 | `embedding.query_template` | None | Template for search queries. See [query and document templates](#query-and-document-templates). |
 | `embedding.document_template` | None | Template for entries when sdd indexes them. |
+
+### Events
+
+sdd keeps project events in an event store under `.sdd/events/`, one folder per channel.
+
+Every write adds a file `<time>-<random>.jsonl` and never changes one, so files from two clones merge in git without conflicts. sdd merges a channel's small files into a larger one as they pile up. Each line holds one event as a JSON object: `id`, `type`, `time`, `writer`, `subject` (`uri`, `entries` or both) and the payload, as `payload` when it is JSON, else base64 in `payload_base64`. The folder names the channel. A file whose last line has no newline, or with a line that is no complete event, fails every read with an error naming the file, and no merge drops it. A field sdd does not know is ignored, and a merge keeps its line as written, so the lines a newer sdd writes in a `git` channel still read in an older one.
+
+| Key | File | Default | Meaning |
+| --- | --- | --- | --- |
+| `events.channels.<name>.share` | Project | `local` | `local` keeps the channel on this machine, with a `.gitignore` in its folder. `git` commits it with the graph in the next sdd commit. |
+
+| Command | What it does |
+| --- | --- |
+| `sdd events compact` | Merges each channel's files into one, holding every event once. |
+| `sdd events export [--channel <name>]...` | Writes the events as JSON Lines ordered by time, every channel unless `--channel` names some. |
+| `sdd events import <file\|->` | Validates every line first, then appends the events the store does not hold yet. It refuses a field it does not know, since it would drop it. |
 
 ### Sync and sessions
 
