@@ -77,12 +77,14 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			if err != nil {
 				return err
 			}
-			var cacheNotice func(context.Context) string
+			var beforeCall func(context.Context, string) (context.Context, mcpserver.Notices, error)
 			if launchCachePrune != nil {
 				timerCtx, stopTimer := context.WithCancel(ctx)
 				defer stopTimer()
 				go runCachePruneTimer(timerCtx, launchCachePrune)
-				cacheNotice = serveCacheNotice
+				beforeCall = func(ctx context.Context, _ string) (context.Context, mcpserver.Notices, error) {
+					return ctx, mcpserver.Notices{Cache: serveCacheNotice(ctx)}, nil
+				}
 			}
 
 			transport := cmd.String("transport")
@@ -91,7 +93,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
-				CacheNotice:   cacheNotice,
+				BeforeCall:    beforeCall,
 			})
 			if err != nil {
 				return err

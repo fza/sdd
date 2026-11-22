@@ -26,6 +26,11 @@ func (n *onceNotice) take(context.Context) string {
 	return notice
 }
 
+// beforeCall is the host's BeforeCall, handing the notice out as notices.cache.
+func (n *onceNotice) beforeCall(ctx context.Context, _ string) (context.Context, mcpserver.Notices, error) {
+	return ctx, mcpserver.Notices{Cache: n.take(ctx)}, nil
+}
+
 func (n *onceNotice) set(notice string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -34,7 +39,7 @@ func (n *onceNotice) set(notice string) {
 
 func TestTheCacheNoticeRidesOneResponse(t *testing.T) {
 	notice := &onceNotice{notice: "background cache pruning failed at 2026-11-01T12:00:00Z: permission denied; see sdd info"}
-	env := newTestServer(t, nil, "", "", func(o *testServerOptions) { o.MCP.CacheNotice = notice.take })
+	env := newTestServer(t, nil, "", "", func(o *testServerOptions) { o.MCP.BeforeCall = notice.beforeCall })
 	client := connect(t, env.srv)
 	var opened mcpserver.ServeResponse
 	call(t, client, "start_session", map[string]any{}, &opened)
@@ -50,7 +55,7 @@ func TestTheCacheNoticeRidesOneResponse(t *testing.T) {
 
 func TestTheCacheNoticeRidesTheFirstResponse(t *testing.T) {
 	notice := &onceNotice{}
-	env := newTestServer(t, nil, "", "", func(o *testServerOptions) { o.MCP.CacheNotice = notice.take })
+	env := newTestServer(t, nil, "", "", func(o *testServerOptions) { o.MCP.BeforeCall = notice.beforeCall })
 	client := connect(t, env.srv)
 	session := openSession(t, client).Session
 

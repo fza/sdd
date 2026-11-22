@@ -154,8 +154,8 @@ func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) er
 	}
 }
 
-// serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,
-// handed out once.
+// serveCacheNotice is serve's notices.cache: a failed run's notice, handed
+// out once.
 func serveCacheNotice(ctx context.Context) string {
 	log := slogutils.FromContext(ctx)
 	loc, err := repos.DefaultLocations()
