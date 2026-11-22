@@ -25,7 +25,7 @@ func TestRenderHiding(t *testing.T) {
 	for _, want := range []string{
 		"hiding:  rules hide only on a replay proof for judge chat:claude-haiku-5-5, prompt revision ab12cd34, on 1,840 live entries\n",
 		"threshold: full · proof: 0 of 190 needed entries hidden in 53 replays, bound 0.980, graph of 1,800\n",
-		"hid 300 in 12 checks, would have hidden 300 at full · misses: 1 rescue, 0 verifier, 0 scan (the scan caught 25% of 40 planted)\n",
+		"hid 300 in 12 checks, would have hidden 300 at full · misses: 1 rescue, 0 verifier, 0 person, 0 scan (the scan caught 25% of 40 planted)\n",
 		"far-floor: narrowed · no proof yet; careful form from the first check\n",
 		"hid 200 in 12 checks, would have hidden 260 at full",
 		"margins: of 446 references, 1 scored below the cut and 5 within 0.05 above it; a warning only, it moves no rule\n",

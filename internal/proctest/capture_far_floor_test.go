@@ -266,3 +266,51 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndAStepDown
 		})
 	}
 }
+
+// An entry the check hid that the person names in their own words at
+// playback is a person miss of the rule that hid it.
+func TestCaptureGrounding_AHiddenEntryThePersonNamesIsAMiss(t *testing.T) {
+	const judge = "test:scripted"
+	var entries []*model.Entry
+	for i := range 4 {
+		text := fmt.Sprintf("An omega gap number %d.", i)
+		entries = append(entries, &model.Entry{ID: fmt.Sprintf("20260201-1000%02d-s-tac-om%d", i, i), Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Summary: text, Content: text})
+	}
+	for i := range 3 {
+		text := fmt.Sprintf("A far gap number %d.", i)
+		entries = append(entries, &model.Entry{ID: fmt.Sprintf("20260202-1000%02d-s-tac-far", i), Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Summary: text, Content: text})
+	}
+	proofs := local.NewMemoryProofStore()
+	world, session := newCaptureWorld(t, "grounding-person",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
+		proctest.WithRelevance(local.NewMemoryRelevanceStore()), proctest.WithProofs(proofs), proctest.WithPrefilter(sdd.Prefilter{Scorer: &test.ScriptedScorer{Default: 0.1}, Judge: judge}),
+		proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
+	world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+	instance := session.Start(t, "capture", nil).Instance
+	draft := captureDraft()
+	draft["body"] = "A tactical gap: the fixture observes something about omega."
+	session.Report(t, instance, draft)
+	if gathered := session.Gather(t, instance); !strings.Contains(floorLine(gathered.Text), "s-tac-om1") {
+		t.Fatalf("the floor should hide the omega gaps:\n%s", gathered.Text)
+	}
+	proctest.RequireStep(t, session.Report(t, instance, draft), "playback")
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it, though om1 is 20260201-100001-s-tac-om1, check it later")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+
+	segments, err := proofs.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := relevance.FoldProofs(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Misses) != 1 {
+		t.Fatalf("misses %+v: the named hidden entry should be the one miss", records.Misses)
+	}
+	if miss := records.Misses[0]; miss.Capture != entryID || miss.Hidden != "20260201-100001-s-tac-om1" || miss.Rule != model.RuleFarFloor || miss.Detector != model.DetectPerson {
+		t.Fatalf("miss %+v: the person named an entry the floor hid", miss)
+	}
+}

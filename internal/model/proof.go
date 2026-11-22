@@ -3,6 +3,7 @@ package model
 import (
 	"cmp"
 	"maps"
+	"regexp"
 	"slices"
 	"time"
 )
@@ -66,6 +67,9 @@ const (
 	// DetectScan: the scan after writing found a hidden entry that
 	// duplicates or contradicts the written one.
 	DetectScan MissDetector = "scan"
+	// DetectPerson: the person's own words during the capture name a
+	// hidden entry.
+	DetectPerson MissDetector = "person"
 )
 
 // Miss is a needed entry a rule hid in a capture's check, as a detector
@@ -279,20 +283,33 @@ func DetectionRate(checks []ReplayCheck) (rate float64, planted int) {
 	return rate, planted
 }
 
+// CaptureEvidence is what a published capture shows of the entries it
+// needed: those it answers (refs, supersedes, closes), the findings of its
+// deep verifier, and the person's own words relayed during it.
+type CaptureEvidence struct {
+	Answered []string
+	Findings []DeepFinding
+	Words    []string
+}
+
 // CaptureProofs returns the proof records a published capture adds, per
 // judge whose scores its reading holds: the tally of its check, the margins
-// of the entries it answers above the threshold's cut, a rescue miss for
-// each entry it answers that a rule hid in its check, and a verifier miss
-// for each other hidden entry a finding of its deep verifier rests on.
-func CaptureProofs(entryID string, reading *Reading, answered []string, findings []DeepFinding, at time.Time) ProofRecords {
+// of the entries it answers above the threshold's cut, and a miss for each
+// entry a rule hid in its check that the capture still needed, recorded by
+// the first detector that saw it: rescue for an entry it answers, verifier
+// for one a finding rests on, person for one the person's words name by
+// full or short ID.
+func CaptureProofs(entryID string, reading *Reading, evidence CaptureEvidence, at time.Time) ProofRecords {
 	var records ProofRecords
 	if reading == nil {
 		return records
 	}
+	answered := evidence.Answered
 	var basis []string
-	for _, finding := range findings {
+	for _, finding := range evidence.Findings {
 		basis = append(basis, finding.Basis...)
 	}
+	named := NamedEntries(evidence.Words)
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
 		tally := CheckTally{Capture: entryID, Judge: judge, At: at}
@@ -311,6 +328,8 @@ func CaptureProofs(entryID string, reading *Reading, answered []string, findings
 					detector = DetectRescue
 				case slices.Contains(basis, id):
 					detector = DetectVerifier
+				case named[id] || named[ShortID(id)]:
+					detector = DetectPerson
 				}
 				if detector != "" && !missed[id] {
 					missed[id] = true
@@ -444,4 +463,24 @@ func NewHidingReport(records ProofRecords, judge, revision string, graphSize int
 		}
 	}
 	return report
+}
+
+var (
+	namedFullID  = regexp.MustCompile(`\b\d{8}-\d{6}-[a-z]-[a-z]{3}-[a-z0-9]+\b`)
+	namedShortID = regexp.MustCompile(`\b[a-z]-[a-z]{3}-[a-z0-9]+\b`)
+)
+
+// NamedEntries returns the entry IDs words name, in full or in the short
+// type-layer-suffix form, as a set holding each form found.
+func NamedEntries(words []string) map[string]bool {
+	named := map[string]bool{}
+	for _, text := range words {
+		for _, id := range namedFullID.FindAllString(text, -1) {
+			named[id] = true
+		}
+		for _, id := range namedShortID.FindAllString(namedFullID.ReplaceAllString(text, " "), -1) {
+			named[id] = true
+		}
+	}
+	return named
 }

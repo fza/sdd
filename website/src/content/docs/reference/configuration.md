@@ -203,9 +203,9 @@ auto:    on (verify.auto_calibrate): `sdd serve` scores unscored labelled pairs 
          uncalibrated: run `sdd grounding update`
 hiding:  rules hide only on a replay proof for judge chat:claude-haiku-5-5, prompt revision 1c0e9a52, on 1,840 live entries
          threshold: compute-only · no proof yet
-           hid 0 in 12 checks, would have hidden 310 at full · misses: 0 rescue, 0 verifier, 0 scan (no planted miss yet)
+           hid 0 in 12 checks, would have hidden 310 at full · misses: 0 rescue, 0 verifier, 0 person, 0 scan (no planted miss yet)
          far-floor: narrowed · no proof yet; careful form from the first check
-           hid 240 in 12 checks, would have hidden 395 at full · misses: 0 rescue, 0 verifier, 0 scan (no planted miss yet)
+           hid 240 in 12 checks, would have hidden 395 at full · misses: 0 rescue, 0 verifier, 0 person, 0 scan (no planted miss yet)
          margins: of 31 references, 0 scored below the cut and 2 within 0.05 above it; a warning only, it moves no rule
 ```
 
@@ -235,10 +235,11 @@ The threshold and the far floor are the hiding rules: each sets candidates aside
 
 The proof comes from past entries replayed in the background on the ranking judge of a command without a client. A replayed entry plays the draft: its text without every sentence that names an entry it references, against the entries with earlier IDs. Its candidates are those a semantic search of that text and the listings of its topics find, at most 764, scored with the far entries in every call; its references are not given to the far floor, since they are the answers the replay checks. A needed entry is one the replayed entry refs, closes or supersedes. The proof is the Wilson lower bound (95%) of the share of needed entries the rule did not hide. It names the judge, the revision of the judge's prompt, the graph's size and the counts. It expires when the prompt changes, or once the graph has grown by a quarter since; a threshold whose proof expired sets nothing aside, and a far floor falls back to its careful form, until fresh replays prove it again. A judge without a prompt, a reranker, has no revision. Replayed entries are spread over topic areas and months. About 53 replays give a full proof.
 
-A rule goes one step down on misses from three captures since its latest replay, and only a fresh replay lifts it again. A miss is a needed entry a rule hid in a capture's check, recorded by one of three detectors:
+A rule goes one step down on misses from three captures since its latest replay, and only a fresh replay lifts it again. A miss is a needed entry a rule hid in a capture's check, recorded by one of four detectors:
 
 - Rescue: the written entry references an entry a rule hid in its own check.
 - Verifier: a finding of the `deep` verifier rests on an entry the drafting agent's check hid.
+- Person: the person's own words relayed during the capture, at playback among them, name an entry its check hid, by full or short ID.
 - Scan after writing: in the background, the judge reads the written entry and the 20 entries each rule hid closest to its line and flags those that duplicate or contradict it, a question other than the ranking's. About one judge call per written entry.
 
 Each replay also hides one of its needed entries on purpose and has the scan read it among the entries hidden closest to the line, so `sdd grounding status` shows beside each count of misses the share of planted misses the scan caught: without it, no misses could not be told from a scan that sees nothing. The status also shows the margins of the references the captures wrote above the threshold's cut, and how many lie below it or within 0.05 above. A growing share close above the cut warns that it sits too high; it moves no rule.

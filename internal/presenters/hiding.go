@@ -59,7 +59,7 @@ func proofText(state model.RuleState) string {
 
 func missesText(misses map[model.MissDetector]int) string {
 	var parts []string
-	for _, detector := range []model.MissDetector{model.DetectRescue, model.DetectVerifier, model.DetectScan} {
+	for _, detector := range []model.MissDetector{model.DetectRescue, model.DetectVerifier, model.DetectPerson, model.DetectScan} {
 		parts = append(parts, fmt.Sprintf("%d %s", misses[detector], detector))
 	}
 	return strings.Join(parts, ", ")

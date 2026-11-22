@@ -274,7 +274,8 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	if err := runtime.appendRelevance(w.ctx, batch); err != nil {
 		return err
 	}
-	return runtime.appendProofs(w.ctx, model.CaptureProofs(entryID, ctx.Reading, answered, findings, w.app.clock.Now()))
+	evidence := model.CaptureEvidence{Answered: answered, Findings: findings, Words: w.session.UserWords(ctx.Instance)}
+	return runtime.appendProofs(w.ctx, model.CaptureProofs(entryID, ctx.Reading, evidence, w.app.clock.Now()))
 }
 
 // openedHidden returns the entries a verifier reading of the capture served

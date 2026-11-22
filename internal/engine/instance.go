@@ -61,6 +61,9 @@ type Instance struct {
 	// answer: replayed from the log, so the refusal of repeatedWords holds
 	// across a resume.
 	lastWords map[string]chosenWords
+	// userWords are the person's words of every answer, in order; replayed
+	// from the log.
+	userWords []string
 	// unattended counts, per step, the agent's answers since a person last
 	// answered it; replayed from the log.
 	unattended map[string]int
@@ -1191,6 +1194,7 @@ func (inst *Instance) recordWords(chooser, choice, words string) {
 		inst.lastWords = map[string]chosenWords{}
 	}
 	inst.lastWords[chooser] = chosenWords{choice, words}
+	inst.userWords = append(inst.userWords, words)
 }
 
 // repeatedWords refuses user words relayed for another choice at the same

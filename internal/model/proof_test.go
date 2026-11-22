@@ -135,7 +135,7 @@ func TestCaptureProofs_TalliesTheCheckAndRecordsRescueAndVerifierMisses(t *testi
 		Hiding: []model.RuleMark{{Rule: model.RuleThreshold, Step: model.StepFull, Would: 2}, {Rule: model.RuleFarFloor, Step: model.StepNarrowed, Would: 3}},
 	}})
 	findings := []model.DeepFinding{{Basis: []string{"f2", "t2"}}}
-	records := model.CaptureProofs("e", reading, []string{"t2", "ref", "close"}, findings, proofTime)
+	records := model.CaptureProofs("e", reading, model.CaptureEvidence{Answered: []string{"t2", "ref", "close"}, Findings: findings}, proofTime)
 	if len(records.Tallies) != 1 {
 		t.Fatalf("tallies %+v: one per judge", records.Tallies)
 	}
@@ -195,5 +195,35 @@ func TestNewHidingReport(t *testing.T) {
 	}
 	if report.Margins != (model.MarginReport{Count: 3, Below: 1, Close: 1}) || report.Cut != thresholds.SetAside {
 		t.Fatalf("margins %+v: one below the cut and one within the warning band", report.Margins)
+	}
+}
+
+func TestCaptureProofs_ThePersonsWordsNameAHiddenEntry(t *testing.T) {
+	const (
+		full  = "20260101-100000-s-tac-ful"
+		short = "20260101-100001-d-cpt-sho"
+		other = "20260101-100002-s-tac-oth"
+	)
+	reading := &model.Reading{}
+	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{
+		Judge: "j", Subject: "s", Scores: map[string]uint8{full: 10, short: 20, other: 30},
+		Below: []string{full, short, other}, Hiding: []model.RuleMark{{Rule: model.RuleFarFloor, Step: model.StepNarrowed}},
+	}})
+	words := []string{"Write it, but did you see " + full + "?", "Yes. Also d-cpt-sho bears on it."}
+	records := model.CaptureProofs("e", reading, model.CaptureEvidence{Answered: []string{other}, Words: words}, proofTime)
+	got := map[string]model.MissDetector{}
+	for _, miss := range records.Misses {
+		got[miss.Hidden] = miss.Detector
+	}
+	want := map[string]model.MissDetector{full: model.DetectPerson, short: model.DetectPerson, other: model.DetectRescue}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("misses %v: an entry the person names by full or short ID is a person miss, a reference stays a rescue", got)
+	}
+}
+
+func TestNamedEntries(t *testing.T) {
+	named := model.NamedEntries([]string{"see 20260101-100000-s-tac-ful and d-cpt-sho, not re-run or x-y"})
+	if len(named) != 2 || !named["20260101-100000-s-tac-ful"] || !named["d-cpt-sho"] || named["s-tac-ful"] {
+		t.Fatalf("named %v: full and short IDs, a full one not again as short", named)
 	}
 }

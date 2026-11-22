@@ -317,7 +317,7 @@ func TestGroundingStatus_ReportsTheHidingRules(t *testing.T) {
 		{name: "without a proof", want: []string{"threshold: compute-only · no proof yet", "far-floor: narrowed · no proof yet; careful form from the first check"}},
 		{name: "with proofs", proofs: func(t *testing.T) *localadapter.MemoryProofStore { return floorProofs(t, 3) }, want: []string{
 			"far-floor: narrowed · proof: 0 of 189 needed entries hidden in 189 replays, bound 0.980, graph of 100,000; 3 misses from 3 captures since its latest replay",
-			"misses: 3 rescue, 0 verifier, 0 scan (no planted miss yet)",
+			"misses: 3 rescue, 0 verifier, 0 person, 0 scan (no planted miss yet)",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
