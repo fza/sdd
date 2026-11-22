@@ -2,18 +2,25 @@ package embed
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
 
-const defaultOllamaEndpoint = "http://localhost:11434"
+// Ollama defaults: the endpoint, and how long the model stays loaded after a
+// request; Ollama's own 5 minutes unload it between searches.
+const (
+	defaultOllamaEndpoint  = "http://localhost:11434"
+	defaultOllamaKeepAlive = "30m"
+)
 
 // ollamaEmbedder implements embed.Embedder against Ollama's batch-capable
 // `POST {endpoint}/api/embed` API (newer endpoint with list-input support
@@ -22,29 +29,37 @@ const defaultOllamaEndpoint = "http://localhost:11434"
 // backpressure).
 type ollamaEmbedder struct {
 	endpoint         string
+	keepAlive        string
 	identity         llm.Identity
 	queryTemplate    string
 	documentTemplate string
 	httpClient       *http.Client
 }
 
-func newOllama(cfg model.EmbeddingConfig) pkgembed.Embedder {
+func newOllama(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	endpoint := cfg.OllamaEndpoint
 	if endpoint == "" {
 		endpoint = defaultOllamaEndpoint
 	}
+	keepAlive := cmp.Or(cfg.KeepAlive, defaultOllamaKeepAlive)
+	_, err := time.ParseDuration(keepAlive)
+	if err != nil {
+		return nil, fmt.Errorf("embedding.keep_alive %q: %w", cfg.KeepAlive, err)
+	}
 	return &ollamaEmbedder{
 		endpoint:         endpoint,
+		keepAlive:        keepAlive,
 		identity:         llm.Identity{Provider: "ollama", Model: cfg.Model},
 		queryTemplate:    cfg.QueryTemplate,
 		documentTemplate: cfg.DocumentTemplate,
 		httpClient:       &http.Client{},
-	}
+	}, nil
 }
 
 type ollamaEmbedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+	Model     string   `json:"model"`
+	Input     []string `json:"input"`
+	KeepAlive string   `json:"keep_alive"`
 }
 
 type ollamaEmbedResponse struct {
@@ -70,7 +85,7 @@ func (e *ollamaEmbedder) request(ctx context.Context, texts []string) (result pk
 			err = &llm.Error{Identity: e.identity, Err: err}
 		}
 	}()
-	body := ollamaEmbedRequest{Model: e.identity.Model, Input: texts}
+	body := ollamaEmbedRequest{Model: e.identity.Model, Input: texts, KeepAlive: e.keepAlive}
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return pkgembed.Result{}, fmt.Errorf("marshal ollama request: %w", err)
