@@ -18,7 +18,7 @@ func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
 	memory.raw = true
 	cs := connectAs(t, env.srv, memory)
 	session := openSession(t, cs).Session
-	var serve mcpserver.ServeResult
+	var serve mcpserver.ServeResponse
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
 	lane := proofOf(t, serve.Instructions, "lane first")
 
@@ -28,7 +28,7 @@ func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
 	if !strings.Contains(testsupport.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
 		t.Errorf("the lane whose proof failed should serve in full, got %.300q", serve.Instructions)
 	}
-	if serve.Notices == nil {
+	if serve.Notices.Proof == "" {
 		t.Fatal("a failed proof should get a proof notice")
 	}
 	for _, want := range []string{wrong.String() + " (not the word its proof asks for)", unknown.String() + " (no such tag)"} {
@@ -38,8 +38,9 @@ func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
 	}
 
 	right := proofOf(t, serve.Instructions, "lane first")
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{right.String()}}, &serve)
-	if serve.Notices != nil {
-		t.Errorf("a right proof should get no notice, got %+v", serve.Notices)
+	var proved mcpserver.ServeResponse
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{right.String()}}, &proved)
+	if proved.Notices.Proof != "" {
+		t.Errorf("a right proof should get no notice, got %+v", proved.Notices)
 	}
 }

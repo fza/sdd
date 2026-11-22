@@ -29,11 +29,10 @@ func (p Proofs) lists() (held, reread []string) {
 }
 
 // ResultProofs names, on a result from an attached session, the pieces
-// earlier results served in full that the agent has not proved since, and
-// how the proofs the call listed fared.
+// earlier results served in full that the agent has not proved since. How
+// the proofs the call listed fared rides in its notices (Notices.Proof).
 type ResultProofs struct {
-	Unproved string         `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by tag and name; prove each whose text you still see in held"`
-	Notices  *ResultNotices `json:"notices,omitempty"`
+	Unproved string `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by tag and name; prove each whose text you still see in held"`
 }
 
 func (r *ResultProofs) setUnproved(line string) { r.Unproved = line }
@@ -54,18 +53,6 @@ func unprovedLine(list []sdd.UnprovedPiece, room int) string {
 		}
 	}
 	return ""
-}
-
-// ResultNotices carries the notices a result holds beside its payload.
-type ResultNotices struct {
-	Proof string `json:"proof,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
-}
-
-func (r *ResultProofs) setProofNotice(notice string) {
-	if r.Notices == nil {
-		r.Notices = &ResultNotices{}
-	}
-	r.Notices.Proof = notice
 }
 
 // proofNotice names the proofs of a call that failed, so the agent corrects

@@ -30,13 +30,20 @@ type Options struct {
 	// (stdio transport). Local clients get absolute paths in read results
 	// (read_attachment) so they can read files directly instead of paging.
 	LocalClient bool
-	// Version is the SDD version the info tool reports, and the server
-	// implementation version under New.
-	Version string
 	// OutputSchema declares each tool's outputSchema in tools/list, as the
 	// SDK derives it from the tool's result type. Results carry structured
 	// content either way; off, the listing stays a fraction of the size.
 	OutputSchema bool
+	// Version is the SDD version the info tool reports, and the server
+	// implementation version under New.
+	Version string
+
+	// BeforeCall, when set, runs before every tool call with the session the
+	// call names, "" for none: an error refuses the call with it, the notices
+	// ride on the call's result in notices, or in the error text when the
+	// call fails or is refused, and the call runs under the context it
+	// returns, its own when that is nil.
+	BeforeCall func(ctx context.Context, session string) (call context.Context, notices Notices, err error)
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -46,8 +53,9 @@ type toolSet struct {
 	searchSyncMode sdd.SearchSyncMode
 	localIdentity  sdd.RequestIdentity
 	local          bool
-	version        string
 	outputSchema   bool
+	version        string
+	before         func(context.Context, string) (context.Context, Notices, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -66,8 +74,9 @@ func newToolSet(opts Options) (*toolSet, error) {
 		searchSyncMode: opts.SearchSyncMode,
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
-		version:        opts.Version,
 		outputSchema:   opts.OutputSchema,
+		version:        opts.Version,
+		before:         opts.BeforeCall,
 		sessions:       newSessionCache(),
 	}, nil
 }
