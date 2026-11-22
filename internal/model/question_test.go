@@ -170,3 +170,27 @@ func TestTextQuestionLineNamesTextAndLost(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionNeutralComparesCopiesAcrossSessions(t *testing.T) {
+	const (
+		text   = "Resume it with resume_session HANDLE when its topic returns. Its parked moves keep their state and HANDLE stays valid."
+		first  = "s_20261122-100000-aaaa"
+		second = "s_20261122-110000-bbbb"
+	)
+	a := model.SessionNeutral(strings.ReplaceAll(text, "HANDLE", first), first)
+	b := model.SessionNeutral(strings.ReplaceAll(text, "HANDLE", second), second)
+	if a != b {
+		t.Fatalf("copies differing only in their session handle should compare as one text, got %q and %q", a, b)
+	}
+	for seed := range uint64(300) {
+		q, ok := model.DrawQuestion(a, rand.New(rand.NewPCG(seed, seed)), nil)
+		if !ok {
+			t.Fatal("the neutral text should still yield questions")
+		}
+		for _, part := range []string{q.Phrase, q.Second, q.Answer} {
+			if strings.Contains(part, "session§") || strings.Contains(part, "handle") {
+				t.Fatalf("no question should ask about the session handle, got %+v", q)
+			}
+		}
+	}
+}

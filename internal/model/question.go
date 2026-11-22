@@ -417,6 +417,20 @@ func (p questionText) candidates(kind QuestionKind) []TextQuestion {
 	return out
 }
 
+// sessionPart stands in for a session handle in a held text. Its inner sign
+// makes it no answerable word, so no question's phrase or answer holds it.
+const sessionPart = "session§handle"
+
+// SessionNeutral is text with the session handle replaced by a stand-in, so
+// copies that differ only by their serving session's handle compare as one
+// text (20261122-105026-d-tac-wl5).
+func SessionNeutral(text, session string) string {
+	if session == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, session, sessionPart)
+}
+
 // SchemaDescriptions joins the description strings of a JSON schema, in the
 // key order its JSON carries them, as the text a question about the schema
 // is made from: each its own paragraph.
