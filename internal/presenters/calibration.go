@@ -25,7 +25,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	}
 	fmt.Fprintf(w, "recall bound: %.4f at %d misses of %d referenced (floor %.2f)\n", report.RecallBound, report.Misses, report.Positive, model.RecallFloor)
 	if report.Thresholds.Valid {
-		fmt.Fprintf(w, "thresholds: set aside below %.3f, serve in full from %.3f\n", report.Thresholds.SetAside, report.Thresholds.Relevant)
+		fmt.Fprintf(w, "thresholds: %s\n", thresholdsText(report))
 	} else {
 		fmt.Fprintln(w, "thresholds: none yet, the recall bound does not hold: the prefilter sorts and sets nothing aside")
 	}
@@ -51,4 +51,23 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	if dominant := report.DominantCode(); dominant != "" {
 		fmt.Fprintf(w, "prompt revision hint: most pairs passed in full were set aside as %s\n", dominant)
 	}
+}
+
+// thresholdsText names a calibrated report's thresholds and, once replayed
+// labels take part in the calibration, the labels each rests on
+// (model.Calibrate).
+func thresholdsText(report model.CalibrationReport) string {
+	thresholds := report.Thresholds
+	setAside, relevant := "", ""
+	if report.Replay > 0 && !report.ReplayExcluded {
+		setAside, relevant = " (all labels)", " (live labels)"
+		if thresholds.SetAsideLive {
+			setAside = relevant
+		}
+	}
+	serve := fmt.Sprintf("serve in full from %.3f", thresholds.Relevant)
+	if !thresholds.ServesInFull() {
+		serve = "serve nothing in full"
+	}
+	return fmt.Sprintf("set aside below %.3f%s, %s%s", thresholds.SetAside, setAside, serve, relevant)
 }

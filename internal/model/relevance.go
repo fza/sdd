@@ -421,14 +421,21 @@ const (
 )
 
 // RelevanceThresholds are a judge's calibrated limits: a candidate scoring
-// below SetAside is set aside, one scoring at or above Relevant is served in
-// full. Valid is false until the recall bound holds, and an invalid set
-// decides nothing.
+// below SetAside is set aside, any other scoring at or above Relevant is
+// served in full. Valid is false until the recall bound holds, and an
+// invalid set decides nothing. SetAsideLive reports that SetAside is the cut
+// of the live labels alone, lower than the cut over all of them (Calibrate).
 type RelevanceThresholds struct {
-	Valid    bool
-	SetAside float64
-	Relevant float64
+	Valid        bool
+	SetAside     float64
+	SetAsideLive bool
+	Relevant     float64
 }
+
+// ServesInFull reports whether any score reaches Relevant: Calibrate puts
+// it above every score while the live labels reach RelevantPrecision at
+// none.
+func (t RelevanceThresholds) ServesInFull() bool { return t.Valid && t.Relevant <= 1 }
 
 // Lookup decides a pair from subject to candidate: a reader's answer
 // decides, a flipped implicit dismissal as relevant; else judge's score
@@ -459,10 +466,10 @@ func (l *RelevanceLedger) Lookup(subject, candidate, judge string, thresholds Re
 
 func (t RelevanceThresholds) decide(score float64) RelevanceDecision {
 	switch {
-	case score >= t.Relevant:
-		return RelevanceRelevant
 	case score < t.SetAside:
 		return RelevanceNotRelevant
+	case score >= t.Relevant:
+		return RelevanceRelevant
 	}
 	return RelevanceUndecided
 }
