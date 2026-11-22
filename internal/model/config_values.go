@@ -63,6 +63,10 @@ func ConfigValueRefusal(t reflect.Type, segments []string, value string) error {
 	if value == "" {
 		return fmt.Errorf("%s takes no empty value; `sdd config unset` removes a key", key)
 	}
+	// llm.provider is a plain string field, so its closed set is named here.
+	if key == "llm.provider" {
+		return checkClosedValue(key, value, LLMProviders())
+	}
 	typ, ok := ConfigKeyType(t, segments)
 	if !ok {
 		return nil

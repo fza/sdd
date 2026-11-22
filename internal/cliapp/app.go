@@ -82,7 +82,7 @@ func llmConfigWithFlags(cmd *cli.Command, fileCfg *model.PerRepoConfig) model.LL
 		cfg = fileCfg.LLM
 	}
 	if cmd.IsSet("provider") {
-		cfg.Provider = model.LLMProvider(cmd.String("provider"))
+		cfg.Provider = cmd.String("provider")
 	}
 	if cmd.IsSet("model") {
 		cfg.Model = cmd.String("model")
