@@ -16,9 +16,9 @@ func TestEventsConfig_GitChannels(t *testing.T) {
 	}{
 		{name: "none configured", config: model.EventsConfig{}},
 		{name: "git and local", config: model.EventsConfig{Channels: map[string]model.EventChannelConfig{
-			"wip": {Share: model.EventShareLocal}, "recheck": {Share: model.EventShareGit}, "outside": {Share: model.EventShareGit}, "other": {},
-		}}, want: []string{"outside", "recheck"}},
-		{name: "unknown share", config: model.EventsConfig{Channels: map[string]model.EventChannelConfig{"recheck": {Share: "hosted"}}}, wantErr: true},
+			"wip": {Share: model.EventShareLocal}, "test": {Share: model.EventShareGit}, "outside": {Share: model.EventShareGit}, "other": {},
+		}}, want: []string{"outside", "test"}},
+		{name: "unknown share", config: model.EventsConfig{Channels: map[string]model.EventChannelConfig{"test": {Share: "hosted"}}}, wantErr: true},
 		{name: "invalid channel name", config: model.EventsConfig{Channels: map[string]model.EventChannelConfig{"Re/check": {Share: model.EventShareGit}}}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -36,32 +36,32 @@ func TestEventsConfig_GitChannels(t *testing.T) {
 
 func TestMergeConfig_OverlaysEventChannels(t *testing.T) {
 	base := &model.PerRepoConfig{Events: model.EventsConfig{Channels: map[string]model.EventChannelConfig{
-		"recheck": {Share: model.EventShareLocal}, "outside": {Share: model.EventShareGit},
+		"test": {Share: model.EventShareLocal}, "outside": {Share: model.EventShareGit},
 	}}}
 	overlay := &model.PerRepoConfig{Events: model.EventsConfig{Channels: map[string]model.EventChannelConfig{
-		"recheck": {Share: model.EventShareGit}, "outside": {},
+		"test": {Share: model.EventShareGit}, "outside": {},
 	}}}
 	merged := model.MergeConfig(base, overlay)
 	channels, err := merged.Events.GitChannels()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(channels, []string{"outside", "recheck"}) {
+	if !slices.Equal(channels, []string{"outside", "test"}) {
 		t.Fatalf("git channels = %v; the overlay's share should win and an empty one inherit", channels)
 	}
-	if base.Events.Channels["recheck"].Share != model.EventShareLocal {
+	if base.Events.Channels["test"].Share != model.EventShareLocal {
 		t.Fatal("merging should leave the base layer unchanged")
 	}
 }
 
 func TestValidateEventType(t *testing.T) {
-	for _, valid := range []string{"sdd.recheck", "tracker.issue.commented", "a1.b-2"} {
+	for _, valid := range []string{"sdd.test", "tracker.issue.commented", "a1.b-2"} {
 		err := model.ValidateEventType(valid)
 		if err != nil {
 			t.Errorf("ValidateEventType(%q) = %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"", "recheck", "Sdd.recheck", "sdd.", ".recheck", "sdd..recheck", "sdd.re check", "sdd.1st"} {
+	for _, invalid := range []string{"", "test", "Sdd.test", "sdd.", ".test", "sdd..test", "sdd.re check", "sdd.1st"} {
 		err := model.ValidateEventType(invalid)
 		if err == nil {
 			t.Errorf("ValidateEventType(%q) accepted an invalid type", invalid)
@@ -70,13 +70,13 @@ func TestValidateEventType(t *testing.T) {
 }
 
 func TestValidateEventChannel(t *testing.T) {
-	for _, valid := range []string{"recheck", "wip", "tracker-2"} {
+	for _, valid := range []string{"test", "wip", "tracker-2"} {
 		err := model.ValidateEventChannel(valid)
 		if err != nil {
 			t.Errorf("ValidateEventChannel(%q) = %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"", "Recheck", "re.check", "../wip", "-wip"} {
+	for _, invalid := range []string{"", "Test", "re.check", "../wip", "-wip"} {
 		err := model.ValidateEventChannel(invalid)
 		if err == nil {
 			t.Errorf("ValidateEventChannel(%q) accepted an invalid channel", invalid)
@@ -85,10 +85,10 @@ func TestValidateEventChannel(t *testing.T) {
 }
 
 func TestEventTypeReserved(t *testing.T) {
-	if !model.EventTypeReserved("sdd.recheck") {
+	if !model.EventTypeReserved("sdd.test") {
 		t.Error("a type under sdd. should be reserved")
 	}
-	for _, other := range []string{"sddx.recheck", "tracker.sdd"} {
+	for _, other := range []string{"sddx.test", "tracker.sdd"} {
 		if model.EventTypeReserved(other) {
 			t.Errorf("%q should not be reserved", other)
 		}

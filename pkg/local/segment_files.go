@@ -23,11 +23,10 @@ func writeSegmentFile(dir, ext string, data []byte) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	name, err := segment.Name(time.Now())
+	name, err := segment.Name(time.Now(), ext)
 	if err != nil {
 		return err
 	}
-	name = strings.TrimSuffix(name, segment.Ext) + ext
 	temp := "." + name + ".tmp"
 	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {

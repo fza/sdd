@@ -136,11 +136,11 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 func TestPendingSegments_ListTheChannelsJSONLines(t *testing.T) {
 	dir := newTestRepo(t)
 	events := filepath.Join(dir, ".sdd", "events")
-	err := os.MkdirAll(filepath.Join(events, "recheck"), 0o755)
+	err := os.MkdirAll(filepath.Join(events, "test"), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"recheck/a.jsonl", "recheck/notes.txt", "a.jsonl"} {
+	for _, name := range []string{"test/a.jsonl", "test/notes.txt", "a.jsonl"} {
 		err := os.WriteFile(filepath.Join(events, name), []byte("{}\n"), 0o644)
 		if err != nil {
 			t.Fatal(err)
@@ -150,7 +150,7 @@ func TestPendingSegments_ListTheChannelsJSONLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(pending, []string{".sdd/events/recheck/a.jsonl"}) {
+	if !slices.Equal(pending, []string{".sdd/events/test/a.jsonl"}) {
 		t.Fatalf("pending should hold the channel's JSON Lines segment alone, holds %v", pending)
 	}
 }

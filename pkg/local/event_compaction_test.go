@@ -23,7 +23,7 @@ func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testi
 		settledCalls++
 		var ids []string
 		for _, event := range events {
-			if channel == "recheck" && event.ID == "e0" {
+			if channel == "test" && event.ID == "e0" {
 				ids = append(ids, event.ID)
 			}
 		}
@@ -33,14 +33,14 @@ func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testi
 		t.Fatal(err)
 	}
 	for i := range 7 {
-		event := testEvent(fmt.Sprintf("e%d", i), "recheck")
+		event := testEvent(fmt.Sprintf("e%d", i), "test")
 		for range 2 {
 			if err := store.Append(t.Context(), []sdd.Event{event}); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	channelDir := filepath.Join(dir, "recheck")
+	channelDir := filepath.Join(dir, "test")
 	if files := eventFiles(t, channelDir); len(files) >= 8 {
 		t.Fatalf("%d segments: a tier of eight small segments should have merged", len(files))
 	}
