@@ -1432,7 +1432,7 @@ func noteCallSession(ctx context.Context, identity sdd.RequestIdentity, ss *shel
 // composes none. Schema and vocabulary dedup live only in composeServe: a
 // base mapping drops those fields, and recording bytes never delivered would
 // stub them for a later serve that does deliver. It returns what it served.
-func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, pageFull []string) (ServeResult, servedCount, error) {
+func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, resent bool, pageFull []string) (ServeResult, servedCount, error) {
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
@@ -1441,7 +1441,7 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
 	var count servedCount
-	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, pageFull)
+	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, resent, pageFull)
 	var omitted []string
 	res.Produced, omitted = endedValues(serve.Produced)
 	if len(omitted) > 0 {
@@ -1517,7 +1517,7 @@ func (s *toolSet) toRootServeResultWithin(ctx context.Context, req *mcp.CallTool
 // blocks its framing has, and whether its vocabulary table waits.
 type heldLanes struct {
 	keep, base, framing, blocks int
-	vocabularyWaits             bool
+	vocabularyWaits, resent     bool
 }
 
 const (
@@ -1566,6 +1566,11 @@ func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss
 			ss.root.WithdrawServedSince(mark)
 		}
 	}
+	if res, kept, _, fits, err := compose(held); err != nil || fits {
+		return res, kept, err
+	}
+	ss.root.WithdrawServedSince(mark)
+	held.resent = true
 	alone := -1
 	for held.keep = lanes; ; held.keep-- {
 		res, kept, count, fits, err := compose(held)
@@ -1675,7 +1680,7 @@ func recordDeferrals(ss *shellSession, instances []string, res any) error {
 // composeServe composes serve's whole result with what held names, and
 // returns what it served of serve's own.
 func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, servedCount, error) {
-	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, pageFull)
+	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, held.resent, pageFull)
 	if err != nil {
 		return ServeResult{}, servedCount{}, err
 	}
@@ -1698,7 +1703,7 @@ func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		res.Instructions += "\n\n(the vocabulary table waits, as this result would run past its size bound. Call next with this instance and no report to have it before you act; it serves the step again)"
 	}
 	if serve.Base != nil {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingAll, nil)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingAll, false, nil)
 		if err != nil {
 			return ServeResult{}, servedCount{}, err
 		}
@@ -1718,7 +1723,7 @@ func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolReques
 	var base *BaseServe
 	keep := len(serve.InstructionLanes)
 	for ; ; keep-- {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingAll, pageFull)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingAll, false, pageFull)
 		if err != nil {
 			return nil, err
 		}

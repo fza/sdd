@@ -255,8 +255,8 @@ type Session struct {
 	// word. call is the tool call in flight; rnd draws tags and positions.
 	anchors map[string]issuedAnchor
 	// deferred folds the deferral events: per instance whose serve left parts
-	// waiting, the pieces it sent, each under its tag (FollowDeferral).
-	deferred map[string]map[Piece]string
+	// waiting, the pieces it sent, each under its tag and step (FollowDeferral).
+	deferred map[string]map[Piece]sentPiece
 	// unproved folds, per piece name, its newest serve in full that no proof
 	// followed, numbered by servedSeq (Unproved).
 	unproved  map[string]unprovedServe

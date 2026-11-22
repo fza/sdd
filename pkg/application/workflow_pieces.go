@@ -110,6 +110,13 @@ func (w *WorkflowSession) FollowDeferral(instance string) {
 	w.session.FollowDeferral(instance)
 }
 
+// Resent reports the tag under which the deferral the call follows sent the
+// piece named name at the instance's step, when the call would serve text,
+// its content now, in full all the same.
+func (w *WorkflowSession) Resent(instance, name, text string) (string, bool) {
+	return w.session.Resent(instance, engine.Piece{Name: name, Hash: contentHash(model.WithoutProofs(text))})
+}
+
 // EndDeferral ends the instance's deferral, as a serve of it settles it.
 func (w *WorkflowSession) EndDeferral(instance string) {
 	w.session.EndDeferral(instance)
