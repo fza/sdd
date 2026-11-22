@@ -395,7 +395,8 @@ func (p questionText) candidates(kind QuestionKind) []TextQuestion {
 				q.Second = second
 				window, asked = line[i:end+1+phraseWords], line[end:end+1]
 			}
-			if !p.window(window) {
+			// A run ending on a stop word invites completing the phrase past it.
+			if !p.window(window) || len(asked) > 1 && functionWords[strings.ToLower(asked[len(asked)-1].word)] {
 				continue
 			}
 			q.Answer = answerOf(asked...)

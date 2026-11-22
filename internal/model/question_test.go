@@ -145,6 +145,21 @@ func TestEveryQuestionReadsAsALiteralRunOfWords(t *testing.T) {
 	}
 }
 
+func TestNoAskedRunEndsOnAStopWord(t *testing.T) {
+	text := "Then sdd writes them on the entry. The user wants to wrap up the session and leaves the room of the house to its owner."
+	stop := map[string]bool{"the": true, "a": true, "an": true, "of": true, "on": true, "to": true, "up": true, "its": true, "and": true}
+	candidates := allCandidates(text)
+	if len(candidates) == 0 {
+		t.Fatal("the sample should yield questions")
+	}
+	for _, q := range candidates {
+		words := strings.Fields(q.Answer)
+		if len(words) > 1 && stop[strings.ToLower(words[len(words)-1])] {
+			t.Errorf("no question should ask for a run of words whose last word is a stop word, got %+v", q)
+		}
+	}
+}
+
 func TestQuestionsStayShortForLongWords(t *testing.T) {
 	text := "Call configuration-resolution-precedence-override-mechanism before every-single-repository-synchronisation-handshake and the-whole-cross-project-dependency-closure-walk starts."
 	for _, q := range allCandidates(text) {
