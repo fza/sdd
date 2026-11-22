@@ -91,7 +91,7 @@
           "type": "string"
         },
         "page": {
-          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "description": "a later page of this tool's last result too large for one, as its page line names, leaving the other arguments aside; with instance, the next page of that capture's graph check, built from the scores that arrived by then",
           "type": "integer"
         },
         "query": {

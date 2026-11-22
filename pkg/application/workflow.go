@@ -276,6 +276,9 @@ type WorkflowSession struct {
 	startClient     *string
 	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
 	cutRepeats bool
+	// checks holds, per capture, the lines its last graph check keeps for
+	// pages built when asked for (heldCheck).
+	checks map[string]*heldCheck
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string

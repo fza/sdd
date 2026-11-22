@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // WorkflowGatherRequest asks for a grounding serve inside the session.
@@ -25,7 +26,12 @@ type WorkflowGatherRequest struct {
 	// Wait has the judge score until the minimum holds (GatherRequest.Wait).
 	Wait bool
 	// Rejudge has the judge score every candidate again (GatherRequest.Rejudge).
-	Rejudge  bool
+	Rejudge bool
+	// Paged serves a capture's check in pages within the call's result bound
+	// (WithResultBound); Page asks for a later page of its last check, built
+	// when asked for.
+	Paged    bool
+	Page     int
 	SyncMode SearchSyncMode
 }
 
@@ -36,6 +42,13 @@ type WorkflowGatherRequest struct {
 // credited read listed, and runs nothing else.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
+	budget := resultBound(ctx).Read()
+	if request.Page > 1 {
+		if request.Instance == "" {
+			return GatherResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: a later page of a graph check needs its instance"}
+		}
+		return w.checkPage(ctx, request.Instance, request.Page, budget)
+	}
 	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs, Query: strings.TrimSpace(request.Query), Terms: nonEmpty(request.Terms), Wait: request.Wait, Rejudge: request.Rejudge, unattended: w.session.DialogueMode.AgentAnswers()}
 	if repeats := w.repeats(); repeats != nil {
 		gather.Held, gather.Served = repeats.Held, repeats.Served
@@ -67,6 +80,17 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 	if request.Instance == "" {
 		w.session.LogRead("gather", result.FullIDs, result.SummaryIDs)
 		return result, w.session.SinkErr()
+	}
+	if gather.openOnly {
+		request.Paged = false
+	} else {
+		delete(w.checks, request.Instance)
+	}
+	if request.Paged && result.check != nil && model.ServedChars(result.Text) > budget {
+		result, err = w.firstPage(request.Instance, result, budget)
+		if err != nil {
+			return GatherResult{}, err
+		}
 	}
 	err = w.session.Record(engine.Read{Tool: "gather", Instance: request.Instance, Full: result.FullIDs, Summary: result.SummaryIDs, Grounding: result.payload})
 	if err != nil {

@@ -131,6 +131,55 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 	return nil
 }
 
+// CheckPage is a later page of a graph check, built when asked for: the
+// lines a late score marks as likely bearing, the held lines in doubt and
+// by title it serves, how many held lines a late score set aside, and how
+// many the check counts without listing.
+type CheckPage struct {
+	Number   int
+	Late     []model.Line
+	Doubt    []model.Line
+	Titles   []model.Line
+	SetAside int
+	Counted  int
+}
+
+// RenderCheckPage writes a later page of a graph check. Nothing is cut.
+func RenderCheckPage(w io.Writer, g *model.Graph, page CheckPage, repeats *Repeats) {
+	fmt.Fprintf(w, "# graph check, page %d   %d shown\n", page.Number, len(page.Late)+len(page.Doubt)+len(page.Titles))
+	if len(page.Late) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "## likely bearing, scored since the last page (%d) — each owes a verdict or a reference\n", len(page.Late))
+		for _, line := range page.Late {
+			line.Summary = true
+			writeMarkedLine(w, g, line, repeats)
+		}
+	}
+	if len(page.Doubt) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "## in doubt (%d)\n", len(page.Doubt))
+		for _, line := range page.Doubt {
+			writeMarkedLine(w, g, line, repeats)
+		}
+	}
+	if len(page.Titles) > 0 || page.Counted > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "## by title (%d)\n", len(page.Titles))
+		for _, line := range page.Titles {
+			fmt.Fprintf(w, "  %s  %s\n", line.Entry.ID, line.Entry.ListingTitle())
+		}
+		if page.Counted > 0 {
+			fmt.Fprintf(w, "  +%d more, not listed\n", page.Counted)
+		}
+	}
+	repeats.WriteWayBack(w)
+	if page.SetAside > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "## set aside since the last page (%d)\n", page.SetAside)
+		fmt.Fprintf(w, "  %d %s\n", page.SetAside, model.SetAsideFiltered)
+	}
+}
+
 // writeMarkedLine writes one line: its marks, ID, status and title, a newer
 // refinement, and the first summary sentence below it when the line carries
 // one. A held entry prints its pointer in place of ID, status and title.

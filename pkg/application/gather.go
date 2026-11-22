@@ -131,6 +131,19 @@ type GatherResult struct {
 	FullIDs    []string
 	SummaryIDs []string
 	payload    model.ReadPayload
+	check      *checkParts
+}
+
+// checkParts are what a capture's check builds its later pages from: the
+// result its text renders, and the judge, the draft and the thresholds it
+// placed its lines by; judging marks a judge that ran.
+type checkParts struct {
+	served     *query.GatherResult
+	runtime    *ProjectRuntime
+	judge      Prefilter
+	judging    bool
+	subject    string
+	thresholds model.RelevanceThresholds
 }
 
 // Gather serves the reading of a draft: the semantic search with the draft's
@@ -394,6 +407,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		served.Opened = shown
 	}
 	result := GatherResult{Project: runtime.options.Project, FullIDs: slices.Clone(opened), SummaryIDs: lines.Shown()}
+	result.check = &checkParts{served: served, runtime: runtime, judge: prefilter, judging: pass.judged && policy.Prefilter, subject: subject, thresholds: thresholds}
 	var rendered bytes.Buffer
 	err = presenters.RenderGather(&rendered, served)
 	if err != nil {
