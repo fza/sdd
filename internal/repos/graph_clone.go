@@ -249,11 +249,24 @@ func (g *GraphClones) keep(ctx context.Context, repoID model.RepoID, dir string)
 // Widen sets the cone of the clone of repoID to hold graphDir, which its
 // committed config does not name yet: init commits the graph directory's
 // first files before that config reaches the clone's upstream.
-func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir string) error {
+func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir string) (err error) {
 	dir, err := g.Dir(repoID)
 	if err != nil {
 		return err
 	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	if g.locker == nil {
+		return fmt.Errorf("widening the clone of %s: no clone locker", repoID)
+	}
+	release, err := g.locker.LockClone(ctx, dir, graphDir)
+	if err != nil {
+		return fmt.Errorf("locking the clone of %s: %w", repoID, err)
+	}
+	defer release()
 	cone, changed, err := g.coneChange(ctx, dir, graphDir)
 	if err != nil || !changed {
 		return err

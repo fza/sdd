@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,6 +80,23 @@ func TestGraphClonesEnsureRefusesWithoutALocker(t *testing.T) {
 	}
 }
 
+// The upkeep of a graph repository holding no graph directory yet leaves it
+// absent, so nothing reads a layout from the lock's folder.
+func TestGraphClonesEnsureCreatesNoGraphDirectory(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}, git.GraphClones{}, gate, syncstate.CloneLocks{})
+
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, ".sdd", "graph"))
+	if statErr == nil {
+		t.Error("the upkeep should create no graph directory")
+	}
+}
+
 // The upkeep a read command runs before it reads waits for a writer holding
 // the graph lock, so the entry the writer published and its commit survive.
 func TestGraphClonesEnsureWaitsForAWriter(t *testing.T) {
@@ -129,5 +147,106 @@ func TestGraphClonesEnsureWaitsForAWriter(t *testing.T) {
 	ahead := strings.TrimSpace(test.Git(t, dir, "rev-list", "--count", "@{u}..HEAD"))
 	if ahead != "1" {
 		t.Errorf("the writer's commit should survive the upkeep, %s commits ahead", ahead)
+	}
+}
+
+// heldKeep keeps through git and, once armed, holds the next keep until
+// release closes; it notes every cone change.
+type heldKeep struct {
+	git.GraphClones
+	armed   atomic.Bool
+	widened atomic.Bool
+	started chan struct{}
+	release chan struct{}
+}
+
+func (h *heldKeep) KeepGraphClone(ctx context.Context, dir string, routing []string) error {
+	if h.armed.CompareAndSwap(true, false) {
+		close(h.started)
+		<-h.release
+	}
+	return h.GraphClones.KeepGraphClone(ctx, dir, routing)
+}
+
+func (h *heldKeep) SetSparseCone(ctx context.Context, dir string, cone []string) error {
+	h.widened.Store(true)
+	return h.GraphClones.SetSparseCone(ctx, dir, cone)
+}
+
+// Widen changes the cone only under the clone lock, never beside another
+// process keeping the same clone.
+func TestGraphClonesWidenWaitsForAKeep(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\n", ".sdd/graph/2026/11/07-120000-s-tac-abc.md": "---\ntype: signal\n---\nx\n"})
+	locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
+	held := &heldKeep{started: make(chan struct{}), release: make(chan struct{})}
+	limits := func(string) gitgate.Limits { return model.DefaultGitLimits() }
+	keeper := repos.NewGraphClones(locations, held, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: limits}), syncstate.CloneLocks{})
+	widener := repos.NewGraphClones(locations, held, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: limits}), syncstate.CloneLocks{})
+	dir, _, err := keeper.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.widened.Store(false)
+	held.armed.Store(true)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Go(func() { _, _, errs[0] = keeper.Ensure(t.Context(), remote.RepoID, "") })
+	<-held.started
+	wg.Go(func() { errs[1] = widener.Widen(t.Context(), remote.RepoID, "decisions") })
+	time.Sleep(300 * time.Millisecond)
+	widenedDuringKeep := held.widened.Load()
+	close(held.release)
+	wg.Wait()
+	if widenedDuringKeep {
+		t.Error("Widen changed the cone while another process kept the clone")
+	}
+	for _, err := range errs {
+		if err != nil {
+			t.Errorf("both callers should succeed, got %v", err)
+		}
+	}
+	cone, err := git.GraphClones{}.SparseCone(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cone, "decisions") {
+		t.Errorf("the cone should hold the widened graph directory after the keep, got %v", cone)
+	}
+}
+
+// Widen changes the cone only under the clone's sync and graph locks, never
+// beside a sync round or a writer.
+func TestGraphClonesWidenWaitsForASyncRound(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\n", ".sdd/graph/2026/11/07-120000-s-tac-abc.md": "---\ntype: signal\n---\nx\n"})
+	locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
+	held := &heldKeep{started: make(chan struct{}), release: make(chan struct{})}
+	limits := func(string) gitgate.Limits { return model.DefaultGitLimits() }
+	clones := repos.NewGraphClones(locations, held, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: limits}), syncstate.CloneLocks{})
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.widened.Store(false)
+	release, err := syncstate.CloneLocks{}.LockClone(t.Context(), dir, "decisions")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- clones.Widen(t.Context(), remote.RepoID, "decisions") }()
+	time.Sleep(300 * time.Millisecond)
+	widenedDuringSync := held.widened.Load()
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("Widen: %v", err)
+	}
+	if widenedDuringSync {
+		t.Error("Widen changed the cone while a sync round held the clone")
+	}
+	if !held.widened.Load() {
+		t.Error("Widen should change the cone once the sync round released the clone")
 	}
 }
