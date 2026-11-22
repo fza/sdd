@@ -335,8 +335,10 @@ func (s *Session) DropAnswer() { s.call.answered, s.call.reset = 0, false }
 
 // Ask ends a response with a question: about the text held longest by its
 // latest copy, the next oldest where that text yields no question not asked
-// before, its phrase occurring in no other text served. It logs the question
-// and returns its line, empty when no held text yields one.
+// before, its phrase occurring in no other text served and its answer no
+// earlier question's, so an answer replayed from the call history answers
+// nothing. It logs the question and returns its line, empty when no held
+// text yields one.
 func (s *Session) Ask() string {
 	pieces := slices.Collect(maps.Keys(s.texts))
 	slices.SortFunc(pieces, func(a, b Piece) int {
@@ -358,13 +360,16 @@ func (s *Session) Ask() string {
 		}
 		return false
 	}
+	answeredBefore := func(answer string) bool {
+		return slices.ContainsFunc(s.questions, func(asked askedQuestion) bool { return asked.question.Answered(answer) })
+	}
 	for _, p := range pieces {
 		held := s.texts[p]
 		if held.latest < s.heldFrom {
 			continue
 		}
 		q, ok := model.DrawQuestion(held.text, s.random(), func(q model.TextQuestion) bool {
-			return !s.asked[p.key()+"|"+q.Key()] && !elsewhere(p, q.Phrase) && !elsewhere(p, q.Second)
+			return !s.asked[p.key()+"|"+q.Key()] && !elsewhere(p, q.Phrase) && !elsewhere(p, q.Second) && !answeredBefore(q.Answer)
 		})
 		if !ok {
 			continue

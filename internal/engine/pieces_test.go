@@ -127,6 +127,22 @@ func TestNoQuestionIsAskedTwice(t *testing.T) {
 	}
 }
 
+func TestNoAnswerAnswersTwoQuestions(t *testing.T) {
+	session := newPieceSession(nil)
+	var given []string
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	for q != "" {
+		words := answer(t, q, stepText)
+		for _, earlier := range given {
+			if (model.TextQuestion{Answer: earlier}).Answered(words) {
+				t.Fatalf("an answer given before should answer no later question, got %q again for %q", words, q)
+			}
+		}
+		given = append(given, words)
+		_, q = respond(t, session, words, map[engine.Piece]string{stepLane: stepText})
+	}
+}
+
 func TestAnAnswerCountsAgainstEveryOpenQuestion(t *testing.T) {
 	session := newPieceSession(nil)
 	_, first := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
