@@ -293,6 +293,22 @@ func (r DeepResponse) Validate() error {
 // DeepFindingID is the number sdd gives the finding at index i.
 func DeepFindingID(i int) string { return "f" + strconv.Itoa(i+1) }
 
+// DeepFindingLabel names a finding by its number, severity and axis, the way
+// every listing after the one serving it in full refers to it.
+func DeepFindingLabel(id string, finding DeepFinding) string {
+	return fmt.Sprintf("%s [%s, %s]", id, finding.Severity, finding.Axis)
+}
+
+// DeepSettledLine renders a settled finding as one line: its label, how it
+// was settled and the note, if any, with its line breaks folded.
+func DeepSettledLine(id string, finding DeepFinding, settled, note string) string {
+	line := "- " + DeepFindingLabel(id, finding) + " " + settled
+	if note = strings.Join(strings.Fields(note), " "); note != "" {
+		line += ": " + note
+	}
+	return line + "\n"
+}
+
 // DeepOpenFindings counts the findings the verifier still stands by: every
 // finding whose latest response neither concedes nor drops it.
 func DeepOpenFindings(findings []DeepFinding, responses []DeepResponse) int {

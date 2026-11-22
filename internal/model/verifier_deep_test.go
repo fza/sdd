@@ -51,6 +51,23 @@ func TestBuildDeepProposal_HunkCarriesTheChangedSpanWithAFewWordsAround(t *testi
 	}
 }
 
+func TestDeepSettledLine(t *testing.T) {
+	finding := model.DeepFinding{Verdict: "the layer is too low", Axis: "ref-fit", Severity: "low"}
+	tests := []struct {
+		name, settled, note, want string
+	}{
+		{name: "with a note", settled: "withdrawn", note: "the dialogue\n  names the layer", want: "- f2 [low, ref-fit] withdrawn: the dialogue names the layer\n"},
+		{name: "without a note", settled: "accepted without an edit", want: "- f2 [low, ref-fit] accepted without an edit\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := model.DeepSettledLine("f2", finding, tt.settled, tt.note); got != tt.want {
+				t.Fatalf("a settled finding should render as one line with its label, outcome and note, got %q", got)
+			}
+		})
+	}
+}
+
 func TestBuildDeepProposal_RefusesNonMatchingAndOverlappingEdits(t *testing.T) {
 	_, _, err := model.BuildDeepProposal(deepBase, []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "absent text", New: "x"}}}})
 	if err == nil || !strings.Contains(err.Error(), "f1 edit 1: old text matches the draft 0 times") {

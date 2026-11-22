@@ -37,12 +37,17 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 	x := startDeep(t, world, session, captureDraft())
 	verdict := "the gap claims an observation the graph records nowhere"
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
-	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	serve := x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	if !strings.Contains(test.Untagged(serve.Instructions), "- f1 [medium, inconsistent]: "+verdict) {
+		t.Fatalf("deepAnswer should serve the finding in full:\n%s", serve.Instructions)
+	}
 	preflights := world.LLM.Calls(llm.PurposePreflight)
-	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
+	settled := "- f1 [medium, inconsistent] accepted without an edit\n"
 	replay := test.Untagged(serve.Instructions)
-	for _, want := range []string{"The deep verifier left these findings without a change to the draft", "- f1 [medium, inconsistent]: " + verdict, "Show the user each one in full, as listed, never a paraphrase, before they confirm or adjust the draft."} {
+	for _, want := range []string{"The deep verifier left these findings without a change to the draft", settled, "Show the user each one before they confirm or adjust the draft: the finding as you were served it in full, never a paraphrase, and how it was settled."} {
 		if !strings.Contains(replay, want) {
 			t.Fatalf("the replayed playback should carry %q:\n%s", want, replay)
 		}
@@ -53,10 +58,35 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 		t.Fatalf("the replay should run no second pre-flight, got %d calls after %d", calls, preflights)
 	}
 	text := test.Untagged(serve.Instructions)
-	for _, want := range []string{"You accepted these findings of the deep verifier, which carried no edit, so the entry was written without a change for them:", "- f1 [medium, inconsistent]: " + verdict, "Tell the user each one."} {
+	for _, want := range []string{"You accepted these findings of the deep verifier, which carried no edit, so the entry was written without a change for them:", settled, "Tell the user each one."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("verifySummary should carry %q:\n%s", want, text)
 		}
+	}
+	for name, text := range map[string]string{"playback": replay, "verifySummary": text} {
+		if strings.Contains(text, verdict) {
+			t.Errorf("%s should name the settled finding in one line, not repeat it in full:\n%s", name, text)
+		}
+	}
+}
+
+// A playback round carrying the deep exchange's settled findings is the only
+// one: the round after an adjust leaves them out.
+func TestCaptureDeep_SettledFindingsRideOnePlaybackRound(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-settled-once", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{map[string]any{"verdict": "the gap claims an observation the graph records nowhere", "axis": "inconsistent", "severity": "medium"}})
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+	const settled = "- f1 [medium, inconsistent] accepted without an edit"
+	if !strings.Contains(test.Untagged(serve.Instructions), settled) {
+		t.Fatalf("the first playback after the exchange should carry the settled finding:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, x.instance, "playback", "adjust", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "say one thing")
+	proctest.RequireStep(t, serve, "playback")
+	if text := test.Untagged(serve.Instructions); strings.Contains(text, settled) || strings.Contains(text, "left these findings without a change") {
+		t.Fatalf("a playback round after the one that carried the settled findings should leave them out:\n%s", text)
 	}
 }
 
@@ -125,7 +155,7 @@ func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing
 	if strings.Contains(text, "Show the user") {
 		t.Errorf("an autonomous playback should not address a user about the findings:\n%s", text)
 	}
-	for _, want := range []string{"- f1 [medium, inconsistent]: " + verdict, "Weigh each against your grounding before you confirm or adjust the draft."} {
+	for _, want := range []string{"- f1 [medium, inconsistent] accepted without an edit", "Weigh each against your grounding before you confirm or adjust the draft."} {
 		if !strings.Contains(text, want) {
 			t.Errorf("an autonomous playback should put the findings to the agent, missing %q:\n%s", want, text)
 		}

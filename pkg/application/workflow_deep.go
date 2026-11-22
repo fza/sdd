@@ -373,7 +373,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's unchanged findings as shown, so the playback they go to runs once.", Writes: []string{fieldDeepReplayed}},
+			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's settled findings as shown once a playback that carried them is answered, so no later round carries them again.", Writes: []string{fieldDeepReplayed}},
 			Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine(fieldDeepReplayed, true) },
 		},
 		{
@@ -925,8 +925,9 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 	var open, withdrawn, unedited strings.Builder
 	for i, finding := range findings {
 		id := model.DeepFindingID(i)
+		label := model.DeepFindingLabel(id, finding)
 		if finding.Owner {
-			fmt.Fprintf(&open, "- %s, only the user can settle it\n  draft: %s\n  verifier: %s\n", id, deepPassages(finding.Pointers), finding.Verdict)
+			fmt.Fprintf(&open, "- %s: only the user can settle it\n", label)
 			continue
 		}
 		var response *model.DeepResponse
@@ -937,7 +938,7 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 			}
 		}
 		if response != nil && (response.Outcome == model.DeepConceded || response.Outcome == model.DeepDropped) {
-			fmt.Fprintf(&withdrawn, "- %s [%s, %s]: %s\n  withdrawn: %s\n", id, finding.Severity, finding.Axis, finding.Verdict, response.Note)
+			withdrawn.WriteString(model.DeepSettledLine(id, finding, "withdrawn", response.Note))
 			continue
 		}
 		var answer *model.DeepAnswer
@@ -947,14 +948,11 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 			}
 		}
 		if answer != nil && response != nil && response.Outcome == model.DeepHeld {
-			fmt.Fprintf(&open, "- %s, contested, and the verifier holds it\n  draft: %s; the drafter: %s\n  verifier: %s; %s\n", id, deepPassages(finding.Pointers), answer.Reason, finding.Verdict, response.Note)
-			for _, edit := range edited[id] {
-				fmt.Fprintf(&open, "  verifier's edit: replace %q with %q\n", edit.Old, edit.New)
-			}
+			fmt.Fprintf(&open, "- %s: contested, and the verifier holds it\n  the drafter: %s\n  the verifier: %s\n", label, answer.Reason, response.Note)
 			continue
 		}
 		if edited[id] == nil {
-			fmt.Fprintf(&unedited, "- %s [%s, %s]: %s\n", id, finding.Severity, finding.Axis, finding.Verdict)
+			unedited.WriteString(model.DeepSettledLine(id, finding, "accepted without an edit", ""))
 		}
 	}
 	writes := map[string]any{fieldDeepProposal: proposal, fieldDeepHunks: model.RenderDeepHunks(hunks), fieldDeepOpen: open.String(), fieldDeepWithdrawn: withdrawn.String(), fieldDeepUnedited: unedited.String()}
@@ -965,23 +963,6 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 		}
 	}
 	return nil
-}
-
-// deepPassages names what the draft holds where a finding points.
-func deepPassages(pointers []model.DeepPointer) string {
-	var passages []string
-	for _, pointer := range pointers {
-		switch {
-		case pointer.Quote != "":
-			passages = append(passages, fmt.Sprintf("%s says %q", pointer.Field, pointer.Quote))
-		case pointer.ID != "":
-			passages = append(passages, fmt.Sprintf("%s names %s", pointer.Field, pointer.ID))
-		}
-	}
-	if len(passages) == 0 {
-		return "the draft as it stands"
-	}
-	return strings.Join(passages, "; ")
 }
 
 // Engine-written fields of the verify task.
@@ -1066,10 +1047,15 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 	// findings, the proposal and its hunks reach their reader whole, never at
 	// the store-value cap.
 	err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: a reading page, the findings, the proposal or its hunks, up to one page of the reading."},
+		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: a reading page, the findings, the proposal or its hunks, up to one page of the reading. Arg unplayed: nothing once a playback carrying the settled findings was answered (markDeepReplayed)."},
 		ServeSafe: true,
 		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DeepPageChars}},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
+			if unplayed, _ := args["unplayed"].(bool); unplayed {
+				if replayed, _ := ctx.Store.Get(fieldDeepReplayed); replayed == true {
+					return "", nil
+				}
+			}
 			field, _ := args["field"].(string)
 			value, _ := workflowStoreString(ctx.Store, field)
 			return value, nil
