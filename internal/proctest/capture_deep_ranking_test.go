@@ -94,8 +94,8 @@ func TestCaptureDeep_AClaudeHostRanksWithItsJudgeFromAssembleOn(t *testing.T) {
 	if !strings.Contains(reading, "Ranking source: judge "+hostJudge+", ") {
 		t.Fatalf("the reading's header should name the host's judge:\n%s", reading)
 	}
-	if !strings.Contains(reading, "ID: "+laneRelevant) {
-		t.Fatalf("the entry the host's judge rates relevant should be served in full:\n%s", reading)
+	if !strings.HasPrefix(readingLine(reading, laneRelevant), "! .90") {
+		t.Fatalf("the entry the host's judge rates relevant should be a marked line:\n%s", reading)
 	}
 	if len(gather.Scored()) != 0 {
 		t.Fatalf("gather's judge scored %v: the Claude host's judge ranks the deep reading", gather.Scored())
@@ -153,7 +153,7 @@ func TestCaptureDeep_AnotherHostRanksWithThePrefilterJudge(t *testing.T) {
 	if len(host.Scored()) != 0 {
 		t.Fatalf("the Claude host's judge scored %v under another host", host.Scored())
 	}
-	if !strings.Contains(reading, "Ranking source: judge "+gatherJudge+", ") || !strings.Contains(reading, "ID: "+laneRelevant) {
+	if !strings.Contains(reading, "Ranking source: judge "+gatherJudge+", ") || !strings.HasPrefix(readingLine(reading, laneRelevant), "! .90") {
 		t.Fatalf("the prefilter judge should rank the reading:\n%s", reading)
 	}
 }
@@ -179,8 +179,8 @@ func TestCaptureDeep_AnotherHostRanksBySimilarityWithoutAJudge(t *testing.T) {
 	if !strings.Contains(reading, "Ranking source: similarity to the draft, ") && !strings.Contains(reading, " by similarity to the draft") {
 		t.Fatalf("the reading's header should name similarity as its ranking source:\n%s", reading)
 	}
-	kappa := strings.Index(reading, "\n"+kappaEntry+"  ")
-	low := strings.Index(reading, "\n20260603-120000-d-tac-l00  ")
+	kappa := strings.Index(reading, "  "+kappaEntry+" {")
+	low := strings.Index(reading, "  20260603-120000-d-tac-l00 {")
 	if kappa < 0 || low < 0 || kappa > low {
 		t.Fatalf("the entry most similar to the draft should be listed first:\n%s", reading)
 	}
@@ -232,7 +232,7 @@ func TestCaptureDeep_ARankingPastItsTimeLimitLeavesListedOrder(t *testing.T) {
 }
 
 // A judge whose ranking recall over its referenced labels is below the bar
-// widens the reading: the top served in full doubles, and the header says
+// widens the reading: the lines in doubt double, and the header says
 // why.
 func TestCaptureDeep_AWeakJudgeWidensTheReading(t *testing.T) {
 	readingWith := func(t *testing.T, recall uint8) string {
@@ -255,15 +255,15 @@ func TestCaptureDeep_AWeakJudgeWidensTheReading(t *testing.T) {
 	}
 	weak, sound := readingWith(t, 10), readingWith(t, 250)
 
-	if !strings.Contains(weak, "ranking recall is below the bar, so the reading serves the top 10 in full") {
+	if !strings.Contains(weak, "ranking recall is below the bar, so the reading lists 200 lines in doubt") {
 		t.Fatalf("the header should say the weak judge widened the reading:\n%s", weak)
 	}
 	if strings.Contains(sound, "below the bar") {
 		t.Fatalf("a sound judge should not widen the reading:\n%s", sound)
 	}
 	blocks := func(reading string) int { return strings.Count(reading, "---\n\nID: ") }
-	if got := blocks(weak) - blocks(sound); got != model.DeepTopRanked {
-		t.Fatalf("the weak judge's reading serves %d more entries in full, want %d", got, model.DeepTopRanked)
+	if blocks(weak) != blocks(sound) {
+		t.Fatalf("the weak judge's reading serves %d entries in full against %d: widening lists more lines, never more entries in full", blocks(weak), blocks(sound))
 	}
 }
 
@@ -365,8 +365,8 @@ func requireRecordedRanking(t *testing.T, world *proctest.World, session *procte
 	if !strings.Contains(reading, "Ranking source: judge "+hostJudge+", ") {
 		t.Fatalf("the reading's header should name the judge whose recorded scores rank it:\n%s", reading)
 	}
-	if !strings.Contains(reading, "ID: "+laneRelevant) {
-		t.Fatalf("the entry the recorded scores rate relevant should be served in full:\n%s", reading)
+	if !strings.HasPrefix(readingLine(reading, laneRelevant), "! .90") {
+		t.Fatalf("the entry the recorded scores rate relevant should be a marked line:\n%s", reading)
 	}
 	if scored := judge.Scored(); len(scored) != paid {
 		t.Fatalf("the judge scored %v after the restart: the recorded scores should rank the reading", scored[paid:])
@@ -433,8 +433,8 @@ func TestCaptureDeep_WithoutARankingStoreARestartScoresAgain(t *testing.T) {
 	serve := session.Answer(t, instance, "playback", "confirm", nil, "write it")
 	proctest.RequireStep(t, serve, "deepDispatch")
 	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
-	if !strings.Contains(reading, "ID: "+laneRelevant) {
-		t.Fatalf("the entry the judge rates relevant should be served in full:\n%s", reading)
+	if !strings.HasPrefix(readingLine(reading, laneRelevant), "! .90") {
+		t.Fatalf("the entry the judge rates relevant should be a marked line:\n%s", reading)
 	}
 	if scored := host.Scored(); len(scored) == paid {
 		t.Fatal("a server started anew should ask the judge again: nothing kept the first pass's scores")

@@ -31,14 +31,14 @@ func deepTargets(store *engine.Store) []string {
 // ranking judge of the session's host and the entries whose rank needs a
 // score from it.
 type rankingPlan struct {
-	runtime  *ProjectRuntime
-	graph    *model.Graph
-	judge    Prefilter
-	subject  string
-	draft    model.VerifierDraft
-	input    model.VerifierReading
-	slots    []model.VerifierSlot
-	unscored []string
+	runtime   *ProjectRuntime
+	graph     *model.Graph
+	judge     Prefilter
+	subject   string
+	draft     model.VerifierDraft
+	input     model.VerifierReading
+	placement model.VerifierPlacement
+	unscored  []string
 	// recorded are the entries whose score only a background pass's record
 	// holds (rankedScores), not yet the reading.
 	recorded []string
@@ -89,8 +89,8 @@ func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store
 	if credited != nil && credited.Corpus != nil {
 		plan.input.Seed = credited.Corpus.Hash
 	}
-	plan.slots = model.PlaceVerifierReading(graph, plan.draft, plan.input)
-	plan.unscored = model.VerifierUnscored(plan.slots, plan.input)
+	plan.placement = model.PlaceVerifierReading(graph, plan.draft, plan.input)
+	plan.unscored = model.VerifierUnscored(plan.placement, plan.input)
 	return plan, nil
 }
 
@@ -278,25 +278,25 @@ func (w *WorkflowSession) verifierPlacement(ctx *engine.Context) (verifierPlaced
 				return verifierPlaced{}, err
 			}
 			maps.Copy(plan.input.Scores, fresh)
-			plan.slots = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
+			plan.placement = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
 		}
 	}
-	if still := model.VerifierUnscored(plan.slots, plan.input); len(still) > 0 {
+	if still := model.VerifierUnscored(plan.placement, plan.input); len(still) > 0 {
 		similarity, err := plan.runtime.draftSimilarity(w.ctx, plan.subject, still)
 		if err != nil {
 			logger.Warn("the verifier's reading keeps listed order for the entries no judge scored: similarity to the draft failed", "error", err)
 		} else if len(similarity) > 0 {
 			plan.input.Similarity = similarity
-			plan.slots = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
+			plan.placement = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
 		}
 	}
-	return verifierPlaced{slots: plan.slots, input: plan.input, judge: plan.judge.Judge}, nil
+	return verifierPlaced{placement: plan.placement, input: plan.input, judge: plan.judge.Judge}, nil
 }
 
 // verifierPlaced is the deep verifier's placed reading, the input it was
 // placed from and the judge that ranked it.
 type verifierPlaced struct {
-	slots []model.VerifierSlot
-	input model.VerifierReading
-	judge string
+	placement model.VerifierPlacement
+	input     model.VerifierReading
+	judge     string
 }

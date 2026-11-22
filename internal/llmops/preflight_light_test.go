@@ -165,47 +165,44 @@ func TestDeepReadingBlock(t *testing.T) {
 	}
 }
 
-// The closing block lists the next-ranked by title and first summary
-// sentence, the rest by title, grouped under one heading each: the implicit
-// dismissals, then the entries below the prefilter's threshold, then the
-// others, in rank order within a group.
-func TestDeepListedBlock_GroupsTheLinesUnderHeadings(t *testing.T) {
-	summary := readingEntry("20261101-090000-s-tac-sum", "Shown and left unanswered. More words after.", "Body.", "capture/attachments")
-	summary.Title = "Unanswered entry"
-	titled := readingEntry("20261101-100000-s-tac-ttl", "Listed by title. Never this sentence.", "Body.", "capture/attachments")
-	titled.Title = "Title only"
-	hidden := readingEntry("20261101-110000-s-tac-hid", "Below the threshold.", "Body.", "capture/attachments")
-	both := readingEntry("20261101-120000-s-tac-bth", "Unanswered and below.", "Body.", "capture/attachments")
-	other := readingEntry("20261101-130000-s-tac-oth", "Another listed one.", "Body.", "capture/attachments")
-	block := llmops.DeepListedBlock([]llmops.DeepListedLine{
-		{Entry: summary, Summary: true, Implicit: true},
-		{Entry: titled},
-		{Entry: hidden, Hidden: true},
-		{Entry: both, Hidden: true, Implicit: true},
-		{Entry: other},
-	}, 7)
-	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
-	want := "Shown to the capture and left unanswered (implicitly dismissed):\n" +
-		summary.ID + "  Unanswered entry: Shown and left unanswered.\n" +
-		both.ID + "  Unanswered and below.\n" +
-		"\nBelow the prefilter's threshold:\n" +
-		hidden.ID + "  Below the threshold.\n" +
-		"\nOther listed entries:\n" +
-		titled.ID + "  Title only\n" +
-		other.ID + "  Another listed one.\n" +
-		"\n7 more listed, open with search or show"
-	if block.ID != llmops.DeepListedID || lines != want || !strings.Contains(block.Text, "## Listed, not served (5)") {
-		t.Errorf("each entry should keep one line of its tier in its group, got:\n%s", block.Text)
+// The closing block lists the marked lines with why sdd marked them and what
+// the drafter did, then the lines in doubt, the title lines, a count of the
+// rest and one count per set-aside reason, without IDs.
+func TestDeepLinesBlock_ListsTheGroupsWithTheirNotes(t *testing.T) {
+	marked := readingEntry("20261101-090000-s-tac-mrk", "Closes the target. More words after.", "Body.", "capture/attachments")
+	marked.Title = "Marked entry"
+	doubt := readingEntry("20261101-100000-s-tac-dbt", "In doubt. Never this sentence.", "Body.", "capture/attachments")
+	doubt.Title = "Doubtful entry"
+	titled := readingEntry("20261101-110000-s-tac-ttl", "By title.", "Body.", "capture/attachments")
+	graph := lightGraph(t, marked, doubt, titled)
+	score := 0.42
+	lines := model.Lines{
+		Bearing:  []model.Line{{Entry: marked, Marked: true, Reason: model.VerifierClosesTarget}},
+		Doubt:    []model.Line{{Entry: doubt, Score: &score, Hop: true}},
+		Titles:   []model.Line{{Entry: titled}},
+		Counted:  []string{"a", "b"},
+		SetAside: []model.GatherSetAside{{Reason: model.SetAsideFiltered, IDs: []string{"20261101-120000-s-tac-asd"}}},
 	}
-}
-
-// With only unmarked entries the closing block prints no group heading.
-func TestDeepListedBlock_OmitsTheHeadingOfALoneOtherGroup(t *testing.T) {
-	titled := readingEntry("20261101-100000-s-tac-ttl", "Listed by title.", "Body.", "capture/attachments")
-	block := llmops.DeepListedBlock([]llmops.DeepListedLine{{Entry: titled}}, 0)
-	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
-	if want := titled.ID + "  Listed by title."; lines != want {
-		t.Errorf("a lone other group should list its lines without a heading, got:\n%s", block.Text)
+	drafter := func(id string) string {
+		if id == doubt.ID {
+			return "drafter: read"
+		}
+		return ""
+	}
+	block := llmops.DeepLinesBlock(graph, lines, drafter)
+	for _, want := range []string{
+		"## marked for you (1)",
+		"! ?         " + marked.ID + " {open}  Marked entry — " + model.VerifierClosesTarget + "\n      Closes the target.\n",
+		"## in doubt (1)\n\n  .42 ~ref  " + doubt.ID + " {open}  Doubtful entry — drafter: read\n\n",
+		"## by title (1)\n\n  " + titled.ID + "  By title.\n  +2 more, not listed\n",
+		"## set aside (1)\n\n  1 " + model.SetAsideFiltered,
+	} {
+		if !strings.Contains(block.Text, want) {
+			t.Errorf("the block lacks %q:\n%s", want, block.Text)
+		}
+	}
+	if block.ID != llmops.DeepListedID || strings.Contains(block.Text, "20261101-120000-s-tac-asd") {
+		t.Errorf("the block should count a set-aside entry without its ID:\n%s", block.Text)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
@@ -507,14 +508,56 @@ func joinInts(values []int) string {
 // entries the reading does not serve.
 const DeepListedID = "the entries the reading lists without serving them"
 
-// DeepListedLine is one entry of the deep reading's closing block: Summary
-// lists it by title and first summary sentence, else by title; Hidden marks
-// it scored below the prefilter's threshold, Implicit dismissed implicitly.
-type DeepListedLine struct {
-	Entry    *model.Entry
-	Summary  bool
-	Hidden   bool
-	Implicit bool
+// DeepLinesBlock lists every entry the verifier's start does not serve as a
+// line of the shared placement: the marked ones with why sdd marked them, the
+// lines in doubt, the title lines and one count per set-aside reason. drafter
+// names what the drafter did with an entry, empty for nothing.
+func DeepLinesBlock(g *model.Graph, lines model.Lines, drafter func(id string) string) model.DeepReadingBlock {
+	var b strings.Builder
+	b.WriteString("---\n\nMarks: `!` marked for you, `.87` the judge's score, `?` not judged, `~ref` one reference from a target. Open any line with show when it bears on the draft; a finding may rest on it.\n")
+	note := func(line model.Line) string {
+		var parts []string
+		if line.Marked {
+			parts = append(parts, line.Reason)
+		}
+		if did := drafter(line.Entry.ID); did != "" {
+			parts = append(parts, did)
+		}
+		return strings.Join(parts, " · ")
+	}
+	if len(lines.Bearing) > 0 {
+		fmt.Fprintf(&b, "\n## marked for you (%d)\n\nEach names why sdd marked it and what the drafter did with it. Open every one that bears on the draft: the drafter learns which you opened.\n\n", len(lines.Bearing))
+		for _, line := range lines.Bearing {
+			line.Summary = true
+			b.WriteString(presenters.MarkedLine(g, line, note(line)))
+		}
+	}
+	if len(lines.Doubt) > 0 {
+		fmt.Fprintf(&b, "\n## in doubt (%d)\n\n", len(lines.Doubt))
+		for _, line := range lines.Doubt {
+			b.WriteString(presenters.MarkedLine(g, line, note(line)))
+		}
+	}
+	if len(lines.Titles) > 0 || len(lines.Counted) > 0 {
+		fmt.Fprintf(&b, "\n## by title (%d)\n\n", len(lines.Titles))
+		for _, line := range lines.Titles {
+			fmt.Fprintf(&b, "  %s  %s\n", line.Entry.ID, line.Entry.ListingTitle())
+		}
+		if len(lines.Counted) > 0 {
+			fmt.Fprintf(&b, "  +%d more, not listed\n", len(lines.Counted))
+		}
+	}
+	setAside := 0
+	for _, group := range lines.SetAside {
+		setAside += len(group.IDs)
+	}
+	if setAside > 0 {
+		fmt.Fprintf(&b, "\n## set aside (%d)\n\n", setAside)
+		for _, group := range lines.SetAside {
+			fmt.Fprintf(&b, "  %d %s\n", len(group.IDs), group.Reason)
+		}
+	}
+	return model.DeepReadingBlock{ID: DeepListedID, Text: strings.TrimRight(b.String(), "\n")}
 }
 
 // DeepRankingNote heads the verifier's reading with what ranked the entries
@@ -546,61 +589,8 @@ func DeepRankingNote(sources model.RankingSources, judge string, widened bool) s
 		fmt.Fprintf(&b, "mixed, %s.", strings.Join(parts, ", "))
 	}
 	if widened {
-		fmt.Fprintf(&b, " The judge's ranking recall is below the bar, so the reading serves the top %d in full and lists the next %d with their summary.", 2*model.DeepTopRanked, 2*model.DeepSummaryRanked)
+		fmt.Fprintf(&b, " The judge's ranking recall is below the bar, so the reading lists %d lines in doubt.", 2*model.DoubtLines)
 	}
 	b.WriteString("\n")
 	return b.String()
-}
-
-// DeepListedBlock lists the entries the reading does not serve, one line
-// each in groups: the implicit dismissals, then those below the prefilter's
-// threshold, then the others, each under its heading and in reading order.
-// It ends with the count of those past a listing ceiling. Every listed and
-// counted line of the reading is rendered here.
-func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock {
-	var b strings.Builder
-	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the higher-ranked ones with the first sentence of their summary, in rank order within each group. An entry below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
-	var implicit, hidden, other []string
-	for _, line := range lines {
-		e := line.Entry
-		text := model.EntryBrief(e)
-		if sentence := e.FirstSummarySentence(); line.Summary && e.Title != "" && sentence != "" {
-			text = e.Title + ": " + sentence
-		}
-		text = e.ID + "  " + text
-		switch {
-		case line.Implicit:
-			implicit = append(implicit, text)
-		case line.Hidden:
-			hidden = append(hidden, text)
-		default:
-			other = append(other, text)
-		}
-	}
-	headed := len(implicit) > 0 || len(hidden) > 0
-	var groups []string
-	for _, group := range []struct {
-		heading string
-		lines   []string
-	}{
-		{"Shown to the capture and left unanswered (" + string(model.LightRoleImplicit) + "):", implicit},
-		{"Below the prefilter's threshold:", hidden},
-		{"Other listed entries:", other},
-	} {
-		if len(group.lines) == 0 {
-			continue
-		}
-		text := strings.Join(group.lines, "\n")
-		if headed {
-			text = group.heading + "\n" + text
-		}
-		groups = append(groups, text)
-	}
-	if counted > 0 {
-		groups = append(groups, fmt.Sprintf("%d more listed, open with search or show", counted))
-	}
-	if len(groups) > 0 {
-		b.WriteString("\n" + strings.Join(groups, "\n\n"))
-	}
-	return model.DeepReadingBlock{ID: DeepListedID, Text: b.String()}
 }

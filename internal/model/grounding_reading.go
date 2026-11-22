@@ -96,7 +96,9 @@ type ReadPayload struct {
 	Full  []string        `json:"full,omitempty"`
 	// Shown names the entries printed as a brief or a pointer line, never
 	// those printed only as a set-aside ID or count.
-	Shown  []string    `json:"shown,omitempty"`
+	Shown []string `json:"shown,omitempty"`
+	// Marked names the lines marked as likely bearing, which owe an answer.
+	Marked []string    `json:"marked,omitempty"`
 	Corpus *CorpusMark `json:"corpus,omitempty"`
 	// Prefilter carries the scores the prefilter gave in this read.
 	Prefilter *PrefilterPayload `json:"prefilter,omitempty"`
@@ -104,7 +106,7 @@ type ReadPayload struct {
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && p.Corpus == nil && p.Prefilter == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && len(p.Marked) == 0 && p.Corpus == nil && p.Prefilter == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture
@@ -115,6 +117,7 @@ type Reading struct {
 	listed map[string]bool
 	full   map[string]bool
 	shown  map[string]bool
+	marked map[string]bool
 	scores map[string]*readingScores
 	audit  map[string]bool
 }
@@ -146,6 +149,14 @@ func (r *Reading) Fold(p ReadPayload) {
 			r.shown[id] = true
 		}
 	}
+	if r.marked == nil {
+		r.marked = map[string]bool{}
+	}
+	for _, id := range p.Marked {
+		if id != "" {
+			r.marked[id] = true
+		}
+	}
 	r.foldPrefilter(p.Prefilter)
 	if r.Corpus == nil && p.Corpus != nil {
 		r.Corpus = p.Corpus
@@ -158,6 +169,14 @@ func (r *Reading) Listed() []string {
 		return nil
 	}
 	return sortedKeys(r.listed)
+}
+
+// Marked returns every line the reading marked as likely bearing, sorted.
+func (r *Reading) Marked() []string {
+	if r == nil {
+		return nil
+	}
+	return sortedKeys(r.marked)
 }
 
 // Full returns every entry served in full inside the reading, sorted.

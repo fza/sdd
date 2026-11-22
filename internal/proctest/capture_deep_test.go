@@ -157,8 +157,8 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 		}
 		reading.WriteString(serve.Instructions)
 	}
-	if !strings.Contains(reading.String(), "## Listed, not served (") || !strings.Contains(reading.String(), "\n"+captureRef2ID+"  A signal no fixture session has read in full.") {
-		t.Fatalf("the reading should list an entry no score ranks into the top in its closing block:\n%s", reading.String())
+	if !strings.Contains(readingLine(reading.String(), captureRef2ID), "A signal no fixture session has read in full.") {
+		t.Fatalf("the reading should list an entry it does not serve in full as a line:\n%s", reading.String())
 	}
 }
 

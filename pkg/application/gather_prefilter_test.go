@@ -166,13 +166,14 @@ func TestGather_PrefilterOnlySortsUntilTheRecallBoundHolds(t *testing.T) {
 
 func rankedID(i int) string { return fmt.Sprintf("20260102-%02d%02d00-s-tac-rnk", i/60, i%60) }
 
-// Below the first recall stage the scored candidates past the top
-// GatherJudgeRanked are listed by title: listed, so a verdict may answer
-// them, but not shown, so publish records no implicit dismissal for them.
+// Below the first recall stage the best five scores are marked and the
+// scored candidates past the next DoubtLines are listed by title: listed, so
+// a verdict may answer them, but not shown, so publish records no implicit
+// dismissal for them.
 func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{}}
 	f := prefilterFixture(t, scorer)
-	for i := range model.GatherJudgeRanked + 20 {
+	for i := range model.FallbackMarks + model.DoubtLines + 15 {
 		id := rankedID(i)
 		f.write(t, id, "gap", fmt.Sprintf("Ranked gap %d.", i), "title: Ranked gap "+fmt.Sprint(i)+"\n")
 		scorer.scores[id] = 0.99 - float64(i)/1000
@@ -182,20 +183,20 @@ func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := rankedID(model.GatherJudgeRanked + 19)
+	last := rankedID(model.FallbackMarks + model.DoubtLines + 14)
 	top := rankedID(0)
-	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.GatherJudgeRanked {
-		t.Fatalf("%d shown: the top %d scored should stay to judge and the rest go unshown:\n%s", len(result.SummaryIDs), model.GatherJudgeRanked, result.Text)
+	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.FallbackMarks+model.DoubtLines {
+		t.Fatalf("%d shown: the five marked and the next lines in doubt should show and the rest go unshown:\n%s", len(result.SummaryIDs), result.Text)
 	}
-	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text, "\n- "+last+" — Ranked gap 119\n") {
+	if !strings.HasPrefix(lineOf(result.Text, top), "! .99") || !strings.HasPrefix(lineOf(result.Text, rankedID(model.FallbackMarks)), "  .") {
+		t.Fatalf("the five best scores should carry the mark and the next none:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "\n## by title (") || !strings.Contains(result.Text, "\n  "+last+"  Ranked gap 119\n") {
 		t.Fatalf("the lower ranks should be listed by ID and title:\n%s", result.Text)
-	}
-	if !strings.Contains(result.Text, "so the top 100 scored stay to judge, ") {
-		t.Fatalf("the header should name the tiers:\n%s", result.Text)
 	}
 }
 
-func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
+func TestGather_CalibratedPrefilterSetsAsideAndMarks(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)
 	f.relevance = calibratedLedger(t)
@@ -204,13 +205,14 @@ func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.FullIDs) != 1 || result.FullIDs[0] != gatherAlpha {
-		t.Fatalf("full %v: a score above the relevant threshold should be served in full", result.FullIDs)
+	if len(result.FullIDs) != 0 || !strings.HasPrefix(lineOf(result.Text, gatherAlpha), "! .95") {
+		t.Fatalf("full %v: a score above the relevant threshold should be a marked line, not served in full:\n%s", result.FullIDs, result.Text)
 	}
-	line := setAsideLine(result.Text, model.SetAsideFiltered)
-	lowSetAside := (strings.Contains(line, gatherBeta) || slices.Contains(result.SummaryIDs, gatherBeta)) && (strings.Contains(line, gatherUnrelated) || slices.Contains(result.SummaryIDs, gatherUnrelated))
-	if !lowSetAside || strings.Contains(line, gatherAlpha) || len(result.SummaryIDs) != 2 {
+	if slices.Contains(result.SummaryIDs, gatherBeta) && slices.Contains(result.SummaryIDs, gatherUnrelated) || len(result.SummaryIDs) != 3 {
 		t.Fatalf("scores below the calibrated threshold should be set aside, but for the audit lines:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, gatherBeta) && !slices.Contains(result.SummaryIDs, gatherBeta) {
+		t.Fatalf("a set-aside entry should be counted without its ID:\n%s", result.Text)
 	}
 }
 
@@ -240,8 +242,8 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 			}
 			for id := range tc.fail {
 				line := lineOf(result.Text, id)
-				if line == "" || strings.Contains(line, "score") || !strings.HasPrefix(line, "- ") {
-					t.Fatalf("failed candidate %s should be listed to judge, unscored:\n%s", id, result.Text)
+				if line == "" || !strings.HasPrefix(line[1:], " ?") {
+					t.Fatalf("failed candidate %s should be listed as a line, marked not judged:\n%s", id, result.Text)
 				}
 			}
 		})
@@ -313,8 +315,8 @@ func TestGather_OnePairCallsLoseOnlyTheLostCall(t *testing.T) {
 			if !strings.Contains(result.Text, "prefilter: partial") || !strings.Contains(result.Text, ", 1 unanswered and left to judge (") {
 				t.Fatalf("one lost call should cost only its candidate and leave the pass partial:\n%s", result.Text)
 			}
-			if !slices.Contains(result.FullIDs, gatherAlpha) {
-				t.Fatalf("the answered calls should keep their scores: %v", result.FullIDs)
+			if !strings.HasPrefix(lineOf(result.Text, gatherAlpha), "! .95") {
+				t.Fatalf("the answered calls should keep their scores:\n%s", result.Text)
 			}
 		})
 	}
@@ -337,22 +339,28 @@ func calibratedLedger(t *testing.T) *localadapter.MemoryRelevanceStore {
 	return store
 }
 
+// lineOf returns the marked line that lists id, empty when none does.
 func lineOf(text, id string) string {
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "- "+id) {
+		if regexp.MustCompile(`^[! ] (\?|\.\d\d|1\.0) `).MatchString(line) && strings.Contains(line, "  "+id) {
 			return line
 		}
 	}
 	return ""
 }
 
-func setAsideLine(text, reason string) string {
+// setAsideCount returns the count a check gives reason, 0 when it names none.
+func setAsideCount(text, reason string) int {
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "- "+reason+":") {
-			return line
+		var count int
+		if strings.HasSuffix(line, " "+reason) {
+			_, err := fmt.Sscanf(strings.TrimSpace(line), "%d", &count)
+			if err == nil {
+				return count
+			}
 		}
 	}
-	return ""
+	return 0
 }
 
 func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
@@ -364,18 +372,14 @@ func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setAside := setAsideLine(result.Text, model.SetAsideFiltered)
-	var audited []string
-	for _, id := range result.SummaryIDs {
-		if line := lineOf(result.Text, id); line != "" && !strings.Contains(setAside, id) {
-			audited = append(audited, id)
+	audited := slices.DeleteFunc(slices.Clone(result.SummaryIDs), func(id string) bool { return id == gatherAlpha })
+	if len(audited) != 2 || setAsideCount(result.Text, model.SetAsideFiltered) != 33 {
+		t.Fatalf("audited %v: ceil(3%%) of the 35 set-asides should be shown blind to judge:\n%s", audited, result.Text)
+	}
+	for _, id := range audited {
+		if line := lineOf(result.Text, id); !strings.HasPrefix(line, "  ?") {
+			t.Fatalf("an audit sample should show unscored and unmarked, so no score tells it apart:\n%s", result.Text)
 		}
-	}
-	if len(audited) != 2 {
-		t.Fatalf("audited %v: ceil(3%%) of the 34 set-asides should be shown blind to judge:\n%s", audited, result.Text)
-	}
-	if strings.Contains(result.Text, "· score") {
-		t.Fatalf("no line should show a score that tells a sample apart:\n%s", result.Text)
 	}
 	again, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
@@ -451,9 +455,9 @@ func TestUpdateGrounding_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	}
 }
 
-// An entry the prefilter serves in full that the consumer already holds prints
-// as its pointer, and still counts as read; opened by ID it is the way back
-// and serves in full.
+// A marked line whose entry the consumer already holds prints its pointer,
+// and still counts as shown; opened by ID it is the way back and serves in
+// full.
 func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)
@@ -472,8 +476,8 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	if !strings.Contains(result.Text, presenters.GatherWayBack) {
 		t.Fatalf("the pointer should name the way back:\n%s", result.Text)
 	}
-	if !slices.Contains(result.FullIDs, gatherAlpha) {
-		t.Fatalf("the pointed entry should still count as read in full: %v", result.FullIDs)
+	if !slices.Contains(result.SummaryIDs, gatherAlpha) {
+		t.Fatalf("the pointed entry should still count as shown: %v", result.SummaryIDs)
 	}
 
 	opened, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", IDs: []string{gatherAlpha}, Held: held})

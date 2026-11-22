@@ -129,10 +129,10 @@ func TestCaptureDismissals_DeepReadingMarksImplicitDismissals(t *testing.T) {
 	world, session := newDeepWorld(t, "dismissals-deep", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	if !strings.Contains(listedGroup(reading, implicitHeading), "\n"+captureRef2ID+"  A signal no fixture session has read in full.\n") {
-		t.Fatalf("the entry left unanswered should be listed under the implicit dismissals:\n%s", reading)
+	if line := readingLine(reading, captureRef2ID); !strings.Contains(line, "A signal no fixture session has read in full.") || !strings.Contains(line, "drafter: shown, left unanswered") {
+		t.Fatalf("the entry left unanswered should be a line naming what the drafter did, got %q:\n%s", line, reading)
 	}
-	if !strings.Contains(reading, "implicitly dismissed (shown, left unanswered") {
+	if !strings.Contains(reading, "was shown it and left it unanswered") {
 		t.Fatalf("the verifier's instructions should describe the implicit role:\n%s", reading)
 	}
 }
@@ -162,32 +162,27 @@ func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
 	}
 }
 
-// The deep reading's closing block lists an entry the drafter was shown and
-// left unanswered under the implicit dismissals, keeping one line per entry,
-// even where it scored below the prefilter's threshold.
+// The deep reading names on each line an entry the drafter was shown and
+// left unanswered, the audit samples of the set-aside entries among them.
 func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	world, session := newDeepWorld(t, "dismissals-deep-lane", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
 		proctest.WithRelevance(laneLedger(t, true)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
 	x := startDeep(t, world, session, captureDraft())
 	reading := verifierReading(t, x)
-	_, lane, ok := strings.Cut(reading, "## Listed, not served (")
-	if !ok {
-		t.Fatalf("the calibrated reading should serve the one-line lane:\n%s", reading)
-	}
-	unanswered := listedGroup(lane, implicitHeading)
 	var marked int
-	for line := range strings.Lines(lane) {
-		id, title, isEntry := strings.Cut(strings.TrimSuffix(line, "\n"), "  ")
-		if !isEntry || !strings.HasPrefix(id, "20260603-") {
+	for i := range 40 {
+		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
+		line := readingLine(reading, id)
+		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(title, "Low directive ") || !strings.Contains(unanswered, "\n"+line) {
-			t.Fatalf("a lane entry shown and left unanswered should be listed under the implicit dismissals, got %q:\n%s", line, lane)
+		if !strings.Contains(line, "Low directive ") || !strings.HasSuffix(line, "drafter: shown, left unanswered") {
+			t.Fatalf("a lane entry shown and left unanswered should say so on its line, got %q:\n%s", line, reading)
 		}
 		marked++
 	}
 	if marked == 0 {
-		t.Fatalf("the lane should hold entries shown and left unanswered:\n%s", lane)
+		t.Fatalf("the lines should hold entries shown and left unanswered:\n%s", reading)
 	}
 }

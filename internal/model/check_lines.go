@@ -211,7 +211,17 @@ func byFallingScore(a, b Line) int {
 // RefHops returns the entries one reference step from targets: those a
 // target references and those referencing a target.
 func RefHops(g *Graph, targets []string) map[string]bool {
-	_, refs := verifierNeighbours(g, targets)
+	refs := map[string]bool{}
+	for _, id := range targets {
+		if target := g.ByID[id]; target != nil {
+			for _, ref := range target.Refs {
+				refs[ref.ID] = true
+			}
+		}
+		for _, other := range g.RefsTo[id] {
+			refs[other] = true
+		}
+	}
 	return refs
 }
 
