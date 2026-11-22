@@ -1,6 +1,7 @@
 package cliapp
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,7 @@ func sessionStoreProject(cfg *model.PerRepoConfig) sdd.ProjectID {
 // appended to wherever it already lies. It records the checkout under each
 // state key, so the sweep reads the in-tree sessions there.
 func resolveSessionLocations(
+	ctx context.Context,
 	sddDir string,
 	cfg *model.PerRepoConfig,
 	locations repos.Locations,
@@ -41,7 +43,7 @@ func resolveSessionLocations(
 		return nil, err
 	}
 	for _, key := range slices.Compact([]string{index.RepoKey(repoID, stableRoot), index.RepoKey("", stableRoot)}) {
-		if err := localadapter.RecordCheckout(locations.StateRoot, key, filepath.Dir(sddDir), time.Now()); err != nil {
+		if err := localadapter.RecordCheckout(ctx, locations.StateRoot, key, filepath.Dir(sddDir), time.Now()); err != nil {
 			return nil, err
 		}
 	}

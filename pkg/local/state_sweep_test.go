@@ -1,8 +1,10 @@
 package local_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/networkteam/slogutils"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
@@ -207,7 +210,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := localadapter.RecordCheckout(f.root, usedEmpty, t.TempDir(), f.now); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, usedEmpty, t.TempDir(), f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, usedEmpty, f.now.Add(-time.Hour))
@@ -339,7 +342,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 		{name: "open in a second checkout", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_first", f.now.Add(-time.Hour))
 			second := t.TempDir()
-			if err := localadapter.RecordCheckout(f.root, key, second, f.now); err != nil {
+			if err := localadapter.RecordCheckout(t.Context(), f.root, key, second, f.now); err != nil {
 				t.Fatal(err)
 			}
 			f.inRepoSession(t, key, second, "s_inrepo", time.Time{})
@@ -362,7 +365,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 			const key = "github.com/acme/paused"
 			checkout := t.TempDir()
 			if !tc.unrecorded {
-				if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+				if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -392,7 +395,7 @@ func TestStateSweepRemovesTheKeptStagedAttachmentsOnceTheInRepoSessionEnds(t *te
 	f := newStateFixture(t)
 	const key = "github.com/acme/paused"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
@@ -416,7 +419,7 @@ func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "local/abcdef012345"
 	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
-		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+		if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -438,7 +441,7 @@ func TestStateSweepDropsACheckoutMissingLongerThanTheRetention(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/paused"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
@@ -469,7 +472,7 @@ func TestStateSweepRefreshesWhenItLastSawACheckout(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now)
@@ -493,7 +496,7 @@ func TestStateSweepCollectsAnInRepoSessionUnderEveryKeyRecordingItsCheckout(t *t
 	const identified, identityless = "github.com/acme/app", "local/abcdef012345"
 	checkout := t.TempDir()
 	for _, key := range []string{identified, identityless} {
-		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+		if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 			t.Fatal(err)
 		}
 		f.used(t, key, f.now)
@@ -575,7 +578,7 @@ func TestStateSweepCollectsTheEndedSessionsOfRecordedCheckouts(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now)
@@ -625,28 +628,37 @@ func TestStateSweepRefusesACheckoutRecordLineWithoutATime(t *testing.T) {
 	}
 }
 
-// A command opening a project replaces a checkout record it cannot read, so a
-// corrupt record never keeps the project from opening; the sweep still fails
-// on one (TestStateSweepRefusesACheckoutRecordLineWithoutATime).
-func TestRecordCheckoutReplacesAMalformedRecord(t *testing.T) {
+// A command opening a project drops the malformed lines of its checkout
+// record with a warning and keeps the rest, so a corrupt record never keeps
+// the project from opening; the sweep still fails on one
+// (TestStateSweepRefusesACheckoutRecordLineWithoutATime).
+func TestRecordCheckoutDropsTheMalformedLinesOfARecord(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "local/abcdef012345"
 	record := filepath.Join(f.root, "checkouts", "local", "abcdef012345.list")
 	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(record, []byte("/work/old\n"), 0o644); err != nil {
+	seen := f.now.Add(-time.Hour).UTC().Format(time.RFC3339)
+	if err := os.WriteFile(record, []byte("/work/other\t"+seen+"\n/work/old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now); err != nil {
+	var logged bytes.Buffer
+	ctx := slogutils.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&logged, nil)))
+
+	if err := localadapter.RecordCheckout(ctx, f.root, key, "/work/app", f.now); err != nil {
 		t.Fatalf("recording a checkout over a malformed record should succeed: %v", err)
 	}
+
 	content, err := os.ReadFile(record)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "/work/app\t" + f.now.UTC().Format(time.RFC3339) + "\n"; string(content) != want {
-		t.Errorf("the malformed record should be replaced, got %q, want %q", content, want)
+	if want := "/work/other\t" + seen + "\n/work/app\t" + f.now.UTC().Format(time.RFC3339) + "\n"; string(content) != want {
+		t.Errorf("the record should keep its valid line, add the checkout and lose the malformed line, got %q, want %q", content, want)
+	}
+	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), record) || !strings.Contains(logged.String(), "/work/old") {
+		t.Errorf("dropping the malformed line should be warned about, naming the record and the line, logged:\n%s", logged.String())
 	}
 }
 
@@ -660,7 +672,7 @@ func TestStateSweepForgetsAMissingCheckoutThatCameBack(t *testing.T) {
 	if err := os.MkdirAll(checkout, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+	if err := localadapter.RecordCheckout(t.Context(), f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
@@ -687,5 +699,36 @@ func TestStateSweepForgetsAMissingCheckoutThatCameBack(t *testing.T) {
 
 	if !f.stagedExists(t, key, "s_inrepo") {
 		t.Error("a checkout missing again for a moment should keep the attachments it may own")
+	}
+}
+
+// A checkout record that cannot be read at all is started afresh with a
+// warning.
+func TestRecordCheckoutStartsAnUnreadableRecordAfresh(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	record := filepath.Join(f.root, "checkouts", "local", "abcdef012345.list")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte("/work/other\t"+f.now.UTC().Format(time.RFC3339)+"\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	ctx := slogutils.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&logged, nil)))
+
+	if err := localadapter.RecordCheckout(ctx, f.root, key, "/work/app", f.now); err != nil {
+		t.Fatalf("recording a checkout over an unreadable record should succeed: %v", err)
+	}
+
+	content, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/work/app\t" + f.now.UTC().Format(time.RFC3339) + "\n"; string(content) != want {
+		t.Errorf("the unreadable record should be started afresh, got %q, want %q", content, want)
+	}
+	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), record) {
+		t.Errorf("starting the record afresh should be warned about, naming it, logged:\n%s", logged.String())
 	}
 }

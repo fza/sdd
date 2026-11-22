@@ -333,7 +333,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
+	storeLocations, err := resolveSessionLocations(ctx, sddDir, cfg, locations)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

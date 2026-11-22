@@ -81,14 +81,15 @@ func projectStampPath(stateRoot, repoKey string) (string, error) {
 // RecordCheckout notes checkout as a working tree the project keyed repoKey
 // is opened from, seen at now, so the sweep reads the sessions earlier
 // versions logged into its .sdd/sessions. A checkout seen within a day is
-// left as recorded. A record it cannot read is replaced, so a corrupt record
-// never keeps a project from opening; the sweep reports one.
-func RecordCheckout(stateRoot, repoKey, checkout string, now time.Time) error {
+// left as recorded. The malformed lines of the record are dropped, and a
+// record it cannot read at all is started afresh, each with a warning, so a
+// corrupt record never keeps a project from opening; the sweep fails on one.
+func RecordCheckout(ctx context.Context, stateRoot, repoKey, checkout string, now time.Time) error {
 	path, err := checkoutsPath(stateRoot, repoKey)
 	if err != nil {
 		return err
 	}
-	return updateCheckoutRecord(stateRoot, path, true, func(record *checkoutRecord) {
+	return updateCheckoutRecord(ctx, stateRoot, path, true, func(record *checkoutRecord) {
 		record.see(checkout, now)
 	})
 }
@@ -143,24 +144,39 @@ func (r checkoutRecord) paths() []string {
 // loadCheckoutRecord reads the record at path; a missing one lists nothing,
 // a malformed line fails it.
 func loadCheckoutRecord(path string) (checkoutRecord, error) {
+	record, malformed, err := readCheckoutRecord(path)
+	if err != nil {
+		return checkoutRecord{}, err
+	}
+	if len(malformed) > 0 {
+		return checkoutRecord{}, fmt.Errorf("reading checkout record %s: malformed line %q", path, malformed[0])
+	}
+	return record, nil
+}
+
+// readCheckoutRecord reads the record at path, returning the lines it cannot
+// parse apart from the rest; the error is the read's alone.
+func readCheckoutRecord(path string) (record checkoutRecord, malformed []string, err error) {
 	content, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return checkoutRecord{}, nil
+		return checkoutRecord{}, nil, nil
 	}
 	if err != nil {
-		return checkoutRecord{}, fmt.Errorf("reading checkout record: %w", err)
+		return checkoutRecord{}, nil, fmt.Errorf("reading checkout record %s: %w", path, err)
 	}
-	record := checkoutRecord{exists: true}
+	record = checkoutRecord{exists: true}
 	for line := range strings.Lines(string(content)) {
-		entry, ok := parseCheckoutLine(strings.TrimSuffix(line, "\n"))
+		line = strings.TrimSuffix(line, "\n")
+		entry, ok := parseCheckoutLine(line)
 		if !ok {
-			return checkoutRecord{}, fmt.Errorf("reading checkout record %s: malformed line %q", path, line)
+			malformed = append(malformed, line)
+			continue
 		}
 		if !slices.Contains(record.paths(), entry.path) {
 			record.entries = append(record.entries, entry)
 		}
 	}
-	return record, nil
+	return record, malformed, nil
 }
 
 // parseCheckoutLine reads one record line, its times split off from the end
@@ -200,25 +216,33 @@ const checkoutRecordWait = time.Second
 // updateCheckoutRecord applies change to the record at path as one locked
 // read-modify-write, writing it back only when change modified it. A record
 // left with no checkout stays as an empty file, so the sweep can tell every
-// recorded checkout gone from none ever recorded. replaceUnreadable starts an
-// unreadable record afresh instead of failing.
-func updateCheckoutRecord(stateRoot, path string, replaceUnreadable bool, change func(*checkoutRecord)) (err error) {
+// recorded checkout gone from none ever recorded. repair drops malformed
+// lines, and starts a record it cannot read at all afresh, with a warning,
+// instead of failing.
+func updateCheckoutRecord(ctx context.Context, stateRoot, path string, repair bool, change func(*checkoutRecord)) (err error) {
 	if err := os.MkdirAll(filepath.Join(stateRoot, checkoutsCategory), 0o755); err != nil {
 		return fmt.Errorf("creating checkout records: %w", err)
 	}
 	lock := flock.New(filepath.Join(stateRoot, checkoutsCategory+".lock"))
-	ctx, cancel := context.WithTimeout(context.Background(), checkoutRecordWait)
+	lockCtx, cancel := context.WithTimeout(ctx, checkoutRecordWait)
 	defer cancel()
-	if _, err := lock.TryLockContext(ctx, 10*time.Millisecond); err != nil {
+	if _, err := lock.TryLockContext(lockCtx, 10*time.Millisecond); err != nil {
 		return fmt.Errorf("locking checkout records: %w", err)
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
-	record, err := loadCheckoutRecord(path)
+	log := slogutils.FromContext(ctx)
+	record, malformed, err := readCheckoutRecord(path)
 	switch {
-	case err != nil && replaceUnreadable:
+	case err != nil && repair:
+		log.Warn("starting an unreadable checkout record afresh", "record", path, "err", err)
 		record = checkoutRecord{exists: true, modified: true}
 	case err != nil:
 		return err
+	case len(malformed) > 0 && repair:
+		log.Warn("dropping malformed checkout record lines", "record", path, "lines", malformed)
+		record.modified = true
+	case len(malformed) > 0:
+		return fmt.Errorf("reading checkout record %s: malformed line %q", path, malformed[0])
 	}
 	change(&record)
 	if !record.modified {
@@ -276,7 +300,7 @@ func (s StateSweep) Sweep(ctx context.Context, now time.Time, sessionRetention, 
 		return counts, err
 	}
 	var errs []error
-	recordedBy, err := s.tendCheckoutRecords(keys, now, unusedRetention)
+	recordedBy, err := s.tendCheckoutRecords(ctx, keys, now, unusedRetention)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -337,7 +361,7 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 // as an unmounted volume, stays. It returns the keys recording each checkout
 // found on disk. The checkouts are looked up outside the record lock, so a
 // hanging mount never holds up a command recording its checkout.
-func (s StateSweep) tendCheckoutRecords(keys []string, now time.Time, retention time.Duration) (map[string][]string, error) {
+func (s StateSweep) tendCheckoutRecords(ctx context.Context, keys []string, now time.Time, retention time.Duration) (map[string][]string, error) {
 	recordedBy := map[string][]string{}
 	var errs []error
 	for _, key := range keys {
@@ -363,7 +387,7 @@ func (s StateSweep) tendCheckoutRecords(keys []string, now time.Time, retention 
 				absent[checkout] = true
 			}
 		}
-		err = updateCheckoutRecord(s.StateRoot, path, false, func(record *checkoutRecord) {
+		err = updateCheckoutRecord(ctx, s.StateRoot, path, false, func(record *checkoutRecord) {
 			kept := record.entries[:0]
 			for _, entry := range record.entries {
 				switch {
