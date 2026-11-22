@@ -320,23 +320,49 @@ func TestADeferralHoldsWhatItSentWhateverTheAnswer(t *testing.T) {
 	}
 }
 
+func TestNoQuestionPhraseOccursInATextServedOncePerChange(t *testing.T) {
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	session.BeginCall("", nil)
+	session.ServeChanged(engine.Piece{Name: "framing principles", Hash: "f1"}, stepText)
+	serve(session, stepLane, stepText)
+	session.RecordServed()
+	if q := session.Ask(); q != "" {
+		t.Errorf("a question's phrase should occur in no other text served, got %q", q)
+	}
+
+	events, err := engine.ReadEvents(&log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).
+		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed.BeginCall("", nil)
+	if q := replayed.Ask(); q != "" {
+		t.Errorf("after a restart, a question's phrase should still occur in no other text served, got %q", q)
+	}
+}
+
 func TestServeChangedServesEachCallerOncePerChange(t *testing.T) {
 	block := engine.Piece{Name: "framing focus", Hash: "h1"}
 	var log bytes.Buffer
 	session := newPieceSession(engine.NewWriterSink(&log))
 	session.BeginCall("", nil)
-	if !session.ServeChanged(block) {
+	if !session.ServeChanged(block, "") {
 		t.Fatal("the first caller should be served a block it was never sent")
 	}
 	session.RecordServed()
 
 	session.BeginCall("", nil)
-	if session.ServeChanged(block) {
+	if session.ServeChanged(block, "") {
 		t.Error("the first caller should not be served an unchanged block again")
 	}
 	session.BeginCall("", nil)
 	session.SetCaller("verifier")
-	if !session.ServeChanged(block) {
+	if !session.ServeChanged(block, "") {
 		t.Error("a second caller the session never served should get the block")
 	}
 	session.RecordServed()
@@ -353,17 +379,17 @@ func TestServeChangedServesEachCallerOncePerChange(t *testing.T) {
 	for _, caller := range []string{"", "verifier"} {
 		replayed.BeginCall("", nil)
 		replayed.SetCaller(caller)
-		if replayed.ServeChanged(block) {
+		if replayed.ServeChanged(block, "") {
 			t.Errorf("caller %q should hold the block after a restart", caller)
 		}
 	}
 	replayed.BeginCall("", nil)
-	if !replayed.ServeChanged(engine.Piece{Name: block.Name, Hash: "h2"}) {
+	if !replayed.ServeChanged(engine.Piece{Name: block.Name, Hash: "h2"}, "") {
 		t.Error("a changed block should serve again")
 	}
 	replayed.BeginCall("", nil)
 	replayed.SetCaller("third")
-	if !replayed.ServeChanged(block) {
+	if !replayed.ServeChanged(block, "") {
 		t.Error("a third caller should get the block")
 	}
 }
