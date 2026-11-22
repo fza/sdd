@@ -63,6 +63,7 @@ func initRepo(t *testing.T, dir string) {
 	gitIn(t, dir, "commit", "-q", "-m", "seed")
 }
 
+//nolint:unparam // some PRs read git's output, others only run it
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
