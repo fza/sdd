@@ -13,11 +13,11 @@ import (
 )
 
 // eventJSON is one line of the JSON form of the event store. A payload that
-// is compact JSON is shown as itself, any other payload as base64, so both
-// survive a round trip byte for byte.
+// is compact JSON is shown as itself, any other payload as base64 under
+// payload_base64, so both survive a round trip byte for byte.
 type eventJSON struct {
 	ID            string           `json:"id"`
-	Channel       string           `json:"channel"`
+	Channel       string           `json:"channel,omitempty"`
 	Type          string           `json:"type"`
 	Time          string           `json:"time"`
 	Writer        string           `json:"writer"`
@@ -38,24 +38,38 @@ func ExportEventsJSON(ctx context.Context, store EventStore, query EventQuery, w
 	if err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(w)
-	encoder.SetEscapeHTML(false)
 	for _, event := range events {
-		line := eventJSON{
-			ID: event.ID, Channel: event.Channel, Type: event.Type, Time: event.Time.UTC().Format(time.RFC3339Nano), Writer: event.Writer,
-			Subject: eventSubjectJSON{URI: event.Subject.URI, Entries: event.Subject.Entries},
+		line, err := MarshalEventJSON(event)
+		if err == nil {
+			_, err = w.Write(line)
 		}
-		if compactJSON(event.Payload) {
-			line.Payload = event.Payload
-		} else if len(event.Payload) > 0 {
-			line.PayloadBase64 = base64.StdEncoding.EncodeToString(event.Payload)
-		}
-		err := encoder.Encode(line)
 		if err != nil {
 			return fmt.Errorf("writing event %s: %w", event.ID, err)
 		}
 	}
 	return nil
+}
+
+// MarshalEventJSON returns the line ExportEventsJSON writes for event, its
+// newline included. An event without a channel gets no channel field.
+func MarshalEventJSON(event Event) ([]byte, error) {
+	line := eventJSON{
+		ID: event.ID, Channel: event.Channel, Type: event.Type, Time: event.Time.UTC().Format(time.RFC3339Nano), Writer: event.Writer,
+		Subject: eventSubjectJSON{URI: event.Subject.URI, Entries: event.Subject.Entries},
+	}
+	if compactJSON(event.Payload) {
+		line.Payload = event.Payload
+	} else if len(event.Payload) > 0 {
+		line.PayloadBase64 = base64.StdEncoding.EncodeToString(event.Payload)
+	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(line)
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 func compactJSON(payload []byte) bool {
@@ -114,9 +128,33 @@ func ImportEventsJSON(ctx context.Context, store EventStore, r io.Reader) (int, 
 	return len(fresh), nil
 }
 
+// decodeEventJSON refuses fields it does not know: an import writes what it
+// reads, and would drop them unseen (20260921-174543-d-cpt-tv9).
 func decodeEventJSON(line []byte) (Event, error) {
+	event, err := unmarshalEventJSON(line, true)
+	if err != nil {
+		return Event{}, err
+	}
+	err = ValidateEvent(event)
+	if err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
+// UnmarshalEventJSON decodes one line as MarshalEventJSON writes it. Fields
+// it does not know are ignored, so a line a newer sdd wrote still reads
+// (20260921-174543-d-cpt-tv9). It refuses a line holding both payload fields;
+// whether the envelope is complete is ValidateEvent's call.
+func UnmarshalEventJSON(line []byte) (Event, error) {
+	return unmarshalEventJSON(line, false)
+}
+
+func unmarshalEventJSON(line []byte, strict bool) (Event, error) {
 	decoder := json.NewDecoder(bytes.NewReader(line))
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	var decoded eventJSON
 	err := decoder.Decode(&decoded)
 	if err != nil {
@@ -143,10 +181,6 @@ func decodeEventJSON(line []byte) (Event, error) {
 		if err != nil {
 			return Event{}, fmt.Errorf("event %s: payload_base64: %w", decoded.ID, err)
 		}
-	}
-	err = ValidateEvent(event)
-	if err != nil {
-		return Event{}, err
 	}
 	return event, nil
 }

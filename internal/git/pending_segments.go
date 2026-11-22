@@ -10,11 +10,12 @@ import (
 )
 
 // segmentPathspecs match the segments sdd shares through Git: those of every
-// event channel. A local channel's directory ignores itself, so the segments
-// git lists are shared ones, and they ride the commit sdd is about to make
-// instead of commits of their own. The
-// relevance ledger lives only in machine state.
+// event channel, JSON Lines and the binary ones a compaction removes. A local
+// channel's directory ignores itself, so the segments git lists are shared
+// ones, and they ride the commit sdd is about to make instead of commits of
+// their own. The relevance ledger lives only in machine state.
 var segmentPathspecs = []string{
+	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.jsonl",
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.seg",
 }
 
