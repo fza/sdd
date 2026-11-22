@@ -80,7 +80,7 @@ func TestCaptureGrounding_AMarkedLineHoldsTheReport(t *testing.T) {
 	if len(marked) != model.FallbackMarks || len(gathered.FullIDs) != 0 {
 		t.Fatalf("marked %v, full %v: a check without a judge should mark its first five lines and serve nothing in full:\n%s", marked, gathered.FullIDs, gathered.Text)
 	}
-	session.Gather(t, instance, captureRef2ID)
+	session.Open(t, instance, captureRef2ID)
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "assemble")
 	var owed []any
@@ -616,7 +616,7 @@ func TestCaptureGrounding_OpeningByIDRunsNothingElse(t *testing.T) {
 	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "topics": []any{"cli/ux"}})
 	session.Gather(t, instance)
 	paid := scorer.scored
-	opened := session.Gather(t, instance, captureRef2ID, captureRefID)
+	opened := session.Open(t, instance, captureRef2ID, captureRefID)
 	if scorer.scored != paid || len(opened.FullIDs) != 2 || len(opened.SummaryIDs) != 0 || strings.Contains(opened.Text, "reads: ") {
 		t.Fatalf("full %v, lines %v, %d judge calls: opening by ID should serve both entries and run nothing else:\n%s", opened.FullIDs, opened.SummaryIDs, scorer.scored-paid, opened.Text)
 	}

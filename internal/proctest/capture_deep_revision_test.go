@@ -159,7 +159,7 @@ func TestCaptureDeep_ARevisionIsJudgedOnlyOnceServed(t *testing.T) {
 	x.pickUp(t)
 	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, session.Answer(t, x.instance, "deepProposal", "accept", nil, ""), "playback")
-	session.Gather(t, x.instance, read.ID)
+	session.Open(t, x.instance, read.ID)
 	serve := session.Answer(t, x.instance, "playback", "adjust", map[string]any{"body": "A tactical gap: the fixture observes a subject twice."}, "one more change")
 	proctest.RequireStep(t, serve, "playback")
 	proctest.RequireStep(t, session.Answer(t, x.instance, "playback", "confirm", nil, "now write it"), "deepWait")

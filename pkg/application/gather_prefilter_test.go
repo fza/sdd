@@ -186,14 +186,13 @@ func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 	}
 	last := rankedID(model.FallbackMarks + model.DoubtLines + 14)
 	top := rankedID(0)
-	ranked := slices.DeleteFunc(slices.Clone(result.SummaryIDs), func(id string) bool { return !strings.HasSuffix(id, "-s-tac-rnk") })
-	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(ranked) != model.FallbackMarks+model.DoubtLines {
-		t.Fatalf("%d ranked gaps shown: the five marked and the next lines in doubt should show and the rest go unshown:\n%s", len(ranked), result.Text)
+	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.FallbackMarks+model.DoubtLines {
+		t.Fatalf("%d shown: the five marked and the next lines in doubt should show and the rest go unshown:\n%s", len(result.SummaryIDs), result.Text)
 	}
 	if !strings.HasPrefix(lineOf(result.Text, top), "! .99") || !strings.HasPrefix(lineOf(result.Text, rankedID(model.FallbackMarks)), "  .") {
 		t.Fatalf("the five best scores should carry the mark and the next none:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "\n## by title (") || !strings.Contains(result.Text, "\n  "+last+"  Ranked gap 119\n") {
+	if !strings.Contains(result.Text, "\n## by title (") || !strings.Contains(result.Text+"\n", "\n  "+last+"  Ranked gap 119\n") {
 		t.Fatalf("the lower ranks should be listed by ID and title:\n%s", result.Text)
 	}
 }

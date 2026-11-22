@@ -68,12 +68,12 @@
     "name": "bind_branch"
   },
   {
-    "description": "Ground a draft before its capture, in one call; session required. On a small graph: every live entry's brief. Above it: a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call; session required. Runs a search by meaning with the draft's own text, your query and terms, and the live listing of every draft topic, and has the ranking judge order what they found. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "draft": {
-          "description": "without instance: the draft text the searches are written from; credits nothing",
+          "description": "without instance: the draft text, searched by meaning as it stands; credits nothing",
           "type": "string"
         },
         "ids": {
@@ -87,12 +87,16 @@
           ]
         },
         "instance": {
-          "description": "the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "description": "the running capture this reading grounds. Its reported draft is searched with its own text and its topics listed. Only reads made through gather inside it count for its grounding. Report the draft at assemble first",
           "type": "string"
         },
         "page": {
           "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
           "type": "integer"
+        },
+        "query": {
+          "description": "your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism",
+          "type": "string"
         },
         "reread": {
           "description": "names of served pieces you no longer see; they serve in full again",
@@ -108,8 +112,8 @@
           "description": "attached session's handle, from start_session or resume_session; required",
           "type": "string"
         },
-        "topics": {
-          "description": "without instance: the draft's topic labels, each listed in full",
+        "terms": {
+          "description": "your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess",
           "items": {
             "type": "string"
           },
@@ -117,6 +121,20 @@
             "null",
             "array"
           ]
+        },
+        "topics": {
+          "description": "without instance: the draft's topic labels; with one: topics listed beside the draft's own. Each is listed in full",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "wait": {
+          "description": "have the ranking judge score until the minimum is judged, without its time limit: what to pass, with the same searches, when a check judged too few and the person chose to wait",
+          "type": "boolean"
         }
       },
       "type": "object"

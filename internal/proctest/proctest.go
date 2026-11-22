@@ -793,7 +793,20 @@ func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fiel
 // MCP gather tool does, with the world's searches.
 func (s *Session) Gather(t *testing.T, instance string, ids ...string) sdd.GatherResult {
 	t.Helper()
-	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, Query: s.World.GatherQuery, Terms: s.World.GatherTerms, Topics: s.World.GatherTopics, SyncMode: sdd.SearchSyncLocal})
+	return s.gather(t, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, Query: s.World.GatherQuery, Terms: s.World.GatherTerms, Topics: s.World.GatherTopics})
+}
+
+// Open opens ids inside instance as an agent does by gather with ids alone:
+// once the reading began, nothing else runs.
+func (s *Session) Open(t *testing.T, instance string, ids ...string) sdd.GatherResult {
+	t.Helper()
+	return s.gather(t, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids})
+}
+
+func (s *Session) gather(t *testing.T, request sdd.WorkflowGatherRequest) sdd.GatherResult {
+	t.Helper()
+	request.SyncMode = sdd.SearchSyncLocal
+	result, err := s.WF.Gather(t.Context(), s.World.Identity, request)
 	if err != nil {
 		t.Fatal(err)
 	}

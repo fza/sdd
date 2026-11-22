@@ -127,6 +127,15 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 
 	session.LogRead(t, "show", []string{sample}, nil)
 	draft["refs"] = append(draft["refs"].([]any), map[string]any{"id": sample, "kind": "addresses", "desc": "bears on it"})
+	var marked []any
+	for _, id := range markedLines(second.Text) {
+		if id != sample {
+			marked = append(marked, id)
+		}
+	}
+	if len(marked) > 0 {
+		draft["verdicts"] = []any{map[string]any{"ids": marked, "code": model.VerdictTopicOnly}}
+	}
 	proctest.RequireStep(t, session.Report(t, instance, draft), "playback")
 	entry := confirmCapture(t, world, session, instance)
 
