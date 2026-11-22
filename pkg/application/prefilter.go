@@ -94,7 +94,7 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 		pass.note = "no draft to rate the candidates against"
 		return pass, nil
 	case len(candidates) < policy.PrefilterFrom:
-		pass.note = fmt.Sprintf("%d pairs to judge, below verify.prefilter_from (%d): judge the lines yourself",len(candidates), policy.PrefilterFrom)
+		pass.note = fmt.Sprintf("%d pairs to judge, below verify.prefilter_from (%d): judge the lines yourself", len(candidates), policy.PrefilterFrom)
 		return pass, nil
 	}
 	if err := secrets.CheckText("the draft", subject); err != nil {
