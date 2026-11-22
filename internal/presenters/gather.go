@@ -18,6 +18,14 @@ const GatherWayBack = "show with its id"
 // (20261121-223938-d-tac-rqi).
 const GatherInstruction = "Open every entry you would reference and every entry that could contradict the draft. Then open those that look like bearing on the topic."
 
+// GatherRecheckInstruction is the duty a check states beside
+// GatherInstruction: the judgements a capture keeps answer earlier drafts
+// (20261121-233807-d-tac-4iw).
+const GatherRecheckInstruction = "Whenever a change gives the draft a fundamentally different shape, run a new graph check. Pass rejudge to have every candidate judged again against the draft as it stands."
+
+// NoMeaningSearchNote is what a check without an embedding model states.
+const NoMeaningSearchNote = "no search by meaning ran: no embedding model is set (embedding.provider)"
+
 // RenderGather writes a graph check: the header, the instruction, the
 // entries opened by ID in full, the lines likely bearing, in doubt and by
 // title, and one count per set-aside reason. Nothing is cut: every line
@@ -55,6 +63,9 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 		prefilter += ": " + result.PrefilterNote
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
+	if result.NoMeaningSearch {
+		fmt.Fprintln(w, NoMeaningSearchNote)
+	}
 	if result.Shortfall != nil {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# judged too few")
@@ -63,6 +74,7 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, GatherInstruction+" Open entries with gather ids, several in one call.")
+	fmt.Fprintln(w, GatherRecheckInstruction)
 
 	wayBackShown := false
 	if result.Opened != nil && len(result.Opened.Groups) > 0 {

@@ -233,14 +233,18 @@ func TestVerifierUnscored_AsksForScoresWhereTheClassWaitsOnThem(t *testing.T) {
 }
 
 // The ranking sources count the candidates by what ranked them: the judge's
-// score, similarity to the draft, or listed order.
+// score, the searches' merged order, similarity to the draft, or listed
+// order.
 func TestVerifierRankingSources_CountsWhatRankedEachEntry(t *testing.T) {
-	g := model.NewGraph([]*model.Entry{gap("target"), gap("a"), gap("b"), gap("c"), gap("d")})
-	reading := model.VerifierReading{Listed: []string{"a", "b", "c", "d"}, Scores: map[string]uint8{"a": 1, "target": 2}, Similarity: map[string]float64{"b": 0.5}}
+	g := model.NewGraph([]*model.Entry{gap("target"), gap("a"), gap("b"), gap("c"), gap("d"), gap("e")})
+	reading := model.VerifierReading{
+		Listed: []string{"a", "b", "c", "d"}, Scores: map[string]uint8{"a": 1, "target": 2}, Similarity: map[string]float64{"b": 0.5},
+		Reads: []model.GroundingRead{{Mode: model.GroundingKeyword, Text: "t", IDs: []string{"e"}}},
+	}
 	placement := model.PlaceVerifierReading(g, model.VerifierDraft{Targets: []string{"target"}}, reading)
 	got := model.VerifierRankingSources(placement, reading)
-	if got != (model.RankingSources{Judged: 1, Similar: 1, Listed: 2}) {
-		t.Fatalf("sources %+v: one judged, one by similarity, two in listed order; the target is not ranked", got)
+	if got != (model.RankingSources{Judged: 1, Searched: 1, Similar: 1, Listed: 2}) {
+		t.Fatalf("sources %+v: one judged, one found by a search, one by similarity, two in listed order; the target is not ranked", got)
 	}
 	for name, tc := range map[string]struct {
 		sources model.RankingSources
@@ -248,6 +252,7 @@ func TestVerifierRankingSources_CountsWhatRankedEachEntry(t *testing.T) {
 	}{
 		"judge":      {model.RankingSources{Judged: 3}, "judge"},
 		"similarity": {model.RankingSources{Similar: 3}, "similarity"},
+		"searches":   {model.RankingSources{Searched: 3}, "searches"},
 		"mixed":      {model.RankingSources{Judged: 1, Listed: 1}, "mixed"},
 		"listed":     {model.RankingSources{Listed: 2}, "listed order"},
 		"none":       {model.RankingSources{}, ""},

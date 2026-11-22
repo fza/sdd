@@ -74,7 +74,7 @@ func TestRelevanceLedger_CountsLegacyJudgeNamesUnderTheCurrentOne(t *testing.T) 
 func TestReading_ScoresUnderALegacyJudgeName(t *testing.T) {
 	var reading model.Reading
 	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "generate:gpt-5.5", Subject: "s", Scores: map[string]uint8{"x": 7}}})
-	scores, _ := reading.Scores("chat:gpt-5.5", "s")
+	scores := reading.Kept("chat:gpt-5.5")
 	if scores["x"] != 7 {
 		t.Fatalf("the generate scores should answer chat, got %v", scores)
 	}

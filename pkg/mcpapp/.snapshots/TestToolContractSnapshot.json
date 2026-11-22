@@ -98,6 +98,10 @@
           "description": "your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism",
           "type": "string"
         },
+        "rejudge": {
+          "description": "have the ranking judge score every candidate against the draft as it stands, the judgements the capture keeps from earlier drafts included",
+          "type": "boolean"
+        },
         "reread": {
           "description": "names of served pieces you no longer see; they serve in full again",
           "items": {

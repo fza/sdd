@@ -202,18 +202,36 @@ func TestGather_SearchesWithTheDraftsTextAlone(t *testing.T) {
 	}
 }
 
+// Without an embedding model a check runs the keyword searches and the
+// topic listings on a graph of any size and states that no search by
+// meaning ran.
+func TestGather_SearchesWithoutAnEmbeddingModel(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	for i := range 120 {
+		f.write(t, fmt.Sprintf("20260102-1%05d-s-tac-p%03d", i, i), "gap", fmt.Sprintf("Padding entry %d.", i), "")
+	}
+	f.withoutEmbedder = true
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
+
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Topics: []string{"cli/ux"}, Query: "alpha matters", Terms: []string{"beta"}})
+	if err != nil {
+		t.Fatalf("a check without an embedding model should run, got %v", err)
+	}
+	for _, want := range []string{`keyword "beta"`, "listing topic(cli/ux)", gatherBeta, gatherTopicOnly, presenters.NoMeaningSearchNote} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("serve lacks %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, "semantic") {
+		t.Errorf("no search by meaning should run without an embedding model:\n%s", result.Text)
+	}
+}
+
 func TestGather_ChecksTheEmbedderBeforeSearching(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
 
-	t.Run("missing", func(t *testing.T) {
-		f.withoutEmbedder = true
-		defer func() { f.withoutEmbedder = false }()
-		_, err := gather(t, f.app(t, sdd.GroundingPolicy{}, nil), sdd.GatherRequest{Draft: "A draft about alpha."})
-		if err == nil || !strings.Contains(err.Error(), "embedding") {
-			t.Fatalf("a missing embedder should fail naming it, got %v", err)
-		}
-	})
 	t.Run("unreachable", func(t *testing.T) {
 		down := embed.EmbedderFunc{Space: "down/v1", Run: func(context.Context, embed.Request) (embed.Result, error) {
 			return embed.Result{}, errors.New("connection refused")
@@ -338,6 +356,9 @@ func TestGather_ServesLinesAndTheInstruction(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, presenters.GatherInstruction) || presenters.GatherInstruction != "Open every entry you would reference and every entry that could contradict the draft. Then open those that look like bearing on the topic." {
 		t.Fatalf("the check should carry the instruction word for word:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "Whenever a change gives the draft a fundamentally different shape, run a new graph check.") {
+		t.Fatalf("the check should state that a draft of a fundamentally different shape needs a new check:\n%s", result.Text)
 	}
 	n := len(result.SummaryIDs)
 	if !strings.HasPrefix(result.Text, fmt.Sprintf("# graph check   %d candidates · judged 0 of %d · %d shown · 0 set aside\n", n, n, n)) || n < model.FallbackMarks {

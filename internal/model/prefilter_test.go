@@ -169,22 +169,28 @@ func TestRelevanceText_KeepsTheWholeEntry(t *testing.T) {
 	}
 }
 
-// Scores answer the draft they were given against: a revised draft finds
-// none to reuse, and its own scores replace the earlier ones.
-func TestReadingScores_AnswerTheDraftTheyScored(t *testing.T) {
+// A judgement stays with the capture when the draft changes: a score against
+// the same draft folds to the highest, one against a revised draft replaces
+// the earlier one, and an entry the revised draft did not judge keeps its
+// judgement.
+func TestReadingKept_KeepsAJudgementAcrossDrafts(t *testing.T) {
 	first, revised := model.RelevanceSubjectHash("gap\nthe first draft"), model.RelevanceSubjectHash("gap\nthe revised draft")
 	reading := &model.Reading{}
 	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "j", Subject: first, Scores: map[string]uint8{"a": 200, "b": 10}}})
-	if scores, _ := reading.Scores("j", first); scores["a"] != 200 {
-		t.Fatalf("the scored draft should find its scores, got %v", scores)
-	}
-	if scores, _ := reading.Scores("j", revised); scores != nil {
-		t.Fatalf("a revised draft should find no scores to reuse, got %v", scores)
+	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "j", Subject: first, Scores: map[string]uint8{"a": 150}}})
+	if kept := reading.Kept("j"); kept["a"] != 200 {
+		t.Fatalf("kept %v: a score against the same draft should fold to the highest", kept)
 	}
 	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "j", Subject: revised, Scores: map[string]uint8{"a": 20}}})
-	scores, _ := reading.Scores("j", revised)
-	if scores["a"] != 20 || len(scores) != 1 {
-		t.Fatalf("the revised draft's scores should replace the earlier ones, got %v", scores)
+	kept := reading.Kept("j")
+	if kept["a"] != 20 || kept["b"] != 10 {
+		t.Fatalf("kept %v: the revised draft's judgement should replace the earlier one and every other stay", kept)
+	}
+	if stale := reading.Stale("j", revised); len(stale) != 1 || stale["b"] != 10 {
+		t.Fatalf("stale %v: only the judgement given against the earlier draft is stale", stale)
+	}
+	if reading.Kept("other") != nil {
+		t.Fatalf("a judge that scored nothing should keep no judgement")
 	}
 }
 

@@ -23,6 +23,9 @@ type GatherResult struct {
 	SetAside []model.GatherSetAside
 	// Shortfall is a judge that scored fewer candidates than the minimum.
 	Shortfall *model.JudgeShortfall
+	// NoMeaningSearch marks a check that ran no search by meaning because the
+	// project has no embedding model.
+	NoMeaningSearch bool
 	// Held reports whether the consumer already holds an entry in full that
 	// the serve did not open by ID: it prints as a pointer with the brief and
 	// the way back. Nil holds

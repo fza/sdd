@@ -49,6 +49,9 @@ type GroundingEvidence struct {
 	// Own are the entries written by the capture's own dialogue; they never
 	// count as landed.
 	Own []string
+	// WithoutEmbedder marks a project without an embedding model, whose
+	// check runs no search by meaning and owes none.
+	WithoutEmbedder bool
 }
 
 // Exempt reports whether the draft's kind skips the gate.
@@ -56,13 +59,14 @@ func (e GroundingEvidence) Exempt() bool { return GroundingExemptKind(e.Kind) }
 
 // OwedReads names the reads the reading still lacks: none once every live
 // brief was served, as an older sdd served a small graph, else the semantic
-// search, a keyword search and the listing of each draft topic.
+// search where an embedding model is set, a keyword search and the listing
+// of each draft topic.
 func (e GroundingEvidence) OwedReads() []string {
 	if e.Reading.Ran(GroundingBriefs) {
 		return nil
 	}
 	var owed []string
-	if !e.Reading.Ran(GroundingSemantic) {
+	if !e.WithoutEmbedder && !e.Reading.Ran(GroundingSemantic) {
 		owed = append(owed, "the semantic search")
 	}
 	if !e.Reading.Ran(GroundingKeyword) {

@@ -35,6 +35,19 @@ func TestGroundingEvidence_OwedReads(t *testing.T) {
 	}
 }
 
+// A project without an embedding model owes no search by meaning; one with
+// a model does.
+func TestGroundingEvidence_OwesNoSearchByMeaningWithoutAnEmbeddingModel(t *testing.T) {
+	var keyword model.Reading
+	keyword.Fold(model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingKeyword, Text: "t", IDs: []string{"a"}}}, Corpus: model.NewCorpusMark([]string{"a"})})
+	if owed := (model.GroundingEvidence{Reading: &keyword, WithoutEmbedder: true}).OwedReads(); len(owed) != 0 {
+		t.Fatalf("owed = %v: without an embedding model the keyword search and listings should suffice", owed)
+	}
+	if owed := (model.GroundingEvidence{Reading: &keyword}).OwedReads(); !slices.Equal(owed, []string{"the semantic search"}) {
+		t.Fatalf("owed = %v: with an embedding model the search by meaning should stay owed", owed)
+	}
+}
+
 // A marked line owes an answer; an entry opened in full without the mark owes
 // none.
 func TestGroundingEvidence_MarkedLinesAndVerdicts(t *testing.T) {

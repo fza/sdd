@@ -52,6 +52,22 @@ func TestCaptureGrounding_RefusesUntilTheCaptureIsRead(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
+// A project without an embedding model captures: its check runs the keyword
+// searches and the listings, and the gate owes no search by meaning.
+func TestCaptureGrounding_PassesWithoutAnEmbeddingModel(t *testing.T) {
+	_, session := newCaptureWorld(t, "grounding-no-embedder", proctest.WithGroundingEnforced(), proctest.WithoutEmbedder())
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	session.Report(t, instance, captureDraft())
+	gathered := session.Gather(t, instance)
+	if !strings.Contains(gathered.Text, "no embedding model is set") || strings.Contains(gathered.Text, "semantic") {
+		t.Fatalf("the check should state that no search by meaning ran:\n%s", gathered.Text)
+	}
+	serve = session.Report(t, instance, answerMarked(gathered.Text, map[string]any{"confidence": "medium"}))
+	proctest.RequireStep(t, serve, "playback")
+}
+
 // markedLines returns the IDs of the lines a graph check marks as likely
 // bearing.
 func markedLines(text string) []string {
@@ -116,25 +132,33 @@ func TestCaptureGrounding_VerdictNamesAListedEntry(t *testing.T) {
 	}
 }
 
-func TestCaptureGrounding_EntryLandedSinceTheReadingMustBeListed(t *testing.T) {
+// An entry that lands while the capture drafts is listed by sdd itself at
+// the next report and counted as read: no report is refused for it, and a
+// landed line marked likely bearing owes its answer like any other.
+func TestCaptureGrounding_EntryLandedSinceTheReadingIsListedBySDD(t *testing.T) {
 	world, session := newGroundingWorld(t, "grounding-landed")
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 
-	session.Gather(t, instance)
+	gathered := session.Gather(t, instance)
 	landed := &model.Entry{ID: "20260602-090000-s-tac-lnd", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 		Summary: "A gap that landed during the reading.", Content: "A gap that landed during the reading."}
 	proctest.WriteEntry(t, world.GraphDir, landed)
 
-	serve = session.Report(t, instance, captureDraft())
-	proctest.RequireStep(t, serve, "assemble")
-	requireDiagnostics(t, serve, "landed since the reading began", landed.ID, "call gather with instance "+instance)
-
-	gathered := session.Gather(t, instance)
-	if !strings.Contains(gathered.Text, "new since the reading began") || !strings.Contains(gathered.Text, landed.ID) {
-		t.Fatalf("a later gather should list the landed entry:\n%s", gathered.Text)
+	serve = session.Report(t, instance, answerMarked(gathered.Text, captureDraft()))
+	if hasDiagnostic(serve, "landed since the reading began") {
+		t.Fatalf("no report should be refused for an entry that landed, got %v", serve.Diagnostics)
 	}
-	serve = session.Report(t, instance, answerMarked(gathered.Text, map[string]any{"confidence": "medium"}))
+	if !strings.Contains(serve.Instructions, "new since the reading began") || !strings.Contains(serve.Instructions, landed.ID) {
+		t.Fatalf("the report's serve should list the landed entry:\n%s", serve.Instructions)
+	}
+	// Without a judge the agent judges the landed lines, the first five marked.
+	if !slices.Contains(markedLines(serve.Instructions), landed.ID) {
+		t.Fatalf("the landed line should carry the mark of a check the agent judges:\n%s", serve.Instructions)
+	}
+	proctest.RequireStep(t, serve, "assemble")
+	requireDiagnostics(t, serve, "lines marked ! end neither in refs nor in verdicts", landed.ID)
+	serve = session.Report(t, instance, map[string]any{"verdicts": []any{map[string]any{"ids": []any{landed.ID}, "code": model.VerdictOther}}})
 	proctest.RequireStep(t, serve, "playback")
 }
 
@@ -429,7 +453,7 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 			proctest.RequireStep(t, serve, "playback")
 			session.Gather(t, instance)
 			if !tc.fail && scorer.scored == first {
-				t.Fatal("a gather after the draft changed scored no candidate: scores of the earlier draft should not answer it")
+				t.Fatal("a gather after the draft changed scored no candidate: a low judgement among the first 20 of the merged order is due a second look")
 			}
 			entry := confirmCapture(t, world, session, instance)
 

@@ -552,6 +552,8 @@ func DeepRankingNote(sources model.RankingSources, judge string, widened bool) s
 		return ""
 	case "judge":
 		fmt.Fprintf(&b, "judge %s, %d entries.", judge, sources.Judged)
+	case "searches":
+		fmt.Fprintf(&b, "the capture's searches against the final draft, %d entries: no judge scored them.", sources.Searched)
 	case "similarity":
 		fmt.Fprintf(&b, "similarity to the draft, %d entries: no judge scored them.", sources.Similar)
 	case "listed order":
@@ -560,6 +562,9 @@ func DeepRankingNote(sources model.RankingSources, judge string, widened bool) s
 		var parts []string
 		if sources.Judged > 0 {
 			parts = append(parts, fmt.Sprintf("%d by judge %s", sources.Judged, judge))
+		}
+		if sources.Searched > 0 {
+			parts = append(parts, fmt.Sprintf("%d by the capture's searches against the final draft", sources.Searched))
 		}
 		if sources.Similar > 0 {
 			parts = append(parts, fmt.Sprintf("%d by similarity to the draft", sources.Similar))

@@ -110,6 +110,7 @@ func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, loadGraph func(
 	evidence := model.GroundingEvidence{
 		Reading: ctx.Reading, Kind: model.Kind(kind),
 		Answered: captureAnswered(ctx.Store), Verdicts: storeVerdicts(ctx.Store), Own: w.ownEntries(ctx.Instance),
+		WithoutEmbedder: !runtime.searchesByMeaning(),
 	}
 	if evidence.Exempt() {
 		return model.GroundingEvidence{}, false, nil

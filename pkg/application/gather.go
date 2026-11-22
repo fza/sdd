@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -92,6 +93,9 @@ type GatherRequest struct {
 	// Wait has the judge score until the minimum holds, without a time
 	// limit: the choice a person makes after a check judged too few.
 	Wait bool
+	// Rejudge has the judge score every candidate against the draft now, the
+	// judgements the capture keeps included (20261121-233807-d-tac-4iw).
+	Rejudge bool
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer. Nil serves every line in full,
 	// as the CLI does. Served records a body served in full.
@@ -109,6 +113,9 @@ type GatherRequest struct {
 	// openOnly opens the IDs alone in a capture whose draft fills the
 	// request: no search, listing or judge call.
 	openOnly bool
+	// judgeLanded has an open-only call judge and mark the landed entries it
+	// lists (WorkflowSession.listLanded).
+	judgeLanded bool
 	// unattended marks a session without a person at the check
 	// (model.DialogueMode.AgentAnswers).
 	unattended bool
@@ -255,13 +262,18 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	labels := ledger.Labels(judge)
 	var held map[string]uint8
+	var due []string
+	var draftMark *model.DraftMark
 	var floor *model.FarFloor
 	below := map[string]bool{}
 	subject := ""
 	if strings.TrimSpace(request.Draft) != "" {
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
 		key := model.RelevanceSubjectHash(subject)
-		held, _ = request.reading.Scores(judge, key)
+		held = request.reading.Kept(judge)
+		if !openOnly {
+			held, due, draftMark = keptJudgements(graph, live, request, judge, thresholds, candidates, reads)
+		}
 		// A floor at compute-only sets nothing aside, verdicts held from before included.
 		if prefilter.Scorer != nil {
 			if hiding.floor.Step != model.StepComputeOnly {
@@ -279,13 +291,23 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 
 	pass := prefilterPass{status: model.PrefilterOff, note: "ids only: no search, listing or judge call", scores: held}
-	if !openOnly {
+	judged := !openOnly || request.judgeLanded
+	if judged {
 		budget := judgeBudget{limit: policy.JudgeTimeout, target: model.JudgeTarget(len(split.Undecided), policy.JudgeMinimum), wait: request.Wait, unattended: request.unattended}
 		endCheck := a.liveChecks.begin()
 		pass, err = runPrefilter(ctx, prefilter, policy, budget, subject, graph, split.Undecided, held, floor)
 		endCheck()
 		if err != nil {
 			return GatherResult{}, err
+		}
+		// A second look the judge did not give leaves the kept judgement.
+		kept := request.reading.Kept(judge)
+		for _, id := range due {
+			if _, scored := pass.scores[id]; !scored {
+				if score, ok := kept[id]; ok {
+					pass.scores[id] = score
+				}
+			}
 		}
 	}
 	var shortfall *model.JudgeShortfall
@@ -321,7 +343,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		Candidates: slices.Concat(split.Relevant, split.Undecided),
 		Scores:     pass.scores, BelowFloor: below, Thresholds: thresholds,
 		Widened:    model.JudgeRankingHealth(labels).Weak(),
-		SelfJudged: !openOnly && subject != "" && (pass.status == model.PrefilterOff || pass.status == model.PrefilterFailed || shortfall != nil),
+		SelfJudged: judged && subject != "" && (pass.status == model.PrefilterOff || pass.status == model.PrefilterFailed || shortfall != nil),
 		Hops:       model.RefHops(graph, request.References), Marked: marked,
 	})
 	marks := []model.RuleMark{
@@ -354,6 +376,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note, Shortfall: shortfall,
 		Found: len(candidates), Judged: lines.Judged + len(split.NotRelevant), Lines: lines, SetAside: setAside,
+		NoMeaningSearch: !openOnly && !runtime.searchesByMeaning(),
 	}
 	for _, candidate := range split.Relevant {
 		if _, scored := pass.scores[candidate.Entry.ID]; !scored {
@@ -377,7 +400,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		return GatherResult{}, err
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
-	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(opened), Shown: slices.Clone(result.SummaryIDs), Marked: lines.MarkedIDs(), Corpus: served.Corpus, Shortfall: shortfall}
+	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(opened), Shown: slices.Clone(result.SummaryIDs), Marked: lines.MarkedIDs(), Corpus: served.Corpus, Shortfall: shortfall, Draft: draftMark}
 	if len(pass.fresh) > 0 || len(filtered) > 0 {
 		var cut uint8
 		if hiding.thresholds.Valid {
@@ -388,6 +411,39 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	return result, nil
 }
 
+// keptJudgements returns the judgements a check reuses, those due a second
+// look (model.SecondLook) and the draft the check reads against. A rejudge
+// reuses none.
+func keptJudgements(graph *model.Graph, live []*model.Entry, request GatherRequest, judge string, thresholds model.RelevanceThresholds, ordered []model.GatherCandidate, reads []model.GroundingRead) (map[string]uint8, []string, *model.DraftMark) {
+	mark := &model.DraftMark{Topics: slices.Clone(request.Topics), References: slices.Clone(request.References)}
+	for _, read := range reads {
+		if read.Mode == model.GroundingSemantic && read.Text == "" {
+			mark.Nearest = slices.Clone(read.IDs[:min(model.SecondLookTop, len(read.IDs))])
+		}
+	}
+	judged := request.reading.JudgedDraft()
+	moved := model.DraftMoved(judged, mark.Nearest)
+	mark.Judged = judged == nil || moved
+	kept := request.reading.Kept(judge)
+	if request.Rejudge {
+		return nil, slices.Sorted(maps.Keys(kept)), mark
+	}
+	order := make([]string, len(ordered))
+	for i, candidate := range ordered {
+		order[i] = candidate.Entry.ID
+	}
+	stale := request.reading.Stale(judge, model.RelevanceSubjectHash(model.RelevanceText(request.Kind, request.Topics, "", request.Draft)))
+	due := model.SecondLook{
+		Graph: graph, Live: live, Kept: stale, Thresholds: thresholds, Order: order,
+		Previous: request.reading.LastDraft(), Current: *mark, Moved: moved,
+	}.Due()
+	held := maps.Clone(kept)
+	for _, id := range due {
+		delete(held, id)
+	}
+	return held, due, mark
+}
+
 // gatherSearches runs the semantic search with the draft's own text, the
 // agent's semantic search and its keyword searches. Each search lists up to
 // gatherSearchLimit hits among candidate, the live entries that can become
@@ -395,7 +451,10 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 // slot.
 func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest, candidate map[string]bool) ([]model.GroundingRead, error) {
 	draft := strings.TrimSpace(request.Draft)
-	if draft != "" || request.Query != "" {
+	phrase := request.Query
+	if !runtime.searchesByMeaning() {
+		draft, phrase = "", ""
+	} else if draft != "" || phrase != "" {
 		if err := checkEmbedder(ctx, runtime); err != nil {
 			return nil, err
 		}
@@ -451,12 +510,12 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		}
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, IDs: ids})
 	}
-	if request.Query != "" {
-		ids, err := run(query.SearchQuery{Phrase: request.Query})
+	if phrase != "" {
+		ids, err := run(query.SearchQuery{Phrase: phrase})
 		if err != nil {
 			return nil, fmt.Errorf("sdd: gather: semantic search: %w", err)
 		}
-		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, Text: request.Query, IDs: ids})
+		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, Text: phrase, IDs: ids})
 	}
 	for _, term := range request.Terms {
 		ids, err := run(query.SearchQuery{Terms: []string{regexp.QuoteMeta(term)}})
@@ -476,13 +535,16 @@ const (
 	embedProbeTimeout = 30 * time.Second
 )
 
-// checkEmbedder fails fast when no embedding model is configured or the
-// configured one does not answer within embedProbeTimeout, naming the model
-// and its host.
+// searchesByMeaning reports whether the project has an embedding model and a
+// search index: without them a check runs its keyword searches and topic
+// listings alone (20261121-233807-d-tac-4iw).
+func (r *ProjectRuntime) searchesByMeaning() bool {
+	return r.options.Embedder != nil && r.options.SearchIndex != nil
+}
+
+// checkEmbedder fails fast when the configured embedding model does not
+// answer within embedProbeTimeout, naming the model and its host.
 func checkEmbedder(ctx context.Context, runtime *ProjectRuntime) error {
-	if runtime.options.Embedder == nil || runtime.options.SearchIndex == nil {
-		return &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: gather needs an embedding model for its semantic search: configure embedding.provider"}
-	}
 	probe, cancel := context.WithTimeout(ctx, embedProbeTimeout)
 	defer cancel()
 	_, err := runtime.options.Embedder.Embed(probe, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{embedProbeText}})

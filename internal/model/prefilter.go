@@ -64,28 +64,19 @@ func RelevanceSubjectHash(subject string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// readingScores is the reading's fold of one judge's prefilter scores, all
-// against the latest draft it scored, and the candidates among them below
-// the far floor.
+// readingScores is the reading's fold of one judge's prefilter scores, each
+// against the draft it was given for (against), and, against the latest
+// draft it scored, the candidates below the far floor and what the hiding
+// rules set aside.
 type readingScores struct {
 	forward  bool
 	subject  string
 	scores   map[string]uint8
+	against  map[string]string
 	below    map[string]bool
 	setAside map[string]bool
 	cut      uint8
 	hiding   map[HidingRule]RuleMark
-}
-
-// Scores returns the scores judge gave inside the reading against the draft
-// subject keys, and whether they answer only from the draft to each
-// candidate. Scores against an earlier draft are none.
-func (r *Reading) Scores(judge, subject string) (map[string]uint8, bool) {
-	if r == nil || r.scores[judge] == nil || r.scores[judge].subject != subject {
-		return nil, false
-	}
-	held := r.scores[judge]
-	return held.scores, held.forward
 }
 
 // BelowFloor returns the candidates judge's scores inside the reading put
@@ -115,8 +106,9 @@ func (r *Reading) audited(id string, verdict ReaderVerdict) ReaderVerdict {
 }
 
 // foldPrefilter joins one read's scores and far floor verdicts. A score
-// folds to the highest; a verdict stands as first given, so no later
-// judgment of a candidate moves it across the floor.
+// against the draft an entry's judgement answers folds to the highest; one
+// against another draft replaces it. A verdict stands as first given, so no
+// later judgment of a candidate moves it across the floor.
 func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	if p == nil || p.Judge == "" {
 		return
@@ -127,7 +119,11 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	judge := CanonicalJudge(p.Judge)
 	held := r.scores[judge]
 	if held == nil || held.subject != p.Subject {
-		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}, below: map[string]bool{}, setAside: map[string]bool{}, hiding: map[HidingRule]RuleMark{}}
+		fresh := &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}, against: map[string]string{}, below: map[string]bool{}, setAside: map[string]bool{}, hiding: map[HidingRule]RuleMark{}}
+		if held != nil {
+			fresh.scores, fresh.against = held.scores, held.against
+		}
+		held = fresh
 		r.scores[judge] = held
 	}
 	for _, id := range p.SetAside {
@@ -146,13 +142,13 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 		r.audit[id] = true
 	}
 	for _, id := range p.Below {
-		if _, scored := held.scores[id]; !scored {
+		if _, scored := held.scores[id]; !scored || held.against[id] != p.Subject {
 			held.below[id] = true
 		}
 	}
 	for id, score := range p.Scores {
-		if current, ok := held.scores[id]; !ok || score > current {
-			held.scores[id] = score
+		if current, ok := held.scores[id]; !ok || score > current || held.against[id] != p.Subject {
+			held.scores[id], held.against[id] = score, p.Subject
 		}
 	}
 }

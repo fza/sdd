@@ -106,11 +106,13 @@ type ReadPayload struct {
 	// Shortfall records a judge that scored fewer candidates than the
 	// check's minimum.
 	Shortfall *JudgeShortfall `json:"shortfall,omitempty"`
+	// Draft is the draft a check read against.
+	Draft *DraftMark `json:"draft,omitempty"`
 }
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && len(p.Marked) == 0 && p.Corpus == nil && p.Prefilter == nil && p.Shortfall == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && len(p.Marked) == 0 && p.Corpus == nil && p.Prefilter == nil && p.Shortfall == nil && p.Draft == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture
@@ -124,6 +126,9 @@ type Reading struct {
 	marked map[string]bool
 	scores map[string]*readingScores
 	audit  map[string]bool
+	// lastDraft is the draft the latest check read against; judgedDraft the
+	// draft as judged (DraftMark).
+	lastDraft, judgedDraft *DraftMark
 }
 
 // Fold adds one credited read. The first corpus mark stands; later marks are
@@ -162,6 +167,7 @@ func (r *Reading) Fold(p ReadPayload) {
 		}
 	}
 	r.foldPrefilter(p.Prefilter)
+	r.foldDraft(p.Draft)
 	if r.Corpus == nil && p.Corpus != nil {
 		r.Corpus = p.Corpus
 	}

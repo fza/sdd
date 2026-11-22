@@ -188,7 +188,7 @@ func TestReadingBelowFloor_KeepsTheFirstVerdict(t *testing.T) {
 	if got := reading.BelowFloor("j", subject); !slices.Equal(got, []string{"below", "late"}) {
 		t.Fatalf("below the floor %v: a scored candidate keeps its first verdict and a new one brings its own", got)
 	}
-	if scores, _ := reading.Scores("j", subject); scores["below"] != 90 {
+	if scores := reading.Kept("j"); scores["below"] != 90 {
 		t.Fatalf("scores %v: the score still folds to the highest", scores)
 	}
 	if got := reading.BelowFloor("other", subject); got != nil {
