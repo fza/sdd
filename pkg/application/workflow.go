@@ -279,12 +279,9 @@ type WorkflowSession struct {
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string
-	// laneFull collects the entries the framing lane in render serves in full;
-	// framingFull keeps them per block of the last Framing call. framing is
-	// set while the lanes render.
-	laneFull    []string
-	framingFull map[string][]string
-	framing     bool
+	// framing is set while the framing lanes render, which carry no anchor
+	// tags: a framing block serves once per change, never on a proof.
+	framing bool
 	// stepFull collects the entries the verify reading page serves whole, until
 	// TakeStepFullIDs hands them on.
 	stepFull []string
@@ -883,7 +880,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			}
 			return result, nil
 		}
-		result.Base, err = w.ServeShell(ctx, identity)
+		result.Base, err = w.landShell(ctx, identity)
 		if err != nil {
 			return result, fmt.Errorf("serving session shell after advancing %s: %w", request.Instance, err)
 		}
@@ -904,6 +901,31 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	return w.publicServe(serve)
+}
+
+// landShell is the session shell's serve as a move's end lands on it: the
+// base step named with its goal, chooser and the moves to start next, its
+// text left out (20261121-233256-d-tac-mm2); resume_session serves it in
+// full.
+func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentity) (*WorkflowServe, error) {
+	mark := w.session.PieceMark()
+	serve, err := w.ServeShell(ctx, identity)
+	if err != nil || serve == nil {
+		return serve, err
+	}
+	graph, err := w.graphs.Current()
+	if err != nil {
+		return nil, err
+	}
+	landing := fmt.Sprintf("The move ended; the dialogue is back at %s, step %s. Its instructions stand as served earlier; resume_session sends them in full.", serve.Procedure, serve.Step)
+	if moves := graph.MoveCanonicals(); len(moves) > 0 {
+		landing += " Moves to start next: " + strings.Join(moves, ", ") + "."
+	}
+	// Pieces the left-out text placed never reach the agent.
+	w.session.DropPiecesSince(mark)
+	serve.InstructionLanes = nil
+	serve.Instructions = serve.ComposeInstructions(landing)
+	return serve, nil
 }
 
 func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity) (WorkflowResumeResult, error) {
@@ -1027,7 +1049,7 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
-	base, err := w.ServeShell(ctx, identity)
+	base, err := w.landShell(ctx, identity)
 	if err != nil {
 		return result, fmt.Errorf("serving session shell after abandoning %s: %w", instance, err)
 	}
@@ -1383,14 +1405,12 @@ func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.Se
 		return nil, nil
 	}
 	var lanes []types.ServeLane
-	w.framingFull = map[string][]string{}
 	w.framing = true
-	defer func() { w.laneFull, w.framing = nil, false }()
+	defer func() { w.framing = false }()
 	for _, call := range inst.Spec.Framing {
 		if !wants(call.EffectiveID()) {
 			continue
 		}
-		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
 			return nil, fmt.Errorf("framing lane %s: %w", call.Fn, err)
@@ -1404,18 +1424,9 @@ func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.Se
 		}
 		if text = strings.TrimSpace(text); text != "" {
 			lanes = append(lanes, types.ServeLane{Name: call.EffectiveID(), Text: text})
-			if cut == nil && len(w.laneFull) > 0 {
-				w.framingFull[text] = w.laneFull
-			}
 		}
 	}
 	return lanes, nil
-}
-
-// FramingFullIDs returns the entries a block of the last Framing call served
-// in full, whole: a lane cut for size names none.
-func (w *WorkflowSession) FramingFullIDs(block string) []string {
-	return w.framingFull[block]
 }
 
 // TakeStepFullIDs returns the entries the verify reading page served whole

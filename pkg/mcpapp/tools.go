@@ -8,7 +8,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -52,8 +51,15 @@ type ProjectResult struct {
 // opened, the accessible projects are listed instead.
 const StatusProjectRequired = "project-required"
 
+// CallerMark tells a second caller on a session from the first, so each gets
+// the session framing once (20261121-233256-d-tac-mm2).
+type CallerMark struct {
+	Caller string `json:"caller,omitempty" jsonschema:"set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller"`
+}
+
 type StartProcedureArgs struct {
 	Proofs
+	CallerMark
 	Session   string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Canonical string         `json:"canonical" jsonschema:"procedure to start, by its stable name (e.g. capture)"`
 	Params    map[string]any `json:"params,omitempty" jsonschema:"typed start inputs per the procedure's declaration: declared params, plus any declared state field to seed at start (e.g. a known anchor)"`
@@ -64,6 +70,7 @@ type StartProcedureArgs struct {
 
 type NextArgs struct {
 	Proofs
+	CallerMark
 	RetryRef  uint64 `json:"retry_ref,omitempty" jsonschema:"exact retry reference from a failed operation; mutually exclusive with report and cancel_ref"`
 	CancelRef uint64 `json:"cancel_ref,omitempty" jsonschema:"exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref"`
 	Session   string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
@@ -76,6 +83,7 @@ type NextArgs struct {
 
 type AbandonArgs struct {
 	Proofs
+	CallerMark
 	Instance string `json:"instance,omitempty" jsonschema:"instance handle of the move to abandon; pass session too, naming the session the move belongs to"`
 	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly; no resume, no framing"`
 	Reason   string `json:"reason,omitempty" jsonschema:"why the instance or session is being abandoned"`
@@ -97,6 +105,7 @@ type AbandonResult struct {
 
 type ParkArgs struct {
 	Proofs
+	CallerMark
 	Session  string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Instance string `json:"instance" jsonschema:"running move instance to park"`
 	Note     string `json:"note,omitempty" jsonschema:"one line on why the move is shelved; the session log carries it for whoever resumes it"`
@@ -200,11 +209,12 @@ type ServeResult struct {
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"recorded cancellation: return position and what the operation reports it left"`
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
 	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID); a value past 200 characters is left out and named in instructions"`
-	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it"`
+	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants): a block goes to each caller once and again when it changes, no proof asked; resume_session sends every block again"`
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
-	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state this instance already collected; values persist across handover. Do not re-derive them"`
+	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"resume_session only: the state this instance already collected, each value of up to 300 characters whole; values persist across handover. Do not re-derive them"`
+	CollectedLarge   map[string]int          `json:"collected_large,omitempty" jsonschema:"resume_session only: the collected values past 300 characters, by name with their size in characters; read_value returns one whole"`
 	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input. Follow each one's instructions"`
 	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
 	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
@@ -261,6 +271,7 @@ type BaseServe struct {
 // --- sessions & staging ----------------------------------------------------
 
 type ResumeSessionArgs struct {
+	CallerMark
 	Session string `json:"session" jsonschema:"session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: every piece of the position serves in full, whatever the call holds"`
 }
 
@@ -445,6 +456,18 @@ type ReadAttachmentArgs struct {
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte position to continue from (next_offset of the previous page)"`
 	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"page size cap; default 65536. A page stops short of it where the result would grow past its bound; next_offset continues"`
 	Handle   string `json:"handle,omitempty" jsonschema:"read a file staged in this session (before any entry carries it) by its handle, in the same bounded pages; pass instead of id"`
+}
+
+type ReadValueArgs struct {
+	Session  string `json:"session,omitempty" jsonschema:"attached session's handle; required"`
+	Instance string `json:"instance" jsonschema:"the move whose value to read, as resume_session names it"`
+	Name     string `json:"name" jsonschema:"the value's name, as collected_large lists it"`
+	Page     int    `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
+}
+
+type ReadValueResult struct {
+	ResultNotices
+	Value string `json:"value" jsonschema:"the value whole, never cut; a value past one result comes in pages"`
 }
 
 type ReadAttachmentResult struct {
@@ -674,6 +697,13 @@ func (s *toolSet) register(srv *mcp.Server) error {
 	}, s.readAttachment)
 
 	addTool(srv, s, &mcp.Tool{
+		Name: "read_value",
+		Description: "Read one value a move of the session collected, whole, in pages where it runs past one " +
+			"result. resume_session carries the small values and names the larger ones under collected_large; " +
+			"this returns one of those.",
+	}, s.readValue)
+
+	addTool(srv, s, &mcp.Tool{
 		Name:        "info",
 		Description: "Session framing header; session required. Project, local participant, configured language, available search modes.",
 	}, s.info)
@@ -848,6 +878,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, ServeResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	identity := s.requestIdentity(req)
 	serve, err := ss.root.Start(ctx, identity, sdd.WorkflowStartRequest{
 		Canonical: args.Canonical, Params: args.Params, Label: args.Label, Parent: args.Parent,
@@ -866,6 +897,7 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		return nil, ServeResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	if args.Instance == "" {
 		return nil, ServeResult{}, toolError("instance is required")
 	}
@@ -896,6 +928,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		return nil, AbandonResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	identity := s.requestIdentity(req)
 	result, err := ss.root.Abandon(ctx, identity, args.Instance, args.Reason)
 	if err != nil {
@@ -931,6 +964,7 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 		return nil, ParkResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	if args.Instance == "" {
 		return nil, ParkResult{}, toolError("instance is required")
 	}
@@ -1006,6 +1040,7 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
@@ -1279,33 +1314,10 @@ func emptyViewMessage(knownParticipants []string) string {
 	return msg
 }
 
-// Value-projection caps, derived from the calibrated serveview budget so the
-// wire surface and the engine share one upgrade knob (d-tac-qwc). Collected
-// and produced values are the session store projected onto a serve, so the
-// per-value cap is the store-value cap and the per-instance block cap is the
-// engine-written values cap.
-var (
-	// maxCollectedValueBytes caps a single projected collected or produced
-	// value. The values persist in full in the session store; the cap only
-	// bounds what the serve carries so a large reported judgment cannot blow
-	// the client's token budget.
-	maxCollectedValueBytes = serveview.Default().Cap(serveview.PartStoreValue).MaxBytes
-
-	// maxCollectedInstanceBytes caps the total value projection for one
-	// instance. Per-value capping alone lets a field-heavy instance stack many
-	// near-cap values into a payload that, across several resumed instances, can
-	// reach the ~10K-token output ceiling where Codex CLI truncates a tool result
-	// (s-tac-jom, s-tac-40d) — a silent cut is exactly what d-cpt-0tm forbids. The
-	// budget keeps whole, high-signal values in sorted-key order and replaces the
-	// rest with a labeled omission, so the resume serve stays comfortably under the
-	// host ceiling while every dropped value is named, never silently gone.
-	maxCollectedInstanceBytes = serveview.Default().Cap(serveview.PartProduced).MaxBytes
-
-	// maxLineListBytes caps the whole-line lists MCP responses carry (open
-	// threads, discarded threads, session rejections); cuts keep whole lines
-	// and name the remainder.
-	maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
-)
+// maxLineListBytes caps the whole-line lists MCP responses carry (open
+// threads, discarded threads, session rejections); cuts keep whole lines and
+// name the remainder.
+var maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
 
 // maxResumeOpenInstances caps how many open instances a resume projection
 // serves in full; the rest are named, each reachable through next.
@@ -1322,7 +1334,7 @@ func endedValues(values map[string]any) (map[string]string, []string) {
 	var out map[string]string
 	var omitted []string
 	for _, name := range slices.Sorted(maps.Keys(values)) {
-		value := collectedString(values[name])
+		value := sdd.CollectedText(values[name])
 		if len(value) > maxEndedValueChars {
 			omitted = append(omitted, name)
 			continue
@@ -1333,61 +1345,6 @@ func endedValues(values map[string]any) (map[string]string, []string) {
 		out[name] = value
 	}
 	return out, omitted
-}
-
-// capValues renders each collected or produced value to a display string,
-// truncates any over-cap value, and enforces a per-instance total budget by
-// spending it on whole values in sorted-key order — anything past the budget
-// is replaced with an explicit omission notice, so a resuming agent sees the
-// compression rather than losing a field silently (d-cpt-0tm). Returns nil for
-// an empty projection so the field is omitted.
-func capValues(values map[string]any) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	out := make(map[string]string, len(values))
-	spent := 0
-	for _, name := range names {
-		value := capValue(collectedString(values[name]))
-		if spent+len(value) > maxCollectedInstanceBytes {
-			out[name] = "[collected value omitted here for size — persisted in full in the session store]"
-			continue
-		}
-		spent += len(value)
-		out[name] = value
-	}
-	return out
-}
-
-// collectedString renders a store value for the projection: strings pass
-// through; everything else is JSON-encoded so lists and scalars stay legible.
-// A marshal failure is stamped rather than silently rendered as Go syntax, so
-// an encoding error is visible (mirrors StateSnapshot's "!err:" marker).
-func collectedString(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("[!json-encode-error: %v] %v", err, v)
-	}
-	return string(b)
-}
-
-// capValue truncates an over-cap value on a rune boundary and appends
-// a notice naming the cap.
-func capValue(s string) string {
-	bounded := truncate.Bytes(s, maxCollectedValueBytes, "")
-	if bounded.Cut.Clean() {
-		return s
-	}
-	return fmt.Sprintf("%s\n\n[collected value truncated at %d of %d bytes — persisted in full, compressed here]", bounded.Text, bounded.Cut.KeptBytes, bounded.Cut.TotalBytes)
 }
 
 func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowArgs) (*mcp.CallToolResult, ShowResult, error) {
@@ -1454,6 +1411,23 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 		return nil, GatherResult{}, err
 	}
 	return nil, GatherResult{Serve: pagedText(ss, "gather", result.Text)}, nil
+}
+
+func (s *toolSet) readValue(ctx context.Context, req *mcp.CallToolRequest, args ReadValueArgs) (*mcp.CallToolResult, ReadValueResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	if err != nil {
+		return nil, ReadValueResult{}, err
+	}
+	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		value, err := heldPage(ss, "read_value", args.Page)
+		return nil, ReadValueResult{Value: value}, err
+	}
+	value, err := ss.root.CollectedValue(strings.TrimSpace(args.Instance), strings.TrimSpace(args.Name))
+	if err != nil {
+		return nil, ReadValueResult{}, err
+	}
+	return nil, ReadValueResult{Value: pagedText(ss, "read_value", value)}, nil
 }
 
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1717,8 +1691,9 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
 		Step: serve.Step, Goal: serve.Goal, Missing: serve.Missing,
 		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
-		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
+		PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
+	res.Collected, res.CollectedLarge = sdd.SplitCollected(serve.Collected)
 	if parked := serve.Parked; parked != nil {
 		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
 	}

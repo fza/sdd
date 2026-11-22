@@ -103,6 +103,8 @@ type pieceCall struct {
 	// seq orders the pieces and pointers the call serves, so a mark
 	// withdraws both.
 	seq int
+	// caller is the mark the call carries (SetCaller).
+	caller string
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
@@ -274,18 +276,49 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 // Hash withdraws the content, so the next one serves again; it serves
 // nothing. The change is recorded by RecordAnchors.
 func (s *Session) ServeChanged(p Piece) bool {
-	last := s.changed[p.Name]
 	if p.Hash == "" {
-		if last != "" {
+		if s.changed[changedKey(s.call.caller, p.Name)] != "" {
 			s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true, seq: s.nextSeq()})
 		}
 		return false
 	}
-	if last == p.Hash && !s.call.full {
+	if !s.Changed(p) {
 		return false
 	}
 	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true, seq: s.nextSeq()})
 	return true
+}
+
+// Changed reports whether ServeChanged would serve p, recording nothing: its
+// content differs from the last the session served the call's caller under
+// p.Name, or the call serves every piece in full. Content the call served
+// already counts as served.
+func (s *Session) Changed(p Piece) bool {
+	if s.call.full {
+		return !slices.ContainsFunc(s.call.pending, func(sent pendingAnchor) bool { return sent.changed && sent.piece == p })
+	}
+	last := s.changed[changedKey(s.call.caller, p.Name)]
+	for _, sent := range s.call.pending {
+		if sent.changed && sent.piece.Name == p.Name {
+			last = sent.piece.Hash
+		}
+	}
+	return last != p.Hash
+}
+
+// SetCaller makes the call in flight serve the caller it names: what serves
+// once per change counts per caller, so a caller the session has not served
+// gets every such piece in full. The empty caller is the session's first
+// (20261121-233256-d-tac-mm2).
+func (s *Session) SetCaller(caller string) { s.call.caller = caller }
+
+// changedKey keys the content a caller was served under a piece's name; the
+// first caller's keys are the bare names an older log holds.
+func changedKey(caller, name string) string {
+	if caller == "" {
+		return name
+	}
+	return caller + "\x00" + name
 }
 
 // PieceMark marks the pieces and pointers the call has served so far.
@@ -372,6 +405,9 @@ func (s *Session) RecordAnchors() {
 		}
 		if p.changed {
 			record["changed"] = true
+			if s.call.caller != "" {
+				record["caller"] = s.call.caller
+			}
 		}
 		if len(p.covers) > 0 {
 			record["covers"] = p.covers
@@ -453,7 +489,8 @@ func (s *Session) foldAnchor(record any) {
 		if s.changed == nil {
 			s.changed = map[string]string{}
 		}
-		s.changed[name] = hash
+		caller, _ := fields["caller"].(string)
+		s.changed[changedKey(caller, name)] = hash
 	}
 	tag, _ := fields["tag"].(string)
 	if tag == "" {
