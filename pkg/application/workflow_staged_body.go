@@ -18,7 +18,6 @@ import (
 const (
 	fieldBodyHandle = "bodyHandle"
 	fieldBodyHash   = "bodyHash"
-	fieldBody       = "body"
 	fieldBodyPatch  = "bodyPatch"
 )
 
