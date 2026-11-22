@@ -17,10 +17,6 @@ import (
 
 const graphCloneRepoID = model.RepoID("example.test/acme/app-sdd")
 
-func TestMain(m *testing.M) {
-	test.RunTestsAsSDD(m)
-}
-
 // graphRepoCode builds a code repository whose config names a graph
 // repository with graph_repo, beside a project_dir leading nowhere, and the
 // graph repository on a remote.

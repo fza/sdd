@@ -23,10 +23,6 @@ const (
 	entryPath   = ".sdd/graph/2026/11/07-120000-s-tac-abc.md"
 )
 
-func TestMain(m *testing.M) {
-	test.RunTestsAsSDD(m)
-}
-
 // seededRemote is a graph repository holding a config, one entry and code
 // outside the graph.
 func seededRemote(t *testing.T) *test.GraphRemote {
