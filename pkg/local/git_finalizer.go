@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -75,16 +76,16 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 		return fmt.Errorf("git finalizer: mutation %s has no paths", mutation.BatchID)
 	}
 	if len(added) > 0 {
-		addArgs := append([]string{"-C", f.Checkout, "add", "--all", "--"}, added...)
-		if out, err := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); err != nil {
+		addArgs := append([]string{"add", "--all", "--"}, added...)
+		if out, err := git.CommandAt(ctx, f.Checkout, addArgs...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git finalizer add: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
 	if len(removed) > 0 {
 		// A removal may already be staged by an attempt whose commit failed;
 		// --ignore-unmatch keeps the retry from failing on the missing path.
-		rmArgs := append([]string{"-C", f.Checkout, "rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
-		if out, err := exec.CommandContext(ctx, "git", rmArgs...).CombinedOutput(); err != nil {
+		rmArgs := append([]string{"rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
+		if out, err := git.CommandAt(ctx, f.Checkout, rmArgs...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git finalizer rm: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -92,8 +93,8 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if message == "" {
 		message = "sdd: apply " + mutation.BatchID
 	}
-	commitArgs := append([]string{"-C", f.Checkout, "commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
-	if out, err := exec.CommandContext(ctx, "git", commitArgs...).CombinedOutput(); err != nil {
+	commitArgs := append([]string{"commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
+	if out, err := git.CommandAt(ctx, f.Checkout, commitArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git finalizer commit: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
@@ -106,7 +107,7 @@ func (f GitFinalizer) lookupTrailer(ctx context.Context, trailer string) (string
 		return "", fmt.Errorf("git finalizer: concrete branch is required")
 	}
 	trailerPattern := "^" + regexp.QuoteMeta(trailer) + "$"
-	out, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "log", f.Branch, "--extended-regexp", "--grep="+trailerPattern, "--format=%H", "-n", "1").CombinedOutput()
+	out, err := git.CommandAt(ctx, f.Checkout, "log", f.Branch, "--extended-regexp", "--grep="+trailerPattern, "--format=%H", "-n", "1").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git finalizer log: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
@@ -117,14 +118,14 @@ func (f GitFinalizer) lookupTrailer(ctx context.Context, trailer string) (string
 // revision carries it at all.
 func (f GitFinalizer) readCommittedFile(ctx context.Context, revision, logicalPath string) ([]byte, bool, error) {
 	filename := path.Join(f.GraphDir, logicalPath)
-	listed, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "ls-tree", "--name-only", revision, "--", filename).Output()
+	listed, err := git.CommandAt(ctx, f.Checkout, "ls-tree", "--name-only", revision, "--", filename).Output()
 	if err != nil {
 		return nil, false, fmt.Errorf("listing %s at %s: %w", filename, revision, err)
 	}
 	if strings.TrimSpace(string(listed)) == "" {
 		return nil, false, nil
 	}
-	content, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "show", revision+":"+filename).Output()
+	content, err := git.CommandAt(ctx, f.Checkout, "show", revision+":"+filename).Output()
 	if err != nil {
 		return nil, false, fmt.Errorf("reading %s at %s: %w", filename, revision, err)
 	}
@@ -133,7 +134,7 @@ func (f GitFinalizer) readCommittedFile(ctx context.Context, revision, logicalPa
 
 // isAncestor reports whether the revision is reachable from the branch head.
 func (f GitFinalizer) isAncestor(ctx context.Context, revision string) (bool, error) {
-	err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "merge-base", "--is-ancestor", revision, f.Branch).Run()
+	err := git.CommandAt(ctx, f.Checkout, "merge-base", "--is-ancestor", revision, f.Branch).Run()
 	if err == nil {
 		return true, nil
 	}
