@@ -26,8 +26,8 @@ func TestOrderGatherCandidates_FusesSearchRanksThenSimilarity(t *testing.T) {
 	near, far, unknown := gap("20260101-100003-s-tac-nea"), gap("20260101-100004-s-tac-far"), gap("20260101-100005-s-tac-unk")
 	g := model.NewGraph([]*model.Entry{first, second, third, near, far, unknown})
 	reads := []model.GroundingRead{
-		{Mode: model.GroundingSemantic, IDs: []string{first.ID, second.ID}},
 		{Mode: model.GroundingKeyword, Text: "t", IDs: []string{second.ID, third.ID}},
+		{Mode: model.GroundingSemantic, IDs: []string{first.ID, second.ID}},
 		{Mode: model.GroundingListing, Text: "a/b", IDs: []string{unknown.ID, far.ID, near.ID, first.ID}},
 	}
 	candidates, _ := model.GatherCandidates(g, model.GroundingPopulation(g), reads, nil, nil)
