@@ -423,7 +423,7 @@ func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepProposal")
 	serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" || !strings.Contains(serve.Instructions, "f1, only the user can settle it") {
+	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" || !strings.Contains(serve.Instructions, "- f1 [medium, aspiration]: only the user can settle it\n") {
 		t.Fatalf("the open point should go to the user, got %+v:\n%s", serve.PendingChooser, serve.Instructions)
 	}
 	serve = session.Answer(t, x.instance, "deepUser", "settle", nil, "it is in scope")
@@ -455,7 +455,7 @@ func TestCaptureDeep_ThreeDeliveriesThenTheUser(t *testing.T) {
 	session.Refresh(t)
 	serve := session.Answer(t, x.instance, "deepProposal", "escalate", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if want := "- f1, contested, and the verifier holds it\n  draft: the draft as it stands; the drafter: the subject is in the ref\n  verifier: the gap names no subject; a reader of the entry alone cannot tell\n  verifier's edit: replace \"observes something.\" with \"observes a subject.\"\n"; !strings.Contains(serve.Instructions, want) {
+	if want := "- f1 [medium, inconsistent]: contested, and the verifier holds it\n  the drafter: the subject is in the ref\n  the verifier: a reader of the entry alone cannot tell\n"; !strings.Contains(serve.Instructions, want) || strings.Contains(serve.Instructions, "the gap names no subject") {
 		t.Fatalf("the user should see both positions of the open point:\n%s", serve.Instructions)
 	}
 }
@@ -1153,18 +1153,18 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 			session.Refresh(t)
 			serve := session.Report(t, x.instance, nil)
 			proctest.RequireStep(t, serve, "playback")
-			if replay := serve.Instructions; !strings.Contains(replay, "the gap rests on incidents no entry records\n  withdrawn: ") {
+			if replay := serve.Instructions; !strings.Contains(replay, "- f1 [medium, missing-ref] withdrawn: "+note+"\n") || strings.Contains(replay, "the gap rests on incidents") {
 				t.Errorf("the replayed playback should show the withdrawn finding:\n%s", replay)
 			}
 			serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 			proctest.RequireStep(t, serve, "verifySummary")
 			text := serve.Instructions
-			for _, want := range []string{"- f1 [medium, missing-ref]: the gap rests on incidents no entry records\n  withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {
+			for _, want := range []string{"- f1 [medium, missing-ref] withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {
 				if !strings.Contains(text, want) {
 					t.Errorf("the drafter should be told of the withdrawn finding, missing %q:\n%s", want, text)
 				}
 			}
-			if strings.Contains(text, "the layer is too low\n  withdrawn") || !strings.Contains(text, "which carried no edit, so the entry was written without a change for them:\n\n- f2 [low, ref-fit]: the layer is too low\n") {
+			if !strings.Contains(text, "which carried no edit, so the entry was written without a change for them:\n\n- f2 [low, ref-fit] accepted without an edit\n") {
 				t.Errorf("a finding the drafter accepted without an edit is named as such, not as withdrawn:\n%s", text)
 			}
 		})

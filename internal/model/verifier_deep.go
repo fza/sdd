@@ -228,6 +228,22 @@ func (r DeepResponse) Validate() error {
 // DeepFindingID is the number sdd gives the finding at index i.
 func DeepFindingID(i int) string { return "f" + strconv.Itoa(i+1) }
 
+// DeepFindingLabel names a finding by its number, severity and axis, the way
+// every listing after the one serving it in full refers to it.
+func DeepFindingLabel(id string, finding DeepFinding) string {
+	return fmt.Sprintf("%s [%s, %s]", id, finding.Severity, finding.Axis)
+}
+
+// DeepSettledLine renders a settled finding as one line: its label, how it
+// was settled and the note, if any, with its line breaks folded.
+func DeepSettledLine(id string, finding DeepFinding, settled, note string) string {
+	line := "- " + DeepFindingLabel(id, finding) + " " + settled
+	if note = strings.Join(strings.Fields(note), " "); note != "" {
+		line += ": " + note
+	}
+	return line + "\n"
+}
+
 // DeepOpenFindings counts the findings the verifier still stands by: every
 // finding whose latest response neither concedes nor drops it.
 func DeepOpenFindings(findings []DeepFinding, responses []DeepResponse) int {
@@ -254,7 +270,9 @@ type DeepChange struct {
 }
 
 // DeepHunk is one applied edit of the proposal, labelled by its finding. Old
-// and New are the whole lines the edit touches, before and after.
+// and New are the changed span before and after, with up to
+// DeepHunkContextWords words of its lines around it; an ellipsis marks a line
+// that goes on.
 type DeepHunk struct {
 	ID      string
 	Finding string
@@ -363,15 +381,52 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 		b.WriteString(base[last:span.start])
 		b.WriteString(span.edit.New)
 		last = span.end
-		lineStart := strings.LastIndex(base[:span.start], "\n") + 1
-		lineEnd := span.end + strings.IndexByte(base[span.end:]+"\n", '\n')
+		before, after := deepHunkContext(base, span.start, span.end)
 		hunks = append(hunks, DeepHunk{
 			ID: "h" + strconv.Itoa(i+1), Finding: span.finding, Outcome: span.outcome,
-			Line: strings.Count(base[:span.start], "\n") + 1, Old: base[lineStart:lineEnd], New: base[lineStart:span.start] + span.edit.New + base[span.end:lineEnd],
+			Line: strings.Count(base[:span.start], "\n") + 1, Old: before + span.edit.Old + after, New: before + span.edit.New + after,
 		})
 	}
 	b.WriteString(base[last:])
 	return b.String(), hunks, nil
+}
+
+// DeepHunkContextWords is how many words of its lines a hunk carries on each
+// side of the changed span.
+const DeepHunkContextWords = 3
+
+// deepHunkContext is the text of base a hunk carries around the span
+// start..end: up to DeepHunkContextWords words on each side, never past the
+// span's lines, with an ellipsis where a line goes on.
+func deepHunkContext(base string, start, end int) (string, string) {
+	lineStart := strings.LastIndex(base[:start], "\n") + 1
+	lineEnd := end + strings.IndexByte(base[end:]+"\n", '\n')
+	from := start
+	for words := 0; words < DeepHunkContextWords && from > lineStart; words++ {
+		for from > lineStart && base[from-1] == ' ' {
+			from--
+		}
+		for from > lineStart && base[from-1] != ' ' {
+			from--
+		}
+	}
+	to := end
+	for words := 0; words < DeepHunkContextWords && to < lineEnd; words++ {
+		for to < lineEnd && base[to] == ' ' {
+			to++
+		}
+		for to < lineEnd && base[to] != ' ' {
+			to++
+		}
+	}
+	before, after := base[from:start], base[end:to]
+	if from > lineStart {
+		before = "…" + before
+	}
+	if to < lineEnd {
+		after += "…"
+	}
+	return before, after
 }
 
 // deepEditSpans places every edit over base, sorted by position: each old
