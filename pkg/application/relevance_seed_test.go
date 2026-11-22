@@ -115,7 +115,7 @@ func TestUpdateGrounding_SeedsTheGraphsRefsForTheJudgeToCalibrate(t *testing.T) 
 	if scored := updated.Scored; scored.Scored != 189 || scored.Requests != 1 || scorer.calls() != 1 {
 		t.Fatalf("scored %+v after %d calls: one request should score the referencing entry's pairs", scored, scorer.calls())
 	}
-	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
+	state, err := application.PrefilterState(t.Context(), identity, gatherProject, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,12 +163,21 @@ func TestUpdateGrounding_MeasuresTheRankingJudgesHealth(t *testing.T) {
 	if updated.Scored.Scored != model.RankingRecallMinimum || host.calls() != 1 {
 		t.Fatalf("update %+v after %d host calls: the host's judge should score every labelled pair", updated, host.calls())
 	}
-	state, err := application.PrefilterState(t.Context(), identity, gatherProject)
+	for _, client := range []string{"", "claude-code"} {
+		state, err := application.PrefilterState(t.Context(), identity, gatherProject, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if weak := state.Weak; state.Judge != "test:host" || weak == nil || weak.Judge != "test:host" || weak.Recall != 0 || weak.Positives != model.RankingRecallMinimum {
+			t.Fatalf("state %+v for client %q: the host's judge scores the references below the line", state, client)
+		}
+	}
+	other, err := application.PrefilterState(t.Context(), identity, gatherProject, "codex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Weak) != 1 || state.Weak[0].Judge != "test:host" || state.Weak[0].Recall != 0 || state.Weak[0].Positives != model.RankingRecallMinimum {
-		t.Fatalf("state %+v: only the host's judge scores the references below the line", state)
+	if other.Judge != gatherJudge || other.Weak != nil {
+		t.Fatalf("state %+v: a client other than a Claude host ranks with the prefilter's judge, whose health is not measured", other)
 	}
 	status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
 	if err != nil {

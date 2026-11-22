@@ -50,6 +50,10 @@ type Options struct {
 	// unset. It lowers the result bound of a Claude Code caller
 	// (model.ResultBoundFor).
 	MCPOutputTokens int
+	// OnClient, when set, runs under New after each request a server
+	// answered from a client that reported its name, with that name; an
+	// error fails the request with it.
+	OnClient func(ctx context.Context, clientName string) error
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -142,6 +146,9 @@ func New(opts Options) (*Server, error) {
 		app: opts.Application,
 	}
 	s.mcp.AddReceivingMiddleware(s.refuseWhileClosing)
+	if opts.OnClient != nil {
+		s.mcp.AddReceivingMiddleware(noteClient(opts.OnClient))
+	}
 	err = tools.register(s.mcp)
 	if err != nil {
 		return nil, err
@@ -159,6 +166,44 @@ func (s *Server) RunStdio(ctx context.Context) error {
 func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
 	runErr := s.mcp.Run(ctx, transport)
 	return errors.Join(runErr, s.Shutdown(context.Background()))
+}
+
+func noteClient(onClient func(context.Context, string) error) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if err != nil {
+				return res, err
+			}
+			name, ok := requestClient(req)
+			if !ok {
+				return res, nil
+			}
+			err = onClient(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			return res, nil
+		}
+	}
+}
+
+// requestClient is the client a request came from as it reports its name:
+// in an initialize, or once its session holds what the client reported, as
+// a session the sessionless protocol discovers does.
+func requestClient(req mcp.Request) (string, bool) {
+	if params, ok := req.GetParams().(*mcp.InitializeParams); ok && params.ClientInfo != nil {
+		return params.ClientInfo.Name, true
+	}
+	session, ok := req.GetSession().(*mcp.ServerSession)
+	if !ok || session == nil {
+		return "", false
+	}
+	params := session.InitializeParams()
+	if params == nil || params.ClientInfo == nil {
+		return "", false
+	}
+	return params.ClientInfo.Name, true
 }
 
 func (s *Server) refuseWhileClosing(next mcp.MethodHandler) mcp.MethodHandler {
