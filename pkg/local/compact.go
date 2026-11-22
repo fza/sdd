@@ -53,11 +53,11 @@ func tierToMerge(files []segmentFile) []segmentFile {
 // segmentMerge merges segments into one; nil when no record is left.
 type segmentMerge func(segments [][]byte) ([]byte, error)
 
-// compactDir merges segments of dir: every segment when full, else tier by
-// tier while a tier overflows.
-func compactDir(ctx context.Context, dir string, full bool, merge segmentMerge) error {
+// compactDir merges the segments of dir carrying ext: every segment when
+// full, else tier by tier while a tier overflows.
+func compactDir(ctx context.Context, dir, ext string, full bool, merge segmentMerge) error {
 	for range maxCompactions {
-		files, err := readSegmentFiles(ctx, dir)
+		files, err := readSegmentFiles(ctx, dir, ext)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func compactDir(ctx context.Context, dir string, full bool, merge segmentMerge) 
 			return nil
 		}
 		if merged != nil {
-			err = writeSegmentFile(dir, merged)
+			err = writeSegmentFile(dir, ext, merged)
 			if err != nil {
 				return err
 			}

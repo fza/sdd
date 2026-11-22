@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestEventsImportExport_RoundTripsThroughTheBinaryLog(t *testing.T) {
+func TestEventsImportExport_RoundTripsThroughTheStore(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nevents:\n  channels:\n    recheck:\n      share: git\n")
 	lines := `{"id":"e1","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["20261108-120000-d-cpt-f01","20261107-115150-d-cpt-0mu"]}}
@@ -23,7 +23,7 @@ func TestEventsImportExport_RoundTripsThroughTheBinaryLog(t *testing.T) {
 	if !strings.Contains(imported.stdout, "Imported 2 events") {
 		t.Fatalf("import output = %q", imported.stdout)
 	}
-	segments, err := filepath.Glob(filepath.Join(f.root, ".sdd", "events", "*", "*.seg"))
+	segments, err := filepath.Glob(filepath.Join(f.root, ".sdd", "events", "*", "*.jsonl"))
 	if err != nil || len(segments) != 2 {
 		t.Fatalf("import should write one segment per channel under .sdd/events, found %v (%v)", segments, err)
 	}
@@ -89,7 +89,7 @@ func TestEventsCompact_MergesEachChannel(t *testing.T) {
 	if compacted.err != nil || !strings.Contains(compacted.stdout, "Compacted") {
 		t.Fatalf("compact = %q, %v", compacted.stdout, compacted.err)
 	}
-	segments, err := filepath.Glob(filepath.Join(f.root, ".sdd", "events", "wip", "*.seg"))
+	segments, err := filepath.Glob(filepath.Join(f.root, ".sdd", "events", "wip", "*.jsonl"))
 	if err != nil || len(segments) != 1 {
 		t.Fatalf("compact should leave one segment in the channel, found %v (%v)", segments, err)
 	}

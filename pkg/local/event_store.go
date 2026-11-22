@@ -10,24 +10,19 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/segment"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
-const eventSegmentKind = "sdd.events"
+const eventFileExt = ".jsonl"
 
 // localChannelIgnore keeps a local channel's directory, itself included, out
 // of Git, so its segments never reach a commit, sdd's or anyone's. A git
 // channel carries no such file, so its new segments are what the next sdd
 // auto-commit picks up.
 var localChannelIgnore = []byte("# sdd: local event channel, kept out of Git\n*\n")
-
-// sharedSegmentAttributes, in the event store's directory, keeps Git from
-// diffing or merging a shared channel's segments as text.
-var sharedSegmentAttributes = []byte("# sdd: event segments are binary\n*.seg binary\n")
 
 // EventSettler returns the IDs of the events of channel that compaction
 // may drop.
@@ -47,9 +42,11 @@ type FilesystemEventStoreOptions struct {
 }
 
 // FilesystemEventStore is the local default of the project event store: an
-// append log per channel of immutable segment files <time>-<random>.seg, one
-// per Append call and channel, merged by tiered compaction. It never commits;
-// see localChannelIgnore for how sharing follows the channel.
+// append log per channel of immutable JSON Lines segments
+// <time>-<random>.jsonl, one per Append call and channel, merged by tiered
+// compaction. Each line is one event as application.MarshalEventJSON writes
+// it, without the channel its directory names. It never commits; see
+// localChannelIgnore for how sharing follows the channel.
 type FilesystemEventStore struct {
 	dir         string
 	gitChannels []string
@@ -72,7 +69,7 @@ func NewFilesystemEventStore(options FilesystemEventStoreOptions) (*FilesystemEv
 }
 
 func (s *FilesystemEventStore) Append(ctx context.Context, events []app.Event) error {
-	byChannel := map[string][][]byte{}
+	byChannel := map[string][]byte{}
 	var channels []string
 	for _, event := range events {
 		err := app.ValidateEvent(event)
@@ -82,7 +79,10 @@ func (s *FilesystemEventStore) Append(ctx context.Context, events []app.Event) e
 		if _, seen := byChannel[event.Channel]; !seen {
 			channels = append(channels, event.Channel)
 		}
-		byChannel[event.Channel] = append(byChannel[event.Channel], encodeEvent(event))
+		byChannel[event.Channel], err = appendEventLine(byChannel[event.Channel], event)
+		if err != nil {
+			return err
+		}
 	}
 	for _, channel := range channels {
 		err := ctx.Err()
@@ -101,7 +101,7 @@ func (s *FilesystemEventStore) Append(ctx context.Context, events []app.Event) e
 	return nil
 }
 
-func (s *FilesystemEventStore) writeSegment(channel string, records [][]byte) (err error) {
+func (s *FilesystemEventStore) writeSegment(channel string, lines []byte) (err error) {
 	dir := filepath.Join(s.dir, channel)
 	err = os.MkdirAll(dir, 0o755)
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *FilesystemEventStore) writeSegment(channel string, records [][]byte) (e
 	if err != nil {
 		return err
 	}
-	return writeSegmentFile(dir, segment.Encode(eventSegmentKind, records))
+	return writeSegmentFile(dir, eventFileExt, lines)
 }
 
 // markSharing writes the ignore file into a local channel's directory and
@@ -129,37 +129,14 @@ func (s *FilesystemEventStore) markSharing(root *os.Root, channel string) error 
 	}
 	if slices.Contains(s.gitChannels, channel) {
 		if present && bytes.Equal(current, localChannelIgnore) {
-			if err := root.Remove(".gitignore"); err != nil {
-				return err
-			}
+			return root.Remove(".gitignore")
 		}
-		return s.markSegmentsBinary()
+		return nil
 	}
 	if present {
 		return nil
 	}
 	return root.WriteFile(".gitignore", localChannelIgnore, 0o644)
-}
-
-// markSegmentsBinary writes the attributes file once a channel is shared,
-// inside the store only: anything but a regular file in its place is
-// refused.
-func (s *FilesystemEventStore) markSegmentsBinary() (err error) {
-	root, err := os.OpenRoot(s.dir)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	info, err := root.Lstat(".gitattributes")
-	switch {
-	case err == nil && info.Mode().IsRegular():
-		return nil
-	case err == nil:
-		return fmt.Errorf("%s is not a regular file", filepath.Join(s.dir, ".gitattributes"))
-	case !errors.Is(err, fs.ErrNotExist):
-		return err
-	}
-	return root.WriteFile(".gitattributes", sharedSegmentAttributes, 0o644)
 }
 
 func (s *FilesystemEventStore) Query(ctx context.Context, query app.EventQuery) ([]app.Event, error) {
@@ -207,35 +184,75 @@ func (s *FilesystemEventStore) channels() ([]string, error) {
 }
 
 func (s *FilesystemEventStore) readChannel(ctx context.Context, channel string) ([]app.Event, error) {
-	files, err := readSegmentFiles(ctx, filepath.Join(s.dir, channel))
+	files, err := readSegmentFiles(ctx, filepath.Join(s.dir, channel), eventFileExt)
 	if err != nil {
 		return nil, err
 	}
 	var events []app.Event
 	for _, file := range files {
-		read, err := decodeEventSegment(channel, file.data)
+		read, err := decodeEventLines(channel, file.data)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", file.path, err)
 		}
-		events = append(events, read...)
+		for _, event := range read {
+			events = append(events, event.Event)
+		}
 	}
 	return events, nil
 }
 
-func decodeEventSegment(channel string, data []byte) ([]app.Event, error) {
-	records, err := segment.Decode(data, eventSegmentKind)
+// storedEvent is an event with the JSON line that holds it. Compaction writes
+// the line back as it is, so fields only a newer sdd knows survive an older
+// one's compaction (20260921-174543-d-cpt-tv9).
+type storedEvent struct {
+	app.Event
+	line []byte
+}
+
+func appendEventLine(lines []byte, event app.Event) ([]byte, error) {
+	event.Channel = ""
+	line, err := app.MarshalEventJSON(event)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("event %s: %w", event.ID, err)
 	}
-	events := make([]app.Event, 0, len(records))
-	for _, record := range records {
-		event, err := decodeEvent(channel, record)
+	return append(lines, line...), nil
+}
+
+// decodeEventLines reads a JSON Lines segment. Every line ends in a newline,
+// so a last line without one was cut off and the segment reads as corrupt
+// instead of as fewer events.
+func decodeEventLines(channel string, data []byte) ([]storedEvent, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%w: empty file", segment.ErrCorrupt)
+	}
+	if data[len(data)-1] != '\n' {
+		return nil, fmt.Errorf("%w: torn last line, no newline at its end", segment.ErrCorrupt)
+	}
+	var events []storedEvent
+	for number, line := range bytes.Split(data[:len(data)-1], []byte("\n")) {
+		event, err := decodeEventLine(channel, line)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: line %d: %w", segment.ErrCorrupt, number+1, err)
 		}
-		events = append(events, event)
+		events = append(events, storedEvent{Event: event, line: line})
 	}
 	return events, nil
+}
+
+func decodeEventLine(channel string, line []byte) (app.Event, error) {
+	event, err := app.UnmarshalEventJSON(line)
+	if err != nil {
+		return app.Event{}, err
+	}
+	if event.Channel != "" && event.Channel != channel {
+		return app.Event{}, fmt.Errorf("event %s names channel %s", event.ID, event.Channel)
+	}
+	event.Channel = channel
+	err = app.ValidateEvent(event)
+	if err != nil {
+		return app.Event{}, err
+	}
+	return event, nil
 }
 
 // Compact merges every segment of each channel into one, holding each event
@@ -268,9 +285,9 @@ func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel strin
 			}
 		}
 		seen := map[string]bool{}
-		var kept []app.Event
+		var kept []storedEvent
 		for _, data := range segments {
-			events, err := decodeEventSegment(channel, data)
+			events, err := decodeEventLines(channel, data)
 			if err != nil {
 				return nil, err
 			}
@@ -282,17 +299,14 @@ func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel strin
 				kept = append(kept, event)
 			}
 		}
-		if len(kept) == 0 {
-			return nil, nil
+		slices.SortStableFunc(kept, func(a, b storedEvent) int { return a.Time.Compare(b.Time) })
+		var lines []byte
+		for _, event := range kept {
+			lines = append(append(lines, event.line...), '\n')
 		}
-		slices.SortStableFunc(kept, func(a, b app.Event) int { return a.Time.Compare(b.Time) })
-		records := make([][]byte, len(kept))
-		for i, event := range kept {
-			records[i] = encodeEvent(event)
-		}
-		return segment.Encode(eventSegmentKind, records), nil
+		return lines, nil
 	}
-	return compactDir(ctx, filepath.Join(s.dir, channel), full, merge)
+	return compactDir(ctx, filepath.Join(s.dir, channel), eventFileExt, full, merge)
 }
 
 func (s *FilesystemEventStore) settledEvents(ctx context.Context, channel string) (map[string]bool, error) {
@@ -312,67 +326,6 @@ func (s *FilesystemEventStore) settledEvents(ctx context.Context, channel string
 		settled[id] = true
 	}
 	return settled, nil
-}
-
-func encodeEvent(event app.Event) []byte {
-	record := segment.AppendString(nil, event.ID)
-	record = segment.AppendString(record, event.Type)
-	record = segment.AppendVarint(record, event.Time.UnixNano())
-	record = segment.AppendString(record, event.Writer)
-	record = segment.AppendString(record, event.Subject.URI)
-	record = segment.AppendUvarint(record, uint64(len(event.Subject.Entries)))
-	for _, entry := range event.Subject.Entries {
-		record = segment.AppendString(record, entry)
-	}
-	return segment.AppendBytes(record, event.Payload)
-}
-
-func decodeEvent(channel string, record []byte) (app.Event, error) {
-	reader := segment.NewReader(record)
-	event := app.Event{Channel: channel}
-	var err error
-	event.ID, err = reader.String()
-	if err == nil {
-		event.Type, err = reader.String()
-	}
-	var nanos int64
-	if err == nil {
-		nanos, err = reader.Varint()
-		event.Time = time.Unix(0, nanos).UTC()
-	}
-	if err == nil {
-		event.Writer, err = reader.String()
-	}
-	if err == nil {
-		event.Subject.URI, err = reader.String()
-	}
-	var count uint64
-	if err == nil {
-		count, err = reader.Uvarint()
-	}
-	for i := uint64(0); err == nil && i < count; i++ {
-		var entry string
-		entry, err = reader.String()
-		event.Subject.Entries = append(event.Subject.Entries, entry)
-	}
-	var payload []byte
-	if err == nil {
-		payload, err = reader.Bytes()
-	}
-	if err == nil && !reader.Empty() {
-		err = fmt.Errorf("%w: bytes after the event record", segment.ErrCorrupt)
-	}
-	if err != nil {
-		return app.Event{}, err
-	}
-	if len(payload) > 0 {
-		event.Payload = slices.Clone(payload)
-	}
-	err = app.ValidateEvent(event)
-	if err != nil {
-		return app.Event{}, fmt.Errorf("%w: %w", segment.ErrCorrupt, err)
-	}
-	return event, nil
 }
 
 // MemoryEventStore is a process-local event store for tests and embedded

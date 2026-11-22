@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
+	"github.com/networkteam/sdd/internal/segment"
 )
 
 // FilesystemRelevanceStore keeps the relevance verdict ledger in a directory
@@ -42,15 +43,15 @@ func (s *FilesystemRelevanceStore) Append(ctx context.Context, data []byte) erro
 	if err != nil {
 		return err
 	}
-	err = writeSegmentFile(s.dir, data)
+	err = writeSegmentFile(s.dir, segment.Ext, data)
 	if err != nil {
 		return err
 	}
-	return compactDir(ctx, s.dir, false, mergeRelevanceSegments)
+	return compactDir(ctx, s.dir, segment.Ext, false, mergeRelevanceSegments)
 }
 
 func (s *FilesystemRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
-	files, err := readSegmentFiles(ctx, s.dir)
+	files, err := readSegmentFiles(ctx, s.dir, segment.Ext)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func (s *FilesystemRelevanceStore) Segments(ctx context.Context) ([][]byte, erro
 // Compact merges every segment into one canonical segment holding each
 // record once; a directory already in that state stays untouched.
 func (s *FilesystemRelevanceStore) Compact(ctx context.Context) error {
-	return compactDir(ctx, s.dir, true, mergeRelevanceSegments)
+	return compactDir(ctx, s.dir, segment.Ext, true, mergeRelevanceSegments)
 }
 
 func mergeRelevanceSegments(segments [][]byte) ([]byte, error) {
@@ -110,7 +111,7 @@ func (s *MemoryRelevanceStore) Segments(_ context.Context) ([][]byte, error) {
 // of source replay: the way a seed is taken back. A pair a live record also
 // labels is live and stays.
 func (s *FilesystemRelevanceStore) DropReplay(ctx context.Context) error {
-	return compactDir(ctx, s.dir, true, func(segments [][]byte) ([]byte, error) {
+	return compactDir(ctx, s.dir, segment.Ext, true, func(segments [][]byte) ([]byte, error) {
 		ledger, err := relevance.Fold(segments)
 		if err != nil {
 			return nil, err
