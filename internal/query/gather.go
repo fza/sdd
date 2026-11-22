@@ -16,6 +16,8 @@ type GatherResult struct {
 	Prefilter string
 	// PrefilterNote says what the prefilter did or why it did not run.
 	PrefilterNote string
+	// Shortfall is a judge that scored fewer candidates than the minimum.
+	Shortfall *model.JudgeShortfall
 	// Full holds the entries served in full, at most GatherFullCap; Overflow
 	// the opened entries past the cap.
 	Full     *ShowResult

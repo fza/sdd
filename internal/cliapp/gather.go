@@ -18,16 +18,17 @@ import (
 func gatherCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "gather",
-		Usage:     "Print the grounding reading of a draft: every live brief on a small graph, else its searches and topic listings",
+		Usage:     "Print the grounding reading of a draft: a search with its own text, your searches and its topic listings",
 		ArgsUsage: "[entry-id...]",
 		Flags: append(append(embeddingFlags(),
-			&cli.StringFlag{Name: "draft", Usage: "Draft text the searches are written from"},
+			&cli.StringFlag{Name: "draft", Usage: "Draft text, searched by meaning as it stands"},
 			&cli.StringFlag{Name: "draft-file", Usage: "File holding the draft text"},
 			&cli.StringFlag{Name: "kind", Usage: "The draft's entry kind"},
 			&cli.StringSliceFlag{Name: "topic", Usage: "A draft topic label, listed in full (repeatable)"},
-			&cli.StringFlag{Name: "query", Aliases: []string{"q"}, Usage: "Semantic search phrase, instead of the query writer"},
-			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each, instead of the query writer (repeatable)"},
+			&cli.StringFlag{Name: "query", Aliases: []string{"q"}, Usage: "Search phrase, searched by meaning beside the draft's text"},
+			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each (repeatable)"},
 			&cli.StringFlag{Name: "subject", Usage: "An existing entry the reading grounds: its text stands in for the draft, and stored verdicts against it answer repeat pairs"},
+			&cli.BoolFlag{Name: "wait", Usage: "Have the ranking judge score until the minimum is judged, without its time limit"},
 		), sessionFlags()...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			draft := cmd.String("draft")
@@ -55,7 +56,7 @@ func gatherCmd() *cli.Command {
 			} else {
 				result, err = application.Gather(ctx, identity, project, sdd.GatherRequest{
 					SyncMode: sdd.SearchSyncAll, Draft: draft, Kind: cmd.String("kind"), Topics: cmd.StringSlice("topic"),
-					IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Subject: cmd.String("subject"),
+					IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Subject: cmd.String("subject"), Wait: cmd.Bool("wait"),
 				})
 			}
 			if err != nil {
@@ -69,7 +70,7 @@ func gatherCmd() *cli.Command {
 
 // sessionGatherUnsupported are the gather flags a session reading takes from
 // its capture's draft instead.
-var sessionGatherUnsupported = []string{"kind", "query", "term", "subject"}
+var sessionGatherUnsupported = []string{"kind", "subject"}
 
 // sessionGather runs the reading inside the session: naming its capture, the
 // reading credits that capture as the MCP gather does; without one it only
@@ -77,7 +78,7 @@ var sessionGatherUnsupported = []string{"kind", "query", "term", "subject"}
 func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, draft string) (sdd.GatherResult, error) {
 	for _, name := range sessionGatherUnsupported {
 		if cmd.IsSet(name) {
-			return sdd.GatherResult{}, fmt.Errorf("--%s does not apply with --session: the capture's draft writes the searches", name)
+			return sdd.GatherResult{}, fmt.Errorf("--%s does not apply with --session: the capture's draft sets it", name)
 		}
 	}
 	instance, err := session.capture(cmd, false)
@@ -85,7 +86,8 @@ func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, d
 		return sdd.GatherResult{}, err
 	}
 	return session.workflow.Gather(ctx, session.identity, sdd.WorkflowGatherRequest{
-		Instance: instance, IDs: cmd.Args().Slice(), Draft: draft, Topics: cmd.StringSlice("topic"), SyncMode: sdd.SearchSyncAll,
+		Instance: instance, IDs: cmd.Args().Slice(), Draft: draft, Topics: cmd.StringSlice("topic"),
+		Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Wait: cmd.Bool("wait"), SyncMode: sdd.SearchSyncAll,
 	})
 }
 
@@ -121,7 +123,7 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	policy := block.GroundingPolicy()
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
-		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
+		PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter, JudgeTimeout: policy.JudgeTimeout, JudgeMinimum: policy.JudgeMinimum,
 		AutoCalibrate: policy.AutoCalibrate, RecheckResponsible: recheck.Responsible,
 	}
 }

@@ -13,14 +13,15 @@ import (
 type GroundingReadMode string
 
 const (
-	// GroundingSemantic is a vector search; Text holds the query.
+	// GroundingSemantic is a vector search; Text holds the query, empty for
+	// the search with the draft's own text.
 	GroundingSemantic GroundingReadMode = "semantic"
 	// GroundingKeyword is a text search; Text holds the term.
 	GroundingKeyword GroundingReadMode = "keyword"
 	// GroundingListing is the live listing of one topic; Text holds the label.
 	GroundingListing GroundingReadMode = "listing"
-	// GroundingBriefs is every live brief of a graph below the search limit,
-	// served without any search.
+	// GroundingBriefs is every live brief of a small graph, which an older sdd
+	// served in place of searching; read only from its session logs.
 	GroundingBriefs GroundingReadMode = "briefs"
 	// GroundingOpened is entries opened in full by ID.
 	GroundingOpened GroundingReadMode = "opened"
@@ -100,11 +101,14 @@ type ReadPayload struct {
 	Corpus *CorpusMark `json:"corpus,omitempty"`
 	// Prefilter carries the scores the prefilter gave in this read.
 	Prefilter *PrefilterPayload `json:"prefilter,omitempty"`
+	// Shortfall records a judge that scored fewer candidates than the
+	// check's minimum.
+	Shortfall *JudgeShortfall `json:"shortfall,omitempty"`
 }
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && p.Corpus == nil && p.Prefilter == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && p.Corpus == nil && p.Prefilter == nil && p.Shortfall == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture

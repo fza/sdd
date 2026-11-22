@@ -68,7 +68,7 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 	}
 
 	var again mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session}, &again)
+	call(t, cs, "gather", map[string]any{"session": session, "terms": []string{"oscillation"}, "topics": []string{"testing/fixture"}}, &again)
 	served := again.Serve
 	for page := 2; strings.Contains(again.Serve, "for the next;"); page++ {
 		call(t, cs, "gather", map[string]any{"session": session, "page": page}, &again)
@@ -98,10 +98,10 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 // page, not the to-judge heading alone.
 func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
 	graphDir := writeFixtureGraph(t)
-	for n := range 60 {
-		summary := fmt.Sprintf("Gap %d of the paging fixture is a candidate whose brief line runs long enough that sixty of them fill more than one gather result.", n)
+	for n := range 120 {
+		summary := fmt.Sprintf("Gap %d of the paging fixture is a candidate whose brief line runs long enough that a hundred and twenty of them fill more than one gather result.", n)
 		entry := strings.Replace(gapEntry, "summary: Pre-flight verdict oscillation produces contradictory findings across runs.", "summary: "+summary, 1)
-		path := filepath.Join(graphDir, fmt.Sprintf("2026/06/02-%06d-s-tac-p%02d.md", 100000+n, n))
+		path := filepath.Join(graphDir, fmt.Sprintf("2026/06/02-%06d-s-tac-%03d.md", 100000+n, n))
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
 	session := openSession(t, cs).Session
 
 	var first mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session}, &first)
+	call(t, cs, "gather", map[string]any{"session": session, "terms": []string{"paging"}, "topics": []string{"testing/fixture"}}, &first)
 	if !strings.Contains(first.Serve, "(page 1 of ") {
 		t.Fatalf("the fixture's gather should page past the result bound:\n%.400s", first.Serve)
 	}
@@ -135,7 +135,7 @@ func TestGatherCreditsTheNamedCapture(t *testing.T) {
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
 
 	var served mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "instance": serve.Instance}, &served)
+	call(t, cs, "gather", map[string]any{"session": session, "instance": serve.Instance, "terms": []string{"oscillation"}}, &served)
 	reads := readEvents(t, env, session, "gather")
 	if len(reads) != 1 || reads[0].Instance != serve.Instance {
 		t.Fatalf("gather should log one read credited to the capture: %+v", reads)

@@ -73,6 +73,7 @@ type Application struct {
 	processes     RoundProcesses
 	background    background
 	refreshes     refreshes
+	liveChecks    liveChecks
 	onShutdown    func(context.Context)
 }
 

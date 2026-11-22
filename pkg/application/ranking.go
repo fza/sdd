@@ -188,14 +188,9 @@ func (r *ProjectRuntime) draftSimilarity(ctx context.Context, draft string, ids 
 	if err != nil {
 		return nil, err
 	}
-	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	draft, err = r.indexCapped(ctx, draft)
 	if err != nil {
 		return nil, err
-	}
-	if len(maxRunes) > 0 && maxRunes[0] > 0 {
-		if runes := []rune(draft); len(runes) > maxRunes[0] {
-			draft = string(runes[:maxRunes[0]])
-		}
 	}
 	embedded, err := r.options.Embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{draft}})
 	if err != nil {
@@ -221,6 +216,25 @@ func (r *ProjectRuntime) draftSimilarity(ctx context.Context, draft string, ids 
 		}
 	}
 	return similarity, nil
+}
+
+// indexCapped cuts text to the rune cap the search index's rows were
+// chunked under, so a draft embeds as a query the model takes whole.
+func (r *ProjectRuntime) indexCapped(ctx context.Context, text string) (string, error) {
+	namespace, err := r.indexNamespace()
+	if err != nil {
+		return "", err
+	}
+	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return "", err
+	}
+	if len(maxRunes) > 0 && maxRunes[0] > 0 {
+		if runes := []rune(text); len(runes) > maxRunes[0] {
+			text = string(runes[:maxRunes[0]])
+		}
+	}
+	return text, nil
 }
 
 // The nearest chunks a similarity read asks for: an entry owns several, so

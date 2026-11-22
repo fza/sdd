@@ -113,7 +113,7 @@ func TestCaptureGrounding_SeedsTheWidenReport(t *testing.T) {
 	session.Gather(t, instance)
 	serve = session.Report(t, instance, map[string]any{"entryKind": "gap"})
 	proctest.RequireStep(t, serve, "assemble")
-	if !strings.Contains(serve.Instructions, "Reading recorded by sdd gather:") || !strings.Contains(serve.Instructions, "all live: ") {
+	if !strings.Contains(serve.Instructions, "Reading recorded by sdd gather:") || !strings.Contains(serve.Instructions, "keyword(fixture): ") {
 		t.Fatalf("the grounding lane should carry the seeded reading:\n%s", serve.Instructions)
 	}
 
@@ -264,17 +264,18 @@ func TestCaptureGrounding_ReadingSurvivesResume(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
-// Above verify.brief_all_below the reading owes the searches and the
+// The reading owes the searches and the
 // listing of each draft topic; opening entries alone does not ground a draft.
 func TestCaptureGrounding_SearchModeOwesTheSearchesAndListings(t *testing.T) {
-	_, session := newCaptureWorld(t, "grounding-owed", proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, BriefAllBelow: 1}))
+	world, session := newCaptureWorld(t, "grounding-owed", proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true}))
+	world.GatherQuery, world.GatherTerms, world.GatherTopics = "", nil, nil
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 
 	session.Gather(t, instance, captureRefID)
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "assemble")
-	requireDiagnostics(t, serve, "the reading lacks the semantic search, a keyword search, the listing of topic cli/ux", "call gather with instance "+instance)
+	requireDiagnostics(t, serve, "the reading lacks the semantic search, a keyword search (gather's terms), the listing of topic cli/ux", "call gather with instance "+instance)
 }
 
 // An entry another capture of the same dialogue wrote never counts as landed
@@ -375,9 +376,10 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 			world, session := newCaptureWorld(t, "grounding-prefilter",
 				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
 				proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
+			world.GatherTopics = nil
 			serve := session.Start(t, "capture", nil)
 			instance := serve.Instance
-			session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+			session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something first.", "entryKind": "gap", "topics": []any{"cli/ux"}})
 			session.Gather(t, instance)
 			first := scorer.scored
 			if first == 0 {

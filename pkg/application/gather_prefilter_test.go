@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -84,7 +85,7 @@ func prefilterFixture(t *testing.T, scorer *scriptedScorer) *gatherFixture {
 }
 
 func prefilterPolicy(from int) sdd.GroundingPolicy {
-	return sdd.GroundingPolicy{BriefAllBelow: 10_000, Prefilter: true, PrefilterFrom: from}
+	return sdd.GroundingPolicy{Prefilter: true, PrefilterFrom: from}
 }
 
 func TestGather_PrefilterBelowItsThresholdRunsNoCall(t *testing.T) {
@@ -174,20 +175,21 @@ func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 	f := prefilterFixture(t, scorer)
 	for i := range model.GatherJudgeRanked + 20 {
 		id := rankedID(i)
-		f.write(t, id, "gap", fmt.Sprintf("Ranked gap %d.", i), "title: Ranked gap "+fmt.Sprint(i)+"\n")
+		f.write(t, id, "gap", fmt.Sprintf("Ranked gap %d.", i), "title: Ranked gap "+fmt.Sprint(i)+"\ntopics:\n  - testing/ranked\n")
 		scorer.scores[id] = 0.99 - float64(i)/1000
 	}
 	application := f.app(t, prefilterPolicy(1), nil)
-	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about ranked gaps."})
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about ranked gaps.", Topics: []string{"testing/ranked"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	last := rankedID(model.GatherJudgeRanked + 19)
 	top := rankedID(0)
-	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(result.SummaryIDs) != model.GatherJudgeRanked {
-		t.Fatalf("%d shown: the top %d scored should stay to judge and the rest go unshown:\n%s", len(result.SummaryIDs), model.GatherJudgeRanked, result.Text)
+	ranked := slices.DeleteFunc(slices.Clone(result.SummaryIDs), func(id string) bool { return !strings.HasSuffix(id, "-s-tac-rnk") })
+	if !slices.Contains(result.SummaryIDs, top) || slices.Contains(result.SummaryIDs, last) || len(ranked) != model.GatherJudgeRanked {
+		t.Fatalf("%d ranked gaps shown: the top %d scored should stay to judge and the rest go unshown:\n%s", len(ranked), model.GatherJudgeRanked, result.Text)
 	}
-	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text, "\n- "+last+" — Ranked gap 119\n") {
+	if !strings.Contains(result.Text, "\n# listed by title (") || !strings.Contains(result.Text+"\n", "\n- "+last+" — Ranked gap 119\n") {
 		t.Fatalf("the lower ranks should be listed by ID and title:\n%s", result.Text)
 	}
 	if !strings.Contains(result.Text, "so the top 100 scored stay to judge, ") {
@@ -209,7 +211,7 @@ func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	}
 	line := setAsideLine(result.Text, model.SetAsideFiltered)
 	lowSetAside := (strings.Contains(line, gatherBeta) || slices.Contains(result.SummaryIDs, gatherBeta)) && (strings.Contains(line, gatherUnrelated) || slices.Contains(result.SummaryIDs, gatherUnrelated))
-	if !lowSetAside || strings.Contains(line, gatherAlpha) || len(result.SummaryIDs) != 2 {
+	if !lowSetAside || strings.Contains(line, gatherAlpha) || len(result.SummaryIDs) != blindShare(line, len(result.SummaryIDs)) {
 		t.Fatalf("scores below the calibrated threshold should be set aside, but for the audit lines:\n%s", result.Text)
 	}
 }
@@ -371,8 +373,8 @@ func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
 			audited = append(audited, id)
 		}
 	}
-	if len(audited) != 2 {
-		t.Fatalf("audited %v: ceil(3%%) of the 34 set-asides should be shown blind to judge:\n%s", audited, result.Text)
+	if len(audited) == 0 || len(audited) != blindShare(setAside, len(audited)) {
+		t.Fatalf("audited %v: ceil(3%%) of the set-asides should be shown blind to judge:\n%s", audited, result.Text)
 	}
 	if strings.Contains(result.Text, "· score") {
 		t.Fatalf("no line should show a score that tells a sample apart:\n%s", result.Text)
@@ -382,7 +384,7 @@ func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(again.SummaryIDs, result.SummaryIDs) {
-		t.Fatal("a repeated gather of one graph should audit the same entries")
+		t.Fatalf("a repeated gather of one graph should audit the same entries:\n%s\n---\n%s", result.Text, again.Text)
 	}
 }
 
@@ -495,4 +497,14 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	if !strings.Contains(reopened.Text, "id: "+gatherAlpha) {
 		t.Fatalf("an entry opened by ID without its proof should serve in full:\n%s", reopened.Text)
 	}
+}
+
+// blindShare is how many of the set-asides in line and the audited lines
+// shown beside them a gather shows blind (model.AuditSample).
+func blindShare(line string, audited int) int {
+	setAside := audited
+	if line != "" {
+		setAside += strings.Count(line, ", ") + 1
+	}
+	return int(math.Ceil(model.AuditShare * float64(setAside)))
 }

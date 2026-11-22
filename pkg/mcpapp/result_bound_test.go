@@ -130,7 +130,7 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &capture)
 	}
 	var gathered mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "instance": capture.Instance}, &gathered)
+	call(t, cs, "gather", map[string]any{"session": session, "instance": capture.Instance, "terms": []string{"gap"}}, &gathered)
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
 	t.Logf("largest results: %v", bound.largest)

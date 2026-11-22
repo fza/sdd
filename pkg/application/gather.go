@@ -2,13 +2,16 @@ package application
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
-	"github.com/networkteam/sdd/internal/llmops"
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
@@ -23,13 +26,18 @@ type GroundingPolicy struct {
 	Enforce       bool
 	DepthDown     int
 	DepthUp       int
-	BriefAllBelow int
 	PrefilterFrom int
 	// Prefilter switches the prefilter on where the runtime has one.
 	Prefilter bool
 	// AutoCalibrate lets a server score the ranking judge's unscored
 	// labelled pairs in the background (Application.AutoCalibrate).
 	AutoCalibrate bool
+	// JudgeTimeout bounds the ranking judge of a graph check; zero takes
+	// model.DefaultJudgeTimeout, model.NoJudgeTimeout runs it to the end.
+	// JudgeMinimum is the count it scores before the check goes on without
+	// it; zero takes model.DefaultJudgeMinimum.
+	JudgeTimeout time.Duration
+	JudgeMinimum int
 	// RecheckResponsible names the participants catch-up shows the recheck
 	// list to; empty shows it to everyone.
 	RecheckResponsible []string
@@ -40,10 +48,13 @@ func (p GroundingPolicy) resolved() GroundingPolicy {
 	for _, field := range []struct {
 		value    *int
 		fallback int
-	}{{&p.DepthDown, defaults.DepthDown}, {&p.DepthUp, defaults.DepthUp}, {&p.BriefAllBelow, defaults.BriefAllBelow}, {&p.PrefilterFrom, defaults.PrefilterFrom}} {
+	}{{&p.DepthDown, defaults.DepthDown}, {&p.DepthUp, defaults.DepthUp}, {&p.PrefilterFrom, defaults.PrefilterFrom}, {&p.JudgeMinimum, defaults.JudgeMinimum}} {
 		if *field.value == 0 {
 			*field.value = field.fallback
 		}
+	}
+	if p.JudgeTimeout == 0 {
+		p.JudgeTimeout = defaults.JudgeTimeout
 	}
 	return p
 }
@@ -53,8 +64,8 @@ func (p GroundingPolicy) resolved() GroundingPolicy {
 const gatherSearchLimit = 20
 
 // GatherRequest asks for a grounding serve. Draft, Kind and Topics describe
-// the draft; IDs opens entries in full; Query and Terms replace the query
-// writer with explicit searches, a path only an uncredited read takes.
+// the draft; IDs opens entries in full; Query and Terms are the agent's
+// searches, run beside the search with the draft's own text.
 type GatherRequest struct {
 	SyncMode          SearchSyncMode
 	Branch            string
@@ -76,6 +87,9 @@ type GatherRequest struct {
 	// and topics stand in for an empty draft, and the relevance ledger's
 	// stored verdicts against it answer repeat pairs without a new judgment.
 	Subject string
+	// Wait has the judge score until the minimum holds, without a time
+	// limit: the choice a person makes after a check judged too few.
+	Wait bool
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer. Nil serves every line in full,
 	// as the CLI does. Anchor places the tag in a body served in full.
@@ -90,6 +104,12 @@ type GatherRequest struct {
 	// client is the session's MCP client, which picks the ranking judge
 	// (rankingJudge); empty for a reading without one.
 	client string
+	// unattended marks a session without a person at the check
+	// (model.DialogueMode.AgentAnswers).
+	unattended bool
+	// alsoListed are topics the agent asked a capture's check to list beside
+	// the draft's own, which alone describe the draft.
+	alsoListed []string
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -167,8 +187,6 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	var reads []model.GroundingRead
 	switch {
-	case len(live) < policy.BriefAllBelow:
-		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
 		candidate := make(map[string]bool, len(live))
 		for _, e := range live {
@@ -179,7 +197,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			return GatherResult{}, err
 		}
 		reads = append(reads, searched...)
-		for _, label := range request.Topics {
+		for _, label := range uniqueIDs(slices.Concat(request.Topics, request.alsoListed)) {
 			path, err := model.ParseTopicPath(label)
 			if err != nil {
 				return GatherResult{}, fmt.Errorf("sdd: gather: topic %q: %w", label, err)
@@ -192,8 +210,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			reads = append(reads, model.GroundingRead{Mode: model.GroundingListing, Text: path.String(), IDs: ids})
 		}
 	case len(opened) == 0:
-		return GatherResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: fmt.Sprintf(
-			"sdd: gather needs the draft: the graph holds %d live entries, at or above verify.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
+		return GatherResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: gather needs the draft, a search or ids to open: the reading searches from the draft's text"}
 	}
 	landed := request.since.Since(liveIDs)
 	if len(landed) > 0 {
@@ -205,6 +222,14 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	candidates, setAside := model.GatherCandidates(graph, live, reads, opened, request.Answered)
 	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
+	var similarity map[string]float64
+	if text := cmp.Or(strings.TrimSpace(request.Draft), request.Query); text != "" {
+		similarity, err = runtime.draftSimilarity(ctx, text, model.Unsearched(candidates, reads))
+		if err != nil {
+			return GatherResult{}, fmt.Errorf("sdd: gather: similarity to the draft: %w", err)
+		}
+	}
+	candidates = model.OrderGatherCandidates(graph, candidates, reads, similarity, request.References)
 	prefilter := runtime.rankingJudge(request.client)
 	judge := prefilter.Judge
 	ledger, thresholds, err := runtime.judgeCalibration(ctx, judge)
@@ -235,9 +260,29 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		}
 	}
 
-	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held, floor)
+	budget := judgeBudget{limit: policy.JudgeTimeout, target: model.JudgeTarget(len(split.Undecided), policy.JudgeMinimum), wait: request.Wait, unattended: request.unattended}
+	endCheck := a.liveChecks.begin()
+	pass, err := runPrefilter(ctx, prefilter, policy, budget, subject, graph, split.Undecided, held, floor)
+	endCheck()
 	if err != nil {
 		return GatherResult{}, err
+	}
+	var shortfall *model.JudgeShortfall
+	if pass.judged {
+		state, err := runtime.judgeState(ctx, ledger, judge, pass.broken)
+		if err != nil {
+			return GatherResult{}, err
+		}
+		limit := policy.JudgeTimeout
+		if limit <= 0 || request.Wait {
+			limit = pass.waited
+		}
+		if short, ok := model.NewJudgeShortfall(pass.scored, len(split.Undecided), policy.JudgeMinimum, limit, state); ok {
+			short.Unattended = request.unattended
+			shortfall = &short
+			slogutils.FromContext(ctx).Warn("gather: the ranking judge scored fewer candidates than the minimum",
+				"judge", judge, "judged", short.Judged, "listed", short.Listed, "minimum", short.Minimum, "cause", short.Cause, "waited", short.Waited, "unattended", short.Unattended)
+		}
 	}
 	for _, id := range pass.below {
 		below[id] = true
@@ -280,7 +325,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
-		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
+		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note, Shortfall: shortfall,
 		ToJudge: candidates, Listed: placed.Listed, Counted: len(placed.Counted), SetAside: setAside,
 	}
 	if request.Held != nil {
@@ -316,35 +361,34 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		return GatherResult{}, err
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
-	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
+	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus, Shortfall: shortfall}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
 		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: audit}
 	}
 	return result, nil
 }
 
-// gatherSearches runs the semantic search and the keyword searches. The
-// embedder is checked before the query writer spends any LLM tokens. Each
-// search lists up to gatherSearchLimit hits among candidate, the live entries
-// that can become candidates, so closed entries and records of who takes part
-// never take a slot.
+// gatherSearches runs the semantic search with the draft's own text, the
+// agent's semantic search and its keyword searches. Each search lists up to
+// gatherSearchLimit hits among candidate, the live entries that can become
+// candidates, so closed entries and records of who takes part never take a
+// slot.
 func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest, candidate map[string]bool) ([]model.GroundingRead, error) {
-	explicit := request.Query != "" || len(request.Terms) > 0
-	if !explicit || request.Query != "" {
+	draft := strings.TrimSpace(request.Draft)
+	if draft != "" || request.Query != "" {
 		if err := checkEmbedder(ctx, runtime); err != nil {
 			return nil, err
 		}
 	}
-	queries := llmops.GatherQueries{Query: request.Query, Terms: request.Terms}
-	if !explicit {
-		if err := secrets.CheckText("the draft", request.Draft); err != nil {
+	if draft != "" {
+		if err := secrets.CheckText("the draft", draft); err != nil {
 			return nil, err
 		}
-		written, err := llmops.GatherQuery(ctx, runtime.options.LLM, llmops.GatherQueryDraft{Kind: request.Kind, Topics: request.Topics, Text: request.Draft})
+		capped, err := runtime.indexCapped(ctx, draft)
 		if err != nil {
-			return nil, fmt.Errorf("sdd: gather: %w", err)
+			return nil, err
 		}
-		queries = written
+		draft = capped
 	}
 	target := SearchTarget{state: &searchTargetState{members: []*searchTargetMember{{runtime: runtime, selected: selected}}, mode: request.SyncMode}}
 	defer target.state.closed.Store(true)
@@ -357,6 +401,8 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		if err != nil {
 			return nil, err
 		}
+		// Equal scores come in no fixed order, so the ID breaks them: a repeated
+		// check reads alike.
 		slices.SortStableFunc(found.Entries, func(x, y query.SearchEntry) int {
 			switch {
 			case x.Score > y.Score:
@@ -364,7 +410,10 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 			case x.Score < y.Score:
 				return 1
 			}
-			return 0
+			if x.Entry == nil || y.Entry == nil {
+				return 0
+			}
+			return strings.Compare(x.Entry.ID, y.Entry.ID)
 		})
 		var ids []string
 		for _, hit := range found.Entries {
@@ -375,14 +424,21 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		return ids, nil
 	}
 	var reads []model.GroundingRead
-	if queries.Query != "" {
-		ids, err := run(query.SearchQuery{Phrase: queries.Query})
+	if draft != "" {
+		ids, err := run(query.SearchQuery{Phrase: draft})
+		if err != nil {
+			return nil, fmt.Errorf("sdd: gather: semantic search with the draft's text: %w", err)
+		}
+		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, IDs: ids})
+	}
+	if request.Query != "" {
+		ids, err := run(query.SearchQuery{Phrase: request.Query})
 		if err != nil {
 			return nil, fmt.Errorf("sdd: gather: semantic search: %w", err)
 		}
-		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, Text: queries.Query, IDs: ids})
+		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, Text: request.Query, IDs: ids})
 	}
-	for _, term := range queries.Terms {
+	for _, term := range request.Terms {
 		ids, err := run(query.SearchQuery{Terms: []string{regexp.QuoteMeta(term)}})
 		if err != nil {
 			return nil, fmt.Errorf("sdd: gather: keyword search %q: %w", term, err)

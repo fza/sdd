@@ -14,7 +14,7 @@ func TestCLIGatherServesInFullEveryTime(t *testing.T) {
 		if result.err != nil {
 			t.Fatalf("sdd gather: %v\n%s", result.err, result.stderr)
 		}
-		assertContainsOutput(t, "stdout", result.stdout, "every live brief, no search", "# relevant", "id: "+appEntryID, appBody)
+		assertContainsOutput(t, "stdout", result.stdout, "opened "+appEntryID, "# relevant", "id: "+appEntryID, appBody)
 		if strings.Contains(result.stdout, pointerMark) {
 			t.Fatalf("the CLI printed a pointer:\n%s", result.stdout)
 		}

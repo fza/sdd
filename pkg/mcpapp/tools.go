@@ -424,10 +424,13 @@ type ShowResult struct {
 type GatherArgs struct {
 	Proofs
 	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
-	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft is searched with its own text and its topics listed. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
 	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held"`
-	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
-	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text, searched by meaning as it stands; credits nothing"`
+	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels; with one: topics listed beside the draft's own. Each is listed in full"`
+	Query    string   `json:"query,omitempty" jsonschema:"your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism"`
+	Terms    []string `json:"terms,omitempty" jsonschema:"your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess"`
+	Wait     bool     `json:"wait,omitempty" jsonschema:"have the ranking judge score until the minimum is judged, without its time limit: what to pass, with the same searches, when a check judged too few and the person chose to wait"`
 	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
@@ -659,9 +662,9 @@ func (s *toolSet) register(srv *mcp.Server) error {
 
 	addTool(srv, s, &mcp.Tool{
 		Name: "gather",
-		Description: "Ground a draft before its capture, in one call; session required. On a small graph: " +
-			"every live entry's brief. Above it: a semantic search, keyword searches and the live listing " +
-			"of every draft topic, written from the draft. Name the running capture as instance: only " +
+		Description: "Ground a draft before its capture, in one call; session required. Runs a search by " +
+			"meaning with the draft's own text, your query and terms, and the live listing of every " +
+			"draft topic, and has the ranking judge order what they found. Name the running capture as instance: only " +
 			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
 			"An entry the call proves it holds prints as a pointer with its brief.",
 	}, s.gather)
@@ -1445,7 +1448,7 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 	}
 	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
 		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
-		SyncMode: s.searchSyncMode,
+		Query: args.Query, Terms: args.Terms, Wait: args.Wait, SyncMode: s.searchSyncMode,
 	})
 	if err != nil {
 		return nil, GatherResult{}, err

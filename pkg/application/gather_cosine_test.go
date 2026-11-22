@@ -29,7 +29,7 @@ func TestGather_StoredSimilarityLabelsSetNothingAside(t *testing.T) {
 	f.seed(t)
 	f.relevance = store
 	embeddings := &countingEmbeddings{}
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize, Prefilter: true, PrefilterFrom: 1}, embeddings)
+	application := f.app(t, sdd.GroundingPolicy{Prefilter: true, PrefilterFrom: 1}, embeddings)
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Topics: []string{"cli/ux"}})
 	if err != nil {
 		t.Fatal(err)

@@ -1,9 +1,0 @@
-{
-  "type": "object",
-  "properties": {
-    "query": {"type": "string"},
-    "terms": {"type": "array", "items": {"type": "string"}}
-  },
-  "required": ["query", "terms"],
-  "additionalProperties": false
-}

@@ -127,7 +127,7 @@ func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testi
 	for i := range 40 {
 		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
 		switch {
-		case strings.Contains(unanswered, "\n"+id+"  Low directive "+strconv.Itoa(i)+".\n"):
+		case strings.Contains(unanswered, "\n"+id+"  Low directive "+strconv.Itoa(i)+"."):
 			hidden = append(hidden, id)
 		case strings.Contains(reading, "ID: "+id):
 			audited = append(audited, id)

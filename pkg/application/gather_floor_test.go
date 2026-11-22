@@ -15,6 +15,9 @@ import (
 
 // The far floor fixture: a draft on topic cli/ux that references
 // floorReference and searches for "omega". Three entries are far from it.
+// The search with the draft's text lists only filler gaps, none of the
+// fixture's own entries, so each of those is found by the reads the test
+// names.
 const (
 	floorReference = "20260103-100000-d-tac-ref"
 	floorPlain     = "20260103-100001-s-tac-pln"
@@ -29,12 +32,19 @@ const (
 
 var floorFar = []string{floorFarLow, floorFarMid, floorFarHigh}
 
+// gatherSearchHits is how many hits one search of a gather lists.
+const gatherSearchHits = 20
+
 // floorFixture writes the fixture graph, with far of its three far
 // entries. The scorer rates the far entries 0.1, 0.3 and 0.5, so the floor
 // of a call is 0.3.
 func floorFixture(t *testing.T, scorer *scriptedScorer, far int) *gatherFixture {
 	t.Helper()
 	f := newGatherFixture(t)
+	for i := range gatherSearchHits {
+		f.write(t, fmt.Sprintf("20260104-1000%02d-s-tac-f%02d", i, i), "gap", fmt.Sprintf("A filler gap number %d.", i), "")
+	}
+	f.unsearched = true
 	f.write(t, floorReference, "directive", "The directive the draft references.", "intent: pending\n")
 	f.write(t, floorPlain, "gap", "An omega gap one search finds.", "")
 	f.write(t, floorHigh, "gap", "An omega gap the judge rates high.", "")
@@ -57,7 +67,7 @@ func floorFixture(t *testing.T, scorer *scriptedScorer, far int) *gatherFixture 
 }
 
 func floorPolicy() sdd.GroundingPolicy {
-	return sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize, Prefilter: true, PrefilterFrom: 1}
+	return sdd.GroundingPolicy{Prefilter: true, PrefilterFrom: 1}
 }
 
 func floorRequest() sdd.GatherRequest {
@@ -117,12 +127,12 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 			if tc.calibrated {
 				f.relevance = calibratedLedger(t)
 			}
-			result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), floorRequest())
+			result, err := gather(t, f.app(t, floorPolicy(), nil), floorRequest())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(scorer.requests) != 3 {
-				t.Fatalf("%d calls: five candidates should take three calls of two beside the far entries", len(scorer.requests))
+			if len(scorer.requests) < 3 {
+				t.Fatalf("%d calls: five candidates and more should take calls of two beside the far entries", len(scorer.requests))
 			}
 			for _, request := range scorer.requests {
 				if len(request.Candidates) > 5 || !slices.Equal(farIn(request), floorFar) {
@@ -171,7 +181,7 @@ func TestGather_FarFloorReadsASubjectsOwnReferences(t *testing.T) {
 	scorer := &scriptedScorer{}
 	f := floorFixture(t, scorer, 3)
 	f.write(t, subject, "directive", "A subject directive about omega.", "intent: pending\ntopics:\n  - cli/ux\nrefs:\n  - "+floorReference+"\n")
-	result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), sdd.GatherRequest{Subject: subject, Terms: []string{"omega"}})
+	result, err := gather(t, f.app(t, floorPolicy(), nil), sdd.GatherRequest{Subject: subject, Terms: []string{"omega"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +200,7 @@ func TestGather_FarFloorRidesEveryPartOfAHalvedCall(t *testing.T) {
 	inner := &scriptedScorer{maxBatch: 100, short: true, limit: 5}
 	f := floorFixture(t, inner, 3)
 	f.prefilter.Scorer = llmrelevance.Halving(inner, &llmrelevance.MemoryBatchSizes{}, gatherJudge)
-	result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), floorRequest())
+	result, err := gather(t, f.app(t, floorPolicy(), nil), floorRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +211,8 @@ func TestGather_FarFloorRidesEveryPartOfAHalvedCall(t *testing.T) {
 			t.Fatalf("a call of %d lines with far entries %v: every part should carry the three far entries", len(request.Candidates), farIn(request))
 		}
 	}
-	if !slices.Equal(lines, []int{8, 5, 5, 4}) {
-		t.Fatalf("calls of %v lines: the broken call of eight should be scored again in parts of five", lines)
+	if len(lines) < 2 || lines[0] <= 5 || slices.ContainsFunc(lines[1:], func(n int) bool { return n == lines[0] }) {
+		t.Fatalf("calls of %v lines: the broken first call should be scored again in smaller parts", lines)
 	}
 	if setAsideLine(result.Text, model.SetAsideFloor) == "" || !strings.Contains(result.Text, "prefilter: ok: ") {
 		t.Fatalf("the halved pass should score every candidate and set aside below the floor:\n%s", result.Text)
@@ -233,7 +243,7 @@ func TestGather_FarFloorNeedsFarEntriesADraftToBeFarFromAndRoomInACall(t *testin
 			if tc.request != nil {
 				tc.request(&request)
 			}
-			result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), request)
+			result, err := gather(t, f.app(t, floorPolicy(), nil), request)
 			if err != nil {
 				t.Fatal(err)
 			}

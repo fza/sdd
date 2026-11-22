@@ -207,8 +207,8 @@ func (s *stuckScorer) Score(context.Context, pkgrelevance.Request) (pkgrelevance
 }
 
 // A judge that never answers holds the reading no longer than the ranking
-// time limit: the reading comes in listed order and says so.
-func TestCaptureDeep_ARankingPastItsTimeLimitLeavesListedOrder(t *testing.T) {
+// time limit: the reading ranks by similarity to the draft and says so.
+func TestCaptureDeep_ARankingPastItsTimeLimitLeavesSimilarityOrder(t *testing.T) {
 	stuck := &stuckScorer{release: make(chan struct{})}
 	t.Cleanup(func() { close(stuck.release) })
 	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
@@ -221,8 +221,8 @@ func TestCaptureDeep_ARankingPastItsTimeLimitLeavesListedOrder(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("the reading took %s: a stuck judge should hold it no longer than the time limit", elapsed)
 	}
-	if !strings.Contains(reading, "Ranking source: listed order, ") {
-		t.Fatalf("with no score and no embedder the header should name listed order:\n%s", reading)
+	if !strings.Contains(reading, "similarity to the draft") {
+		t.Fatalf("with no score the header should name similarity:\n%s", reading)
 	}
 	stuck.mu.Lock()
 	defer stuck.mu.Unlock()

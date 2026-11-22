@@ -416,7 +416,9 @@ type Prefiltered struct {
 // belowFloor is set aside, with and without valid thresholds. Of the
 // others, with valid thresholds a score below SetAside is set aside and any
 // other at or above Relevant served in full; every other candidate, scored
-// or not, stays to judge, scored ones first by falling score. Without valid
+// or not, stays to judge, scored ones first by falling score, a done entry
+// last among equal scores and among the unscored, the rest in the order
+// given. Without valid
 // thresholds no score sets aside or serves, and the scored candidates past
 // the first GatherJudgeRanked, doubled when widened for a weak judge, are
 // listed by title up to GatherTitleListed and counted past it. An unscored
@@ -449,7 +451,7 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, bel
 		case a.Score != nil && b.Score != nil && *a.Score != *b.Score:
 			return cmp.Compare(*b.Score, *a.Score)
 		}
-		return 0
+		return cmp.Compare(rankLast(a.Entry.Kind == KindDone), rankLast(b.Entry.Kind == KindDone))
 	}
 	slices.SortStableFunc(placed.ToJudge, byScore)
 	slices.SortStableFunc(placed.Relevant, byScore)

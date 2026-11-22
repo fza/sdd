@@ -94,9 +94,9 @@ func (r VerifierReading) tiers() (top, summary int) {
 // the drafter read in full, and every listed lifecycle neighbour of a target
 // (verifierNeighbours). Then the entries given a verdict, as briefs, and the
 // listed entries one ref from a target by title and first summary sentence,
-// up to DeepHopListed by rank. Rank is falling score, unscored entries after
-// the scored by falling similarity, then in listed order, done entries below
-// all others. The rest of the
+// up to DeepHopListed by rank. Rank is falling score, a done entry last among
+// equal scores; unscored entries follow the scored, done ones last, the rest
+// by falling similarity, then in listed order. The rest of the
 // listed entries go by rank: the first DeepTopRanked that are not done, and
 // scored unless every ranked entry fits them, are served in full, the next ones up to DeepSummaryRanked listed by title and
 // first summary sentence, the rest by title, up to DeepTitleListed. Once
@@ -133,16 +133,19 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 	}
 	done := func(id string) bool { return g.ByID[id].Kind == KindDone }
 	byRank := func(a, b string) int {
-		if c := cmp.Compare(rankLast(done(a)), rankLast(done(b))); c != 0 {
-			return c
-		}
 		scoreA, scoredA := reading.Scores[a]
 		scoreB, scoredB := reading.Scores[b]
 		if c := cmp.Compare(rankLast(!scoredA), rankLast(!scoredB)); c != 0 {
 			return c
 		}
-		if scoredA {
+		if scoredA && scoreA != scoreB {
 			return cmp.Compare(scoreB, scoreA)
+		}
+		if c := cmp.Compare(rankLast(done(a)), rankLast(done(b))); c != 0 {
+			return c
+		}
+		if scoredA {
+			return 0
 		}
 		similarA, nearA := reading.Similarity[a]
 		similarB, nearB := reading.Similarity[b]

@@ -65,12 +65,8 @@ type LLMScript struct {
 	DuringPreflight func()
 	// PreflightErr, when set, fails every pre-flight call with it.
 	PreflightErr error
-	// GatherQuery is the semantic query the gather query writer answers
-	// with, and its one keyword term.
-	GatherQuery string
-	GatherTerm  string
-	Title       string
-	Summary     string
+	Title        string
+	Summary      string
 }
 
 // Prompts returns the requests the runner ran for the purpose, in order.
@@ -113,8 +109,6 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 			return llm.Result{}, s.PreflightErr
 		}
 		return marshalFindings(locatedFindings(s.PreflightFindings, request.UserPrompt))
-	case llm.PurposeGatherQuery:
-		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
 	default:
@@ -211,6 +205,7 @@ type config struct {
 	ranking     sdd.Ranking
 	events      sdd.EventStore
 	embedder    embed.Embedder
+	noEmbedder  bool
 	staged      func(sdd.StagedBlobStore) sdd.StagedBlobStore
 }
 
@@ -291,10 +286,25 @@ func WithEvents(store sdd.EventStore) Option {
 }
 
 // WithEmbedder gives the world's project an embedding model over an
-// in-memory search index, so gather reads in search mode.
+// in-memory search index in place of flatEmbedder.
 func WithEmbedder(embedder embed.Embedder) Option {
 	return func(c *config) { c.embedder = embedder }
 }
+
+// WithoutEmbedder leaves the world's project without an embedding model.
+func WithoutEmbedder() Option {
+	return func(c *config) { c.noEmbedder = true }
+}
+
+// flatEmbedder gives every text the same vector, so a search by meaning
+// lists every entry and no entry is nearer the draft than another.
+var flatEmbedder = embed.EmbedderFunc{Space: "test:flat", Run: func(_ context.Context, request embed.Request) (embed.Result, error) {
+	result := embed.Result{Identity: llm.Identity{Provider: "test", Model: "flat"}}
+	for range request.Texts {
+		result.Vectors = append(result.Vectors, []float32{1, 0})
+	}
+	return result, nil
+}}
 
 // WithPrefilter gives the world's project a relevance scorer.
 func WithPrefilter(prefilter sdd.Prefilter) Option {
@@ -396,6 +406,13 @@ type World struct {
 	// SessionsDir holds the session logs Sessions writes, <session>.jsonl.
 	SessionsDir string
 	LLM         *LLMScript
+	// GatherQuery and GatherTerms are the searches Session.Gather passes, as
+	// an agent writes them for its capture's check.
+	GatherQuery string
+	GatherTerms []string
+	// GatherTopics are the topics it lists: the fixture draft's and every
+	// fixture entry's (fixtureTopics).
+	GatherTopics []string
 	// Rounds runs the rounds a world with a delegate launcher launches.
 	Rounds *test.RoundProcesses
 
@@ -504,7 +521,10 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		window := *cfg.window
 		options.Window = func(context.Context) (sdd.ModelWindow, error) { return window, nil }
 	}
-	if cfg.embedder != nil {
+	if !cfg.noEmbedder {
+		if cfg.embedder == nil {
+			cfg.embedder = flatEmbedder
+		}
 		options.Embedder, options.SearchIndex = cfg.embedder, localadapter.NewMemorySearchIndexStore()
 		options.RuneCap = func(context.Context) (int, error) { return 512, nil }
 	}
@@ -527,7 +547,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Staged: blobs, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, dropped: dropped, runtimeOptions: options}
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Staged: blobs, Sessions: sessions, SessionsDir: sessionsDir, LLM: script, GatherQuery: "the fixture graph", GatherTerms: []string{"fixture"}, GatherTopics: fixtureTopics(cfg.entries), dropped: dropped, runtimeOptions: options}
 	resolver := &accessResolver{participant: cfg.participant, dialogue: cfg.dialogue}
 	resolver.runtime.Store(runtime)
 	var staged sdd.StagedBlobStore = blobs
@@ -770,10 +790,10 @@ func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fiel
 }
 
 // Gather runs the grounding read inside instance, opening ids in full, as the
-// MCP gather tool does.
+// MCP gather tool does, with the world's searches.
 func (s *Session) Gather(t *testing.T, instance string, ids ...string) sdd.GatherResult {
 	t.Helper()
-	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, SyncMode: sdd.SearchSyncNone})
+	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, Query: s.World.GatherQuery, Terms: s.World.GatherTerms, Topics: s.World.GatherTopics, SyncMode: sdd.SearchSyncLocal})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +867,17 @@ func (w *World) Delegate(t *testing.T, dispatch *sdd.WorkflowDispatch) *Session 
 	return &Session{World: w, WF: workflow, ID: dispatch.Session}
 }
 
-func marshalGatherQuery(query, term string) (llm.Result, error) {
-	output, err := json.Marshal(map[string]any{"query": query, "terms": []string{term}})
-	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
+// fixtureTopics are the topics a world's check lists by default: the
+// fixture draft's, cli/ux, and every topic of the entries the world starts
+// with, so a small fixture graph is listed whole, the draft reported or not.
+func fixtureTopics(entries []*model.Entry) []string {
+	topics := []string{"cli/ux"}
+	for _, e := range entries {
+		for _, topic := range e.Topics {
+			if label := topic.String(); !slices.Contains(topics, label) {
+				topics = append(topics, label)
+			}
+		}
+	}
+	return topics
 }

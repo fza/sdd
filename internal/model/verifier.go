@@ -174,10 +174,14 @@ type VerifyConfig struct {
 	IdleTimeout  VerifyDuration `yaml:"idle_timeout,omitempty"`
 	// RankingTimeout bounds the deep reading's ranking pass
 	// (ResolvedRankingTimeout).
-	RankingTimeout VerifyDuration       `yaml:"ranking_timeout,omitempty"`
-	Depth          GroundingDepthConfig `yaml:"depth,omitempty"`
-	BriefAllBelow  *int                 `yaml:"brief_all_below,omitempty"`
-	PrefilterFrom  *int                 `yaml:"prefilter_from,omitempty"`
+	RankingTimeout VerifyDuration `yaml:"ranking_timeout,omitempty"`
+	// JudgeTimeout and JudgeMinimum bound the ranking judge of a graph
+	// check (ResolvedJudgeTimeout, ResolvedJudgeMinimum).
+	JudgeTimeout  JudgeDuration        `yaml:"judge_timeout,omitempty"`
+	JudgeMinimum  *int                 `yaml:"judge_minimum,omitempty"`
+	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
+	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
+	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 	// AutoCalibrate lets `sdd serve` score the ranking judge's unscored
@@ -329,6 +333,12 @@ func (c VerifyConfig) KnownValues() VerifyConfig {
 	if !c.RankingTimeout.Known() {
 		c.RankingTimeout = ""
 	}
+	if !c.JudgeTimeout.Known() {
+		c.JudgeTimeout = ""
+	}
+	if c.JudgeMinimum != nil && *c.JudgeMinimum < 1 {
+		c.JudgeMinimum = nil
+	}
 	if len(c.Kinds) > 0 {
 		known := make(map[Kind]VerifyMode, len(c.Kinds))
 		for kind, mode := range c.Kinds {
@@ -366,6 +376,61 @@ func (r VerifyDuration) Duration() (time.Duration, bool) {
 	return d, err == nil && d > 0
 }
 
+// JudgeDuration is a verify.judge_timeout value: a duration such as 1m, or
+// 0 for no limit.
+type JudgeDuration string
+
+func (JudgeDuration) FreeText() {}
+
+// Known reports whether the value is unset or a duration of 0 or more.
+func (d JudgeDuration) Known() bool {
+	_, ok := d.Duration()
+	return d == "" || ok
+}
+
+// Duration is the value as a duration of 0 or more; false when it is none.
+func (d JudgeDuration) Duration() (time.Duration, bool) {
+	value, err := time.ParseDuration(string(d))
+	return value, err == nil && value >= 0
+}
+
+// The judge limits of a graph check while verify.judge_timeout and
+// verify.judge_minimum are unset. A limit under MinJudgeTimeout reads as it:
+// no shorter wait is useful.
+const (
+	DefaultJudgeTimeout = time.Minute
+	MinJudgeTimeout     = 30 * time.Second
+	DefaultJudgeMinimum = 50
+)
+
+// NoJudgeTimeout is the resolved limit of verify.judge_timeout 0: the judge
+// runs until it is done.
+const NoJudgeTimeout time.Duration = -1
+
+// ResolvedJudgeTimeout is how long a graph check waits for its ranking
+// judge: verify.judge_timeout, at least MinJudgeTimeout, NoJudgeTimeout for
+// 0, else DefaultJudgeTimeout.
+func (c VerifyConfig) ResolvedJudgeTimeout() time.Duration {
+	d, ok := c.JudgeTimeout.Duration()
+	switch {
+	case !ok:
+		return DefaultJudgeTimeout
+	case d == 0:
+		return NoJudgeTimeout
+	}
+	return max(d, MinJudgeTimeout)
+}
+
+// ResolvedJudgeMinimum is the count of candidates a graph check has the
+// judge score before it goes on without it: verify.judge_minimum, else
+// DefaultJudgeMinimum.
+func (c VerifyConfig) ResolvedJudgeMinimum() int {
+	if c.JudgeMinimum == nil || *c.JudgeMinimum < 1 {
+		return DefaultJudgeMinimum
+	}
+	return *c.JudgeMinimum
+}
+
 func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
 	var ignored []IgnoredSetting
 	for _, setting := range []struct {
@@ -389,6 +454,12 @@ func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
 	}
 	if !c.RankingTimeout.Known() {
 		ignored = append(ignored, IgnoredSetting{Key: "verify.ranking_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 45s", c.RankingTimeout)})
+	}
+	if !c.JudgeTimeout.Known() {
+		ignored = append(ignored, IgnoredSetting{Key: "verify.judge_timeout", Reason: fmt.Sprintf("%q is no duration such as 1m, nor 0", c.JudgeTimeout)})
+	}
+	if c.JudgeMinimum != nil && *c.JudgeMinimum < 1 {
+		ignored = append(ignored, IgnoredSetting{Key: "verify.judge_minimum", Reason: fmt.Sprintf("%d is no count of 1 or more", *c.JudgeMinimum)})
 	}
 	for _, kind := range slices.Sorted(maps.Keys(c.Kinds)) {
 		mode, key := c.Kinds[kind], "verify.kinds."+string(kind)
@@ -431,6 +502,12 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	if overlay.RankingTimeout != "" {
 		out.RankingTimeout = overlay.RankingTimeout
+	}
+	if overlay.JudgeTimeout != "" {
+		out.JudgeTimeout = overlay.JudgeTimeout
+	}
+	if overlay.JudgeMinimum != nil {
+		out.JudgeMinimum = overlay.JudgeMinimum
 	}
 	if len(overlay.Kinds) > 0 {
 		// KnownValues gave out a map of its own, so base stays unchanged.

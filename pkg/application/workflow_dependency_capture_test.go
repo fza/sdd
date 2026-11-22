@@ -57,6 +57,7 @@ func newGroundedDependencyFixture(t *testing.T) groundedDependencyFixture {
 		runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 			Project: sdd.ProjectRef{ID: project.id}, Dependencies: project.dependencies, DefaultBranch: "main",
 			Graph: graph, LLM: llm, Grounding: sdd.GroundingPolicy{Enforce: true},
+			Embedder: fixtureEmbeddings{}, RuneCap: testRuneCap, SearchIndex: localadapter.NewMemorySearchIndexStore(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -98,7 +99,7 @@ func (f groundedDependencyFixture) capture(t *testing.T, project sdd.ProjectID, 
 	}
 	instance := serve.Instance
 	requireRefIDsAdvertised(t, serve.ReportSchema, refIDs)
-	if _, err := f.workflow.Gather(t.Context(), f.alice, sdd.WorkflowGatherRequest{Instance: instance, IDs: []string{gatherID}, SyncMode: sdd.SearchSyncNone}); err != nil {
+	if _, err := f.workflow.Gather(t.Context(), f.alice, sdd.WorkflowGatherRequest{Instance: instance, IDs: []string{gatherID}, Query: "a gap noticed while reading", Terms: []string{"gap"}, Topics: []string{"testing/dependency"}, SyncMode: sdd.SearchSyncLocal}); err != nil {
 		t.Fatal(err)
 	}
 	serve = advanceWorkflow(t, f.workflow, f.alice, instance, map[string]any{

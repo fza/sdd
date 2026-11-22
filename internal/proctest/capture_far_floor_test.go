@@ -1,6 +1,7 @@
 package proctest_test
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 	"github.com/networkteam/sdd/pkg/local"
 	"github.com/networkteam/sdd/test"
 )
@@ -50,10 +53,10 @@ func TestCaptureGrounding_FarFloorSparesTheNeighbourhoodOfReferencesAlone(t *tes
 		entries = append(entries, gap(fmt.Sprintf("20260202-1000%02d-s-tac-far", i), fmt.Sprintf("A far gap number %d.", i)))
 	}
 	world, session := newCaptureWorld(t, "grounding-floor-near",
-		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
-		proctest.WithPrefilter(sdd.Prefilter{Scorer: &test.ScriptedScorer{Default: 0.1}, Judge: "test:scripted"}),
-		proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
-	world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: lowScorer(entries), Judge: "test:scripted"}),
+		proctest.WithEmbedder(floorEmbedder), proctest.WithEntries(entries...))
+	world.GatherQuery, world.GatherTerms = "omega gaps", []string{"omega"}
 	instance := session.Start(t, "capture", nil).Instance
 	session.Gather(t, instance, dismissed)
 	draft := captureDraft()
@@ -66,7 +69,7 @@ func TestCaptureGrounding_FarFloorSparesTheNeighbourhoodOfReferencesAlone(t *tes
 	if !slices.Contains(gathered.SummaryIDs, nearReference) || strings.Contains(setAside, nearReference) {
 		t.Fatalf("a candidate next to the draft's reference should stay to judge:\n%s", gathered.Text)
 	}
-	if strings.Count(setAside, "20260201-") != 2 || len(gathered.SummaryIDs) != 2 {
+	if strings.Count(setAside, "20260201-") != 2 || len(fixtureShown(entries, gathered.SummaryIDs)) != 2 {
 		t.Fatalf("the candidate next to the dismissed entry should fall below the floor with the two plain ones, one of the three shown blind:\n%s", gathered.Text)
 	}
 }
@@ -90,12 +93,12 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 		entries = append(entries, &model.Entry{ID: fmt.Sprintf("20260202-1000%02d-s-tac-far", i), Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Summary: text, Content: text})
 	}
 	store := local.NewMemoryRelevanceStore()
-	scorer := &test.ScriptedScorer{Default: 0.1}
+	scorer := lowScorer(entries)
 	world, session := newCaptureWorld(t, "grounding-floor",
-		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
 		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}),
-		proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
-	world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+		proctest.WithEmbedder(floorEmbedder), proctest.WithEntries(entries...))
+	world.GatherQuery, world.GatherTerms = "omega gaps", []string{"omega"}
 	instance := session.Start(t, "capture", nil).Instance
 	draft := captureDraft()
 	draft["body"] = "A tactical gap: the fixture observes something about omega."
@@ -103,14 +106,15 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 
 	first := session.Gather(t, instance)
 	setAside := floorLine(first.Text)
-	if strings.Count(setAside, "-s-tac-omg") != 5 || len(first.SummaryIDs) != 1 || !slices.Contains(candidates, first.SummaryIDs[0]) {
+	shown := fixtureShown(entries, first.SummaryIDs)
+	if strings.Count(setAside, "-s-tac-omg") != 5 || len(shown) != 1 || !slices.Contains(candidates, shown[0]) {
 		t.Fatalf("every candidate rated at the floor should be set aside by it, one of them shown blind:\n%s", first.Text)
 	}
-	sample := first.SummaryIDs[0]
+	sample := shown[0]
 	scored := scorer.Scored()
 	var far []string
 	for _, id := range scored {
-		if !slices.Contains(candidates, id) && !slices.Contains(far, id) {
+		if !slices.Contains(candidates, id) && !slices.Contains(far, id) && strings.HasSuffix(id, "-s-tac-far") {
 			far = append(far, id)
 		}
 	}
@@ -220,7 +224,7 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 				}
 			},
 			check: func(t *testing.T, second sdd.GatherResult, _ string, _ [2]string) {
-				if floorLine(second.Text) != "" || len(second.SummaryIDs) != 2*len(pairs) {
+				if floorLine(second.Text) != "" || len(fixtureShown(entries, second.SummaryIDs)) != 2*len(pairs) {
 					t.Fatalf("a floor that is off should set nothing aside, held verdicts included:\n%s", second.Text)
 				}
 			},
@@ -228,24 +232,25 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := local.NewMemoryRelevanceStore()
-			scorer := &test.ScriptedScorer{Default: 0.1}
+			scorer := lowScorer(entries)
 			world, session := newCaptureWorld(t, "grounding-floor-held",
-				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1, BriefAllBelow: 1}),
+				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
 				proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}),
-				proctest.WithEmbedder(kappaEmbedder()), proctest.WithEntries(entries...))
-			world.LLM.GatherQuery, world.LLM.GatherTerm = "omega gaps", "omega"
+				proctest.WithEmbedder(floorEmbedder), proctest.WithEntries(entries...))
+			world.GatherQuery, world.GatherTerms = "omega gaps", []string{"omega"}
 			instance := session.Start(t, "capture", nil).Instance
 			draft := captureDraft()
 			draft["body"] = "A tactical gap: the fixture observes something about omega."
 			session.Report(t, instance, draft)
 
 			first := session.Gather(t, instance)
-			if strings.Count(floorLine(first.Text), "-s-tac-omg") != 2*len(pairs)-1 || len(first.SummaryIDs) != 1 {
+			shown := fixtureShown(entries, first.SummaryIDs)
+			if strings.Count(floorLine(first.Text), "-s-tac-omg") != 2*len(pairs)-1 || len(shown) != 1 {
 				t.Fatalf("every candidate rated at the floor should be set aside by it, one of them shown blind:\n%s", first.Text)
 			}
 			var free [][2]string
 			for _, pair := range pairs {
-				if !slices.Contains(pair[:], first.SummaryIDs[0]) {
+				if !slices.Contains(pair[:], shown[0]) {
 					free = append(free, pair)
 				}
 			}
@@ -258,4 +263,40 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 			tc.check(t, second, free[0][1], free[1])
 		})
 	}
+}
+
+// floorEmbedder puts the omega and far gaps opposite every query and every
+// other entry, so the search with the draft's text lists the base entries
+// and each gap is found by the reads the test names alone.
+var floorEmbedder = embed.EmbedderFunc{Space: "test:floor", Run: func(_ context.Context, request embed.Request) (embed.Result, error) {
+	result := embed.Result{Identity: llm.Identity{Provider: "test", Model: "floor"}}
+	for _, text := range request.Texts {
+		vector := []float32{1, 0}
+		if request.Purpose != embed.PurposeQuery && (strings.Contains(text, "omega gap") || strings.Contains(text, "far gap")) {
+			vector = []float32{-1, 0}
+		}
+		result.Vectors = append(result.Vectors, vector)
+	}
+	return result, nil
+}}
+
+// lowScorer rates the fixture's own entries 0.1, at the floor its far gaps
+// set, and every other entry, the base entries the binary ships, 0.9.
+func lowScorer(entries []*model.Entry) *test.ScriptedScorer {
+	scores := map[string]float64{}
+	for _, e := range entries {
+		scores[e.ID] = 0.1
+	}
+	return &test.ScriptedScorer{Default: 0.9, Scores: scores}
+}
+
+// fixtureShown are the IDs of shown that name one of entries.
+func fixtureShown(entries []*model.Entry, shown []string) []string {
+	var out []string
+	for _, id := range shown {
+		if slices.ContainsFunc(entries, func(e *model.Entry) bool { return e.ID == id }) {
+			out = append(out, id)
+		}
+	}
+	return out
 }

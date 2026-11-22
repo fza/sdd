@@ -55,8 +55,8 @@ type GroundingEvidence struct {
 func (e GroundingEvidence) Exempt() bool { return GroundingExemptKind(e.Kind) }
 
 // OwedReads names the reads the reading still lacks: none once every live
-// brief was served, else the semantic search, a keyword search and the listing
-// of each draft topic.
+// brief was served, as an older sdd served a small graph, else the semantic
+// search, a keyword search and the listing of each draft topic.
 func (e GroundingEvidence) OwedReads() []string {
 	if e.Reading.Ran(GroundingBriefs) {
 		return nil
@@ -66,7 +66,7 @@ func (e GroundingEvidence) OwedReads() []string {
 		owed = append(owed, "the semantic search")
 	}
 	if !e.Reading.Ran(GroundingKeyword) {
-		owed = append(owed, "a keyword search")
+		owed = append(owed, "a keyword search (gather's terms)")
 	}
 	for _, topic := range e.Topics {
 		if !e.listedTopic(topic.String()) {

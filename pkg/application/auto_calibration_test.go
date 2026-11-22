@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -255,4 +257,71 @@ func TestGroundingStatus_NamesTheBackgroundRun(t *testing.T) {
 	if !strings.Contains(status.Text, "auto:    running in `sdd serve` since 2026-11-18 09:30 UTC: 80 pairs scored, stage 0.95 held") {
 		t.Fatalf("status should name the running calibration:\n%s", status.Text)
 	}
+}
+
+// heldCheckScorer holds every call of a check, whose subject is the draft,
+// until release closes, and counts the calls of background calibration.
+type heldCheckScorer struct {
+	*scriptedScorer
+	checking    chan struct{}
+	release     chan struct{}
+	mu          sync.Mutex
+	calibration int
+}
+
+func (s *heldCheckScorer) Score(ctx context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	if strings.Contains(request.Subject, "A check draft") {
+		select {
+		case s.checking <- struct{}{}:
+		default:
+		}
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return llmrelevance.Result{}, ctx.Err()
+		}
+	} else {
+		s.mu.Lock()
+		s.calibration++
+		s.mu.Unlock()
+	}
+	return s.scriptedScorer.Score(ctx, request)
+}
+
+func (s *heldCheckScorer) calibrationCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calibration
+}
+
+// Background calibration sends no request while a check's judge scores,
+// and resumes once the check is done.
+func TestAutoCalibrate_PausesWhileACheckJudges(t *testing.T) {
+	f := newAutoFixture(t)
+	scorer := &heldCheckScorer{scriptedScorer: &scriptedScorer{}, checking: make(chan struct{}, 1), release: make(chan struct{})}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge}
+	policy := prefilterPolicy(1)
+	policy.AutoCalibrate = true
+	application := f.app(t, policy, nil)
+
+	checked := make(chan error, 1)
+	go func() {
+		_, err := gather(t, application, sdd.GatherRequest{Draft: "A check draft about referenced gaps.", Terms: []string{"Referenced"}})
+		checked <- err
+	}()
+	select {
+	case <-scorer.checking:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the check's judge should be scoring")
+	}
+	startAutoCalibrate(t, application, sdd.AutoCalibrationRequest{})
+	time.Sleep(200 * time.Millisecond)
+	if calls := scorer.calibrationCalls(); calls != 0 {
+		t.Fatalf("%d calibration calls while the check's judge scored: background calibration should wait", calls)
+	}
+	close(scorer.release)
+	if err := <-checked; err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "calibration scores once the check is done", func() bool { return scorer.calibrationCalls() > 0 })
 }

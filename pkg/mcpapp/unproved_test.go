@@ -98,7 +98,7 @@ func TestUnprovedLeavesOutGatherBriefLines(t *testing.T) {
 	session := openSession(t, cs).Session
 
 	var reading mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "held": []any{}}, &reading)
+	call(t, cs, "gather", map[string]any{"session": session, "held": []any{}, "terms": []string{"oscillation"}}, &reading)
 	if !strings.Contains(reading.Serve, fixtureGapID+" (") {
 		t.Fatalf("the gather should serve the fixture entry as a brief line:\n%s", reading.Serve)
 	}

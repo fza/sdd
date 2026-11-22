@@ -22,27 +22,18 @@ import (
 
 const gatherProject = sdd.ProjectID("gather")
 
-// gatherScript answers the query writer and counts every LLM call.
+// gatherScript counts every LLM call and answers none: a check makes no
+// model call of the main llm block.
 type gatherScript struct {
 	mu    sync.Mutex
 	calls int
-	query string
-	terms []string
 }
 
 func (s *gatherScript) Run(_ context.Context, request pkgllm.Request) (pkgllm.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	if request.Purpose != pkgllm.PurposeGatherQuery {
-		return pkgllm.Result{}, fmt.Errorf("unscripted purpose %s", request.Purpose)
-	}
-	quoted := make([]string, len(s.terms))
-	for i, term := range s.terms {
-		quoted[i] = fmt.Sprintf("%q", term)
-	}
-	text := fmt.Sprintf(`{"query": %q, "terms": [%s]}`, s.query, strings.Join(quoted, ", "))
-	return pkgllm.Result{Text: text, Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
+	return pkgllm.Result{}, fmt.Errorf("unscripted purpose %s", request.Purpose)
 }
 
 func (s *gatherScript) count() int {
@@ -61,10 +52,16 @@ type gatherFixture struct {
 	events    sdd.EventStore
 	handEdits sdd.HandEditScanner
 	runs      sdd.CalibrationRuns
+	// withoutEmbedder leaves the runtime without an embedding model where
+	// app is passed none; else it gets countingEmbeddings.
+	withoutEmbedder bool
+	// unsearched marks the entries write writes as far from every draft, so
+	// the search with a draft's text lists them last.
+	unsearched bool
 }
 
 func newGatherFixture(t *testing.T) *gatherFixture {
-	return &gatherFixture{graphDir: t.TempDir(), llm: &gatherScript{query: "alpha matters", terms: []string{"beta"}}}
+	return &gatherFixture{graphDir: t.TempDir(), llm: &gatherScript{}}
 }
 
 func (f *gatherFixture) write(t *testing.T, id, kind, summary, extra string) {
@@ -77,8 +74,12 @@ func (f *gatherFixture) write(t *testing.T, id, kind, summary, extra string) {
 	if strings.Contains(id, "-d-") {
 		typ = "decision"
 	}
+	mark := fixtureMark
+	if f.unsearched {
+		mark = farMark
+	}
 	content := "---\ntype: " + typ + "\nkind: " + kind + "\nlayer: tactical\nconfidence: high\n" + extra +
-		"summary: " + summary + "\n---\n\n" + summary + "\n"
+		"summary: " + summary + "\n---\n\n" + summary + "\n\n" + mark + "\n"
 	if err := os.WriteFile(filepath.Join(dir, id[6:]+".md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +103,12 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Prefilter: f.prefilter, Ranking: f.ranking,
 		Events: f.events, HandEdits: f.handEdits, CalibrationRuns: f.runs,
 	}
+	if embeddings == nil && !f.withoutEmbedder {
+		embeddings = &fixtureEmbeddings{}
+	}
 	if embeddings != nil {
 		options.Embedder, options.RuneCap = embeddings, testRuneCap
-		options.SearchIndex = localadapter.NewPersistentSearchIndexStore(gatherProject, t.TempDir(), "gather/repo")
+		options.SearchIndex = localadapter.NewMemorySearchIndexStore()
 	}
 	runtime, err := sdd.NewProjectRuntime(options)
 	if err != nil {
@@ -124,14 +128,13 @@ func gather(t *testing.T, application *sdd.Application, request sdd.GatherReques
 }
 
 const (
-	gatherAlpha      = "20260101-100000-s-tac-aaa"
-	gatherBeta       = "20260101-100001-s-tac-bbb"
-	gatherOld        = "20260101-100002-d-tac-old"
-	gatherSuccessor  = "20260101-100003-d-tac-new"
-	gatherActor      = "20260101-100004-s-prc-act"
-	gatherTopicOnly  = "20260101-100005-s-tac-top"
-	gatherUnrelated  = "20260101-100006-s-tac-unr"
-	gatherSearchSize = 1
+	gatherAlpha     = "20260101-100000-s-tac-aaa"
+	gatherBeta      = "20260101-100001-s-tac-bbb"
+	gatherOld       = "20260101-100002-d-tac-old"
+	gatherSuccessor = "20260101-100003-d-tac-new"
+	gatherActor     = "20260101-100004-s-prc-act"
+	gatherTopicOnly = "20260101-100005-s-tac-top"
+	gatherUnrelated = "20260101-100006-s-tac-unr"
 )
 
 func (f *gatherFixture) seed(t *testing.T) {
@@ -144,81 +147,86 @@ func (f *gatherFixture) seed(t *testing.T) {
 	f.write(t, gatherUnrelated, "gap", "A gap nobody searches for.", "")
 }
 
-func TestGather_BelowTheLimitServesEveryLiveBriefAndRunsNoSearch(t *testing.T) {
+// A check on a graph of any size runs the search with the draft's own text,
+// the agent's searches and the topic listings, and no model call writes
+// the searches.
+func TestGather_RunsTheDraftSearchTheAgentsSearchesAndTheListings(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
 	emb := &countingEmbeddings{}
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, emb)
+	application := f.app(t, sdd.GroundingPolicy{}, emb)
+
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Topics: []string{"cli/ux"}, Query: "alpha matters", Terms: []string{"beta"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.llm.count() != 0 {
+		t.Fatalf("no model call should write a check's searches: %d calls", f.llm.count())
+	}
+	if emb.queryEmbeds < 2 {
+		t.Errorf("%d query embeds: the draft's text and the agent's phrase should each be searched by meaning", emb.queryEmbeds)
+	}
+	for _, want := range []string{"semantic, the draft's own text", `semantic "alpha matters"`, `keyword "beta"`, "listing topic(cli/ux)", gatherAlpha, gatherBeta, gatherTopicOnly} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("serve lacks %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, "every live brief") {
+		t.Errorf("no check should serve every live brief in place of searching:\n%s", result.Text)
+	}
+	for _, id := range []string{gatherOld, gatherActor} {
+		if strings.Contains(result.Text, id) {
+			t.Errorf("a superseded entry or an actor record must never be a candidate: %s\n%s", id, result.Text)
+		}
+	}
+}
+
+// Without searches of its own the check still searches with the draft's
+// text, whatever the size of the graph.
+func TestGather_SearchesWithTheDraftsTextAlone(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.llm.count() != 0 || emb.queryEmbeds != 0 {
-		t.Fatalf("all-briefs mode must run no query writer and no search: %d LLM calls, %d query embeds", f.llm.count(), emb.queryEmbeds)
-	}
-	if !strings.Contains(result.Text, "every live brief, no search") {
-		t.Errorf("the header should name the all-briefs read:\n%s", result.Text)
-	}
-	for _, id := range []string{gatherAlpha, gatherBeta, gatherSuccessor, gatherTopicOnly, gatherUnrelated} {
-		if !strings.Contains(result.Text, id) {
-			t.Errorf("live entry %s missing from the serve", id)
-		}
-	}
-	if strings.Contains(result.Text, gatherOld) {
-		t.Errorf("a superseded entry must never be a candidate:\n%s", result.Text)
-	}
-	if strings.Contains(result.Text, gatherActor) {
-		t.Errorf("an actor record must never be a candidate:\n%s", result.Text)
+	if !strings.Contains(result.Text, "semantic, the draft's own text") || strings.Contains(result.Text, "keyword ") {
+		t.Errorf("the check should run the draft's search alone:\n%s", result.Text)
 	}
 }
 
-func TestGather_SearchModeChecksTheEmbedderBeforeAnyLLMCall(t *testing.T) {
+func TestGather_ChecksTheEmbedderBeforeSearching(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
 
 	t.Run("missing", func(t *testing.T) {
-		_, err := gather(t, f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, nil), sdd.GatherRequest{Draft: "A draft about alpha."})
+		f.withoutEmbedder = true
+		defer func() { f.withoutEmbedder = false }()
+		_, err := gather(t, f.app(t, sdd.GroundingPolicy{}, nil), sdd.GatherRequest{Draft: "A draft about alpha."})
 		if err == nil || !strings.Contains(err.Error(), "embedding") {
 			t.Fatalf("a missing embedder should fail naming it, got %v", err)
-		}
-		if f.llm.count() != 0 {
-			t.Fatalf("the query writer ran before the embedder check: %d calls", f.llm.count())
 		}
 	})
 	t.Run("unreachable", func(t *testing.T) {
 		down := embed.EmbedderFunc{Space: "down/v1", Run: func(context.Context, embed.Request) (embed.Result, error) {
 			return embed.Result{}, errors.New("connection refused")
 		}}
-		_, err := gather(t, f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, down), sdd.GatherRequest{Draft: "A draft about alpha."})
+		_, err := gather(t, f.app(t, sdd.GroundingPolicy{}, down), sdd.GatherRequest{Draft: "A draft about alpha."})
 		if err == nil || !strings.Contains(err.Error(), "does not answer") {
 			t.Fatalf("an unreachable embedder should fail, got %v", err)
-		}
-		if f.llm.count() != 0 {
-			t.Fatalf("the query writer ran before the embedder check: %d calls", f.llm.count())
 		}
 	})
 }
 
-func TestGather_SearchModeRunsTheWrittenQueriesAndTopicListings(t *testing.T) {
+// A gather with neither a draft, a search nor ids has nothing to read.
+func TestGather_NeedsADraftASearchOrIDs(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, &countingEmbeddings{})
-
-	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Topics: []string{"cli/ux"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.llm.count() != 1 {
-		t.Fatalf("the query writer should run once, ran %d times", f.llm.count())
-	}
-	for _, want := range []string{`semantic "alpha matters"`, `keyword "beta"`, "listing topic(cli/ux)", gatherAlpha, gatherBeta, gatherTopicOnly} {
-		if !strings.Contains(result.Text, want) {
-			t.Errorf("serve lacks %q:\n%s", want, result.Text)
-		}
-	}
-	if strings.Contains(result.Text, gatherOld) {
-		t.Errorf("a superseded entry must never be a candidate:\n%s", result.Text)
+	_, err := gather(t, f.app(t, sdd.GroundingPolicy{}, nil), sdd.GatherRequest{})
+	if err == nil || !strings.Contains(err.Error(), "needs the draft") {
+		t.Fatalf("a bare gather should be refused, got %v", err)
 	}
 }
 
@@ -227,7 +235,7 @@ func TestGather_SearchModeRunsTheWrittenQueriesAndTopicListings(t *testing.T) {
 func TestGather_SearchHitsCountOnlyCandidates(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, &countingEmbeddings{})
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Terms: []string{"alpha"}})
 	if err != nil {
@@ -245,11 +253,12 @@ func TestGather_CutsNoTextAndDropsNoListItem(t *testing.T) {
 	for i := range 60 {
 		id := fmt.Sprintf("20260101-1%05d-s-tac-l%02d", i, i)
 		ids = append(ids, id)
-		f.write(t, id, "gap", fmt.Sprintf("Entry %d %s", i, long), "")
+		f.write(t, id, "gap", fmt.Sprintf("Entry %d %s", i, long), "topics:\n  - testing/long\n")
 	}
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	f.withoutEmbedder = true
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 
-	result, err := gather(t, application, sdd.GatherRequest{IDs: ids[:15]})
+	result, err := gather(t, application, sdd.GatherRequest{IDs: ids[:15], Terms: []string{"ends here"}, Topics: []string{"testing/long"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,9 +278,9 @@ func TestGather_CutsNoTextAndDropsNoListItem(t *testing.T) {
 func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 
-	result, err := gather(t, application, sdd.GatherRequest{Held: func(id string) (string, string, bool) { return "ab12", "", id == gatherBeta }})
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha and beta.", Held: func(id string) (string, string, bool) { return "ab12", "", id == gatherBeta }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +308,7 @@ func TestGather_StoredVerdictsAnswerRepeatPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.relevance = store
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 
 	result, err := gather(t, application, sdd.GatherRequest{Subject: gatherAlpha})
 	if err != nil {
@@ -327,8 +336,41 @@ func TestGather_CorruptLedgerSegmentFailsLoud(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.relevance = store
-	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
 	if _, err := gather(t, application, sdd.GatherRequest{Draft: "A draft."}); !errors.Is(err, segment.ErrCorrupt) {
 		t.Fatalf("gather = %v: a corrupt ledger segment should fail the read", err)
 	}
 }
+
+// fixtureMark ends the body of every entry the gather fixture writes, farMark
+// that of one it writes unsearched.
+const (
+	fixtureMark = "A gather fixture entry."
+	farMark     = "A gather fixture entry far from every draft."
+)
+
+// fixtureEmbeddings embeds as keywordVec does, with one more axis on which
+// every query and every entry the fixture wrote lies near and one it wrote
+// unsearched lies opposite, so a search with a draft's text lists the
+// fixture's entries before the base entries the binary ships, and the
+// unsearched ones last.
+type fixtureEmbeddings struct{}
+
+func (fixtureEmbeddings) Embed(_ context.Context, request embed.Request) (embed.Result, error) {
+	vectors := make([][]float32, len(request.Texts))
+	for i, text := range request.Texts {
+		mark := float32(0)
+		switch {
+		case request.Purpose == embed.PurposeQuery:
+			mark = 1
+		case strings.Contains(text, farMark):
+			mark = -1
+		case strings.Contains(text, fixtureMark):
+			mark = 1
+		}
+		vectors[i] = append(keywordVec(text), mark)
+	}
+	return embed.Result{Vectors: vectors}, nil
+}
+
+func (fixtureEmbeddings) Fingerprint() string { return "fixture/v1" }

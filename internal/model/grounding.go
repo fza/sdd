@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,7 +13,6 @@ import (
 const (
 	DefaultGroundingDepthDown     = 2
 	DefaultGroundingDepthUp       = 1
-	DefaultGroundingBriefAllBelow = 100
 	DefaultGroundingPrefilterFrom = 30
 	DefaultGroundingPrefilter     = true
 	DefaultGroundingAutoCalibrate = true
@@ -30,10 +30,12 @@ type GroundingPolicy struct {
 	Enforce       bool
 	DepthDown     int
 	DepthUp       int
-	BriefAllBelow int
 	PrefilterFrom int
 	Prefilter     bool
 	AutoCalibrate bool
+	// JudgeTimeout and JudgeMinimum bound the ranking judge of a graph check.
+	JudgeTimeout time.Duration
+	JudgeMinimum int
 }
 
 // GroundingPolicy resolves the block's grounding keys against the defaults;
@@ -44,10 +46,11 @@ func (c VerifyConfig) GroundingPolicy() GroundingPolicy {
 		Enforce:       enforce,
 		DepthDown:     intOr(c.Depth.Down, DefaultGroundingDepthDown),
 		DepthUp:       intOr(c.Depth.Up, DefaultGroundingDepthUp),
-		BriefAllBelow: intOr(c.BriefAllBelow, DefaultGroundingBriefAllBelow),
 		PrefilterFrom: intOr(c.PrefilterFrom, DefaultGroundingPrefilterFrom),
 		Prefilter:     boolOr(c.Prefilter, DefaultGroundingPrefilter),
 		AutoCalibrate: boolOr(c.AutoCalibrate, DefaultGroundingAutoCalibrate),
+		JudgeTimeout:  c.ResolvedJudgeTimeout(),
+		JudgeMinimum:  c.ResolvedJudgeMinimum(),
 	}
 }
 
@@ -136,9 +139,10 @@ const (
 )
 
 // GatherCandidates folds the reads into the candidates to judge: each live
-// entry once, tagged by every read that found it, sorted by how many reads
-// found it, then by ID. Opened entries, answered entries, exempt kinds and
-// entries outside the live population are set aside with their reason.
+// entry once, tagged by every read that found it, in the order the reads
+// first found them (OrderGatherCandidates places them). Opened entries,
+// answered entries, exempt kinds and entries outside the live population
+// are set aside with their reason.
 func GatherCandidates(g *Graph, live []*Entry, reads []GroundingRead, opened, answered []string) ([]GatherCandidate, []GatherSetAside) {
 	liveSet := make(map[string]bool, len(live))
 	for _, e := range live {
@@ -195,12 +199,6 @@ func GatherCandidates(g *Graph, live []*Entry, reads []GroundingRead, opened, an
 	for _, id := range order {
 		candidates = append(candidates, *byID[id])
 	}
-	slices.SortStableFunc(candidates, func(a, b GatherCandidate) int {
-		if len(a.FoundBy) != len(b.FoundBy) {
-			return len(b.FoundBy) - len(a.FoundBy)
-		}
-		return strings.Compare(a.Entry.ID, b.Entry.ID)
-	})
 	var groups []GatherSetAside
 	for _, reason := range []string{SetAsideAnswered, SetAsideExempt, SetAsideRetired} {
 		if ids := setAside[reason]; len(ids) > 0 {
@@ -214,6 +212,9 @@ func GatherCandidates(g *Graph, live []*Entry, reads []GroundingRead, opened, an
 func readTag(read GroundingRead) string {
 	switch read.Mode {
 	case GroundingSemantic:
+		if read.Text == "" {
+			return "semantic(draft text)"
+		}
 		return "semantic"
 	case GroundingKeyword:
 		return "keyword(" + read.Text + ")"

@@ -144,23 +144,35 @@ func TestPlaceVerifierReading_ServesUnscoredEntriesInFullOnlyWhenAllFit(t *testi
 	}
 }
 
-// A done entry ranks below every other ranked entry, whatever its score,
-// and is never served in full.
-func TestPlaceVerifierReading_RanksDoneEntriesLastAndListsThem(t *testing.T) {
+// A done entry with a score ranks by it, last only among equal scores and
+// among the unscored, and is never served in full.
+func TestPlaceVerifierReading_RanksDoneEntriesByScoreAndListsThem(t *testing.T) {
 	const (
-		done = "20260101-000000-s-tac-don"
-		gap  = "20260101-000001-s-tac-gap"
+		done     = "20260101-000000-s-tac-don"
+		gap      = "20260101-000001-s-tac-gap"
+		tiedDone = "20260101-000002-s-tac-tdn"
+		tiedGap  = "20260101-000003-s-tac-tgp"
+		openDone = "20260101-000004-s-tac-odn"
+		unscored = "20260101-000005-s-tac-uns"
 	)
 	g := model.NewGraph([]*model.Entry{
 		{ID: done, Type: model.TypeSignal, Kind: model.KindDone},
 		{ID: gap, Type: model.TypeSignal, Kind: model.KindGap},
+		{ID: tiedDone, Type: model.TypeSignal, Kind: model.KindDone},
+		{ID: tiedGap, Type: model.TypeSignal, Kind: model.KindGap},
+		{ID: openDone, Type: model.TypeSignal, Kind: model.KindDone},
+		{ID: unscored, Type: model.TypeSignal, Kind: model.KindGap},
 	})
-	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: []string{done, gap}, Scores: map[string]uint8{done: 250, gap: 1}})
-	if !slices.Equal(slotIDs(slots), []string{gap, done}) {
-		t.Fatalf("order %v: a done entry should rank below the rest", slotIDs(slots))
+	reading := model.VerifierReading{
+		Listed: []string{openDone, unscored, tiedDone, tiedGap, gap, done},
+		Scores: map[string]uint8{done: 250, gap: 1, tiedDone: 100, tiedGap: 100},
 	}
-	if slots[1].Place != model.VerifierPlaceSummary {
-		t.Fatalf("done entry placed %+v, want listed, never served in full", slots[1])
+	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
+	if want := []string{done, tiedGap, tiedDone, gap, unscored, openDone}; !slices.Equal(slotIDs(slots), want) {
+		t.Fatalf("order %v, want %v", slotIDs(slots), want)
+	}
+	if slots[0].Place == model.VerifierPlaceFull {
+		t.Fatalf("done entry placed %+v, want listed, never served in full", slots[0])
 	}
 }
 

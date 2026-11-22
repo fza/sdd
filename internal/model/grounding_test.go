@@ -49,10 +49,10 @@ func TestGatherCandidatesFoldReadsAndSetAside(t *testing.T) {
 	for _, c := range candidates {
 		ids = append(ids, c.Entry.ID)
 	}
-	if !slices.Equal(ids, []string{twice.ID, live.ID}) {
-		t.Fatalf("candidates = %v, want the entry two reads found first", ids)
+	if !slices.Equal(ids, []string{live.ID, twice.ID}) {
+		t.Fatalf("candidates = %v, want each live entry once in ID order", ids)
 	}
-	if !slices.Equal(candidates[0].FoundBy, []string{"semantic", "keyword(t)"}) {
+	if !slices.Equal(candidates[1].FoundBy, []string{"semantic", "keyword(t)"}) {
 		t.Errorf("found-by tags = %v", candidates[0].FoundBy)
 	}
 	reasons := map[string][]string{}
