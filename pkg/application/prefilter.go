@@ -71,8 +71,16 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 	scored := scoreCandidates(ctx, prefilter, subject, pending)
 	pass.fresh = scored.fresh
 	maps.Copy(pass.scores, scored.fresh)
-	var notes []string
-	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs; lines to judge run by falling score", prefilter.Judge, len(pass.fresh), len(pending)))
+	tally := fmt.Sprintf("judge %s scored %d of %d pairs", prefilter.Judge, len(pass.fresh), len(pending))
+	// Without a score, fresh or held by the reading, no line has a rank to run by.
+	ranked := slices.ContainsFunc(candidates, func(candidate model.GatherCandidate) bool {
+		_, ok := pass.scores[candidate.Entry.ID]
+		return ok
+	})
+	if ranked {
+		tally += "; lines to judge run by falling score"
+	}
+	notes := []string{tally}
 	if scored.oversize > 0 {
 		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", scored.oversize))
 	}
