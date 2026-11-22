@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"unicode"
 
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/mdcompose"
@@ -92,7 +93,46 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
 	}
+	result.Findings = flagKindFitUnnamed(result.Findings, kindFit)
 	return result, nil
+}
+
+// KindFitUnnamedNote opens the observation of a kind-fit finding that names
+// none of the stricter kinds: it states no misfit, so it does not block.
+const KindFitUnnamedNote = "Names no other kind the body fits, so it does not block: "
+
+// flagKindFitUnnamed marks such a finding and caps it at medium: the kind_fit
+// rubric asks a finding to name the kind the body fits, yet a model can
+// report the chosen kind fitting at high.
+func flagKindFitUnnamed(findings []Finding, fit *model.KindFit) []Finding {
+	if fit == nil {
+		return findings
+	}
+	out := make([]Finding, 0, len(findings))
+	for _, f := range findings {
+		if f.Category == kindFitCategory && !namesAnyKind(f.Observation, fit.Stricter) {
+			if f.Severity == SeverityHigh {
+				f.Severity = SeverityMedium
+			}
+			f.Observation = KindFitUnnamedNote + f.Observation
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+const kindFitCategory = "kind-fit"
+
+func namesAnyKind(text string, kinds []model.KindTest) bool {
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r)
+	})
+	for _, k := range kinds {
+		if slices.Contains(words, string(k.Kind)) {
+			return true
+		}
+	}
+	return false
 }
 
 // PreflightRubric renders the rules pre-flight would judge entry by, for a
