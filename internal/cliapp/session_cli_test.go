@@ -162,7 +162,7 @@ func TestCLISessionShowInspectsARefForTheCapture(t *testing.T) {
 
 // Where verify.mode enforces grounding, sdd new --session passes the gate the
 // engine capture passes: it holds the draft until a gather inside the capture read
-// the graph and every entry it served in full is referenced or dismissed.
+// the graph and every line it marked is referenced or dismissed.
 func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
 	f := sessionFixture(t, true)
 	session := openCapture(t, f)
@@ -179,11 +179,15 @@ func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
 	}
 	result = f.run(t, sessionNewArgs(session)...)
 	if result.err == nil {
-		t.Fatalf("an entry read in full and left unanswered should hold the capture:\n%s", result.stdout)
+		t.Fatalf("a line marked ! and left unanswered should hold the capture:\n%s", result.stdout)
 	}
-	assertContainsOutput(t, "stderr", result.stderr, sessionOtherID, sessionThirdID)
+	_, owed, ok := strings.Cut(result.stderr, "lines marked ! end neither in refs nor in verdicts: ")
+	owed, _, _ = strings.Cut(owed, ": ")
+	if !ok || owed == "" || strings.Contains(owed, sessionOtherID) {
+		t.Fatalf("the refusal should name the marked lines, and no entry opened without the mark:\n%s", result.stderr)
+	}
 
-	for _, dismissed := range []string{sessionOtherID, sessionThirdID} {
+	for _, dismissed := range strings.Split(owed, ", ") {
 		result = f.run(t, "dismiss", "--session", session, dismissed, "--because", "other-scope")
 		if result.err != nil {
 			t.Fatalf("sdd dismiss --session: %v\n%s", result.err, result.stderr)
