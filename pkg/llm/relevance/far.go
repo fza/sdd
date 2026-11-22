@@ -12,7 +12,7 @@ import (
 // measure what the judge gives an unrelated text in that very call. The far
 // candidates stand at positions drawn from the subject and their IDs, so a
 // repeated request reads alike. The result holds the candidates' scores
-// alone, with Floor beside them. A Halving scorer carries far into every
+// alone, with the line of each one's call in Far. A Halving scorer carries far into every
 // call it splits the request into; it must be the outermost scorer for
 // that. Without far the call is s.Score.
 func ScoreWithFar(ctx context.Context, s Scorer, request Request, far []Candidate) (Result, error) {
@@ -74,8 +74,8 @@ func farPosition(subject, id string, n int) int {
 	return int(binary.BigEndian.Uint64(sum[:8]) % uint64(n+1))
 }
 
-// withoutFar takes the far scores out of a call's result and sets their
-// median as the floor of every candidate left.
+// withoutFar takes the far scores out of a call's result and sets the line
+// they draw for every candidate left.
 func withoutFar(result Result, isFar []bool) Result {
 	out := Result{Identity: result.Identity, Usage: result.Usage}
 	var far []float64
@@ -87,6 +87,6 @@ func withoutFar(result Result, isFar []bool) Result {
 		out.Scores = append(out.Scores, score)
 	}
 	slices.Sort(far)
-	out.Floor = slices.Repeat([]float64{far[(len(far)-1)/2]}, len(out.Scores))
+	out.Far = slices.Repeat([]FarLine{{Lowest: far[0], Median: far[(len(far)-1)/2]}}, len(out.Scores))
 	return out
 }

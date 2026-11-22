@@ -9,8 +9,8 @@ import (
 )
 
 // RenderCalibration writes `sdd grounding status --verbose`: the judge's
-// labels, recall bound and stage, thresholds, background calibration, audit
-// and drift state, and how the pairs it would serve in full were answered,
+// labels, recall bound and stage, thresholds, background calibration, drift
+// steps, and how the pairs it would serve in full were answered,
 // per reason code.
 func RenderCalibration(w io.Writer, report model.CalibrationReport, auto GroundingAuto) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
@@ -53,15 +53,11 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport, auto Groundi
 	default:
 		fmt.Fprintf(w, "ranking recall: %.2f of %d referenced labels score at or above %.1f (bar %.2f)\n", ranking.Recall, ranking.Positives, model.RankingRecallLine, model.RankingRecallBar)
 	}
-	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
-		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
-	fmt.Fprintf(w, "far floor: %s; %d referenced of the latest %d audit labels of its set-asides (window %d, minimum %d, off above %.0f%%)\n",
-		floorState(report.Floor), report.Floor.Misses, report.Floor.Counted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
-	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no drift effect)\n", report.OpenedHidden)
+	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no effect on any rule)\n", report.OpenedHidden)
 	if len(report.Steps) == 0 {
 		fmt.Fprintln(w, "drift steps: none")
 	} else {
-		fmt.Fprintln(w, "drift steps:")
+		fmt.Fprintln(w, "drift steps, each capping the set-aside threshold:")
 		for _, step := range report.Steps {
 			fmt.Fprintf(w, "- %s: set-aside threshold to %.3f\n", step.At.UTC().Format("2006-01-02 15:04"), model.ScoreValue(step.SetAside))
 		}

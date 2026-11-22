@@ -198,7 +198,7 @@ func TestGather_UncalibratedPrefilterListsTheLowerRanksByTitle(t *testing.T) {
 func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)
-	f.relevance = calibratedLedger(t)
+	f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
@@ -208,9 +208,9 @@ func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 		t.Fatalf("full %v: a score above the relevant threshold should be served in full", result.FullIDs)
 	}
 	line := setAsideLine(result.Text, model.SetAsideFiltered)
-	lowSetAside := (strings.Contains(line, gatherBeta) || slices.Contains(result.SummaryIDs, gatherBeta)) && (strings.Contains(line, gatherUnrelated) || slices.Contains(result.SummaryIDs, gatherUnrelated))
-	if !lowSetAside || strings.Contains(line, gatherAlpha) || len(result.SummaryIDs) != 2 {
-		t.Fatalf("scores below the calibrated threshold should be set aside, but for the audit lines:\n%s", result.Text)
+	lowSetAside := strings.Contains(line, gatherBeta) && strings.Contains(line, gatherUnrelated) && !slices.Contains(result.SummaryIDs, gatherBeta) && !slices.Contains(result.SummaryIDs, gatherUnrelated)
+	if !lowSetAside || strings.Contains(line, gatherAlpha) {
+		t.Fatalf("scores below the calibrated threshold should be set aside:\n%s", result.Text)
 	}
 }
 
@@ -229,7 +229,7 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			scorer := &scriptedScorer{fail: tc.fail, failAll: tc.all, short: tc.short, maxBatch: 1, scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.0}}
 			f := prefilterFixture(t, scorer)
-			f.relevance = calibratedLedger(t)
+			f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 			application := f.app(t, prefilterPolicy(1), nil)
 			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 			if err != nil {
@@ -304,7 +304,7 @@ func TestGather_OnePairCallsLoseOnlyTheLostCall(t *testing.T) {
 			f := newGatherFixture(t)
 			f.seed(t)
 			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(inner, 200*time.Millisecond), Judge: gatherJudge}
-			f.relevance = calibratedLedger(t)
+			f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 			application := f.app(t, prefilterPolicy(1), nil)
 			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 			if err != nil {
@@ -337,6 +337,30 @@ func calibratedLedger(t *testing.T) *localadapter.MemoryRelevanceStore {
 	return store
 }
 
+// provenThreshold holds 189 replayed checks by gatherJudge, each keeping its
+// needed entry at calibratedLedger's score: a full proof of the threshold
+// that moves none of its thresholds.
+func provenThreshold(t *testing.T) *localadapter.MemoryProofStore {
+	t.Helper()
+	var records model.ProofRecords
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 189 {
+		records.Replays = append(records.Replays, model.ReplayCheck{
+			Subject: fmt.Sprintf("20250701-%06d-d-tac-rpl", i), Judge: gatherJudge, At: at, GraphSize: 100000,
+			Candidates: []model.ReplayCandidate{{ID: fmt.Sprintf("20250102-%06d-s-tac-ned", i), Score: 200, Needed: true}},
+		})
+	}
+	segment, err := relevance.EncodeProofs(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := localadapter.NewMemoryProofStore()
+	if err := store.Append(t.Context(), segment); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func lineOf(text, id string) string {
 	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(line, "- "+id) {
@@ -355,46 +379,58 @@ func setAsideLine(text, reason string) string {
 	return ""
 }
 
-func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
+// No set-aside returns among the lines to judge: the hiding rules rest on
+// replay proofs, not on samples the agent answers.
+func TestGather_ShowsNoSetAsideBlind(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95}}
 	f := prefilterFixture(t, scorer)
-	f.relevance = calibratedLedger(t)
+	f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
 		t.Fatal(err)
 	}
 	setAside := setAsideLine(result.Text, model.SetAsideFiltered)
-	var audited []string
+	if !strings.Contains(setAside, "): 35: ") || !strings.Contains(result.Text, "# to judge (0)") {
+		t.Fatalf("every candidate below the cut should be set aside:\n%s", result.Text)
+	}
 	for _, id := range result.SummaryIDs {
-		if line := lineOf(result.Text, id); line != "" && !strings.Contains(setAside, id) {
-			audited = append(audited, id)
+		if strings.Contains(setAside, id) {
+			t.Fatalf("set-aside %s should not return among the lines to judge:\n%s", id, result.Text)
 		}
 	}
-	if len(audited) != 2 {
-		t.Fatalf("audited %v: ceil(3%%) of the 34 set-asides should be shown blind to judge:\n%s", audited, result.Text)
-	}
-	if strings.Contains(result.Text, "· score") {
-		t.Fatalf("no line should show a score that tells a sample apart:\n%s", result.Text)
-	}
-	again, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+}
+
+// Without a proof the threshold hides nothing and the gather names what it
+// would have set aside.
+func TestGather_ThresholdWithoutAProofHidesNothing(t *testing.T) {
+	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
+	f := prefilterFixture(t, scorer)
+	f.relevance = calibratedLedger(t)
+	result, err := gather(t, f.app(t, prefilterPolicy(1), nil), sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(again.SummaryIDs, result.SummaryIDs) {
-		t.Fatal("a repeated gather of one graph should audit the same entries")
+	if setAsideLine(result.Text, model.SetAsideFiltered) != "" || !slices.Contains(result.SummaryIDs, gatherBeta) || !slices.Contains(result.SummaryIDs, gatherUnrelated) {
+		t.Fatalf("a threshold without a proof should set nothing aside:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "; the threshold holds no step to hide at and would set aside 35") {
+		t.Fatalf("the prefilter note should name what the threshold would have set aside:\n%s", result.Text)
+	}
+	if len(result.FullIDs) != 1 || result.FullIDs[0] != gatherAlpha {
+		t.Fatalf("full %v: serving in full hides nothing and holds without a proof", result.FullIDs)
 	}
 }
 
 func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
 	f := prefilterFixture(t, &scriptedScorer{})
-	f.relevance = calibratedLedger(t)
+	f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	status, err := application.GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"judge: " + gatherJudge, "labels: 189 referenced", "thresholds: set aside below 0.784", "audit: 3% of set-asides shown blind", "precision: 189 of 189 pairs passed in full were referenced"} {
+	for _, want := range []string{"judge: " + gatherJudge, "labels: 189 referenced", "thresholds: set aside below 0.784", "threshold: full · proof: 0 of 189 needed entries hidden in 189 replays", "precision: 189 of 189 pairs passed in full were referenced"} {
 		if !strings.Contains(status.Text, want) {
 			t.Errorf("status lacks %q:\n%s", want, status.Text)
 		}
@@ -457,7 +493,7 @@ func TestUpdateGrounding_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)
-	f.relevance = calibratedLedger(t)
+	f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	held := func(id string) (string, string, bool) { return "ab12", "", id == gatherAlpha }
 	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (held as tag ab12)"

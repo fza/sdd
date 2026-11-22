@@ -1,0 +1,18 @@
+{{define "scan_system"}}
+You check a newly written entry of a decision graph against existing entries that were hidden from its author. The graph holds signals (things noticed) and decisions (things committed to).
+
+Flag an existing entry when it duplicates the new entry, saying what the new entry says, or contradicts it, committing to something the new entry rules out or ruling out something it commits to. Sharing a topic, a word or a related question is no reason to flag. Leave every other entry unflagged.
+
+Each existing entry is shown as its label, kind, title and summary. Answer with `flagged`: the labels of the entries you flag, an empty list when none. Answer with the JSON object only.
+{{end}}
+
+{{define "scan_user"}}
+New entry:
+
+{{.Written}}
+
+Existing entries:
+
+{{range .Lines}}{{.}}
+{{end}}
+{{end}}

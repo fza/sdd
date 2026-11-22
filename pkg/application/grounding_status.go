@@ -63,11 +63,12 @@ type GroundingStatusRequest struct {
 	Verbose       bool
 }
 
-// GroundingStatus reports the labels, the audit and drift state, the
-// calibration of the ranking judge of a reading without a client and its
-// background calibration (presenters.RenderGroundingSummary). Verbose
-// reports that judge's labels, recall bound and stage, ranking recall,
-// thresholds, audit and drift state, and the precision per reason code.
+// GroundingStatus reports the labels, the calibration of the ranking judge
+// of a reading without a client and its background calibration
+// (presenters.RenderGroundingSummary), then that judge's hiding rules
+// (presenters.RenderHiding). Verbose reports that judge's labels, recall
+// bound and stage, ranking recall, thresholds, drift steps and the precision
+// per reason code in place of the summary.
 func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
@@ -92,13 +93,34 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 			auto.Run = &shown
 		}
 	}
+	hiding, err := runtime.hidingReport(ctx, judge)
+	if err != nil {
+		return GroundingStatus{}, err
+	}
 	var rendered bytes.Buffer
 	if request.Verbose {
 		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay), auto)
 	} else {
 		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judge.Judge, request.ExcludeReplay), judgeOrigin(runtime, judge), auto)
 	}
+	presenters.RenderHiding(&rendered, hiding)
 	return GroundingStatus{Judge: judge.Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
+}
+
+// hidingReport reads the hiding rules of judge on the default branch's live
+// population.
+func (r *ProjectRuntime) hidingReport(ctx context.Context, judge Prefilter) (report model.HidingReport, err error) {
+	selected, err := acquireSnapshotForSearch(ctx, r, "", "")
+	if err != nil {
+		return model.HidingReport{}, err
+	}
+	defer selected.releaseInto(&err)
+	size := len(model.GroundingPopulation(selected.snapshot.graph))
+	_, records, states, err := r.judgeHiding(ctx, judge, size)
+	if err != nil {
+		return model.HidingReport{}, err
+	}
+	return model.NewHidingReport(records, judge.Judge, judge.Revision, size, states.thresholds), nil
 }
 
 // judgeOrigin says where judge, the ranking judge of a reading without a

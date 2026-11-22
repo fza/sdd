@@ -139,8 +139,8 @@ func TestScoreWithFar_MixesTheFarCandidatesIntoTheCall(t *testing.T) {
 	if !slices.Equal(result.Scores, want) {
 		t.Fatalf("scores %v: the result should hold the candidates' scores alone, in request order", result.Scores)
 	}
-	if !slices.Equal(result.Floor, []float64{0.3, 0.3, 0.3, 0.3, 0.3, 0.3}) {
-		t.Fatalf("floor %v: every candidate should carry the median of the far scores", result.Floor)
+	if !slices.Equal(result.Far, slices.Repeat([]relevance.FarLine{{Lowest: 0.1, Median: 0.3}}, 6)) {
+		t.Fatalf("lines %v: every candidate should carry the lowest and the median of the far scores", result.Far)
 	}
 	_, err = relevance.ScoreWithFar(t.Context(), scorer, request, far)
 	if err != nil {
@@ -158,13 +158,13 @@ func TestScoreWithFar_WithoutFarCandidatesIsThePlainCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(scorer.requests[0], request) || result.Floor != nil || len(result.Scores) != 4 {
+	if !reflect.DeepEqual(scorer.requests[0], request) || result.Far != nil || len(result.Scores) != 4 {
 		t.Fatalf("result %+v: without far candidates the request should pass unchanged and hold no floor", result)
 	}
 }
 
 // A call that breaks is scored again in halves, each half with every far
-// candidate, and a candidate's floor is the one its own call measured.
+// candidate, and a candidate's line is the one its own call measured.
 func TestScoreWithFar_HalvingCarriesTheFarCandidatesInEveryPart(t *testing.T) {
 	inner := &callScorer{maxBatch: 13, limit: 8}
 	sizes := &relevance.MemoryBatchSizes{}
@@ -188,12 +188,12 @@ func TestScoreWithFar_HalvingCarriesTheFarCandidatesInEveryPart(t *testing.T) {
 	if !slices.Equal(lines, []int{13, 8, 8}) {
 		t.Fatalf("calls of %v lines: the broken call should be scored again in two halves", lines)
 	}
-	if len(result.Scores) != 10 || len(result.Floor) != 10 {
-		t.Fatalf("%d scores, %d floors for 10 candidates", len(result.Scores), len(result.Floor))
+	if len(result.Scores) != 10 || len(result.Far) != 10 {
+		t.Fatalf("%d scores, %d floors for 10 candidates", len(result.Scores), len(result.Far))
 	}
-	for i, floor := range result.Floor {
-		if floor != 0.008 {
-			t.Fatalf("floor %v of candidate %d: it should be the one its own call of 8 lines measured", floor, i)
+	for i, line := range result.Far {
+		if line.Lowest != 0.008 || line.Median != 0.008 {
+			t.Fatalf("line %v of candidate %d: it should be the one its own call of 8 lines measured", line, i)
 		}
 	}
 	held, ok := sizes.Size(halvingKey)
@@ -217,8 +217,8 @@ func TestScoreWithFar_HalvingSplitsARequestPastItsRememberedSize(t *testing.T) {
 	if !slices.Equal(lines, []int{8, 8, 5}) {
 		t.Fatalf("calls of %v lines: no call should pass the remembered size, far candidates counted", lines)
 	}
-	if !slices.Equal(result.Floor[:5], []float64{0.008, 0.008, 0.008, 0.008, 0.008}) || result.Floor[11] != 0.005 {
-		t.Fatalf("floors %v: each candidate should carry the floor of its own call", result.Floor)
+	if line := result.Far[0]; line.Lowest != 0.008 || result.Far[4] != line || result.Far[11].Lowest != 0.005 {
+		t.Fatalf("lines %v: each candidate should carry the line of its own call", result.Far)
 	}
 }
 

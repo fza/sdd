@@ -162,6 +162,22 @@ func TestFarFloor_Below(t *testing.T) {
 	}
 }
 
+func TestFarFloor_Line(t *testing.T) {
+	entries := []*model.Entry{farEntry("a", nil), farEntry("b", nil), farEntry("c", nil)}
+	graph := model.NewGraph(entries)
+	floor := model.NewFarFloor(graph, entries, model.FarDraft{Subject: "s", Topics: []string{"cli/ux"}}, nil)
+	if floor == nil {
+		t.Fatal("the fixture should give a floor")
+	}
+	if got := floor.Line(0.1, 0.3); got != 0.1 {
+		t.Fatalf("line %v: a new floor should take the careful form, the lowest far score", got)
+	}
+	floor.Form = model.FarMedian
+	if got := floor.Line(0.1, 0.3); got != 0.3 {
+		t.Fatalf("line %v: the median form should take the median far score", got)
+	}
+}
+
 func TestPlacePrefiltered_SetsAsideBelowTheFarFloor(t *testing.T) {
 	candidates := []model.GatherCandidate{{Entry: &model.Entry{ID: "high"}}, {Entry: &model.Entry{ID: "mid"}}, {Entry: &model.Entry{ID: "low"}}, {Entry: &model.Entry{ID: "floored-b"}}, {Entry: &model.Entry{ID: "floored-a"}}}
 	scores := map[string]uint8{"high": 250, "mid": 120, "low": 5, "floored-b": 30, "floored-a": 240}

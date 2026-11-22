@@ -58,6 +58,9 @@ type ProjectRuntimeOptions struct {
 	Ranking Ranking
 	// Relevance is the relevance verdict ledger; nil stores no verdicts.
 	Relevance RelevanceStore
+	// Proofs keeps the proof records that gate the hiding rules; nil keeps
+	// none, so no rule holds a proof.
+	Proofs ProofStore
 	// CalibrationRuns admits one background calibration of the project at
 	// a time and shares its state with other processes; nil runs none.
 	CalibrationRuns CalibrationRuns

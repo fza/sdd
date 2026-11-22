@@ -2,11 +2,9 @@ package application
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -244,7 +242,8 @@ func contextGraph(ctx *engine.Context) func() (*model.Graph, error) {
 // storeCaptureRelevance writes the reader records of the capture and of its
 // deep verifier's findings, keyed to the entry it published, and the flips
 // of the implicit dismissals its references join, into the project's
-// relevance ledger.
+// relevance ledger, and the tally and misses of its check into the proof
+// records (model.CaptureProofs).
 func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project ProjectID, entryID string) error {
 	runtime, err := w.targetRuntime(project, AccessWrite)
 	if err != nil {
@@ -275,28 +274,7 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	if err := runtime.appendRelevance(w.ctx, batch); err != nil {
 		return err
 	}
-	client, err := w.attachedClient(w.ctx)
-	if err != nil {
-		return err
-	}
-	return applyDriftRule(w.ctx, runtime, runtime.rankingJudge(client).Judge, w.app.clock.Now())
-}
-
-// applyDriftRule steps judge's set-aside threshold down when the latest
-// audit labels show too many misses.
-func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, judge string, now time.Time) error {
-	if judge == "" {
-		return nil
-	}
-	ledger, err := runtime.relevanceLedger(ctx)
-	if err != nil {
-		return err
-	}
-	step, due := model.DriftStepDue(ledger.Labels(judge), ledger.Steps(), judge, now)
-	if !due {
-		return nil
-	}
-	return runtime.appendRelevance(ctx, model.RelevanceBatch{Steps: []model.DriftStep{step}})
+	return runtime.appendProofs(w.ctx, model.CaptureProofs(entryID, ctx.Reading, answered, findings, w.app.clock.Now()))
 }
 
 // openedHidden returns the entries a verifier reading of the capture served

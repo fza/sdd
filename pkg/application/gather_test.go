@@ -56,6 +56,8 @@ type gatherFixture struct {
 	llm      *gatherScript
 	// relevance is the ledger the runtime reads; nil runs without one.
 	relevance sdd.RelevanceStore
+	// proofs are the proof records the hiding rules read; nil runs without.
+	proofs    sdd.ProofStore
 	prefilter sdd.Prefilter
 	ranking   sdd.Ranking
 	events    sdd.EventStore
@@ -99,7 +101,7 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 		t.Fatal(err)
 	}
 	options := sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Prefilter: f.prefilter, Ranking: f.ranking,
+		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Proofs: f.proofs, Prefilter: f.prefilter, Ranking: f.ranking,
 		Events: f.events, HandEdits: f.handEdits, CalibrationRuns: f.runs,
 	}
 	if embeddings != nil {

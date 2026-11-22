@@ -24,9 +24,14 @@ const (
 
 // Prefilter is a composed relevance scorer and the judge it scores as: the
 // protocol and the model, the identity calibration keys its labels on.
+// Revision names the chat prompt's revision, empty for a reranker, which
+// reads no prompt; Scan is the scan after writing on the same chat model,
+// nil for a reranker, which answers no question.
 type Prefilter struct {
-	Scorer relevance.Scorer
-	Judge  string
+	Scorer   relevance.Scorer
+	Judge    string
+	Revision string
+	Scan     *llmops.ScanJudge
 }
 
 // NewPrefilter composes a resolved llm_prefilter block
@@ -45,6 +50,8 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink, sizes releva
 		}
 	}
 	var scorer relevance.Scorer
+	var scan *llmops.ScanJudge
+	var revision string
 	var modelName string
 	switch cfg.Protocol {
 	case model.PrefilterSystemOne:
@@ -78,6 +85,11 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink, sizes releva
 		if err != nil {
 			return Prefilter{}, err
 		}
+		scan, err = llmops.NewScanJudge(llm.Observed(chat, sink))
+		if err != nil {
+			return Prefilter{}, err
+		}
+		revision = llmops.ChatRevision()
 		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
 		scorer = relevance.Limited(judge, cmp.Or(cfg.Concurrency, defaultChatConcurrency))
 	case "":
@@ -97,7 +109,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink, sizes releva
 		// Outermost, where relevance.ScoreWithFar finds it.
 		scorer = relevance.Halving(scorer, sizes, judge)
 	}
-	return Prefilter{Scorer: scorer, Judge: judge}, nil
+	return Prefilter{Scorer: scorer, Judge: judge, Revision: revision, Scan: scan}, nil
 }
 
 // prefilterKey returns the key provider a direct protocol authenticates with,

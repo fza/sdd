@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
@@ -55,10 +56,33 @@ func TestCaptureDismissals_UnansweredBriefIsDismissedImplicitly(t *testing.T) {
 	}
 }
 
-// Behind a calibrated prefilter the set-aside entries are listed only by ID
-// and get no record; the blind audit sample, shown and left unanswered, is
-// an implicit dismissal carrying the audit bit.
-func TestCaptureDismissals_SetAsidesStayUnlabelledAndSamplesAreImplicit(t *testing.T) {
+// provenThreshold holds 189 replayed checks by judge, each keeping its
+// needed entry at score 200: a full proof of a threshold calibrated on
+// positives at that score, which moves none of its thresholds.
+func provenThreshold(t *testing.T, judge string) *local.MemoryProofStore {
+	t.Helper()
+	var records model.ProofRecords
+	for i := range 189 {
+		records.Replays = append(records.Replays, model.ReplayCheck{
+			Subject: fmt.Sprintf("20250701-%06d-d-tac-rpl", i), Judge: judge, At: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), GraphSize: 100000,
+			Candidates: []model.ReplayCandidate{{ID: fmt.Sprintf("20250102-%06d-s-tac-ned", i), Score: 200, Needed: true}},
+		})
+	}
+	segment, err := relevance.EncodeProofs(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := local.NewMemoryProofStore()
+	if err := store.Append(t.Context(), segment); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// Behind a calibrated prefilter whose threshold holds a proof the set-aside
+// entries are listed only by ID and get no record, and none returns blind
+// among the lines to judge.
+func TestCaptureDismissals_SetAsidesStayUnlabelledAndNoneReturnsBlind(t *testing.T) {
 	const judge = "test:counting"
 	var seed model.RelevanceBatch
 	for i := range 189 {
@@ -72,14 +96,13 @@ func TestCaptureDismissals_SetAsidesStayUnlabelledAndSamplesAreImplicit(t *testi
 	}
 	world, session := newCaptureWorld(t, "dismissals-audit",
 		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
-		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: &countingScorer{score: 0}, Judge: judge}))
+		proctest.WithRelevance(store), proctest.WithProofs(provenThreshold(t, judge)), proctest.WithPrefilter(sdd.Prefilter{Scorer: &countingScorer{score: 0}, Judge: judge}))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
 	gathered := session.Gather(t, instance)
-	samples := slices.DeleteFunc(slices.Clone(gathered.SummaryIDs), func(id string) bool { return id == captureRefID })
-	if len(samples) == 0 || slices.Contains(gathered.SummaryIDs, captureRef2ID) {
-		t.Fatalf("every candidate scored low, so the lines to judge should be audit samples and the fixture signal set aside:\n%s", gathered.Text)
+	if shown := slices.DeleteFunc(slices.Clone(gathered.SummaryIDs), func(id string) bool { return id == captureRefID }); len(shown) > 0 {
+		t.Fatalf("every candidate scored low, so none should return among the lines to judge, got %v:\n%s", shown, gathered.Text)
 	}
 	asides := []string{captureRef2ID}
 	serve = session.Report(t, instance, captureDraft())
@@ -87,11 +110,6 @@ func TestCaptureDismissals_SetAsidesStayUnlabelledAndSamplesAreImplicit(t *testi
 	entry := confirmCapture(t, world, session, instance)
 
 	ledger := foldLedger(t, store)
-	for _, id := range samples {
-		if verdict, ok := ledger.Reader(model.NewRelevancePair(entry.ID, id)); !ok || verdict.Code != model.ReaderImplicit || !verdict.Audit {
-			t.Errorf("the unanswered sample %s should be an implicit dismissal with the audit bit, got %+v, %v", id, verdict, ok)
-		}
-	}
 	for _, id := range asides {
 		if verdict, ok := ledger.Reader(model.NewRelevancePair(entry.ID, id)); ok {
 			t.Errorf("the set-aside %s was never shown and should get no record, got %+v", id, verdict)

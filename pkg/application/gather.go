@@ -207,10 +207,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
 	prefilter := runtime.rankingJudge(request.client)
 	judge := prefilter.Judge
-	ledger, thresholds, err := runtime.judgeCalibration(ctx, judge)
+	ledger, _, hiding, err := runtime.judgeHiding(ctx, prefilter, len(live))
 	if err != nil {
 		return GatherResult{}, err
 	}
+	// A rule hides only as far as its step allows (model.HidingState).
+	thresholds := model.SteppedThresholds(hiding.thresholds, hiding.threshold.Step)
 	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
@@ -224,14 +226,19 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
 		key := model.RelevanceSubjectHash(subject)
 		held, _ = request.reading.Scores(judge, key)
-		// A floor that went off sets nothing aside, verdicts held from before included.
-		if prefilter.Scorer != nil && !model.JudgeFloorHealth(labels).Off {
-			below = model.StandingBelowFloor(graph, request.References, split.Undecided, request.reading.BelowFloor(judge, key))
+		// A floor at compute-only sets nothing aside, verdicts held from before included.
+		if prefilter.Scorer != nil {
+			if hiding.floor.Step != model.StepComputeOnly {
+				below = model.StandingBelowFloor(graph, request.References, split.Undecided, request.reading.BelowFloor(judge, key))
+			}
 			listed := slices.Concat(request.Answered, request.References, opened, []string{request.Subject})
 			for _, read := range reads {
 				listed = append(listed, read.IDs...)
 			}
 			floor = model.NewFarFloor(graph, live, model.FarDraft{Subject: key, Topics: request.Topics, References: request.References}, listed)
+			if floor != nil {
+				floor.Form = model.FloorForm(hiding.floor.Step)
+			}
 		}
 	}
 
@@ -239,46 +246,40 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if err != nil {
 		return GatherResult{}, err
 	}
+	floorWould := pass.wouldBelow
+	if hiding.floor.Step == model.StepComputeOnly {
+		pass.below = nil
+	}
 	for _, id := range pass.below {
 		below[id] = true
 	}
 	placed := model.PlacePrefiltered(split.Undecided, pass.scores, below, thresholds, model.JudgeRankingHealth(labels).Weak())
+	marks := []model.RuleMark{
+		{Rule: model.RuleThreshold, Step: hiding.threshold.Step, Would: model.WouldSetAside(split.Undecided, pass.scores, below, hiding.thresholds)},
+		{Rule: model.RuleFarFloor, Step: hiding.floor.Step, Would: floorWould},
+	}
 	if len(placed.Listed)+len(placed.Counted) > 0 {
 		pass.note += fmt.Sprintf("; below its first recall stage, so the top %d scored stay to judge, %d more go by title and %d are counted", len(placed.ToJudge)-unscored(placed.ToJudge), len(placed.Listed), len(placed.Counted))
 	}
-	seed := model.NewCorpusMark(liveIDs).Hash
-	if request.since != nil {
-		seed = request.since.Hash
+	if len(placed.SetAside) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: placed.SetAside})
 	}
-	audit, kept := model.AuditSample(slices.Concat(placed.SetAside, placed.BelowFloor), seed)
-	var filtered, floored []string
-	for _, id := range kept {
-		if below[id] {
-			floored = append(floored, id)
-		} else {
-			filtered = append(filtered, id)
-		}
+	if len(placed.BelowFloor) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFloor, IDs: placed.BelowFloor})
 	}
-	if len(filtered) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: filtered})
-	}
-	if len(floored) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFloor, IDs: floored})
-	}
-	if pass.floored || len(floored) > 0 {
-		clause := fmt.Sprintf("the far floor set aside %d", len(floored))
+	if pass.floored || len(placed.BelowFloor) > 0 {
+		clause := fmt.Sprintf("the far floor set aside %d", len(placed.BelowFloor))
 		if pass.note != "" {
 			clause = "; " + clause
 		}
 		pass.note += clause
 	}
-	var samples []model.GatherCandidate
-	for _, candidate := range split.Undecided {
-		if slices.Contains(audit, candidate.Entry.ID) {
-			samples = append(samples, candidate)
+	for _, mark := range marks {
+		if mark.Step == model.StepComputeOnly && mark.Would > 0 {
+			pass.note += fmt.Sprintf("; the %s holds no step to hide at and would set aside %d", mark.Rule, mark.Would)
 		}
 	}
-	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
+	candidates = placed.ToJudge
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
 		ToJudge: candidates, Listed: placed.Listed, Counted: len(placed.Counted), SetAside: setAside,
@@ -317,8 +318,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
-	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: audit}
+	if len(pass.fresh) > 0 || len(placed.SetAside) > 0 {
+		var cut uint8
+		if hiding.thresholds.Valid {
+			cut = model.ScoreByte(hiding.thresholds.SetAside)
+		}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, SetAside: placed.SetAside, Cut: cut, Hiding: marks}
 	}
 	return result, nil
 }

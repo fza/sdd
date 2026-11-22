@@ -24,9 +24,20 @@ const (
 
 // Prefilter is the composed relevance scorer of a project and the judge
 // calibration keys its labels on; a nil Scorer leaves the prefilter off.
+// Revision names the judge prompt's revision, which a proof of a hiding
+// rule names (model.HidingProof); Scan, nil for a judge that answers no
+// question, runs the scan after writing.
 type Prefilter struct {
-	Scorer relevance.Scorer
-	Judge  string
+	Scorer   relevance.Scorer
+	Judge    string
+	Revision string
+	Scan     HiddenScan
+}
+
+// HiddenScan flags the hidden entries that duplicate or contradict a
+// written entry (llmops.ScanJudge).
+type HiddenScan interface {
+	Scan(ctx context.Context, written string, hidden []relevance.Candidate) ([]string, error)
 }
 
 // prefilterPass is what one gather's prefilter did.
@@ -41,6 +52,8 @@ type prefilterPass struct {
 	// floored reports that the pass's calls carried the far entries.
 	below   []string
 	floored bool
+	// wouldBelow counts the candidates the median form would put below.
+	wouldBelow int
 }
 
 // runPrefilter rates the candidates not yet scored in the reading once
@@ -82,7 +95,10 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 	pass.floored = scored.floored
 	for _, candidate := range candidates {
 		mark, marked := scored.marks[candidate.Entry.ID]
-		if marked && floor.Below(candidate, mark.score, mark.floor) {
+		if marked && floor.Below(candidate, mark.score, mark.line.Median) {
+			pass.wouldBelow++
+		}
+		if marked && floor.Below(candidate, mark.score, floor.Line(mark.line.Lowest, mark.line.Median)) {
 			pass.below = append(pass.below, candidate.Entry.ID)
 		}
 	}
@@ -127,10 +143,10 @@ type scoredPairs struct {
 	late       bool
 }
 
-// floorMark is a candidate's score and the median score its call gave the
-// far entries.
+// floorMark is a candidate's score and the line its call's far entries set.
 type floorMark struct {
-	score, floor float64
+	score float64
+	line  relevance.FarLine
 }
 
 // farCandidates are the far entries of floor as a judge call carries them,
@@ -187,7 +203,7 @@ func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, p
 			for i, candidate := range request.Candidates {
 				scored.fresh[candidate.ID] = model.ScoreByte(result.Scores[i])
 				if len(far) > 0 {
-					scored.marks[candidate.ID] = floorMark{score: result.Scores[i], floor: result.Floor[i]}
+					scored.marks[candidate.ID] = floorMark{score: result.Scores[i], line: result.Far[i]}
 				}
 			}
 			return nil

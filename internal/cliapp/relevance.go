@@ -88,7 +88,7 @@ func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink, sizes pkg
 	if err != nil {
 		return sdd.Prefilter{}, err
 	}
-	return sdd.Prefilter{Scorer: prefilter.Scorer, Judge: prefilter.Judge}, nil
+	return appPrefilter(prefilter), nil
 }
 
 // projectRanking composes the ranking both readings share: the Claude host's
@@ -109,8 +109,25 @@ func projectRanking(cfg *model.PerRepoConfig, sink pkgllm.StatsSink, sizes pkgre
 	if err != nil {
 		return sdd.Ranking{}, err
 	}
-	ranking.ClaudeHost = sdd.Prefilter{Scorer: judge.Scorer, Judge: judge.Judge}
+	ranking.ClaudeHost = appPrefilter(judge)
 	_, err = exec.LookPath("claude")
 	ranking.ClaudeCLI = err == nil
 	return ranking, nil
+}
+
+// appPrefilter is a composed judge as the application takes it; a judge
+// without a scan leaves Scan nil.
+func appPrefilter(judge factory.Prefilter) sdd.Prefilter {
+	out := sdd.Prefilter{Scorer: judge.Scorer, Judge: judge.Judge, Revision: judge.Revision}
+	if judge.Scan != nil {
+		out.Scan = judge.Scan
+	}
+	return out
+}
+
+// proofStore opens the proof records of a project's hiding rules: machine
+// state inside the project's relevance ledger folder, so the daily sweep
+// treats both alike.
+func proofStore(stateRoot, repoKey string) (*localadapter.FilesystemProofStore, error) {
+	return localadapter.NewFilesystemProofStore(filepath.Join(relevanceLedgerDir(stateRoot, repoKey), "proofs"))
 }

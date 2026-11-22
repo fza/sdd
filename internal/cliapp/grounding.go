@@ -20,7 +20,7 @@ func groundingCmd() *cli.Command {
 		Commands: []*cli.Command{
 			{
 				Name:  "status",
-				Usage: "Show the labels, the audit and drift state and the ranking judge's calibration",
+				Usage: "Show the labels, the ranking judge's calibration and the hiding rules' steps, proofs and misses",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "exclude-replay", Usage: "Calibrate on the labels of live captures alone, leaving out those seeded from replayed ones"},
 					&cli.BoolFlag{Name: "verbose", Usage: "Show the ranking judge's full calibration: label weights and kinds, thresholds, ranking recall, drift steps, opened hidden entries and precision per reason code"},
