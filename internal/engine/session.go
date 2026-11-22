@@ -57,16 +57,16 @@ const (
 	// only: a resuming agent can tell a shelved move from one that drifted.
 	// With held set, an autonomous session parked it for a person (Parking).
 	EventParked EventType = "parked"
-	// EventServedBlocks is a log written before the anchor proof: replay
+	// EventServedBlocks is a log written before the text question: replay
 	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
-	// EventAnchors records the anchors a call issued for the pieces it served
-	// in full, so a restarted server still checks their proofs (Piece). No
+	// EventTexts records the pieces a call served in full, each text with its
+	// content the first time, and the question its answer answered, so a
+	// restarted server still asks and checks (Session.RecordServed). No
 	// instance: the served memory is session-level like the read set.
-	EventAnchors EventType = "anchors"
-	// EventAnchorSteps records the anchor proofs a call spent on the pointers
-	// it served, so a proof never holds twice (Piece).
-	EventAnchorSteps EventType = "anchor_steps"
+	EventTexts EventType = "texts"
+	// EventQuestion records the question a response ended with (Session.Ask).
+	EventQuestion EventType = "question"
 	// EventReoriented records that the consumer asked for the session's
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
@@ -280,9 +280,16 @@ type Session struct {
 	// design: a parent's inspections count for children dispatched in the same
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
-	// anchors folds the anchor events: each issued tag with its piece and
-	// word. call is the tool call in flight; rnd draws tags and positions.
-	anchors map[string]issuedAnchor
+	// texts folds the texts events: each text served in full with its latest
+	// copy, numbered by copies. questions and asked fold the question
+	// events. call is the tool call in flight; rnd draws questions.
+	texts     map[Piece]*heldText
+	copies    int
+	questions []askedQuestion
+	asked     map[string]bool
+	// changed folds the content hash each piece that serves once per change
+	// last served under its name.
+	changed map[string]string
 	call    pieceCall
 	rnd     model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
@@ -332,7 +339,6 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		now:         time.Now,
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
-		anchors:     map[string]issuedAnchor{},
 		received:    map[string]bool{},
 	}
 	for _, o := range opts {
@@ -1358,14 +1364,11 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			}
 		}
 
-	case EventAnchors:
-		anchors, _ := ev.Data["anchors"].([]any)
-		for _, record := range anchors {
-			s.foldAnchor(record)
-		}
+	case EventTexts:
+		s.foldTexts(ev.Data)
 
-	case EventAnchorSteps:
-		s.foldAnchorSteps(ev.Data)
+	case EventQuestion:
+		s.foldQuestion(ev.Data)
 
 	case EventParked:
 		return s.replayParked(ev)

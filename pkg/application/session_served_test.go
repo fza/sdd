@@ -4,46 +4,72 @@ import (
 	"testing"
 	"time"
 
-	"github.com/networkteam/sdd/internal/model"
+	test "github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-const servedLane = "Draft one entry, dialogue first, then check its grounding."
+const servedLane = "Draft one entry with the user, dialogue first. Then check its grounding against the graph before you write it."
 
-// proofOf is the proof an agent holding a piece served in full would list.
-func proofOf(t *testing.T, served sdd.ServedPiece) string {
+// answerTo answers the question line from the texts an agent holds.
+func answerTo(t *testing.T, line string, texts ...string) string {
 	t.Helper()
-	word, ok := model.WordAfterAnchor(served.Text, served.Tag)
-	if served.Held || !ok {
-		t.Fatalf("the piece should serve in full with its tag, got %+v", served)
+	_, ask, ok := test.LastQuestion(line)
+	if !ok {
+		t.Fatalf("the response should end with a question, got %q", line)
 	}
-	return served.Tag + ":" + word
+	answer, ok := test.AnswerQuestion(ask, texts)
+	if !ok {
+		t.Fatalf("the question should be answerable from the served text, got %q", line)
+	}
+	return answer
 }
 
-// TestAnchorsSurviveReplayAndReorientServesInFull covers the served memory
-// the ledger keeps (d-cpt-aen): a tag one consumer
-// received is checked for the next one that loads the handle, and a
-// reorientation serves its call in full without forgetting the tag.
-func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
+// serveAndAsk serves the lane in full, records it and ends the response with
+// a question, returning the right answer to it.
+func serveAndAsk(t *testing.T, w *sdd.WorkflowSession, identity sdd.RequestIdentity) (string, error) {
+	t.Helper()
+	if w.ServeText("lane step", servedLane, nil).Held {
+		t.Fatal("a first serve should send the lane in full")
+	}
+	err := w.RecordPieces(t.Context(), identity)
+	if err != nil {
+		return "", err
+	}
+	line, err := w.Question(t.Context(), identity)
+	if err != nil {
+		return "", err
+	}
+	return answerTo(t, line, servedLane), nil
+}
+
+// TestQuestionsSurviveReplayAndReorientServesInFull covers the served memory
+// the ledger keeps (d-cpt-aen): a question one consumer was asked is checked
+// for the next one that loads the handle, and a reorientation serves its
+// call in full without closing the question.
+func TestQuestionsSurviveReplayAndReorientServesInFull(t *testing.T) {
 	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
 	identity := sdd.RequestIdentity{Subject: "christopher"}
 	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof := proofOf(t, w.ServeText("lane step", servedLane, nil))
-	err = w.RecordAnchors(t.Context(), identity)
+	if w.ServeText("lane step", servedLane, nil).Held {
+		t.Fatal("a first serve should send the lane in full")
+	}
+	err = w.RecordPieces(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
+	line, err := w.Question(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := answerTo(t, line, servedLane)
 	holds := func(t *testing.T, session *sdd.WorkflowSession, want bool) {
 		t.Helper()
-		err := session.BeginCall([]string{proof}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		session.BeginCall(answer, nil)
 		if got := session.ServeText("lane step", servedLane, nil).Held; got != want {
-			t.Fatalf("a call carrying the proof should hold the lane: %v, want %v", got, want)
+			t.Fatalf("a call carrying the right answer should hold the lane: %v, want %v", got, want)
 		}
 	}
 
@@ -53,10 +79,7 @@ func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
 	}
 	holds(t, replayed, true)
 
-	err = replayed.BeginCall([]string{proof}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	replayed.BeginCall(answer, nil)
 	err = replayed.Reorient(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
@@ -70,44 +93,4 @@ func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	holds(t, again, true)
-}
-
-func TestBeginCallRefusesAMalformedProof(t *testing.T) {
-	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
-	identity := sdd.RequestIdentity{Subject: "christopher"}
-	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = w.BeginCall([]string{"no-word-here"}, nil)
-	if err == nil {
-		t.Error("a held item that is not tag:word should be refused")
-	}
-}
-
-// A lane carrying a held entry's pointer names a next proof that changes on
-// every call; the lane is the same piece all the same, so its own proof
-// still holds it.
-func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
-	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
-	identity := sdd.RequestIdentity{Subject: "christopher"}
-	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lane := func(prompt string) string {
-		return servedLane + "\n\n  20260101-000000-s-tac-aaa — An entry. (held as ⟦ab12⟧; " + model.NextProof("ab12", prompt) + ")"
-	}
-	proof := proofOf(t, w.ServeText("lane step", lane("first"), nil))
-	err = w.RecordAnchors(t.Context(), identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = w.BeginCall([]string{proof}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !w.ServeText("lane step", lane("second"), nil).Held {
-		t.Fatal("a lane whose only change is its entry pointer's next proof should stay held")
-	}
 }

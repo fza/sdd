@@ -15,10 +15,10 @@ import (
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
 	var repeats *Repeats
-	if result.Held != nil || result.Anchor != nil {
-		repeats = &Repeats{Held: result.Held, Anchor: result.Anchor}
+	if result.Held != nil || result.Served != nil {
+		repeats = &Repeats{Held: result.Held, Served: result.Served}
 	}
-	RenderWithin(w, repeats, func(w io.Writer, r *Repeats) { renderGather(w, result, r) })
+	renderGather(w, result, repeats)
 	return nil
 }
 

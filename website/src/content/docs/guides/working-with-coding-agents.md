@@ -36,15 +36,18 @@ When a conversation grows long, the agent compacts it into a summary. The sdd se
 - If the agent carries on from memory instead, skipping steps or answering for you, remind it: "Resume the sdd session first."
 - If the summary lost the session ID, the agent cannot find the session by itself. Give it the ID, or start a new session with `/sdd`.
 
-sdd cannot tell whether a compaction happened, so it repeats a piece of text only while the agent proves it still holds it. Each piece sent in full, such as an instruction lane, a framing block, a report schema, the vocabulary table or an entry, carries a short tag such as `⟦k3f9⟧` before one of its words. On a later call the agent lists in `held`, for each piece it still sees, the tag and the word right after it, as `k3f9:once`. sdd then sends a short pointer instead of the text; an entry comes as its ID and brief with `(held as ⟦k3f9⟧; next proof k3f9:<the word right after "graph">)`. A proof works once: each pointer names the next one, the word after a word that occurs once in the piece's text near its tag, never a word such as "the" or "and" that could be guessed, so only an agent that still sees the text can answer it, and a proof copied from an earlier call never holds. After at most three pointers the piece comes back in full with a fresh tag. A missing or wrong proof, or a tag sdd never sent, brings the piece back in full with a fresh tag, so a summary that dropped a tag costs a re-read, not accuracy. An entry edited since it was sent is sent in full again. Tags in text the agent sends back, such as a quoted passage in a draft or a staged text file, are taken out. A subagent working on the same session holds no tags and gets the full text too. An agent that has lost a piece names its tag or name in `reread`, and sdd sends it in full again. Resuming a session sends every piece in full.
+sdd cannot tell whether a compaction happened, so it repeats a piece of text short only while the agent shows it still holds it. sdd sends each piece in full once: an instruction lane, a framing block, a report schema, the vocabulary table. Every response that starts, resumes or advances a session ends with one question about a text sdd served, in its `question` field, such as `q lane intro: 2 words after "the user first"? | lost`. The next call that advances the session (`start_procedure`, `next`, `park`, `abandon`) must answer it in its `answer` argument, with the words asked for or with `lost`; a call without it is refused. A right answer brings a short pointer in place of each piece served before. A wrong answer or `lost` brings every piece in full. The question asks about the text sdd served longest ago, counting each text from its latest full copy, so a right answer shows the agent still holds everything served since. It names a phrase that occurs once in that text and asks for the words before or after it, the word between two phrases, the number after one, or the first or last words of its sentence or of the next. sdd makes it when it sends the response and never asks the same question twice in a session. Served text carries no mark for the check.
+
+After a compaction the agent answers `lost` where the summary dropped the text, and the text comes back in full. A question pending at the compaction can be answered from the summary, so sdd notices a compaction one call late at most. A subagent working on the same session saw no question, answers `lost` and gets the full text; the main agent's next right answer still gets the pointers. An agent that has lost a piece names it in `reread`, and sdd sends it in full again. An entry comes in full on every later call, whatever the answer; within one result an entry already sent comes as its ID and brief. Resuming a session sends every piece in full.
 
 ```text
-1 → show {ids: [<entry>]}
-  ← … serve each entry ⟦q7m2⟧ once per session …
-2 → next {held: ["q7m2:once"]}
-  ← <entry> — no-repeat rule (held as ⟦q7m2⟧; next proof q7m2:<the word right after "serve">)
-3 → next {held: []}                       text lost in a compaction: no proof
-  ← … serve each entry ⟦h4zt⟧ once per session …   full text, fresh tag
+1 → start_procedure {canonical: capture, answer: lost}
+  ← … instructions, framing and report schema in full …
+    question: q lane intro: 2 words after "the user first"? | lost
+2 → next {answer: "before drafting"}      right answer
+  ← (held: lane intro — served to you before; …)
+3 → next {answer: lost}                   text lost in a compaction
+  ← … instructions, framing and report schema in full …
 ```
 
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.

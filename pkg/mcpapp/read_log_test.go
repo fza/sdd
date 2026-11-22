@@ -88,37 +88,19 @@ func TestViewCutForSizeLogsNoFullRead(t *testing.T) {
 	}
 }
 
-func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
+// An entry gather served in full serves in full again on a later gather: a
+// read carries no answer that could hold it (20261121-230157-d-tac-ym8).
+func TestGatherServesAnEntryInFullAgainOnALaterCall(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 
-	var opened mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &opened)
-	if !strings.Contains(opened.Serve, "# relevant") || !strings.Contains(opened.Serve, "id: "+fixtureGapID) {
-		t.Fatalf("gather with ids should serve the entry in full:\n%s", opened.Serve)
-	}
-
-	var again mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session}, &again)
-	served := again.Serve
-	if !strings.Contains(served, fixtureGapID+" — ") || !strings.Contains(served, "(held as ⟦") {
-		t.Fatalf("a later serve should point at the entry served in full:\n%s", served)
-	}
-	if !strings.Contains(served, "its tag left out of held") {
-		t.Fatalf("the pointer should name the way back:\n%s", served)
-	}
-
-	var proved mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &proved)
-	if strings.Contains(proved.Serve, "id: "+fixtureGapID) || !strings.Contains(proved.Serve, fixtureGapID+" — ") {
-		t.Fatalf("gather with the id of an entry the call proves it holds should serve its pointer:\n%s", proved.Serve)
-	}
-
-	var reopened mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": []any{}}, &reopened)
-	if !strings.Contains(reopened.Serve, "id: "+fixtureGapID) {
-		t.Fatalf("gather with the id and its tag left out of held is the way back and serves in full again:\n%s", reopened.Serve)
+	for range 2 {
+		var opened mcpserver.GatherResult
+		call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &opened)
+		if !strings.Contains(opened.Serve, "# relevant") || !strings.Contains(opened.Serve, "id: "+fixtureGapID) || strings.Contains(opened.Serve, pointerMark) {
+			t.Fatalf("gather with ids should serve the entry in full on every call:\n%s", opened.Serve)
+		}
 	}
 }
 

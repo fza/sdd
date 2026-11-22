@@ -11,7 +11,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/networkteam/sdd/internal/basefacts"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -21,7 +20,7 @@ const captureIntroProse = "Draft one entry — one idea, dialogue first."
 
 const withheldLanesPrefix = "(held: "
 
-var heldLaneName = regexp.MustCompile(`^lane (\S+) ⟦[0-9a-z]{4}⟧(?: \(next proof [^)]*\))?$`)
+var heldLaneName = regexp.MustCompile(`^lane (\S+)$`)
 
 // withheldLanes extracts the lane names from a serve's held-lanes line; nil
 // when the line is absent.
@@ -31,7 +30,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	if !found {
 		return nil
 	}
-	names, _, found := strings.Cut(rest, " — list a tag in reread")
+	names, _, found := strings.Cut(rest, " — served to you before")
 	if !found || !strings.Contains(rest, "resume_session") {
 		t.Fatalf("held-lanes line lacks its way back: %q", instructions)
 	}
@@ -39,7 +38,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	for _, name := range strings.Split(names, ", ") {
 		match := heldLaneName.FindStringSubmatch(name)
 		if match == nil {
-			t.Fatalf("a held lane should be named with its tag, got %q", name)
+			t.Fatalf("a held lane should be named, got %q", name)
 		}
 		lanes = append(lanes, match[1])
 	}
@@ -176,9 +175,8 @@ func TestCaptureLanesDedupAcrossInstances(t *testing.T) {
 
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
-	requireWithheldLanes(t, second, "intro", "grounding", "topics")
+	requireWithheldLanes(t, second, "intro", "typeSystem", "grounding", "topics")
 	requireInstructionsExclude(t, second, captureIntroProse)
-	requireInstructionsContain(t, second, basefacts.OverviewFactID, "already served")
 }
 
 // TestReportSchemaDedup pins schema dedup on canonical bytes: the first

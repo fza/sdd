@@ -4,15 +4,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
         },
         "instance": {
           "description": "instance handle to abandon (a move); pass session too, naming the session the move belongs to",
@@ -23,7 +17,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -37,6 +31,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "answer"
+      ],
       "type": "object"
     },
     "name": "abandon",
@@ -171,6 +168,10 @@
           "description": "the torn-down session's subject label",
           "type": "string"
         },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+          "type": "string"
+        },
         "session": {
           "description": "the torn-down session, on teardown by handle",
           "type": "string"
@@ -224,7 +225,7 @@
     }
   },
   {
-    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -232,18 +233,8 @@
           "description": "without instance: the draft text the searches are written from; credits nothing",
           "type": "string"
         },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "ids": {
-          "description": "entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held",
+          "description": "entries to open in full; an entry the call already holds serves its pointer",
           "items": {
             "type": "string"
           },
@@ -257,7 +248,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -349,20 +340,14 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
         "cancel_ref": {
           "description": "exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref",
           "minimum": 0,
           "type": "integer"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "instance": {
           "description": "instance handle from start_procedure",
@@ -378,7 +363,7 @@
           "type": "object"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -398,6 +383,7 @@
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -640,7 +626,7 @@
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -808,6 +794,10 @@
             "array"
           ]
         },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+          "type": "string"
+        },
         "reason": {
           "description": "why the move is parked",
           "type": "string"
@@ -833,7 +823,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -849,15 +839,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
         },
         "instance": {
           "description": "running move instance to park",
@@ -868,7 +852,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -883,6 +867,7 @@
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -999,6 +984,10 @@
           "type": "boolean"
         },
         "procedure": {
+          "type": "string"
+        },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
           "type": "string"
         },
         "step": {
@@ -1506,7 +1495,7 @@
                 "type": "string"
               },
               "framing": {
-                "description": "session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it",
+                "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
                 "type": "string"
               },
               "goal": {
@@ -1674,6 +1663,10 @@
                   "array"
                 ]
               },
+              "question": {
+                "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+                "type": "string"
+              },
               "reason": {
                 "description": "why the move is parked",
                 "type": "string"
@@ -1699,7 +1692,7 @@
                 "type": "string"
               },
               "vocabulary": {
-                "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it",
+                "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
                 "type": "string"
               }
             },
@@ -1767,6 +1760,10 @@
           "description": "the project this session is bound to",
           "type": "string"
         },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+          "type": "string"
+        },
         "session": {
           "description": "session handle (the session ID)",
           "type": "string"
@@ -1787,16 +1784,6 @@
         "all_repos": {
           "description": "also search every repo in the project's dependency closure",
           "type": "boolean"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "include_superseded": {
           "type": "boolean"
@@ -1843,7 +1830,7 @@
           ]
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -1939,16 +1926,6 @@
             "integer"
           ]
         },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "ids": {
           "description": "entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry",
           "items": {
@@ -1964,7 +1941,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -2076,19 +2053,13 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
         "canonical": {
           "description": "the procedure to start, by its stable name (e.g. capture)",
           "type": "string"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "label": {
           "description": "short single-line subject label for the session (the dialogue); set it early, update when the subject sharpens",
@@ -2108,7 +2079,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -2123,6 +2094,7 @@
         }
       },
       "required": [
+        "answer",
         "canonical"
       ],
       "type": "object"
@@ -2365,7 +2337,7 @@
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -2533,6 +2505,10 @@
             "array"
           ]
         },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+          "type": "string"
+        },
         "reason": {
           "description": "why the move is parked",
           "type": "string"
@@ -2558,7 +2534,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -2827,7 +2803,7 @@
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -2995,6 +2971,10 @@
             "array"
           ]
         },
+        "question": {
+          "description": "a question about a text sdd served you, as q \u003ctext\u003e: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost",
+          "type": "string"
+        },
         "reason": {
           "description": "why the move is parked",
           "type": "string"
@@ -3020,7 +3000,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -3039,16 +3019,6 @@
         "all_repos": {
           "description": "also render the layout over every repo in the project's dependency closure",
           "type": "boolean"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "layout": {
           "description": "sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'",
@@ -3069,7 +3039,7 @@
           ]
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -3093,7 +3063,7 @@
       "additionalProperties": false,
       "properties": {
         "hint": {
-          "description": "one-line pointer to the view layout grammar, left out while the call proves it holds it",
+          "description": "one-line pointer to the view layout grammar, on the first view of a session and after resume_session",
           "type": "string"
         },
         "sections": {
