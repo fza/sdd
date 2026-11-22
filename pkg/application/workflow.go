@@ -927,11 +927,11 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 // landShell is the session shell's serve as a move's end lands on it: the
 // base step named with its goal, chooser and the moves to start next, its
 // text left out (20261121-233256-d-tac-mm2); resume_session serves it in
-// full.
+// full, and so does a call whose answer emptied the held set.
 func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentity) (*WorkflowServe, error) {
 	mark := w.session.PieceMark()
 	serve, err := w.ServeShell(ctx, identity)
-	if err != nil || serve == nil {
+	if err != nil || serve == nil || w.session.Emptied() {
 		return serve, err
 	}
 	graph, err := w.graphs.Current()

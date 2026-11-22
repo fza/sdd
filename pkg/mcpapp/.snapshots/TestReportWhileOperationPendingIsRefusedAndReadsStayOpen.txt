@@ -1,3 +1,6 @@
 isError: true
-content: operation_pending: operation "newEntry" is unfinished; only its retry or cancellation is accepted
+content: |
+  operation_pending: operation "newEntry" is unfinished; only its retry or cancellation is accepted
+
+  This call answered no question: the questions the last response ended with still stand. Answer them again on your next call.
 

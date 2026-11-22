@@ -1642,6 +1642,8 @@ func (s *toolSet) beforeCall(ctx context.Context) (context.Context, string, erro
 
 type syncNoticeKey struct{}
 
+const questionsStandNotice = "This call answered no question: the questions the last response ended with still stand. Answer them again on your next call."
+
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
 // reflects what the call itself recorded. With ask set, the claim of a call
@@ -1672,6 +1674,9 @@ func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest,
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
 		if failed {
+			if ss.root.QuestionsStand() {
+				notice = strings.TrimPrefix(notice+"\n\n"+questionsStandNotice, "\n\n")
+			}
 			ss.root.DropAnswer()
 		}
 		err := ss.root.RecordPieces(ctx, identity)
