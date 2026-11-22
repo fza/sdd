@@ -10,19 +10,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-const briefLoopMachine = `state:
-    brief: {type: text, desc: the answer the command judges}
-steps:
-    - id: ask
-      chooser: agent
-      options:
-          - {choice: send, collect: [brief], call: checkBrief, to: confirm}
-    - id: confirm
-      chooser: agent
-      options:
-          - {choice: again, to: ask}
-          - {choice: finish, to: end(completed)}`
-
 func briefLoopEntry(t *testing.T) *model.Entry {
 	t.Helper()
 	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: briefloop\nclass: move\n" +
