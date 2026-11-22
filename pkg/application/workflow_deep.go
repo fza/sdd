@@ -556,11 +556,16 @@ func checkoutFile(checkout fs.FS, path string) (string, bool, error) {
 }
 
 // deepPages renders the verifier's whole reading, led by the draft document,
-// what pre-flight raised and the changed passages since the last verdict,
-// and names the entries it serves.
+// its refs' fit, what pre-flight raised and the changed passages since the
+// last verdict, and names the entries it serves.
 func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld, error) {
+	refFit, err := deepRefFit(ctx)
+	if err != nil {
+		return nil, deepHeld{}, err
+	}
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
+	lead.WriteString(refFit)
 	lead.WriteString(preflightRaised(ctx.Store))
 	if previous, ok := readDeepVerdict(ctx.Store); ok {
 		if changed := textdiff.ChangedPassages(previous.Document, base); len(changed) > 0 {
@@ -580,6 +585,18 @@ type deepHeld struct {
 	Listed []string `json:"listed,omitempty"`
 	// Hidden are the listed entries the reading served as one line.
 	Hidden []string `json:"hidden,omitempty"`
+}
+
+// deepRefFit renders each ref of the draft against the applicability matrix,
+// as pre-flight reads it, for the verifier's ref-fit axis.
+func deepRefFit(ctx *engine.Context) (string, error) {
+	var fits []model.RefFit
+	for _, ref := range workflowStoreDocuments(ctx.Store, "refs") {
+		id, _ := ref["id"].(string)
+		kind, _ := ref["kind"].(string)
+		fits = append(fits, model.FitRef(ctx.Graph, model.Ref{ID: id, Kind: model.RefKind(kind)}))
+	}
+	return llmops.DeepRefFit(fits)
 }
 
 // preflightRaised renders what pre-flight raised, for the verifier to leave

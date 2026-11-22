@@ -106,13 +106,18 @@ func (w *WorkflowSession) delegateWaits(child engine.Link) (bool, error) {
 	return ok && inst.Status == engine.StatusRunning && inst.Step == verifyWaitStep, nil
 }
 
-// deepRevisionPages renders a revision's reading: page 1 the revised draft
-// and its changed passages, later pages the entries read since the verifier
-// last read, which held names.
+// deepRevisionPages renders a revision's reading: first the revised draft,
+// its refs' fit and its changed passages, then the entries read since the
+// verifier last read, which held names.
 func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, number int, held deepHeld) ([]model.DeepReadingPage, error) {
+	refFit, err := deepRefFit(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Revision %d of the draft\n\nThe draft changed after your last findings, and you hold the reading the earlier pages served. Judge the changed passages below against that reading and against the draft as a whole, then report **judge** with your whole findings list over this draft document: your earlier findings and the drafter's answers to them are over. Any later page holds the entries read since your reading. If you do not hold the earlier reading, report **reread** first.\n\n", number)
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
+	lead.WriteString(refFit)
 	lead.WriteString(preflightRaised(ctx.Store))
 	lead.WriteString("\n## Changed since your last findings\n\n" + revisionPassages(ctx.Store, base))
 	pages, _, err := w.deepReading(ctx, lead.String(), nil, held)

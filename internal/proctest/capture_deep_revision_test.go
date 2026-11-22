@@ -61,7 +61,7 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 		t.Fatalf("the revision should go to the same delegate, continued, got %+v", serve.Dispatches)
 	}
 	serve = x.pickUpRevision(t)
-	for _, want := range []string{"## Revision 1 of the draft", "observes a subject twice.", "Page 1 of 1."} {
+	for _, want := range []string{"## Revision 1 of the draft", "observes a subject twice.", "Page 1 of 1.", "refs[0] " + captureRefID + " (addresses)\nAdmissible ref kinds for this target (live-decision): "} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the revision should serve %q:\n%s", want, serve.Instructions)
 		}
