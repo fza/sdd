@@ -15,7 +15,7 @@ import (
 // pointer to the reread slice keeps the argument types embedding it
 // comparable.
 type Answering struct {
-	Answer string    `json:"answer" jsonschema:"required: the answer to the question the last response of this session ended with (q <text>: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full"`
+	Answer string    `json:"answer" jsonschema:"required: the answers to the questions the last response of this session ended with (q <text>: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full"`
 	Reread *[]string `json:"reread,omitempty" jsonschema:"names of served pieces you no longer see; they serve in full again"`
 }
 
@@ -61,7 +61,12 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 			pointed = append(pointed, name)
 			continue
 		}
-		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
+		var served sdd.ServedPiece
+		if lane.Authored {
+			served = ss.root.ServeAuthoredText(name, lane.Text)
+		} else {
+			served = ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
+		}
 		if served.Held {
 			held = append(held, name)
 			continue

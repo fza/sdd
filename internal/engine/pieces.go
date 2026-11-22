@@ -23,26 +23,33 @@ func (p Piece) key() string { return p.Name + "@" + p.Hash }
 
 // heldText is a text the session served in full: what a question about it is
 // made from, and its latest copy, the number of its newest serve in full.
+// authored marks a text the agent or the person wrote, which is held but no
+// question's text.
 type heldText struct {
-	text   string
-	latest int
+	text     string
+	latest   int
+	authored bool
 }
 
 // askedQuestion is a question a response ended with, about piece as its
-// latest copy stood then.
+// latest copy stood then. round is the index of the first question of the
+// response that asked it: an answer answers a round's questions together.
 type askedQuestion struct {
 	piece    Piece
 	question model.TextQuestion
 	latest   int
+	round    int
 	answered bool
 }
 
 // pieceCall is what one tool call carries and has served so far.
 type pieceCall struct {
-	// answered numbers the question the call's answer answers from 1, 0 for
+	// answered numbers the round the call's answer answers from 1, 0 for
 	// none; held then are the texts whose latest copy is at least provedFrom.
+	// short is set once the answer holds a piece the call serves.
 	answered   int
 	provedFrom int
+	short      bool
 	// reset is set by lost or a wrong answer: the held set empties when the
 	// call records what it served.
 	reset   bool
@@ -65,12 +72,13 @@ type pieceCall struct {
 // delivered result holds of it; changed marks one that serves once per
 // change of its content.
 type pendingServe struct {
-	piece   Piece
-	text    string
-	probe   string
-	covers  []string
-	changed bool
-	seq     int
+	piece    Piece
+	text     string
+	probe    string
+	covers   []string
+	changed  bool
+	authored bool
+	seq      int
 }
 
 func (s *Session) nextSeq() int {
@@ -78,12 +86,13 @@ func (s *Session) nextSeq() int {
 	return s.call.seq - 1
 }
 
-// BeginCall starts a call carrying answer, the agent's answer to a question
-// a response asked, and the piece names it lists in reread, which serve in
-// full. An answer that names the words of a question still unanswered makes
-// the texts whose latest copy is at least that question's hold for the call.
-// None holds nothing; lost or a wrong answer holds nothing and empties the
-// held set, so only texts served from this call on count as held
+// BeginCall starts a call carrying answer, the agent's answers to the
+// questions a response asked (model.RoundAnswered), and the piece names it
+// lists in reread, which serve in full. An answer that answers every
+// question of a round still unanswered makes the texts whose latest copy is
+// at least the oldest of that round's hold for the call. None holds
+// nothing; lost or a wrong answer to any question holds nothing and empties
+// the held set, so only texts served from this call on count as held
 // (20261122-105026-d-tac-wl5).
 func (s *Session) BeginCall(answer string, reread []string) {
 	s.call = pieceCall{reread: map[string]bool{}}
@@ -97,15 +106,42 @@ func (s *Session) BeginCall(answer string, reread []string) {
 		s.call.reset = true
 		return
 	}
-	for i, asked := range s.questions {
-		if asked.answered || !asked.question.Answered(answer) {
+	for round, asked := range s.openRounds() {
+		if !model.RoundAnswered(asked.questions, answer) {
 			continue
 		}
-		if s.call.answered == 0 || asked.latest < s.call.provedFrom {
-			s.call.answered, s.call.provedFrom = i+1, asked.latest
+		earlier := asked.latest < s.call.provedFrom || asked.latest == s.call.provedFrom && round+1 < s.call.answered
+		if s.call.answered == 0 || earlier {
+			s.call.answered, s.call.provedFrom = round+1, asked.latest
 		}
 	}
 	s.call.reset = s.call.answered == 0
+}
+
+// openRound is a round of questions still unanswered: its questions and the
+// oldest latest copy they asked about.
+type openRound struct {
+	questions []model.TextQuestion
+	latest    int
+}
+
+// openRounds lists the rounds still unanswered by the index of their first
+// question.
+func (s *Session) openRounds() map[int]*openRound {
+	rounds := map[int]*openRound{}
+	for _, asked := range s.questions {
+		if asked.answered {
+			continue
+		}
+		round, ok := rounds[asked.round]
+		if !ok {
+			round = &openRound{latest: asked.latest}
+			rounds[asked.round] = round
+		}
+		round.questions = append(round.questions, asked.question)
+		round.latest = min(round.latest, asked.latest)
+	}
+	return rounds
 }
 
 // Answered reports whether the call's answer answers a question still
@@ -125,11 +161,16 @@ func (s *Session) holds(p Piece, byAnswer bool) bool {
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
 		return false
 	}
-	if held, ok := s.texts[p]; byAnswer && ok && s.call.answered > 0 && held.latest >= s.call.provedFrom && held.latest >= s.heldFrom {
+	if byAnswer && s.heldByAnswer(p) {
 		return true
 	}
 	_, sent := s.call.followed[p]
 	return sent
+}
+
+func (s *Session) heldByAnswer(p Piece) bool {
+	held, ok := s.texts[p]
+	return ok && s.call.answered > 0 && held.latest >= s.call.provedFrom && held.latest >= s.heldFrom
 }
 
 // ServePiece decides how the call in flight serves p: true for its pointer
@@ -138,11 +179,33 @@ func (s *Session) holds(p Piece, byAnswer bool) bool {
 // are the entries the piece carries whole, held for the rest of the call.
 // The serve is recorded by RecordServed.
 func (s *Session) ServePiece(p Piece, carried []Piece, text, probe string) bool {
-	if s.Holds(p) {
+	if s.servedShort(p) {
 		return true
 	}
-	s.issue(p, carried, text, probe)
+	s.issue(p, carried, text, probe, false)
 	return false
+}
+
+// ServeAuthored is ServePiece for text the agent or the person wrote, or
+// that embeds their words, such as a draft played back: held as any text,
+// it is never a question's text.
+func (s *Session) ServeAuthored(p Piece, text, probe string) bool {
+	if s.servedShort(p) {
+		return true
+	}
+	s.issue(p, nil, text, probe, true)
+	return false
+}
+
+// servedShort is Holds, noting a piece the call's answer holds.
+func (s *Session) servedShort(p Piece) bool {
+	if !s.Holds(p) {
+		return false
+	}
+	if !s.call.issued[p] && !s.call.covered[p.key()] && s.heldByAnswer(p) {
+		s.call.short = true
+	}
+	return true
 }
 
 // ServeEntry is ServePiece for an entry: a right answer never holds it, so
@@ -152,14 +215,14 @@ func (s *Session) ServeEntry(p Piece, probe string) bool {
 	if s.holds(p, false) {
 		return true
 	}
-	s.issue(p, nil, "", probe)
+	s.issue(p, nil, "", probe, false)
 	return false
 }
 
 // HoldsEntry reports whether the call holds an entry, as ServeEntry reads it.
 func (s *Session) HoldsEntry(p Piece) bool { return s.holds(p, false) }
 
-func (s *Session) issue(p Piece, carried []Piece, text, probe string) {
+func (s *Session) issue(p Piece, carried []Piece, text, probe string, authored bool) {
 	covers := make([]string, len(carried))
 	for i, c := range carried {
 		covers[i] = c.key()
@@ -171,7 +234,7 @@ func (s *Session) issue(p Piece, carried []Piece, text, probe string) {
 	for _, key := range covers {
 		s.call.covered[key] = true
 	}
-	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, probe: probe, covers: covers, seq: s.nextSeq()})
+	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, probe: probe, covers: covers, authored: authored, seq: s.nextSeq()})
 }
 
 // ServeChanged reports whether the call serves p, a piece that serves once per
@@ -314,6 +377,9 @@ func (s *Session) RecordServed() {
 			}
 		} else if _, known := s.texts[p.piece]; !known {
 			record["text"] = p.text
+			if p.authored {
+				record["authored"] = true
+			}
 		}
 		s.foldText(record)
 		records = append(records, record)
@@ -324,12 +390,57 @@ func (s *Session) RecordServed() {
 	}
 	if n := s.call.answered - 1; n >= 0 && !s.questions[n].answered {
 		data["answered"] = n
-		s.questions[n].answered = true
+		if s.call.short {
+			data["short"] = true
+		}
+		s.foldAnswered(n)
 	}
 	if len(data) == 0 {
 		return
 	}
+	if _, answered := data["answered"]; (answered || data["reset"] == true) && s.call.caller != "" {
+		data["caller"] = s.call.caller
+	}
+	s.foldOutcome(data)
 	s.appendEvent("", EventTexts, data)
+}
+
+// foldAnswered marks the round whose first question is n answered.
+func (s *Session) foldAnswered(n int) {
+	for i := range s.questions {
+		if s.questions[i].round == n {
+			s.questions[i].answered = true
+		}
+	}
+}
+
+// foldOutcome folds what a call's answer showed: a lost or wrong answer
+// right after a call of the same caller that served short is a late catch,
+// a compaction the short serve could not see (20261121-230157-d-tac-ym8).
+func (s *Session) foldOutcome(data map[string]any) {
+	caller, _ := data["caller"].(string)
+	if data["reset"] == true {
+		if s.lastShort && s.lastShortCaller == caller {
+			s.lateCatches++
+		}
+		s.lastShort = false
+	}
+	if _, answered := intValue(data["answered"]); answered {
+		s.lastShort, s.lastShortCaller = data["short"] == true, caller
+	}
+}
+
+// LateCatches counts, in a session log, the lost or wrong answers given right
+// after a call that served short: each a compaction caught one call late,
+// as a right answer to a question asked before it cannot show it.
+func LateCatches(events []Event) int {
+	s := &Session{}
+	for _, ev := range events {
+		if ev.Event == EventTexts {
+			s.foldTexts(ev.Data)
+		}
+	}
+	return s.lateCatches
 }
 
 // DropAnswer keeps the call's answer from counting a question answered, for
@@ -337,11 +448,14 @@ func (s *Session) RecordServed() {
 // set stays as it was.
 func (s *Session) DropAnswer() { s.call.answered, s.call.reset = 0, false }
 
-// Ask ends a response with a question: about the text held longest by its
-// latest copy, the next oldest where that text yields no question not asked
-// before, its phrase occurring in no other text served and its answer no
-// earlier question's, so an answer replayed from the call history answers
-// nothing. It logs the question and returns its line, empty when no held
+// Ask ends a response with two questions, one line each: the first about
+// the text held longest by its latest copy, the next oldest where that text
+// yields no question not asked before; the second about the next held text
+// that yields one, or another spot of the first's text where none does. A
+// question's phrase occurs in no other text served and in nothing the agent
+// or the person wrote, it asks about no text they wrote, and its answer is
+// no earlier question's, so an answer replayed from the call history answers
+// nothing. It logs the questions and returns their lines, empty when no held
 // text yields one.
 func (s *Session) Ask() string {
 	pieces := slices.Collect(maps.Keys(s.texts))
@@ -369,21 +483,24 @@ func (s *Session) Ask() string {
 				return true
 			}
 		}
-		return slices.ContainsFunc(once, func(text string) bool { return strings.Contains(text, phrase) })
+		return slices.ContainsFunc(once, func(text string) bool { return strings.Contains(text, phrase) }) || s.inAuthored(phrase)
 	}
 	answeredBefore := func(answer string) bool {
 		return slices.ContainsFunc(s.questions, func(asked askedQuestion) bool { return asked.question.Answered(answer) })
 	}
-	for _, p := range pieces {
+	ask := func(p Piece, first *model.TextQuestion) (model.TextQuestion, bool) {
 		held := s.texts[p]
-		if held.latest < s.heldFrom {
-			continue
+		if held.latest < s.heldFrom || held.authored {
+			return model.TextQuestion{}, false
 		}
 		q, ok := model.DrawQuestion(held.text, s.random(), func(q model.TextQuestion) bool {
+			if first != nil && (q.Phrase == first.Phrase || q.Phrase == first.Second || q.Second != "" && q.Second == first.Phrase) {
+				return false
+			}
 			return !s.asked[p.key()+"|"+q.Key()] && !elsewhere(p, q.Phrase) && !elsewhere(p, q.Second) && !answeredBefore(q.Answer)
 		})
 		if !ok {
-			continue
+			return q, false
 		}
 		data := map[string]any{
 			"name": p.Name, "hash": p.Hash, "latest": held.latest,
@@ -392,9 +509,25 @@ func (s *Session) Ask() string {
 		if q.Second != "" {
 			data["second"] = q.Second
 		}
+		if first != nil {
+			data["paired"] = true
+		}
 		s.foldQuestion(data)
 		s.appendEvent("", EventQuestion, data)
-		return q.Line(p.Name)
+		return q, true
+	}
+	for i, p := range pieces {
+		first, ok := ask(p, nil)
+		if !ok {
+			continue
+		}
+		line := first.Line(p.Name)
+		for _, other := range append(slices.Delete(slices.Clone(pieces), i, i+1), p) {
+			if second, ok := ask(other, &first); ok {
+				return line + "\n" + second.Line(other.Name)
+			}
+		}
+		return line
 	}
 	return ""
 }
@@ -410,9 +543,10 @@ func (s *Session) foldTexts(data map[string]any) {
 		fields, _ := record.(map[string]any)
 		s.foldText(fields)
 	}
-	if n, ok := intValue(data["answered"]); ok && n >= 0 && n < len(s.questions) {
-		s.questions[n].answered = true
+	if n, ok := intValue(data["answered"]); ok && n >= 0 {
+		s.foldAnswered(n)
 	}
+	s.foldOutcome(data)
 }
 
 func (s *Session) foldText(fields map[string]any) {
@@ -445,7 +579,7 @@ func (s *Session) foldText(fields map[string]any) {
 	if text == "" {
 		return
 	}
-	s.texts[p] = &heldText{text: text, latest: s.copies}
+	s.texts[p] = &heldText{text: text, latest: s.copies, authored: fields["authored"] == true}
 }
 
 func (s *Session) foldQuestion(data map[string]any) {
@@ -460,6 +594,10 @@ func (s *Session) foldQuestion(data map[string]any) {
 		question: model.TextQuestion{
 			Kind: model.QuestionKind(str("kind")), Phrase: str("phrase"), Second: str("second"), Answer: str("answer"),
 		},
+		round: len(s.questions),
+	}
+	if n := len(s.questions); data["paired"] == true && n > 0 {
+		asked.round = s.questions[n-1].round
 	}
 	s.questions = append(s.questions, asked)
 	if s.asked == nil {

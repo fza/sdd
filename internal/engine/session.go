@@ -296,6 +296,16 @@ type Session struct {
 	heldFrom  int
 	questions []askedQuestion
 	asked     map[string]bool
+	// authored folds what the agent and the person wrote into the session
+	// (noteAuthored), lower case and single-spaced, which no question's
+	// phrase may occur in.
+	authored map[string]bool
+	// lastShort is set while the session's last answering call, of
+	// lastShortCaller, served a piece short; lateCatches counts the lost or
+	// wrong answers right after one (LateCatches).
+	lastShort       bool
+	lastShortCaller string
+	lateCatches     int
 	// changed folds the content hash each piece that serves once per change
 	// last served under its name, per caller (changedKey).
 	changed map[string]string
@@ -609,6 +619,7 @@ func (s *Session) Park(instanceID, note string) error {
 // appendEvent writes one event to the log. Sink errors fail loudly at the
 // call sites that can surface them; here the event is built centrally.
 func (s *Session) appendEvent(instance string, typ EventType, data map[string]any) uint64 {
+	s.noteAuthored(typ, data)
 	if s.sinkErr != nil {
 		return 0
 	}
@@ -1150,6 +1161,7 @@ func (s *Session) fold(events []Event, resolve SpecResolver) error {
 }
 
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
+	s.noteAuthored(ev.Event, ev.Data)
 	switch ev.Event {
 	case EventSessionMeta:
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {

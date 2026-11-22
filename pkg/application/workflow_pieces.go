@@ -47,6 +47,16 @@ func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPi
 	return ServedPiece{Text: text}
 }
 
+// ServeAuthoredText is ServeText for text the agent or the person wrote,
+// which no question asks about.
+func (w *WorkflowSession) ServeAuthoredText(name, text string) ServedPiece {
+	neutral := w.neutral(text)
+	if w.session.ServeAuthored(engine.Piece{Name: name, Hash: contentHash(neutral)}, neutral, jsonEscaped(text)) {
+		return ServedPiece{Held: true}
+	}
+	return ServedPiece{Text: text}
+}
+
 // ServeSchema serves a report schema named name, reporting whether the call
 // holds it; a question about it asks about its descriptions.
 func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (bool, error) {

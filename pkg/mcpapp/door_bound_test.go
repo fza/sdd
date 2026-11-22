@@ -64,7 +64,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 				if size := serveSize(t, opening); size > model.DefaultResultBound.Serve() {
 					t.Fatalf("the opening, its question guide included, should cost at most %d characters, got %d", model.DefaultResultBound.Serve(), size)
 				}
-				if !strings.Contains(opening.Instructions, "must answer it in answer") {
+				if !strings.Contains(opening.Instructions, "must answer both in answer, in their order and parted by ;") {
 					t.Fatalf("the opening should carry the question guide, got %.300q", opening.Instructions)
 				}
 				instructions, text := opening.Instructions, opening.Instructions+"\n\n"+opening.Framing+"\n\n"+opening.Vocabulary

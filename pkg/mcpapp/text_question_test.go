@@ -2,12 +2,18 @@ package mcpapp_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/proctest"
 	test "github.com/networkteam/sdd/internal/testsupport"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -33,8 +39,8 @@ func lastKey(t *testing.T, text string) string {
 	return last
 }
 
-// Every response that starts, resumes or advances a session ends with one
-// question, no question repeats within the session, and no result carries a
+// Every response that starts, resumes or advances a session ends with two
+// questions, no question repeats within the session, and no result carries a
 // mark placed for the check or a field of the anchor proof.
 func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
@@ -53,13 +59,16 @@ func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 		if err := json.Unmarshal([]byte(text), &fields); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, ok := test.LastQuestion(fields.Question); !ok || strings.Count(fields.Question, " | lost") != 1 {
-			t.Fatalf("%s: the response should carry exactly one question, got %q", tool, fields.Question)
+		questions := test.Questions(fields.Question)
+		if len(questions) != 2 || strings.Count(fields.Question, " | lost") != 2 {
+			t.Fatalf("%s: the response should carry two questions, got %q", tool, fields.Question)
 		}
-		if asked[fields.Question] {
-			t.Fatalf("%s: a question should never be asked twice in a session, got %q again", tool, fields.Question)
+		for _, q := range questions {
+			if asked[q.Ask] {
+				t.Fatalf("%s: a question should never be asked twice in a session, got %q again", tool, q.Ask)
+			}
+			asked[q.Ask] = true
 		}
-		asked[fields.Question] = true
 		for _, gone := range []string{"⟦", `"unproved"`, `"proof_notice"`} {
 			if strings.Contains(text, gone) {
 				t.Fatalf("%s: no result should carry %s", tool, gone)
@@ -83,8 +92,8 @@ func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	raw("next", map[string]any{"session": door.Session, "instance": serve.Instance})
 	raw("abandon", map[string]any{"session": door.Session, "instance": serve.Instance, "reason": "done here"})
 	for i, answer := range agent.answers[1:] {
-		if answer == "lost" {
-			t.Errorf("call %d: an agent holding every text should answer each question, got lost", i+2)
+		if strings.Contains(answer, "lost") {
+			t.Errorf("call %d: an agent holding every text should answer each question, got %q", i+2, answer)
 		}
 	}
 }
@@ -122,6 +131,18 @@ func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 		short  bool
 	}{
 		{"right", func(right string) string { return right }, true},
+		{"right, swapped", func(right string) string {
+			first, second, _ := strings.Cut(right, " ; ")
+			return second + ";" + first
+		}, true},
+		{"one of two lost", func(right string) string {
+			first, _, _ := strings.Cut(right, " ; ")
+			return first + " ; lost"
+		}, false},
+		{"one of two given", func(right string) string {
+			first, _, _ := strings.Cut(right, " ; ")
+			return first
+		}, false},
 		{"wrong", func(string) string { return "misread words" }, false},
 		{"lost", func(string) string { return "lost" }, false},
 	} {
@@ -152,6 +173,81 @@ func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 			}
 		})
 	}
+}
+
+// No question asks about what the agent wrote, played back or echoed in a
+// lane: a compaction summary quotes it (20261121-230157-d-tac-ym8).
+func TestTextQuestionAsksNothingTheAgentWrote(t *testing.T) {
+	var entries []*model.Entry
+	var refs []map[string]any
+	for n := range 3 {
+		e := &model.Entry{
+			ID: fmt.Sprintf("20260601-%06d-s-tac-q%02d", 100000+n, n), Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+			Summary: fmt.Sprintf("Entry %d of the question fixture observes a gap.", n),
+			Content: "The question fixture observes a gap.", Topics: proctest.MustTopics("testing/fixture"), Confidence: "medium",
+		}
+		entries = append(entries, e)
+		refs = append(refs, map[string]any{"id": e.ID, "kind": "related", "desc": fmt.Sprintf("entry %d keeps the harbour lights burning past midnight", n)})
+	}
+	body := "Lanterns along the quay flicker whenever the northern ferry docks late.\n\nEvery harbour pilot logs the tide twice before the morning crossing begins."
+	world := proctest.NewWorld(t, proctest.WithEntries(entries...))
+	srv, err := mcpserver.New(mcpserver.Options{Application: world.App, SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: world.Identity, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := newAgentMemory()
+	cs := connectAs(t, srv, agent)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
+	capture := serve.Instance
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	callRaw(t, cs, "gather", map[string]any{"session": session, "instance": capture, "ids": ids})
+	call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{
+		"body": body, "entryKind": "gap", "layer": "tactical", "refs": refs,
+		"topics": []string{"testing/fixture"}, "confidence": "medium", "widenReport": "opened every fixture entry",
+	}}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the draft should reach playback, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	for range 3 {
+		call(t, cs, "next", map[string]any{"session": session, "instance": capture}, &serve)
+	}
+	call(t, cs, "resume_session", map[string]any{"session": session}, &serve)
+
+	written := []string{body}
+	for _, ref := range refs {
+		written = append(written, ref["desc"].(string))
+	}
+	if len(agent.asked) == 0 {
+		t.Fatal("the responses should end with questions")
+	}
+	for _, line := range agent.asked {
+		for _, q := range test.Questions(line) {
+			if q.Name == "lane "+types.DraftLane || q.Name == "lane exchange" || q.Name == "lane parked" {
+				t.Errorf("no question should ask about a lane the agent wrote, got %q", line)
+			}
+			for _, text := range written {
+				for _, phrase := range quotedPhrases(q.Ask) {
+					if strings.Contains(strings.ToLower(text), strings.ToLower(phrase)) {
+						t.Errorf("no question's phrase should occur in what the agent reported, got %q", line)
+					}
+				}
+			}
+		}
+	}
+}
+
+// quotedPhrases lists the phrases a question quotes.
+func quotedPhrases(ask string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(ask, -1) {
+		out = append(out, m[1])
+	}
+	return out
 }
 
 // connectBare connects a client that sends its arguments as given.

@@ -20,8 +20,8 @@ func writeCaptureSession(t *testing.T, f *appFixture, id, step string, parkedAt 
 }
 
 // writeCaptureSessionIn is writeCaptureSession for a session opened in
-// dialogue mode, empty for guided.
-func writeCaptureSessionIn(t *testing.T, f *appFixture, id, step string, parkedAt time.Time, dialogue string) {
+// dialogue mode, empty for guided; extra events follow the capture's.
+func writeCaptureSessionIn(t *testing.T, f *appFixture, id, step string, parkedAt time.Time, dialogue string, extra ...engine.Event) {
 	t.Helper()
 	sessions, err := localadapter.NewFilesystemSessionStore(localadapter.StoreLocation{
 		Name: "test", Subject: "local", Project: "example.test/cli",
@@ -44,6 +44,7 @@ func writeCaptureSessionIn(t *testing.T, f *appFixture, id, step string, parkedA
 	if !parkedAt.IsZero() {
 		events = append(events, engine.Event{TS: parkedAt, Instance: "i1", Event: engine.EventParked, Data: map[string]any{"step": step, "reason": "blocked again after 1 unattended revise", "held": true}})
 	}
+	events = append(events, extra...)
 	stored := make([]sdd.StoredEvent, 0, len(events))
 	for i, event := range events {
 		event.V, event.Session, event.Seq = engine.LogVersion, id, i+1
@@ -73,6 +74,55 @@ func TestSessionsListsAParkedCaptureWithItsStep(t *testing.T) {
 	for _, want := range []string{"- i1: capture parked at reviseOrOverride · 2h ago · blocked again after 1 unattended revise", "- i1: capture at playback"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("the listing should show each open move and where it is parked, missing %q in:\n%s", want, r.stdout)
+		}
+	}
+}
+
+// A lost answer right after a short serve is a compaction caught one call
+// late; the listing counts them per session (20261121-230157-d-tac-ym8).
+func TestSessionsShowsCompactionsCaughtLate(t *testing.T) {
+	f := newAppFixture(t)
+	shortThenLost := []engine.Event{
+		{Event: engine.EventQuestion, Data: map[string]any{"name": "lane x", "kind": "words-after", "phrase": "a b c", "answer": "d e"}},
+		{Event: engine.EventTexts, Data: map[string]any{"answered": 0, "short": true}},
+		{Event: engine.EventTexts, Data: map[string]any{"reset": true}},
+	}
+	writeCaptureSessionIn(t, f, "s_caught", "playback", time.Time{}, "", shortThenLost...)
+	writeCaptureSession(t, f, "s_clean", "playback", time.Time{})
+
+	r := f.run(t, "sessions")
+	if r.err != nil {
+		t.Fatalf("sessions: %v\n%s", r.err, r.stderr)
+	}
+	lines := map[string]string{}
+	for line := range strings.SplitSeq(r.stdout, "\n") {
+		for _, id := range []string{"s_caught", "s_clean"} {
+			if strings.HasPrefix(line, id+" ") {
+				lines[id] = line
+			}
+		}
+	}
+	if !strings.Contains(lines["s_caught"], "1 compaction caught one call late") {
+		t.Errorf("the listing should count the session's compactions caught one call late, got:\n%s", r.stdout)
+	}
+	if lines["s_clean"] == "" || strings.Contains(lines["s_clean"], "caught") {
+		t.Errorf("a session with no late catch should show none, got:\n%s", r.stdout)
+	}
+
+	r = f.run(t, "sessions", "--format", "json")
+	if r.err != nil {
+		t.Fatalf("sessions --format json: %v\n%s", r.err, r.stderr)
+	}
+	var listed []struct {
+		Session     string
+		LateCatches int `json:"lateCatches"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &listed); err != nil {
+		t.Fatalf("the listing should be JSON: %v\n%s", err, r.stdout)
+	}
+	for _, item := range listed {
+		if want := map[string]int{"s_caught": 1}[item.Session]; item.LateCatches != want {
+			t.Errorf("%s should list its late catches in JSON, got %d", item.Session, item.LateCatches)
 		}
 	}
 }

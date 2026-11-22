@@ -1,10 +1,13 @@
 package types
 
 // ServeLane is one rendered lane of a serve's instruction unit — the unit a
-// host's served-once memory dedups at (d-tac-87o).
+// host's served-once memory dedups at (d-tac-87o). Authored marks a lane
+// made of what the agent or the person wrote, the draft played back among
+// them, which no text question asks about (20261121-230157-d-tac-ym8).
 type ServeLane struct {
-	Name string
-	Text string
+	Name     string
+	Text     string
+	Authored bool
 }
 
 // DraftLane names the lane carrying the engine-rendered draft of a step that

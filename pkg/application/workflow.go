@@ -205,6 +205,9 @@ type WorkflowSessionSummary struct {
 	LastActivity time.Time
 	Attachment   *Attachment
 	Active       bool
+	// LateCatches counts the compactions the text question caught one call
+	// late (engine.LateCatches).
+	LateCatches int
 }
 
 type WorkflowResumeResult struct {
@@ -2187,6 +2190,7 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 		}
 		result.Open = append(result.Open, WorkflowInstanceSummary{Instance: instance, Procedure: item.procedure, Step: item.step, Parked: item.parked})
 	}
+	result.LateCatches = engine.LateCatches(events)
 	return result
 }
 

@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // RandomSource draws question kinds and phrases; math/rand/v2's *rand.Rand
@@ -17,31 +17,35 @@ type RandomSource interface {
 	IntN(n int) int
 }
 
-// QuestionKind is one of the seven kinds of text question
-// (20261121-230157-d-tac-ym8). None counts paragraphs or words.
+// QuestionKind is a kind of text question (20261121-230157-d-tac-ym8). None
+// counts paragraphs or words, and none rests on where a sentence ends: each
+// asks for words standing next to a phrase, a run an agent and the parser
+// read alike.
 type QuestionKind string
 
 const (
-	AskSentenceFirst QuestionKind = "sentence-first"
-	AskSentenceLast  QuestionKind = "sentence-last"
-	AskBetween       QuestionKind = "between"
-	AskNextSentence  QuestionKind = "next-sentence"
-	AskNumberAfter   QuestionKind = "number-after"
-	AskWordsAfter    QuestionKind = "words-after"
-	AskWordsBefore   QuestionKind = "words-before"
+	AskBetween     QuestionKind = "between"
+	AskNumberAfter QuestionKind = "number-after"
+	AskWordsAfter  QuestionKind = "words-after"
+	AskWordsBefore QuestionKind = "words-before"
 )
 
 // QuestionKinds lists the kinds a question is drawn from.
-var QuestionKinds = []QuestionKind{
-	AskSentenceFirst, AskSentenceLast, AskBetween, AskNextSentence, AskNumberAfter, AskWordsAfter, AskWordsBefore,
-}
+var QuestionKinds = []QuestionKind{AskBetween, AskNumberAfter, AskWordsAfter, AskWordsBefore}
 
 // LostAnswer is the answer of an agent that no longer holds the text asked
 // about.
 const LostAnswer = "lost"
 
+// AnswerSeparator parts the answers of a response's questions within one
+// answer. No answer holds it: answers are words and numbers.
+const AnswerSeparator = ";"
+
 // phraseWords is how many words a phrase holds.
 const phraseWords = 3
+
+// maxAskChars bounds a question, which every response carries.
+const maxAskChars = 90
 
 // TextQuestion asks for words of a served text next to a phrase, a run of
 // words that occurs once in it. Second is the phrase after the word asked
@@ -62,14 +66,8 @@ func (q TextQuestion) Key() string {
 // Ask is the question without the text it asks about.
 func (q TextQuestion) Ask() string {
 	switch q.Kind {
-	case AskSentenceFirst:
-		return fmt.Sprintf("first 2 words of the sentence with %q?", q.Phrase)
-	case AskSentenceLast:
-		return fmt.Sprintf("last 2 words of the sentence with %q?", q.Phrase)
 	case AskBetween:
 		return fmt.Sprintf("word between %q and %q?", q.Phrase, q.Second)
-	case AskNextSentence:
-		return fmt.Sprintf("first 2 words of the sentence after the one with %q?", q.Phrase)
 	case AskNumberAfter:
 		return fmt.Sprintf("number after %q?", q.Phrase)
 	case AskWordsBefore:
@@ -96,6 +94,38 @@ func IsLost(given string) bool {
 func (q TextQuestion) Answered(given string) bool {
 	want := answerWords(q.Answer)
 	return len(want) > 0 && slices.Equal(want, answerWords(given))
+}
+
+// RoundAnswered reports whether given answers every question of a
+// response's round, one answer each, parted by AnswerSeparator, in either
+// order. An answer lost for any question answers none.
+func RoundAnswered(questions []TextQuestion, given string) bool {
+	parts := strings.Split(given, AnswerSeparator)
+	if len(questions) == 0 || len(parts) != len(questions) {
+		return false
+	}
+	if slices.ContainsFunc(parts, IsLost) {
+		return false
+	}
+	used := make([]bool, len(parts))
+	var match func(i int) bool
+	match = func(i int) bool {
+		if i == len(questions) {
+			return true
+		}
+		for j, part := range parts {
+			if used[j] || !questions[i].Answered(part) {
+				continue
+			}
+			used[j] = true
+			if match(i + 1) {
+				return true
+			}
+			used[j] = false
+		}
+		return false
+	}
+	return match(0)
 }
 
 func answerWords(s string) []string {
@@ -141,35 +171,23 @@ func shuffle(rnd RandomSource, n int, swap func(i, j int)) {
 
 // textToken is a whitespace-separated token of a text: raw as written, word
 // its letters and digits without surrounding punctuation, start and end its
-// byte offsets.
+// byte offsets. code marks a token inside an inline code span.
 type textToken struct {
 	raw, word  string
 	start, end int
-}
-
-// textSentence is a run of tokens up to a sentence end, a blank line, a list
-// item or a heading; para numbers the paragraph it sits in.
-type textSentence struct {
-	tokens []textToken
-	para   int
+	code       bool
 }
 
 type questionText struct {
-	text      string
-	lower     string
-	sentences []textSentence
+	text  string
+	lower string
+	// lines are the tokens of each line outside fenced code, a list marker
+	// left out: a question's words stand side by side on one line.
+	lines [][]textToken
 }
 
 func parseQuestionText(text string) questionText {
 	parsed := questionText{text: text, lower: strings.ToLower(text)}
-	var current textSentence
-	para := 0
-	closeSentence := func() {
-		if len(current.tokens) > 0 {
-			parsed.sentences = append(parsed.sentences, current)
-		}
-		current = textSentence{para: para}
-	}
 	inFence := false
 	offset := 0
 	for line := range strings.SplitAfterSeq(text, "\n") {
@@ -178,52 +196,25 @@ func parseQuestionText(text string) questionText {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence
-			closeSentence()
-			para++
-			current.para = para
 			continue
 		}
-		if inFence {
+		if inFence || trimmed == "" {
 			continue
 		}
-		if trimmed == "" {
-			closeSentence()
-			para++
-			current.para = para
-			continue
-		}
-		first, _ := utf8.DecodeRuneInString(trimmed)
-		heading := strings.HasPrefix(trimmed, "#")
-		if !unicode.IsLower(first) || heading {
-			closeSentence()
-		}
-		if heading {
-			para++
-			current.para = para
-		}
-		atLineStart := true
+		var tokens []textToken
+		inCode := false
 		for start, raw := range lineTokens(line) {
-			if atLineStart && listMarker(raw) {
-				atLineStart = false
+			if len(tokens) == 0 && listMarker(raw) {
 				continue
 			}
-			atLineStart = false
-			word := wordForm(raw)
-			if word == "" {
-				continue
-			}
-			current.tokens = append(current.tokens, textToken{raw: raw, word: word, start: base + start, end: base + start + len(raw)})
-			if endsSentence(raw, word) {
-				closeSentence()
+			ticks := strings.Count(raw, "`")
+			tokens = append(tokens, textToken{raw: raw, word: wordForm(raw), start: base + start, end: base + start + len(raw), code: inCode || ticks > 0})
+			if ticks%2 == 1 {
+				inCode = !inCode
 			}
 		}
-		if heading {
-			closeSentence()
-			para++
-			current.para = para
-		}
+		parsed.lines = append(parsed.lines, tokens)
 	}
-	closeSentence()
 	return parsed
 }
 
@@ -263,21 +254,30 @@ func wordForm(raw string) string {
 	return strings.TrimFunc(raw, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 
-// endsSentence reports whether a token closes its sentence: it ends in a
-// full stop, question or exclamation mark, quotes and brackets aside, and is
-// no abbreviation such as "e.g.".
-func endsSentence(raw, word string) bool {
-	tail := strings.TrimRight(raw, ")]}\"'*_`")
-	if tail == "" || !strings.ContainsAny(tail[len(tail)-1:], ".!?") {
-		return false
-	}
-	return !strings.Contains(word, ".")
-}
+// entryIDWord matches a full or short entry ID, which summaries carry and
+// agents copy unreliably.
+var entryIDWord = regexp.MustCompile(`^(\d{8}-\d{6}-)?[a-z]-[a-z]{3}-[a-z0-9]+$`)
 
 // plainToken reports whether a token is a word as written, so a phrase of
 // such tokens occurs literally in the text.
 func plainToken(t textToken) bool {
-	return t.raw == t.word && answerable(t.word)
+	return t.raw == t.word && usableWord(t)
+}
+
+// innerToken is plainToken allowing a trailing comma, for a word a window
+// goes on past.
+func innerToken(t textToken) bool {
+	return strings.TrimSuffix(t.raw, ",") == t.word && usableWord(t)
+}
+
+// lastToken is plainToken allowing a trailing comma, colon or stop, for the
+// word a window ends with.
+func lastToken(t textToken) bool {
+	return strings.TrimRight(t.raw, ",.;:!?") == t.word && usableWord(t)
+}
+
+func usableWord(t textToken) bool {
+	return !t.code && answerable(t.word) && !entryIDWord.MatchString(strings.ToLower(t.word))
 }
 
 // answerable reports whether an agent types word back reliably: letters and
@@ -308,109 +308,101 @@ func numberWord(word string) bool {
 	return digits > 0
 }
 
-// phraseAt returns the phrase of the tokens of s from i on, when they occur
-// literally and once in the text and not all are function words.
-func (p questionText) phraseAt(s textSentence, i int) (string, bool) {
-	if i < 0 || i+phraseWords > len(s.tokens) {
+// phraseAt returns the phrase of the tokens of line from i on, when they are
+// plain, single-spaced, occur once in the text and not all are function
+// words.
+func (p questionText) phraseAt(line []textToken, i int) (string, bool) {
+	if i < 0 || i+phraseWords > len(line) {
 		return "", false
 	}
-	return p.literal(s.tokens[i:i+phraseWords], func(phrase string) bool {
-		content := false
-		for _, t := range s.tokens[i : i+phraseWords] {
-			content = content || !functionWords[strings.ToLower(t.word)]
-		}
-		return content && strings.Count(p.lower, strings.ToLower(phrase)) == 1
-	})
+	tokens := line[i : i+phraseWords]
+	if slices.ContainsFunc(tokens, func(t textToken) bool { return !plainToken(t) }) {
+		return "", false
+	}
+	phrase, ok := p.run(tokens)
+	if !ok || strings.Count(p.lower, strings.ToLower(phrase)) != 1 {
+		return "", false
+	}
+	return phrase, slices.ContainsFunc(tokens, func(t textToken) bool { return !functionWords[strings.ToLower(t.word)] })
 }
 
-// literal joins tokens with single spaces when that is how the text holds
-// them, each a plain token, and keep accepts the result.
-func (p questionText) literal(tokens []textToken, keep func(string) bool) (string, bool) {
+// run joins tokens with single spaces when that is how the text holds them.
+func (p questionText) run(tokens []textToken) (string, bool) {
 	raws := make([]string, len(tokens))
 	for i, t := range tokens {
-		if !plainToken(t) {
-			return "", false
-		}
 		raws[i] = t.raw
 	}
 	joined := strings.Join(raws, " ")
-	if p.text[tokens[0].start:tokens[len(tokens)-1].end] != joined || !keep(joined) {
-		return "", false
-	}
-	return joined, true
+	return joined, p.text[tokens[0].start:tokens[len(tokens)-1].end] == joined
 }
 
-func answerOf(tokens ...textToken) (string, bool) {
+// window reports whether tokens read to an agent as the parser reads them:
+// single-spaced words, nothing it might count as a word between them, and
+// no stop before the last.
+func (p questionText) window(tokens []textToken) bool {
+	for _, t := range tokens[:len(tokens)-1] {
+		if !innerToken(t) {
+			return false
+		}
+	}
+	_, ok := p.run(tokens)
+	return ok && lastToken(tokens[len(tokens)-1])
+}
+
+func answerOf(tokens ...textToken) string {
 	words := make([]string, len(tokens))
 	for i, t := range tokens {
-		if !answerable(t.word) {
-			return "", false
-		}
 		words[i] = t.word
 	}
-	return strings.Join(words, " "), true
+	return strings.Join(words, " ")
 }
 
-// candidates lists every question of kind the text holds.
+// candidates lists every question of kind the text holds, each a window of
+// one line: the phrase and the words asked for side by side.
 func (p questionText) candidates(kind QuestionKind) []TextQuestion {
 	var out []TextQuestion
-	for si, s := range p.sentences {
-		n := len(s.tokens)
-		for i := range s.tokens {
-			phrase, ok := p.phraseAt(s, i)
+	for _, line := range p.lines {
+		n := len(line)
+		for i := range line {
+			phrase, ok := p.phraseAt(line, i)
 			if !ok {
 				continue
 			}
 			end := i + phraseWords
-			var answer string
+			var window, asked []textToken
 			q := TextQuestion{Kind: kind, Phrase: phrase}
 			switch kind {
 			case AskWordsAfter:
 				if end+2 > n {
 					continue
 				}
-				answer, ok = answerOf(s.tokens[end], s.tokens[end+1])
+				window, asked = line[i:end+2], line[end:end+2]
 			case AskWordsBefore:
 				if i < 2 {
 					continue
 				}
-				answer, ok = answerOf(s.tokens[i-2], s.tokens[i-1])
-			case AskSentenceFirst:
-				if i < 2 {
-					continue
-				}
-				answer, ok = answerOf(s.tokens[0], s.tokens[1])
-			case AskSentenceLast:
-				if end > n-2 {
-					continue
-				}
-				answer, ok = answerOf(s.tokens[n-2], s.tokens[n-1])
-			case AskNextSentence:
-				if si+1 >= len(p.sentences) || p.sentences[si+1].para != s.para || len(p.sentences[si+1].tokens) < 2 {
-					continue
-				}
-				next := p.sentences[si+1].tokens
-				answer, ok = answerOf(next[0], next[1])
+				window, asked = line[i-2:end], line[i-2:i]
 			case AskNumberAfter:
-				if end >= n || !numberWord(s.tokens[end].word) {
+				if end >= n || !numberWord(line[end].word) {
 					continue
 				}
-				answer = s.tokens[end].word
+				window, asked = line[i:end+1], line[end:end+1]
 			case AskBetween:
-				second, found := p.phraseAt(s, end+1)
+				second, found := p.phraseAt(line, end+1)
 				if !found {
 					continue
 				}
-				if _, found = p.literal(s.tokens[i:end+1+phraseWords], func(string) bool { return true }); !found {
-					continue
-				}
 				q.Second = second
-				answer, ok = answerOf(s.tokens[end])
+				window, asked = line[i:end+1+phraseWords], line[end:end+1]
 			}
-			if !ok {
+			// A run ending on a stop word invites completing the phrase past it.
+			if !p.window(window) || len(asked) > 1 && functionWords[strings.ToLower(asked[len(asked)-1].word)] {
 				continue
 			}
-			q.Answer = answer
+			q.Answer = answerOf(asked...)
+			if len(q.Ask()) > maxAskChars {
+				continue
+			}
 			out = append(out, q)
 		}
 	}
