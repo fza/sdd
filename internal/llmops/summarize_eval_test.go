@@ -142,7 +142,7 @@ type judgeVerdict struct {
 func judgeRunner(t *testing.T) llm.Runner {
 	t.Helper()
 	cfg := evalBaseConfig(t)
-	cfg.Provider = model.LLMProvider(getenvOr("SDD_EVAL_JUDGE_PROVIDER", "ollama"))
+	cfg.Provider = getenvOr("SDD_EVAL_JUDGE_PROVIDER", "ollama")
 	cfg.Model = getenvOr("SDD_EVAL_JUDGE_MODEL", "glm-5.3-flash:cloud")
 	cfg.Params = parseEvalParams(t, getenvOr("SDD_EVAL_JUDGE_PARAMS", "think=high"))
 	cfg.Endpoint = getenvOr("SDD_EVAL_JUDGE_ENDPOINT", cfg.Endpoint)
