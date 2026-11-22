@@ -193,7 +193,7 @@ func TestRepositoryTargetsReadTheGivenLocalLayer(t *testing.T) {
 	if err := os.WriteFile(localLayer, []byte("repo_id: example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	targets, err := local.NewRepositoryTargets(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), localLayer, t.TempDir(), t.TempDir())
+	targets, err := local.NewRepositoryTargetsAt(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), localLayer, t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +207,36 @@ func TestRepositoryTargetsReadTheGivenLocalLayer(t *testing.T) {
 	}
 }
 
+// The upstream signature keeps working and places the gate's state under the
+// XDG locations.
+func TestRepositoryTargetsUpstreamSignature(t *testing.T) {
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, t.TempDir())
+	}
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+
+	targets, err := local.NewRepositoryTargets("example", repo.root, filepath.Join(repo.root, "global-config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := targets.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{Branch: "main"})
+	if err != nil {
+		t.Fatalf("the targets should resolve the project: %v", err)
+	}
+	if err := read.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	r.t.Helper()
 	if r.state == "" {
 		r.state = r.t.TempDir()
 	}
-	targets, err := local.NewRepositoryTargets(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
+	targets, err := local.NewRepositoryTargetsAt(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
 	if err != nil {
 		r.t.Fatal(err)
 	}

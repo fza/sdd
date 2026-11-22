@@ -580,7 +580,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, previous *servedP
 	if err != nil {
 		return nil, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, filepath.Dir(sddDir), locations.ConfigPath, layout.LocalLayerFile(), locations.StateRoot, locations.DataRoot)
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, filepath.Dir(sddDir), locations.ConfigPath, layout.LocalLayerFile(), locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -641,7 +641,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
