@@ -22,7 +22,7 @@ func RunEventStoreTests(t *testing.T, factory func(*testing.T) EventStoreFixture
 	t.Helper()
 	base := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
 	events := []sdd.Event{
-		{ID: "e3", Channel: "recheck", Type: "sdd.recheck", Time: base.Add(2 * time.Minute), Writer: "sdd", Subject: sdd.EventSubject{Entries: []string{"20261108-120000-d-cpt-f01", "20261107-115150-d-cpt-0mu"}}, Payload: []byte{0x00, 0xff}},
+		{ID: "e3", Channel: "test", Type: "sdd.test", Time: base.Add(2 * time.Minute), Writer: "sdd", Subject: sdd.EventSubject{Entries: []string{"20261108-120000-d-cpt-f01", "20261107-115150-d-cpt-0mu"}}, Payload: []byte{0x00, 0xff}},
 		{ID: "e1", Channel: "outside", Type: "tracker.comment", Time: base, Writer: "Tracker", Subject: sdd.EventSubject{URI: "https://tracker.example/issues/7"}, Payload: []byte(`{"body":"first"}`)},
 		{ID: "e2", Channel: "outside", Type: "tracker.closed", Time: base.Add(time.Minute), Writer: "Tracker", Subject: sdd.EventSubject{URI: "https://tracker.example/issues/7", Entries: []string{"20261108-120000-d-cpt-f01"}}},
 		{ID: "e0", Channel: "outside", Type: "tracker.comment", Time: base.Add(2 * time.Minute), Writer: "Tracker", Subject: sdd.EventSubject{URI: "https://tracker.example/issues/8"}, Payload: []byte(`{"body":"other"}`)},
@@ -63,9 +63,9 @@ func RunEventStoreTests(t *testing.T, factory func(*testing.T) EventStoreFixture
 			want  []string
 		}{
 			{name: "everything, by time then ID", query: sdd.EventQuery{}, want: []string{"e1", "e2", "e0", "e3"}},
-			{name: "channel", query: sdd.EventQuery{Channels: []string{"recheck"}}, want: []string{"e3"}},
+			{name: "channel", query: sdd.EventQuery{Channels: []string{"test"}}, want: []string{"e3"}},
 			{name: "type", query: sdd.EventQuery{Types: []string{"tracker.comment"}}, want: []string{"e1", "e0"}},
-			{name: "types", query: sdd.EventQuery{Types: []string{"tracker.closed", "sdd.recheck"}}, want: []string{"e2", "e3"}},
+			{name: "types", query: sdd.EventQuery{Types: []string{"tracker.closed", "sdd.test"}}, want: []string{"e2", "e3"}},
 			{name: "subject URI", query: sdd.EventQuery{URI: "https://tracker.example/issues/7"}, want: []string{"e1", "e2"}},
 			{name: "subject entry", query: sdd.EventQuery{Entries: []string{"20261108-120000-d-cpt-f01"}}, want: []string{"e2", "e3"}},
 			{name: "any subject entry", query: sdd.EventQuery{Entries: []string{"20261107-115150-d-cpt-0mu", "20260101-000000-s-tac-xyz"}}, want: []string{"e3"}},

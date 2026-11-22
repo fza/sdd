@@ -9,8 +9,24 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
+	"github.com/networkteam/sdd/internal/segment"
 	"github.com/networkteam/sdd/pkg/local"
 )
+
+func segmentFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if segment.IsName(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
 
 func readerBatch(i int) model.RelevanceBatch {
 	pair := model.NewRelevancePair(fmt.Sprintf("20260101-%02d%02d00-s-tac-can", i/60, i%60), "20260601-000000-d-tac-sub")

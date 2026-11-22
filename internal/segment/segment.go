@@ -38,8 +38,8 @@ var magic = []byte("SDDREC")
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
-// ErrCorrupt reports bytes that do not decode as a segment of the expected
-// kind.
+// ErrCorrupt reports a segment whose bytes do not read as the records its
+// log expects.
 var ErrCorrupt = errors.New("segment is corrupt")
 
 // Encode returns the segment bytes holding records under kind.
@@ -85,16 +85,16 @@ func Decode(data []byte, kind string) ([][]byte, error) {
 	return records, nil
 }
 
-// Name returns a fresh segment file name for a write at the given time. The
-// random part keeps names from two writers apart, so a directory of segments
-// merges in Git without conflicts.
-func Name(at time.Time) (string, error) {
+// Name returns a fresh segment file name with extension ext for a write at
+// the given time. The random part keeps names from two writers apart, so a
+// directory of segments merges in Git without conflicts.
+func Name(at time.Time, ext string) (string, error) {
 	random := make([]byte, randomBytes)
 	_, err := rand.Read(random)
 	if err != nil {
 		return "", fmt.Errorf("drawing a segment name: %w", err)
 	}
-	return at.UTC().Format(nameLayout) + "-" + hex.EncodeToString(random) + Ext, nil
+	return at.UTC().Format(nameLayout) + "-" + hex.EncodeToString(random) + ext, nil
 }
 
 // IsName reports whether a directory entry name is a segment, not a

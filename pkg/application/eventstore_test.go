@@ -15,7 +15,7 @@ import (
 
 func validEvent() sdd.Event {
 	return sdd.Event{
-		ID: "e1", Channel: "recheck", Type: "sdd.recheck", Time: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), Writer: "sdd",
+		ID: "e1", Channel: "test", Type: "sdd.test", Time: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), Writer: "sdd",
 		Subject: sdd.EventSubject{URI: "https://tracker.example/issues/7", Entries: []string{"20261108-120000-d-cpt-f01"}},
 	}
 }
@@ -30,7 +30,7 @@ func TestValidateEvent(t *testing.T) {
 		"ID with a slash":      func(e *sdd.Event) { e.ID = "a/b" },
 		"ID too long":          func(e *sdd.Event) { e.ID = strings.Repeat("a", 129) },
 		"invalid channel":      func(e *sdd.Event) { e.Channel = "../wip" },
-		"type without name":    func(e *sdd.Event) { e.Type = "recheck" },
+		"type without name":    func(e *sdd.Event) { e.Type = "test" },
 		"no time":              func(e *sdd.Event) { e.Time = time.Time{} },
 		"time out of range":    func(e *sdd.Event) { e.Time = time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC) },
 		"no writer":            func(e *sdd.Event) { e.Writer = " " },
@@ -128,7 +128,7 @@ func TestAppendEvents_RefusesTheReservedNamespace(t *testing.T) {
 		Channel: "outside",
 		Events: []sdd.EventDraft{
 			{Type: "tracker.comment", Subject: sdd.EventSubject{URI: "https://tracker.example/issues/7"}},
-			{Type: "sdd.recheck", Subject: sdd.EventSubject{Entries: []string{"20261108-120000-d-cpt-f01"}}},
+			{Type: "sdd.test", Subject: sdd.EventSubject{Entries: []string{"20261108-120000-d-cpt-f01"}}},
 		},
 	})
 	var coded *sdd.ApplicationError
@@ -230,14 +230,14 @@ func TestEventsJSON_RoundTripsByteForByte(t *testing.T) {
 
 func TestImportEventsJSON_RefusesABadLineBeforeAppending(t *testing.T) {
 	cases := map[string]string{
-		"unknown field":    `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"extra":1}`,
-		"both payloads":    `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"payload":{},"payload_base64":"AA=="}`,
-		"bad time":         `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"yesterday","writer":"sdd","subject":{"entries":["x"]}}`,
-		"bad base64":       `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"payload_base64":"!"}`,
-		"invalid envelope": `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"","subject":{"entries":["x"]}}`,
-		"two values":       `{"id":"e9","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]}} {}`,
+		"unknown field":    `{"id":"e9","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"extra":1}`,
+		"both payloads":    `{"id":"e9","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"payload":{},"payload_base64":"AA=="}`,
+		"bad time":         `{"id":"e9","channel":"test","type":"sdd.test","time":"yesterday","writer":"sdd","subject":{"entries":["x"]}}`,
+		"bad base64":       `{"id":"e9","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]},"payload_base64":"!"}`,
+		"invalid envelope": `{"id":"e9","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"","subject":{"entries":["x"]}}`,
+		"two values":       `{"id":"e9","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]}} {}`,
 	}
-	good := `{"id":"e1","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]}}`
+	good := `{"id":"e1","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["x"]}}`
 	for name, bad := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := localadapter.NewMemoryEventStore()

@@ -360,13 +360,8 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 	if len(problems) > 0 {
 		return "", nil, errors.Join(problems...)
 	}
-	var b strings.Builder
 	hunks := make([]DeepHunk, 0, len(spans))
-	last := 0
 	for i, span := range spans {
-		b.WriteString(base[last:span.start])
-		b.WriteString(span.edit.New)
-		last = span.end
 		lineStart := strings.LastIndex(base[:span.start], "\n") + 1
 		lineEnd := span.end + strings.IndexByte(base[span.end:]+"\n", '\n')
 		hunks = append(hunks, DeepHunk{
@@ -374,8 +369,82 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 			Line: strings.Count(base[:span.start], "\n") + 1, Old: base[lineStart:lineEnd], New: base[lineStart:span.start] + span.edit.New + base[span.end:lineEnd],
 		})
 	}
+	proposal, _ := applyDeepSpans(base, spans)
+	return proposal, hunks, nil
+}
+
+// deepWritten is the text one edit wrote into the proposal, by offset.
+type deepWritten struct {
+	start, end int
+	finding    string
+}
+
+// applyDeepSpans returns base with the spans' edits applied, and where each
+// edit's new text stands in the result.
+func applyDeepSpans(base string, spans []deepSpan) (string, []deepWritten) {
+	var b strings.Builder
+	written := make([]deepWritten, 0, len(spans))
+	last := 0
+	for _, span := range spans {
+		b.WriteString(base[last:span.start])
+		written = append(written, deepWritten{start: b.Len(), end: b.Len() + len(span.edit.New), finding: span.finding})
+		b.WriteString(span.edit.New)
+		last = span.end
+	}
 	b.WriteString(base[last:])
-	return b.String(), hunks, nil
+	return b.String(), written
+}
+
+// MergeDeepBody applies the drafter's edits to the body of the proposal base
+// and changes build. Each edit's old text must match that body exactly once
+// as it stands when the edit applies, and must not overlap text a change
+// wrote.
+func MergeDeepBody(base string, changes []DeepChange, edits []DeepEdit) (string, error) {
+	spans, problems := deepEditSpans(base, changes)
+	if len(problems) > 0 {
+		return "", errors.Join(problems...)
+	}
+	proposal, written := applyDeepSpans(base, spans)
+	parsed, err := ParseDeepDraftDocument(proposal)
+	if err != nil {
+		return "", err
+	}
+	if !parsed.HasBody {
+		return "", errors.New("the proposal holds no body")
+	}
+	body := parsed.Body
+	offset := len(proposal) - len(body)
+	for i := range written {
+		written[i].start -= offset
+		written[i].end -= offset
+	}
+	for i, edit := range edits {
+		if edit.Old == "" {
+			return "", fmt.Errorf("pair %d: old text is empty", i+1)
+		}
+		switch n := strings.Count(body, edit.Old); n {
+		case 1:
+		case 0:
+			return "", fmt.Errorf("pair %d: old text is not in the proposal's body, so a hunk may have rewritten it: %q", i+1, edit.Old)
+		default:
+			return "", fmt.Errorf("pair %d: old text matches the proposal's body %d times, it must match exactly once: %q", i+1, n, edit.Old)
+		}
+		start := strings.Index(body, edit.Old)
+		end := start + len(edit.Old)
+		for _, w := range written {
+			if start < w.end && w.start < end {
+				return "", fmt.Errorf("pair %d edits text %s's edit changes: %q", i+1, w.finding, edit.Old)
+			}
+		}
+		body = body[:start] + edit.New + body[end:]
+		for j := range written {
+			if written[j].start >= end {
+				written[j].start += len(edit.New) - len(edit.Old)
+				written[j].end += len(edit.New) - len(edit.Old)
+			}
+		}
+	}
+	return body, nil
 }
 
 // deepEditSpans places every edit over base, sorted by position: each old

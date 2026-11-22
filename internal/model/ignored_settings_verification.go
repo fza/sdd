@@ -1,8 +1,7 @@
 package model
 
 // dialogue.mode is a person's own; verify values outside their closed sets
-// are read past in any layer; events and recheck are set only in the
-// committed config.
+// are read past in any layer; recheck is set only in the committed config.
 func init() {
 	ignoredSettingRules = append(ignoredSettingRules, func(layer BaseConfig, source ConfigValueSource) []IgnoredSetting {
 		var ignored []IgnoredSetting
@@ -19,10 +18,9 @@ func init() {
 		return true
 	})
 	localStrips = append(localStrips, func(cfg *PerRepoConfig) bool {
-		if len(cfg.Events.Channels) == 0 && len(cfg.Recheck.Responsible) == 0 {
+		if len(cfg.Recheck.Responsible) == 0 {
 			return false
 		}
-		cfg.Events = EventsConfig{}
 		cfg.Recheck = RecheckConfig{}
 		return true
 	})

@@ -96,7 +96,7 @@ func ValidateEventChannel(name string) error {
 // naming the writer's namespace.
 func ValidateEventType(name string) error {
 	if len(name) > maxEventName || !eventType.MatchString(name) {
-		return fmt.Errorf("event type %q: want a namespace and a name, dotted lowercase labels such as sdd.recheck", name)
+		return fmt.Errorf("event type %q: want a namespace and a name, dotted lowercase labels such as tracker.issue", name)
 	}
 	return nil
 }
