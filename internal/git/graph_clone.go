@@ -175,7 +175,7 @@ func cloneRemotes(repoID model.RepoID, source model.CloneSource) ([]cloneRemote,
 }
 
 func buildGraphClone(ctx context.Context, dir string, remotes []cloneRemote, cone []string) error {
-	err := runEnv(ctx, pathEnv(nil), "", "init", "--quiet", dir)
+	err := runEnv(ctx, pathEnv(), "", "init", "--quiet", dir)
 	if err != nil {
 		return err
 	}
