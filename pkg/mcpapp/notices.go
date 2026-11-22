@@ -25,4 +25,13 @@ type NoticesField struct {
 	Notices Notices `json:"notices,omitzero" jsonschema:"what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error"`
 }
 
-func (f *NoticesField) setNotices(notices Notices) { f.Notices = notices }
+// setNotices sets each kind notices carries, keeping a kind the handler set
+// itself.
+func (f *NoticesField) setNotices(notices Notices) {
+	dst, src := reflect.ValueOf(&f.Notices).Elem(), reflect.ValueOf(notices)
+	for i := range src.NumField() {
+		if text := src.Field(i).String(); text != "" {
+			dst.Field(i).SetString(text)
+		}
+	}
+}
