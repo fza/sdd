@@ -167,14 +167,15 @@ func TestFilesystemEventStore_CorruptJSONLinesFailLoud(t *testing.T) {
 	valid := `{"id":"a","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["20261109-004506-d-cpt-udz"]}}` + "\n" +
 		`{"id":"b","type":"sdd.recheck","time":"2026-11-09T12:01:00Z","writer":"sdd","subject":{"entries":["20261109-004506-d-cpt-udz"]}}` + "\n"
 	cases := map[string]string{
-		"torn last line":         strings.TrimSuffix(valid, "\n"),
-		"last line cut mid-way":  valid[:len(valid)-40],
-		"empty file":             "",
-		"blank line":             strings.Replace(valid, "\n", "\n\n", 1),
-		"line that is no JSON":   valid + "not json\n",
-		"unknown field":          valid + `{"id":"c","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","writer":"sdd","subject":{"entries":["x"]},"extra":1}` + "\n",
-		"another channel's line": valid + `{"id":"c","channel":"wip","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","writer":"sdd","subject":{"entries":["x"]}}` + "\n",
-		"incomplete envelope":    valid + `{"id":"c","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","subject":{"entries":["x"]}}` + "\n",
+		"torn last line":              strings.TrimSuffix(valid, "\n"),
+		"last line cut mid-way":       valid[:len(valid)-40],
+		"empty file":                  "",
+		"blank line":                  strings.Replace(valid, "\n", "\n\n", 1),
+		"line that is no JSON":        valid + "not json\n",
+		"torn line a newer sdd wrote": valid + `{"id":"c","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","writer":"sdd","subject":{"entries":["x"]},"extra":1}`,
+		"line missing its time":       valid + `{"id":"c","type":"sdd.recheck","writer":"sdd","subject":{"entries":["x"]}}` + "\n",
+		"another channel's line":      valid + `{"id":"c","channel":"wip","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","writer":"sdd","subject":{"entries":["x"]}}` + "\n",
+		"incomplete envelope":         valid + `{"id":"c","type":"sdd.recheck","time":"2026-11-09T12:02:00Z","subject":{"entries":["x"]}}` + "\n",
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -200,6 +201,44 @@ func TestFilesystemEventStore_CorruptJSONLinesFailLoud(t *testing.T) {
 	got, err := newFileEventStore(t, dir).Query(t.Context(), sdd.EventQuery{})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("the well-formed control segment = %v, %v", got, err)
+	}
+}
+
+// A line a newer sdd wrote, with fields this one does not know, reads as its
+// envelope, and compaction keeps the line as it was.
+func TestFilesystemEventStore_ReadsLinesWithFieldsItDoesNotKnow(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "events")
+	newer := `{"id":"a","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["20261109-004506-d-cpt-udz"],"since":"x"},"payload":{"kind":"strain"},"retention":"7d"}`
+	writeRecheckFile(t, dir, "20261109-120000.000000000-0000000000000000.jsonl", []byte(newer+"\n"))
+	store := newFileEventStore(t, dir)
+	known := testEvent("b", "recheck")
+	known.Time = known.Time.Add(time.Minute)
+	err := store.Append(t.Context(), []sdd.Event{known})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := testEvent("a", "recheck")
+	read.Payload = []byte(`{"kind":"strain"}`)
+	got, err := store.Query(t.Context(), sdd.EventQuery{})
+	if err != nil {
+		t.Fatalf("Query should read past fields it does not know: %v", err)
+	}
+	assertEvents(t, got, []sdd.Event{read, known})
+
+	err = store.Compact(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := eventFiles(t, filepath.Join(dir, "recheck"))
+	if len(files) != 1 {
+		t.Fatalf("compaction should merge the two segments, the channel holds %v", files)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "recheck", files[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), newer+"\n") {
+		t.Fatalf("compaction should keep the newer sdd's line byte for byte, the merged segment holds:\n%s", data)
 	}
 }
 

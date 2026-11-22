@@ -128,8 +128,10 @@ func ImportEventsJSON(ctx context.Context, store EventStore, r io.Reader) (int, 
 	return len(fresh), nil
 }
 
+// decodeEventJSON refuses fields it does not know: an import writes what it
+// reads, and would drop them unseen (20260921-174543-d-cpt-tv9).
 func decodeEventJSON(line []byte) (Event, error) {
-	event, err := UnmarshalEventJSON(line)
+	event, err := unmarshalEventJSON(line, true)
 	if err != nil {
 		return Event{}, err
 	}
@@ -140,12 +142,19 @@ func decodeEventJSON(line []byte) (Event, error) {
 	return event, nil
 }
 
-// UnmarshalEventJSON decodes one line as MarshalEventJSON writes it. It
-// refuses unknown fields and a line holding both payload fields; whether the
-// envelope is complete is ValidateEvent's call.
+// UnmarshalEventJSON decodes one line as MarshalEventJSON writes it. Fields
+// it does not know are ignored, so a line a newer sdd wrote still reads
+// (20260921-174543-d-cpt-tv9). It refuses a line holding both payload fields;
+// whether the envelope is complete is ValidateEvent's call.
 func UnmarshalEventJSON(line []byte) (Event, error) {
+	return unmarshalEventJSON(line, false)
+}
+
+func unmarshalEventJSON(line []byte, strict bool) (Event, error) {
 	decoder := json.NewDecoder(bytes.NewReader(line))
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	var decoded eventJSON
 	err := decoder.Decode(&decoded)
 	if err != nil {

@@ -198,11 +198,28 @@ func (s *FilesystemEventStore) readChannel(ctx context.Context, channel string) 
 	if err != nil {
 		return nil, err
 	}
-	return decodeEventFiles(channel, files)
+	stored, err := decodeEventFiles(channel, files)
+	if err != nil {
+		return nil, err
+	}
+	events := make([]app.Event, len(stored))
+	for i, event := range stored {
+		events[i] = event.Event
+	}
+	return events, nil
 }
 
-func decodeEventFiles(channel string, files []logFile) ([]app.Event, error) {
-	var events []app.Event
+// storedEvent is an event with the JSON line that holds it, none for an
+// event of a binary segment. Compaction writes the line back as it is, so
+// fields only a newer sdd knows survive an older one's compaction
+// (20260921-174543-d-cpt-tv9).
+type storedEvent struct {
+	app.Event
+	line []byte
+}
+
+func decodeEventFiles(channel string, files []logFile) ([]storedEvent, error) {
+	var events []storedEvent
 	for _, file := range files {
 		decode := decodeEventLines
 		if filepath.Ext(file.name) == segment.Ext {
@@ -229,20 +246,20 @@ func appendEventLine(lines []byte, event app.Event) ([]byte, error) {
 // decodeEventLines reads a JSON Lines segment. Every line ends in a newline,
 // so a last line without one was cut off and the segment reads as corrupt
 // instead of as fewer events.
-func decodeEventLines(channel string, data []byte) ([]app.Event, error) {
+func decodeEventLines(channel string, data []byte) ([]storedEvent, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%w: empty file", segment.ErrCorrupt)
 	}
 	if data[len(data)-1] != '\n' {
 		return nil, fmt.Errorf("%w: torn last line, no newline at its end", segment.ErrCorrupt)
 	}
-	var events []app.Event
+	var events []storedEvent
 	for number, line := range bytes.Split(data[:len(data)-1], []byte("\n")) {
 		event, err := decodeEventLine(channel, line)
 		if err != nil {
 			return nil, fmt.Errorf("%w: line %d: %w", segment.ErrCorrupt, number+1, err)
 		}
-		events = append(events, event)
+		events = append(events, storedEvent{Event: event, line: line})
 	}
 	return events, nil
 }
@@ -264,18 +281,18 @@ func decodeEventLine(channel string, line []byte) (app.Event, error) {
 }
 
 // decodeEventSegment reads a binary segment an earlier sdd wrote.
-func decodeEventSegment(channel string, data []byte) ([]app.Event, error) {
+func decodeEventSegment(channel string, data []byte) ([]storedEvent, error) {
 	records, err := segment.Decode(data, eventSegmentKind)
 	if err != nil {
 		return nil, err
 	}
-	events := make([]app.Event, 0, len(records))
+	events := make([]storedEvent, 0, len(records))
 	for _, record := range records {
 		event, err := decodeEvent(channel, record)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, event)
+		events = append(events, storedEvent{Event: event})
 	}
 	return events, nil
 }
@@ -314,7 +331,7 @@ func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel strin
 			return nil, err
 		}
 		seen := map[string]bool{}
-		var kept []app.Event
+		var kept []storedEvent
 		for _, event := range events {
 			if seen[event.ID] || settled[event.ID] {
 				continue
@@ -322,10 +339,14 @@ func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel strin
 			seen[event.ID] = true
 			kept = append(kept, event)
 		}
-		slices.SortStableFunc(kept, func(a, b app.Event) int { return a.Time.Compare(b.Time) })
+		slices.SortStableFunc(kept, func(a, b storedEvent) int { return a.Time.Compare(b.Time) })
 		var lines []byte
 		for _, event := range kept {
-			lines, err = appendEventLine(lines, event)
+			if event.line != nil {
+				lines = append(append(lines, event.line...), '\n')
+				continue
+			}
+			lines, err = appendEventLine(lines, event.Event)
 			if err != nil {
 				return nil, err
 			}
