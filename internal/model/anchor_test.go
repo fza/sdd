@@ -2,10 +2,12 @@ package model_test
 
 import (
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -25,8 +27,9 @@ func TestNewAnchorTagIsFourLowercaseBase36Characters(t *testing.T) {
 }
 
 func TestPlaceAnchorStandsBeforeAContentWord(t *testing.T) {
-	text := "The capture `assemble` step reads 20260705-010751-d-tac-dbk and it is done.\n```\ncode words inside\n```\n**Grounding** matters."
-	allowed := map[string]bool{"capture": true, "step": true, "reads": true, "done": true, "Grounding": true, "matters": true}
+	text := "The capture `assemble` step reads 20260705-010751-d-tac-dbk and it is done.\n```\ncode words inside\n```\n**Grounding** matters.\nEvery later capture checks its draft against the graph first."
+	allowed := map[string]bool{"capture": true, "step": true, "reads": true, "done": true, "Grounding": true, "matters": true,
+		"Every": true, "later": true, "checks": true, "draft": true, "against": true, "graph": true, "first": true}
 	seen := map[string]bool{}
 	for seed := range uint64(200) {
 		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
@@ -221,6 +224,82 @@ func TestPlaceAnchorKeepsAnotherTagsWord(t *testing.T) {
 			if word != proof.Word {
 				t.Fatalf("a new tag should not stand between another tag and its word, got %q", rendered)
 			}
+		}
+	}
+}
+
+// plainTokenPattern is a plain word once surrounding punctuation is trimmed:
+// letters, a hyphen only inside.
+var plainTokenPattern = regexp.MustCompile(`^\p{L}+(-\p{L}+)*$`)
+
+func isPlainToken(token string) bool {
+	word := strings.Trim(token, `"'()[]{}*_.,;:!?`)
+	if !plainTokenPattern.MatchString(word) {
+		return false
+	}
+	letters := utf8.RuneCountInString(strings.ReplaceAll(word, "-", ""))
+	return letters >= 3 && letters <= 12
+}
+
+// tagNeighbours reads the token right before tag's mark on its line and the
+// token right after it.
+func tagNeighbours(t *testing.T, rendered, tag string) (before, after string) {
+	t.Helper()
+	mark := model.AnchorMark(tag)
+	i := strings.Index(rendered, mark)
+	if i < 0 {
+		t.Fatalf("no mark %s in %q", mark, rendered)
+	}
+	line := rendered[strings.LastIndex(rendered[:i], "\n")+1 : i]
+	if fields := strings.Fields(line); len(fields) > 0 {
+		before = fields[len(fields)-1]
+	}
+	if fields := strings.Fields(rendered[i+len(mark):]); len(fields) > 0 {
+		after = fields[0]
+	}
+	return before, after
+}
+
+func assertPlainPlaces(t *testing.T, text string) {
+	t.Helper()
+	for seed := range uint64(200) {
+		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a text with content words should take an anchor")
+		}
+		before, after := tagNeighbours(t, anchor.Render(text), "ab12")
+		if !isPlainToken(before) || !isPlainToken(after) {
+			t.Fatalf("both words beside the tag should be plain 3-12 letter words, got %q ⟦ab12⟧ %q", before, after)
+		}
+		for _, c := range anchor.Challenges {
+			if !isPlainToken(c.Prompt) || !isPlainToken(c.Answer) {
+				t.Fatalf("a challenge should name and ask for plain 3-12 letter words, got %+v", c)
+			}
+		}
+	}
+}
+
+func TestPlaceAnchorKeepsAURLAwayFromTheTag(t *testing.T) {
+	assertPlainPlaces(t, "Read the guide at https://docs.example.com/guides/proof-markers/placement/before-plain-words?ref=served today, then confirm the marker placement works.")
+}
+
+func TestPlaceAnchorNeverChoosesAnEntryIDOrAPath(t *testing.T) {
+	assertPlainPlaces(t, "Read 20260705-010751-d-tac-dbk first, then open internal/model/anchor.go quickly and edit ~/.config settings before merging the branch.")
+}
+
+func TestPlaceAnchorStandsBetweenPlainWords(t *testing.T) {
+	assertPlainPlaces(t, "The internationalization layer calls PlaceAnchorIn twice per request, so caching helps 42 workers.\nEach worker reads `sdd view` output and writes summaries of the result.")
+}
+
+func TestPlaceAnchorFallsBackWithoutAPlainPlace(t *testing.T) {
+	for _, text := range []string{"Internationalization", "Internationalization considerations", "## Grounding"} {
+		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(1))
+		if !ok {
+			t.Errorf("a text without a plain place should still take an anchor: %q", text)
+			continue
+		}
+		if word, _ := model.WordAfterAnchor(anchor.Render(text), "ab12"); word == "" || word != anchor.Word {
+			t.Errorf("the fallback tag should stand before a content word, got %q in %q", word, text)
 		}
 	}
 }
