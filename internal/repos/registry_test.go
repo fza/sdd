@@ -210,6 +210,7 @@ func TestUnconnectedClonesRefuseAnUnsureRepoList(t *testing.T) {
 func TestDefaultLocationsNameMixedXDGRoots(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 	t.Setenv("XDG_STATE_HOME", "")
 	loc, err := repos.DefaultLocations()
 	if err != nil {
