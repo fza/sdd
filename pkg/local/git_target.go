@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -42,13 +41,6 @@ func NewGitWorktreeAcquirer(options GitWorktreeAcquirerOptions) (*GitWorktreeAcq
 		return nil, err
 	}
 	return &GitWorktreeAcquirer{project: options.Project, serverCheckout: root, factory: options.Factory, readFactory: options.ReadFactory, runGit: runGitTargetCommand}, nil
-}
-
-func runGitTargetCommand(ctx context.Context, args ...string) ([]byte, error) {
-	if len(args) > 1 && args[0] == "-C" {
-		return git.CommandAt(ctx, args[1], args[2:]...).CombinedOutput()
-	}
-	return exec.CommandContext(ctx, "git", args...).CombinedOutput()
 }
 
 func (a *GitWorktreeAcquirer) Acquire(ctx context.Context, target app.MutationTarget) (*app.AcquiredTarget, error) {
