@@ -150,16 +150,47 @@ func TestUserDialogue_ConcludeCarriesNoDischargeGate(t *testing.T) {
 
 	// The teaching half of leaving threads behind: the agent names what is
 	// open before the offer, since the answer is final.
-	for _, want := range []string{"name each of those threads", "left behind", "stays resumable by its handle"} {
+	for _, want := range []string{"name each of those threads", "left behind", "keeps the session for its handle to resume", "no move in progress is removed"} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the opening serve should teach ending the session; missing %q", want)
 		}
+	}
+	if strings.Contains(serve.Instructions, "a session nobody ended stays resumable") {
+		t.Error("the opening serve should no longer promise that every session nobody ended stays resumable")
 	}
 
 	done := session.Answer(t, serve.Instance, "junction", "conclude", nil, "wrap it up")
 	proctest.RequireStatus(t, done, "completed")
 	if len(done.Missing) > 0 || done.PendingChooser != nil {
 		t.Fatalf("conclude must end without a gate, got missing %v chooser %+v", done.Missing, done.PendingChooser)
+	}
+}
+
+// In every dialogue mode the opening serve has the agent start a new session
+// on its own when the ground topic changes, keep the earlier handle unconcluded
+// and resume it when the topic returns (20261121-223858-d-tac-cg2).
+func TestUserDialogue_ATopicChangeStartsANewSession(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options []proctest.Option
+	}{
+		{name: "guided"},
+		{name: "auto", options: []proctest.Option{proctest.WithAutonomousDialogue()}},
+		{name: "assisted", options: []proctest.Option{proctest.WithAssistedDialogue()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world := proctest.NewWorld(t, tc.options...)
+			_, serve := openShell(t, world, "dlg-topic-"+tc.name)
+			for _, want := range []string{
+				"ground topic of the conversation changed", "Start a new session yourself", "without asking the user",
+				"Keep the earlier session's handle", "leave that session unconcluded", "When its topic returns, resume it",
+				"except the ones you opened", "resume by the handle you were issued",
+			} {
+				if !strings.Contains(serve.Instructions, want) {
+					t.Errorf("the opening serve should teach sessions per topic; missing %q", want)
+				}
+			}
+		})
 	}
 }
 

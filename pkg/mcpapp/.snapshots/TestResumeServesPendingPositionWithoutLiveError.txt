@@ -2,26 +2,6 @@ framing: |
   Local participant: Tester
   Search: text
   Base branch: main (configured default)
-
-  ## Working principles
-
-  ### The way of thinking
-
-  `20260810-190000-s-prc-way` — process fact signal
-
-  How to think while working here, for every participant, human or agent. Comes first because following a structured process is easier than questioning it. These principles keep the process pointed at the work.
-
-  **Goal first.** Start by asking: why are we doing this at all? The answer sits behind the task as given, behind the process, even behind the decisions the graph records. Those are accounts of the goal, not the goal itself. Unclear answer is a strong signal that alignment is missing. Seek dialogue, and capture what it settles so the graph carries the goal more clearly. Design everything around the goal, the process included. Never bend the goal to fit the process.
-
-  **Misfit is a signal.** The process is meant to be adapted per project. Following it takes effort that serves the process, not the work? That friction is information, possibly about a gap in the process itself. Bring it to dialogue so the process can improve. Setting it aside for the work at hand is fine, but that call is the user's.
-
-  **The graph prepares the dialogue; the dialogue moves the graph.** Show up prepared. Research what the graph holds about the intent at hand; bring that material into the dialogue. Contributing without having looked means making things up. Yet the graph is a picture of the project, never the project itself. It is incomplete and possibly outdated: no record keeps pace with everyone and everything involved. In dialogue that picture meets the participants' words and the observable world. Any of these can contradict the others. Surface such contradictions; settling or skipping them is the user's call. Alignment is the aim: participants with each other, the picture with reality. The graph then leaves every dialogue truer than it entered.
-
-  **A correction is a contradiction too:** between the work delivered and what the user actually needed. Same scheme applies, plus one step. Ask why it occurred, not only where. Settle in dialogue what would prevent that kind of error recurring: knowledge to capture, process to adapt, or both.
-
-  **Expect novelty.** Not everything can be grounded in what exists. Looking similar is not fitting; a forced fit becomes a false floor to reason from. What is truly new deserves treatment as new, connected only where connections are real.
-
-  **When work stops resolving, step up.** Corrections pile up, something stays unclear, progress grinds. Instinct says push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
 instructions: |
   Session resumed. Step position and collected evidence persist.
   open_instances carries each running instance's current serve. The session
@@ -42,7 +22,7 @@ instructions: |
   result's follow-up points at without a proof: it serves in full again. Never
   guess a word: a missing or wrong proof costs only the full text.
 
-  (2 framing blocks wait, as this result would run past its size bound: recentMovement, health. Call next with instance i_1 and no report to have them before you act)
+  (3 framing blocks wait, as this result would run past its size bound: principles, recentMovement, health. Call next with instance i_1 and no report to have them before you act)
 open_instances:
   -
     collected:
@@ -109,7 +89,9 @@ open_instances:
 
       **Routing.** An observation to record is a capture, an entry to dig into is an engage. Recommend, never auto-run. A check-in (catch-up) is the natural opener when the user wants to know where things stand. Free dialogue is fine on its own. Ask names a move? Go straight into it. Something crystallizes mid-dialogue? Propose the move and let the user decide. Reads need no move, only the session handle, which every tool carries.
 
-      **Other dialogues are the user's to name.** The shell serves only its own session's open threads, and no tool lists other dialogues. A session's handle is its capability. It reaches you only by issuance or because the user hands it over. User wants to switch to or pick up another dialogue? They supply its handle, and `resume_session` re-serves it. Never guess a handle. Never offer another dialogue's work unasked.
+      **A new topic, a new session.** The ground topic of the conversation changed? Start a new session yourself with `start_session`, without asking the user: session handling is yours. Keep the earlier session's handle and leave that session unconcluded. When its topic returns, resume it with `resume_session`. It still holds its parked moves and what it read, so going back costs less than reading the graph afresh.
+
+      **Other dialogues are the user's to name, except the ones you opened.** The shell serves only its own session's open threads, and no tool lists other dialogues. A session's handle is its capability. It reaches you only by issuance or because the user hands it over. User wants to switch to or pick up another dialogue? They supply its handle, and `resume_session` re-serves it. A session you opened on an earlier topic you resume by the handle you were issued. Never guess a handle. Never offer another dialogue's work unasked.
 
       **Ending is part of the arc.** A dialogue has a deliberate end, and the user has no reason to know that: every other tool is closed, not finished. So when the conversation reaches a natural stopping point (the ask is answered, the work landed, nothing waits on you), offer to wrap the session up. Offer while the user is still here, not after they have gone quiet.
 
@@ -119,7 +101,7 @@ open_instances:
       - One worth dropping is abandoned with a reason.
       - What is open is worth keeping? Keep the session instead of ending it.
 
-      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: a session nobody ended stays resumable by its handle, so stopping without a word costs nothing.
+      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: stopping without a word costs nothing. A move parked or left mid-step keeps the session for its handle to resume. A session with no move in progress is removed once it has gone untouched for the session retention.
 
       **Standing goal.** This junction stays pending while you talk. Nothing here demands an answer, and leaving the session parks or ends it on its own. Answer conclude only when the user deliberately wants to wrap up the session, and only after the check above.
     open_threads: |
@@ -128,7 +110,8 @@ open_instances:
       listed here resumes through next on its instance id; if you have lost that
       handle, resume_session with this session's handle re-serves these moves with
       their current step and schema. Other open dialogues never appear on this
-      surface — they are the user's to name, by handing over a handle.
+      surface — the user names one by handing over its handle, or you resume one
+      you opened on an earlier topic by the handle you were issued.
       - i_2: capture at write
     pending_chooser:
       chooser: junction

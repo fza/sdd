@@ -5,7 +5,8 @@ user in their language as options to continue, never as an obligation. A move
 listed here resumes through next on its instance id; if you have lost that
 handle, resume_session with this session's handle re-serves these moves with
 their current step and schema. Other open dialogues never appear on this
-surface — they are the user's to name, by handing over a handle.`
+surface — the user names one by handing over its handle, or you resume one
+you opened on an earlier topic by the handle you were issued.`
 
 const autonomousOpenThreadsIntro = `This dialogue's own open threads, in continuation order — finish or park
 each before you conclude the session. A move listed here resumes through next

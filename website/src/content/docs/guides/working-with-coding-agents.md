@@ -108,7 +108,9 @@ A sealed draft you never answer waits at its playback, parked. Nothing is writte
 
 ## Wrap up sessions
 
-At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
+At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing. A session with a move in progress, parked or left mid-step, stays resumable by its ID; one without a move in progress goes once it is untouched for `sessions.retention` ([the daily sweep](/sdd/reference/configuration/#the-daily-sweep)).
+
+When the topic of the conversation changes, the agent starts a new session on its own, without asking, and keeps the earlier one open. When the topic returns, it resumes the earlier session by its ID, which still holds its parked moves and what it read.
 
 ## Deep verification needs Claude Code
 
