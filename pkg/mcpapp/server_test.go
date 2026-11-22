@@ -2529,7 +2529,7 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
-// serveSize is what a serve takes of its result: the unproved list rides in
+// serveSize is what a serve takes of its result: the text question rides in
 // the room model.DefaultResultBound.Serve() leaves under the result bound, as notices do.
 func serveSize(t *testing.T, v any) int {
 	t.Helper()
@@ -2541,7 +2541,7 @@ func serveSize(t *testing.T, v any) int {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	delete(fields, "unproved")
+	delete(fields, "question")
 	return jsonSize(t, fields)
 }
 
