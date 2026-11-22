@@ -37,6 +37,7 @@ type FilesystemGraphStore struct {
 	dir            string
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
+	latest         *retainedSnapshot
 	publicationGit *GitFinalizer
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
