@@ -46,10 +46,11 @@ var writingGuideExtraction = extraction{
 }
 
 // runJSONCheck runs a JSON-shaped check and parses its response, falling back
-// to one extraction call when the first response does not parse. A model asked
-// to reason and to emit strict machine-readable output in one breath writes
-// its conclusion into a field that has no value for it, and discarding a whole
-// response over one such field loses every finding that parsed.
+// to one extraction call when the first response does not parse, here or as
+// an llm.MalformedAnswerError from the runner. A model asked to reason and to
+// emit strict machine-readable output in one breath writes its conclusion into
+// a field that has no value for it, and discarding a whole response over one
+// such field loses every finding that parsed.
 //
 // Both responses failing is an error naming both attempts, because a checker
 // that cannot produce its own output shape has stopped working and must not
@@ -58,16 +59,25 @@ var writingGuideExtraction = extraction{
 func runJSONCheck[T any](ctx context.Context, runner llm.Runner, req llm.Request, spec extraction, parse func(string) (T, error)) (T, error) {
 	var zero T
 
+	var firstText string
+	var firstErr error
 	first, err := runner.Run(ctx, req)
-	if err != nil {
+	var malformed *llm.MalformedAnswerError
+	switch {
+	case errors.As(err, &malformed):
+		firstText, firstErr = malformed.Text, err
+	case err != nil:
 		return zero, err
-	}
-	result, firstErr := parse(first.Text)
-	if firstErr == nil {
-		return result, nil
+	default:
+		var result T
+		result, firstErr = parse(first.Text)
+		if firstErr == nil {
+			return result, nil
+		}
+		firstText = first.Text
 	}
 
-	extractReq, err := renderExtractPrompt(spec, first.Text)
+	extractReq, err := renderExtractPrompt(spec, firstText)
 	if err != nil {
 		return zero, fmt.Errorf("rendering extraction prompt after %v: %w", firstErr, err)
 	}
@@ -98,7 +108,8 @@ func reportsNoAnalysis(text string) bool {
 		Analysis *bool             `json:"analysis"`
 		Findings []json.RawMessage `json:"findings"`
 	}
-	if err := json.Unmarshal([]byte(jsonText), &answer); err != nil {
+	err = json.Unmarshal([]byte(jsonText), &answer)
+	if err != nil {
 		return false
 	}
 	if answer.Analysis == nil {

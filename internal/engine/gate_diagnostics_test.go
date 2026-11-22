@@ -184,10 +184,3 @@ func TestGuardBlocking(t *testing.T) {
 		t.Fatal("a predicate error must propagate even where the other disjunct holds")
 	}
 }
-
-type memorySink struct{ events []engine.Event }
-
-func (m *memorySink) Append(e engine.Event) (uint64, error) {
-	m.events = append(m.events, e)
-	return uint64(e.Seq), nil
-}

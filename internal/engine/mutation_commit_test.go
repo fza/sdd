@@ -8,19 +8,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-const briefLoopMachine = `state:
-    brief: {type: text, desc: the answer the command judges}
-steps:
-    - id: ask
-      chooser: agent
-      options:
-          - {choice: send, collect: [brief], call: checkBrief, to: confirm}
-    - id: confirm
-      chooser: agent
-      options:
-          - {choice: again, to: ask}
-          - {choice: finish, to: end(completed)}`
-
 // An operation that commits an effect and then fails keeps the commit: its
 // retry, live or after a replay, continues past the effect instead of
 // repeating it, and the outcome carries the committed field.

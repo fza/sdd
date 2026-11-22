@@ -34,3 +34,10 @@ func TestRequestCombined(t *testing.T) {
 		})
 	}
 }
+
+func TestMalformedAnswerErrorWithoutCauseStillReads(t *testing.T) {
+	err := &llm.MalformedAnswerError{Text: "{}"}
+	if err.Error() == "" {
+		t.Error("a malformed answer without a cause should still say what it is")
+	}
+}

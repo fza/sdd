@@ -211,7 +211,7 @@ func (c *InitCmd) Validate() error {
 		return fmt.Errorf("repo root is required")
 	}
 	settings := model.BaseConfig{Dialogue: model.DialogueConfig{Mode: c.DialogueMode}}
-	if ignored := model.IgnoredSettings(settings, false); len(ignored) > 0 {
+	if ignored := model.IgnoredSettings(settings, model.ConfigSourceLocal); len(ignored) > 0 {
 		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
 	}
 	return nil
