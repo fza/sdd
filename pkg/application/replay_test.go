@@ -231,3 +231,67 @@ func TestAutoCalibrate_AReplayWaitsWhileACheckJudges(t *testing.T) {
 	}
 	eventually(t, "the replay resumes once the check is done", func() bool { return scorer.calibrationCalls() > calls })
 }
+
+// While the server replays past entries, `sdd grounding status` names the
+// replay phase, when it started, the stage the judge holds and the wait
+// for an idle server, and a check's judge shortfall does not blame it.
+func TestGroundingStatus_NamesTheReplayPhase(t *testing.T) {
+	f := newAutoFixture(t)
+	f.proofs = localadapter.NewMemoryProofStore()
+	if _, err := f.application(t, &scriptedScorer{}, false).UpdateGrounding(t.Context(), updateIdentity, gatherProject, sdd.GroundingUpdateRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.stage(t) != model.RecallFloor {
+		t.Fatal("the update should reach the top stage")
+	}
+	scorer := &scriptedScorer{slow: map[string]bool{}}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge, Revision: "r1", Scan: &flaggingScan{}}
+	policy := prefilterPolicy(1)
+	policy.AutoCalibrate, policy.JudgeTimeout, policy.JudgeMinimum = true, 50*time.Millisecond, 5
+	application := f.app(t, policy, &countingEmbeddings{})
+	started := time.Now().Add(-time.Minute)
+	waiting := make(chan struct{}, 1)
+	startAutoCalibrate(t, application, sdd.AutoCalibrationRequest{WaitIdle: func(ctx context.Context) error {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	select {
+	case <-waiting:
+	case <-time.After(90 * time.Second):
+		t.Fatal("no replay came due in time")
+	}
+
+	run, running, err := f.runs.Running(t.Context())
+	if err != nil || !running || run.Started.Before(started) || run.Stage != model.RecallFloor || !run.Waiting {
+		t.Fatalf("run %+v, %v, %v: the replay phase should record its start, its stage and its wait", run, running, err)
+	}
+	status, err := application.GroundingStatus(t.Context(), updateIdentity, gatherProject, sdd.GroundingStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "auto:    running in `sdd serve` since " + run.Started.UTC().Format("2006-01-02 15:04 UTC") + ": replaying past entries and scanning written ones, stage 0.98 held, paused until the server is idle"
+	if !strings.Contains(status.Text, want) {
+		t.Fatalf("status should name the replay phase:\n%s", status.Text)
+	}
+
+	for s := range autoSubjects {
+		scorer.slow[autoSubject(s)] = true
+		for i := range autoRefs {
+			scorer.slow[autoRef(s, i)] = true
+		}
+	}
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A check draft about referenced gaps.", Terms: []string{"Referenced"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "judged too few") {
+		t.Fatalf("the slow judge should leave the check short:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "background calibration is scoring") {
+		t.Fatalf("a replay scores no labelled pair, so it should not explain a shortfall:\n%s", result.Text)
+	}
+}

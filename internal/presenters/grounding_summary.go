@@ -87,15 +87,19 @@ func stageList() string {
 	return strings.Join(stages, ", ")
 }
 
-// autoCalibrationLine says whether the background calibration runs, and
-// how far it came.
+// autoCalibrationLine says whether the background calibration runs, what
+// it does and how far it came.
 func autoCalibrationLine(auto GroundingAuto) string {
 	if run := auto.Run; run != nil {
 		held := "no stage held yet"
 		if run.Stage > 0 {
 			held = fmt.Sprintf("stage %.2f held", run.Stage)
 		}
-		line := fmt.Sprintf("running in `sdd serve` since %s: %s pairs scored, %s", run.Started.UTC().Format("2006-01-02 15:04 UTC"), thousands(run.Scored), held)
+		doing := thousands(run.Scored) + " pairs scored"
+		if run.Replaying {
+			doing = "replaying past entries and scanning written ones"
+		}
+		line := fmt.Sprintf("running in `sdd serve` since %s: %s, %s", run.Started.UTC().Format("2006-01-02 15:04 UTC"), doing, held)
 		if run.Waiting {
 			line += ", paused until the server is idle"
 		}

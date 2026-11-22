@@ -79,3 +79,17 @@ func TestRenderGroundingSummary_RunningInTheBackground(t *testing.T) {
 		t.Fatalf("a running background calibration should not send the reader to update:\n%s", out.String())
 	}
 }
+
+// A run in its replay phase says so in place of the pairs it scored.
+func TestRenderGroundingSummary_ReplayingInTheBackground(t *testing.T) {
+	var out bytes.Buffer
+	presenters.RenderGroundingSummary(&out, model.LabelTally{}, model.CalibrationReport{Judge: "j", PositiveWeight: 200,
+		Thresholds: model.RelevanceThresholds{Valid: true, Stage: 0.98}},
+		"set by `llm_prefilter`", presenters.GroundingAuto{On: true, Run: &model.CalibrationRun{
+			Judge: "j", Started: time.Date(2026, 11, 22, 9, 30, 0, 0, time.UTC), Stage: 0.98, Replaying: true,
+		}})
+	want := "auto:    running in `sdd serve` since 2026-11-22 09:30 UTC: replaying past entries and scanning written ones, stage 0.98 held\n"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("status should name the replay phase:\n%s", out.String())
+	}
+}

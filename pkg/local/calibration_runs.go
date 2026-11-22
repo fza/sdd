@@ -79,11 +79,12 @@ func (r *FilesystemCalibrationRuns) Running(_ context.Context) (sdd.CalibrationR
 }
 
 type calibrationRunWire struct {
-	Judge   string    `json:"judge"`
-	Started time.Time `json:"started"`
-	Stage   float64   `json:"stage,omitempty"`
-	Scored  int       `json:"scored,omitempty"`
-	Waiting bool      `json:"waiting,omitempty"`
+	Judge     string    `json:"judge"`
+	Started   time.Time `json:"started"`
+	Stage     float64   `json:"stage,omitempty"`
+	Scored    int       `json:"scored,omitempty"`
+	Waiting   bool      `json:"waiting,omitempty"`
+	Replaying bool      `json:"replaying,omitempty"`
 }
 
 type fileCalibrationLease struct {

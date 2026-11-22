@@ -38,11 +38,12 @@ func AuditSample(setAside []string, seed string) (audit, kept []string) {
 // CalibrationRun is a background calibration run a status names
 // (application.CalibrationRun).
 type CalibrationRun struct {
-	Judge   string
-	Started time.Time
-	Stage   float64
-	Scored  int
-	Waiting bool
+	Judge     string
+	Started   time.Time
+	Stage     float64
+	Scored    int
+	Waiting   bool
+	Replaying bool
 }
 
 // CodePrecision is how the pairs a judge would serve in full were answered,

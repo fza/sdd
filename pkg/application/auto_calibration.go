@@ -24,14 +24,16 @@ const (
 
 // CalibrationRun is a background calibration run as its process records it:
 // the judge it scores with, when it started, the stage the judge held at the
-// last record, the pairs it scored, and whether it holds its next request
-// until the server is idle.
+// last record, the pairs it scored, whether it holds its next request until
+// the server is idle, and whether it replays past entries and scans written
+// ones (replayRound) in place of scoring labelled pairs.
 type CalibrationRun struct {
-	Judge   string
-	Started time.Time
-	Stage   float64
-	Scored  int
-	Waiting bool
+	Judge     string
+	Started   time.Time
+	Stage     float64
+	Scored    int
+	Waiting   bool
+	Replaying bool
 }
 
 // CalibrationRuns admits one background calibration of a project at a time,
@@ -125,7 +127,7 @@ func (c *autoCalibrator) round(ctx context.Context) time.Duration {
 	}
 	stage := judgeStage(ledger, judge.Judge)
 	if stage == model.RecallFloor || len(ledger.Scorable()) > 0 && len(c.pending(ledger, judge.Judge)) == 0 {
-		return c.replayPhase(ctx, runtime, runs, judge)
+		return c.replayPhase(ctx, runtime, runs, judge, stage)
 	}
 	lease, held, err := runs.Acquire(ctx)
 	if err != nil {
@@ -158,11 +160,11 @@ func (c *autoCalibrator) round(ctx context.Context) time.Duration {
 	return wait
 }
 
-// replayPhase holds the run while it replays past entries and scans
-// written ones (replayRound), each judge call waiting until no live check
-// judges and the server is idle. It returns at once to the next round
-// while there is more to send.
-func (c *autoCalibrator) replayPhase(ctx context.Context, runtime *ProjectRuntime, runs CalibrationRuns, judge Prefilter) time.Duration {
+// replayPhase holds and records the run while it replays past entries and
+// scans written ones (replayRound), each judge call waiting until no live
+// check judges and the server is idle. It returns at once to the next
+// round while there is more to send.
+func (c *autoCalibrator) replayPhase(ctx context.Context, runtime *ProjectRuntime, runs CalibrationRuns, judge Prefilter, stage float64) time.Duration {
 	log := slogutils.FromContext(ctx)
 	lease, held, err := runs.Acquire(ctx)
 	if err != nil {
@@ -177,16 +179,26 @@ func (c *autoCalibrator) replayPhase(ctx context.Context, runtime *ProjectRuntim
 			log.Warn("replay: releasing the run failed", "err", err)
 		}
 	}()
+	run := CalibrationRun{Judge: judge.Judge, Started: c.app.now(), Stage: stage, Replaying: true}
+	record := func(waiting bool) {
+		run.Waiting = waiting
+		if err := lease.Record(context.WithoutCancel(ctx), run); err != nil {
+			log.Warn("replay: recording the run failed", "err", err)
+		}
+	}
+	record(false)
 	wait := func(ctx context.Context) error {
 		if c.request.WaitNoLiveCheck != nil {
 			if err := c.request.WaitNoLiveCheck(ctx); err != nil {
 				return err
 			}
 		}
-		if c.request.WaitIdle != nil {
-			return c.request.WaitIdle(ctx)
+		if c.request.WaitIdle == nil {
+			return ctx.Err()
 		}
-		return ctx.Err()
+		record(true)
+		defer record(false)
+		return c.request.WaitIdle(ctx)
 	}
 	sent, err := c.replayRound(ctx, runtime, judge, wait)
 	switch {
@@ -372,7 +384,7 @@ func (r *ProjectRuntime) judgeState(ctx context.Context, ledger *model.Relevance
 		if err != nil {
 			return model.JudgeState{}, fmt.Errorf("sdd: gather: reading the background calibration: %w", err)
 		}
-		if running && run.Judge == judge {
+		if running && !run.Replaying && run.Judge == judge {
 			state.Calibrating = true
 			state.CalibrationScored, state.CalibrationOf = run.Scored, run.Scored+state.Unscored
 		}
