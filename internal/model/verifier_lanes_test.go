@@ -26,8 +26,8 @@ func slotIDs(slots []model.VerifierSlot) []string {
 
 // The declared targets, the drafter's full reads and every listed entry
 // closing or superseding a target, or closed or superseded by one, are
-// served in full however many there are; a verdict's entries come as
-// briefs; an entry one ref away from a target is listed by title and first
+// served in full however many there are; a verdict's entries come as lines
+// with their summary sentence; an entry one ref away from a target is listed by title and first
 // summary sentence whatever its rank.
 func TestPlaceVerifierReading_ServesThePrioritySetsInFull(t *testing.T) {
 	const (
@@ -75,8 +75,8 @@ func TestPlaceVerifierReading_ServesThePrioritySetsInFull(t *testing.T) {
 			t.Errorf("%s placed %+v, want listed with its first summary sentence as one ref from a target", id, slot)
 		}
 	}
-	if slot := places[verdict]; slot.Place != model.VerifierPlaceBrief || slot.Role != model.VerifierRoleVerdict {
-		t.Errorf("verdict entry placed %+v, want a brief given a verdict", slot)
+	if slot := places[verdict]; slot.Place != model.VerifierPlaceSummary || slot.Role != model.VerifierRoleVerdict {
+		t.Errorf("verdict entry placed %+v, want a line with its summary sentence, given a verdict", slot)
 	}
 	if slot := places[plain]; slot.Role != model.VerifierRoleRanked || slot.Place != model.VerifierPlaceFull {
 		t.Errorf("the one ranked entry placed %+v, want top-ranked in full", slot)

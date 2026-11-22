@@ -1,13 +1,17 @@
 {{ define "ref_meta_consistency" }}
 ## Reference metadata consistency (apply when the entry has refs)
 
-A ref carries a `kind` — why the pointer exists, chosen from what the entry **body** asserts — and an optional `desc` naming that relationship. Both must read consistently with the body. The canonical ref-kind vocabulary follows, rendered from the graph's own ref-kind fact — the same single source agents pull; judge the chosen kind and desc against it.
+A ref carries a `kind` — why the pointer exists, chosen from what the entry **body** asserts — and an optional `desc` naming that relationship. Both must read consistently with the body.{{ if .Rubric }}
+
+To judge whether a ref's kind or desc fits the body, open the ref-kind fact {{ .RefKindFact }} by its ID: it defines each kind, its direction and its neighbouring kinds.
+
+{{ else }} The canonical ref-kind vocabulary follows, rendered from the graph's own ref-kind fact — the same single source agents pull; judge the chosen kind and desc against it.
 
 {{ .RefKindVocabulary }}
 
 **Applicability is not your question.** Each referenced entry carries an `Admissible ref kinds for this target` line and a `Chosen ref kind` verdict, both computed mechanically from the target's kind and derived status. An inapplicable chosen kind is already blocked by a separate mechanical check before your findings are read. Never emit a finding about whether a kind applies, and never recommend a kind outside the listed admissible set.
 
-Two axes remain yours — both read the **body**, which the mechanical check cannot:
+{{ end }}Two axes remain yours — both read the **body**, which the mechanical check cannot:
 
 - **Kind-vs-body** — among the admissible kinds, does the chosen one name the relationship the body actually asserts, or does the body's own wording indicate a different admissible kind?
 - **Desc-vs-body** — what the desc claims about the relationship vs. what the body actually does with the reference. Skip this axis when no ref carries a `desc`.

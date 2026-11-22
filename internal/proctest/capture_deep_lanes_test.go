@@ -233,3 +233,33 @@ func TestCaptureDeep_TheReadingsScoresAreNotPaidAgain(t *testing.T) {
 		t.Fatalf("the verifier scored %v again: a pair the reading holds should not be paid twice", extra)
 	}
 }
+
+// An entry the drafter dismissed reaches the verifier as one line of the
+// closing block, with the judge's score, the verdict's code, its ID, status
+// and title, never as a block of its own (20261122-101625-d-tac-r0s).
+func TestCaptureDeep_ADismissedEntryIsOneLine(t *testing.T) {
+	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "deep-lanes-dismissed", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithRelevance(laneLedger(t, true)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, map[string]any{"body": deepBody, "entryKind": "gap", "topics": []any{"cli/ux"}})
+	session.Gather(t, instance)
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{laneRelevant}, "code": model.VerdictTopicOnly}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	proctest.RequireStep(t, serve, "deepDispatch")
+	reading := verifierReading(t, dispatchDeep(t, world, session, instance))
+
+	if strings.Contains(reading, "ID: "+laneRelevant) {
+		t.Errorf("a dismissed entry should come as no block:\n%s", reading)
+	}
+	group := listedGroup(reading, "Dismissed by the drafter:")
+	want := " drafter: dismissed, " + model.VerdictTopicOnly + "  " + laneRelevant + " {active}  A directive the scorer rates relevant.\n"
+	if !strings.HasPrefix(group, "\n  .") || !strings.HasSuffix(group, want) || strings.Count(group, "\n") != 2 {
+		t.Errorf("the dismissed entry should be one scored line with its verdict's code, status and title, got %q", group)
+	}
+}

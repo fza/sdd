@@ -25,7 +25,7 @@ Genuine supersession is still distinct from augmentation. A directive that *repl
 2. **Grounding**: decision content should be grounded in referenced entries, not introduce commitments from nowhere.
 3. **No scope smuggling**: decision should not contain undiscussed commitments beyond what referenced entries support. (Refining the scope of a ref'd active plan via the augmenting-directive pattern is not scope smuggling; see "Augmenting directives" above.)
 4. {{ template "layer_check" . }}
-{{ if .ProposedKind "plan" }}5. **Acceptance criteria presence** (applies only when proposed entry is `Kind: plan`): plan decisions must include an `## Acceptance criteria` section in description with `- [ ]` checklist items. A missing AC section on a plan decision is a `high` finding. If proposed kind is not `plan`, skip this check.
+{{ if and (not .Rubric) (.ProposedKind "plan") }}5. **Acceptance criteria presence** (applies only when proposed entry is `Kind: plan`): plan decisions must include an `## Acceptance criteria` section in description with `- [ ]` checklist items. A missing AC section on a plan decision is a `high` finding. If proposed kind is not `plan`, skip this check.
 {{ end }}{{ if .ProposedKind "directive" "strategic" "conceptual" }}6. **Directive shape check** (applies only when proposed entry is `Kind: directive` at `stg` or `cpt` layer): a directive commits to a bounded choice. A commitment with no plausible completion criterion (perpetual pull, orientation, stance) reads as an aspiration, not a directive. If proposed kind is not directive, or layer is `tac` / `ops` / `prc`, skip this check.
 {{ end }}{{ if .Settled }}7. **Settled justification** (applies only to a directive with `Intent: settled`): apply "Settled-directive justification" above as a check of its own.
 {{ end }}
@@ -33,7 +33,7 @@ Genuine supersession is still distinct from augmentation. A directive that *repl
 
 Judge ref completeness from body and referenced entries below, not from a graph-wide search. A decision must ref the entries its body reasons from, responds to, or advances. Not every tangentially-related entry needs a ref.
 
-{{ if .ProposedKind "plan" }}- `high`: proposed entry is a plan decision with no `## Acceptance criteria` section in its description.
+{{ if and (not .Rubric) (.ProposedKind "plan") }}- `high`: proposed entry is a plan decision with no `## Acceptance criteria` section in its description.
 {{ end }}- `medium`: body names a specific entry (by ID or unmistakable description) it depends on, but that entry is absent from refs. Or reasoning clearly leans on context no referenced entry supplies, suggesting a motivating entry is missing. Could be intentional scope narrowing.
 - `medium`: the layer clearly mismatches what the body is about (check 4).
 {{ if .Settled }}- `medium` `settled-unjustified`: a settled directive whose body states no reason it needs no follow-up (check 7).

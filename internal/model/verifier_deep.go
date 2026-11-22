@@ -776,13 +776,13 @@ type DeepReadingPage struct {
 // DeepReadingPages pages the deep verifier's reading: the first page opens
 // with lead (the draft, its refs' fit and what pre-flight raised), the pages
 // of rules follow it, and the blocks of first (the declared targets and the
-// entries read in full), then those of rest (the briefs), fill the room the
+// entries read in full), then those of rest (the listed lines), fill the room the
 // pages before them leave, in order: the lead's last page takes blocks until
 // one does not fit, the rules' last page takes the blocks after it. A page
 // holds whole blocks of at most DeepPageChars, the first page of at most
 // DeepFirstPageChars; a lead or block larger than a page runs on across pages
 // of its own, never cut, and a block's last page names it. The blocks of
-// first are served in full, those of rest as briefs.
+// first are served in full, those of rest as lines.
 func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepReadingBlock) []DeepReadingPage {
 	pages := []DeepReadingPage{{Text: lead}}
 	if ServedChars(lead) > DeepFirstPageChars {

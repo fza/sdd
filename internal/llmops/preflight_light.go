@@ -226,7 +226,7 @@ func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, cod
 // entries hold, has no role line.
 func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
 	var b strings.Builder
-	writeDeepFirstLine(&b, e, graph.DerivedStatus(e), true)
+	writeDeepFirstLine(&b, e, graph.DerivedStatus(e))
 	writeReadingContext(&b, graph, e)
 	writeAgentMark(&b, graph, e)
 	if role != model.LightRoleBrief {
@@ -235,25 +235,10 @@ func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole,
 	return b.String()
 }
 
-// DeepReadingBlock is e's block of the deep verifier's reading: its
-// DeepReadingHeader, then its body when full, else its brief. A brief whose
-// closer the reading holds comes short, as its ID, kind, closer, role and
-// brief: the closer's block tells what closed it, and the brief still
-// shows a draft that reopens it.
-func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, code string, full bool, held func(id string) bool) model.DeepReadingBlock {
-	if full {
-		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + DeepReadingHeader(graph, e, role, code) + "\n" + e.Content}
-	}
-	header := DeepReadingHeader(graph, e, role, code)
-	if status := graph.DerivedStatus(e); status.Kind == model.StatusClosedBy && held(status.By) {
-		var b strings.Builder
-		writeDeepFirstLine(&b, e, status, false)
-		if role != model.LightRoleBrief {
-			writeReadingRole(&b, role, code)
-		}
-		header = b.String()
-	}
-	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + header + "\n" + model.EntryBrief(e)}
+// DeepReadingBlock is e's block of the deep verifier's reading, served in
+// full: its DeepReadingHeader, then its body.
+func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, code string) model.DeepReadingBlock {
+	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + DeepReadingHeader(graph, e, role, code) + "\n" + e.Content}
 }
 
 // deepStatus is derivedStatusForPrompt with a done entry's status in one
@@ -265,18 +250,14 @@ func deepStatus(s model.Status) string {
 	return derivedStatusForPrompt(s)
 }
 
-func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status, withTime bool) {
+func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status) {
 	parts, err := model.ParseID(e.ID)
 	if err == nil && model.TypeFromAbbrev[parts.TypeCode] == e.Type && model.LayerFromAbbrev[parts.LayerCode] == e.Layer &&
 		e.Time.Format("20060102-150405") == parts.Timestamp {
 		fmt.Fprintf(b, "ID: %s | kind: %s | Status: %s\n", e.ID, e.Kind, deepStatus(status))
 		return
 	}
-	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s", e.ID, e.Type, e.Kind, e.Layer, deepStatus(status))
-	if withTime {
-		fmt.Fprintf(b, " | Time: %s", e.Time.Format("2006-01-02 15:04:05"))
-	}
-	b.WriteByte('\n')
+	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s | Time: %s\n", e.ID, e.Type, e.Kind, e.Layer, deepStatus(status), e.Time.Format("2006-01-02 15:04:05"))
 }
 
 // writeAgentMark states who decided e when an agent did, and where the
@@ -510,11 +491,16 @@ const DeepListedID = "the entries the reading lists without serving them"
 // DeepListedLine is one entry of the deep reading's closing block: Summary
 // lists it by title and first summary sentence, else by title; Hidden marks
 // it scored below the prefilter's threshold, Implicit dismissed implicitly.
+// Dismissed is the code of the drafter's verdict on the entry; such a line
+// shows the judge's Score (nil: not judged) and the entry's Status.
 type DeepListedLine struct {
-	Entry    *model.Entry
-	Summary  bool
-	Hidden   bool
-	Implicit bool
+	Entry     *model.Entry
+	Summary   bool
+	Hidden    bool
+	Implicit  bool
+	Dismissed string
+	Score     *float64
+	Status    model.Status
 }
 
 // DeepRankingNote heads the verifier's reading with what ranked the entries
@@ -553,16 +539,21 @@ func DeepRankingNote(sources model.RankingSources, judge string, widened bool) s
 }
 
 // DeepListedBlock lists the entries the reading does not serve, one line
-// each in groups: the implicit dismissals, then those below the prefilter's
-// threshold, then the others, each under its heading and in reading order.
+// each in groups: the drafter's dismissals, the implicit dismissals, those
+// below the prefilter's threshold, then the others, each under its heading
+// and in reading order.
 // It ends with the count of those past a listing ceiling. Every listed and
 // counted line of the reading is rendered here.
 func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the higher-ranked ones with the first sentence of their summary, in rank order within each group. An entry below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
-	var implicit, hidden, other []string
+	fmt.Fprintf(&b, "---\n\n## Listed, not served (%d)\n\nThe reading ranks these below the entries it serves: one line each, ID and title, the higher-ranked ones with the first sentence of their summary, in rank order within each group. An entry the drafter dismissed carries the judge's score (`?`: not judged), the code of the drafter's verdict and its status: open it by ID to audit the dismissal. An entry below the prefilter's threshold is one its calibrated judge scored below the threshold its recall bound holds at. Open any of them with show when it bears on the draft; a finding may rest on it.\n", len(lines))
+	var dismissed, implicit, hidden, other []string
 	for _, line := range lines {
 		e := line.Entry
+		if line.Dismissed != "" {
+			dismissed = append(dismissed, deepDismissedLine(line))
+			continue
+		}
 		text := model.EntryBrief(e)
 		if sentence := e.FirstSummarySentence(); line.Summary && e.Title != "" && sentence != "" {
 			text = e.Title + ": " + sentence
@@ -577,12 +568,13 @@ func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock
 			other = append(other, text)
 		}
 	}
-	headed := len(implicit) > 0 || len(hidden) > 0
+	headed := len(dismissed) > 0 || len(implicit) > 0 || len(hidden) > 0
 	var groups []string
 	for _, group := range []struct {
 		heading string
 		lines   []string
 	}{
+		{"Dismissed by the drafter:", dismissed},
 		{"Shown to the capture and left unanswered (" + string(model.LightRoleImplicit) + "):", implicit},
 		{"Below the prefilter's threshold:", hidden},
 		{"Other listed entries:", other},
@@ -603,4 +595,28 @@ func DeepListedBlock(lines []DeepListedLine, counted int) model.DeepReadingBlock
 		b.WriteString("\n" + strings.Join(groups, "\n\n"))
 	}
 	return model.DeepReadingBlock{ID: DeepListedID, Text: b.String()}
+}
+
+// deepDismissedLine is an entry the drafter dismissed, in the line format of
+// the verifier's start (20261121-223938-d-tac-rqi): the score column, the
+// drafter's verdict, ID, status and title, then the first summary sentence.
+func deepDismissedLine(line DeepListedLine) string {
+	e := line.Entry
+	score := "?  "
+	if line.Score != nil {
+		score = strings.TrimPrefix(fmt.Sprintf("%.2f", *line.Score), "0")
+	}
+	status := ""
+	if line.Status.Kind != model.StatusNone {
+		status = " {" + string(line.Status.Kind)
+		if line.Status.By != "" {
+			status += " " + line.Status.By
+		}
+		status += "}"
+	}
+	text := fmt.Sprintf("  %s drafter: dismissed, %s  %s%s  %s", score, line.Dismissed, e.ID, status, e.ListingTitle())
+	if sentence := e.FirstSummarySentence(); e.Title != "" && sentence != "" {
+		text += "\n      " + sentence
+	}
+	return text
 }

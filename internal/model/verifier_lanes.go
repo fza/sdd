@@ -44,8 +44,6 @@ type VerifierPlace int
 const (
 	// VerifierPlaceFull serves the entry's block with its body.
 	VerifierPlaceFull VerifierPlace = iota
-	// VerifierPlaceBrief serves the entry's block with its brief.
-	VerifierPlaceBrief
 	// VerifierPlaceSummary lists the entry by title and first summary
 	// sentence.
 	VerifierPlaceSummary
@@ -92,7 +90,8 @@ func (r VerifierReading) tiers() (top, summary int) {
 // PlaceVerifierReading orders the deep verifier's reading and places each
 // entry. Served in full, however many: the declared targets, the entries
 // the drafter read in full, and every listed lifecycle neighbour of a target
-// (verifierNeighbours). Then the entries given a verdict, as briefs, and the
+// (verifierNeighbours). Then the entries given a verdict, each a line with
+// its title and first summary sentence (20261122-101625-d-tac-r0s), and the
 // listed entries one ref from a target by title and first summary sentence,
 // up to DeepHopListed by rank. Rank is falling score, unscored entries after
 // the scored by falling similarity, then in listed order, done entries below
@@ -128,7 +127,7 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 	}
 	for _, id := range reading.Listed {
 		if slices.Contains(reading.Verdicts, id) {
-			place(id, VerifierRoleVerdict, VerifierPlaceBrief)
+			place(id, VerifierRoleVerdict, VerifierPlaceSummary)
 		}
 	}
 	done := func(id string) bool { return g.ByID[id].Kind == KindDone }
