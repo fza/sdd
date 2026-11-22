@@ -328,11 +328,6 @@ type LLMConfig struct {
 	Retry RetryConfig `yaml:"retry,omitempty"`
 }
 
-// LLMProviders lists the values llm.provider takes.
-func LLMProviders() []string {
-	return []string{DefaultLLMProvider, "anthropic", "openai", "ollama"}
-}
-
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
 // zero-valued field falls back to the corresponding DefaultRetry* constant via
 // Resolved, so an absent retry block yields the baked defaults.
