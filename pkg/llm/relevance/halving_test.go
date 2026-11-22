@@ -432,6 +432,64 @@ func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 	}
 }
 
+var errTooManyCalls = errors.New("too many calls")
+
+// cappedScorer fails every call after its first max, so a request that
+// would not end does.
+type cappedScorer struct {
+	relevance.Scorer
+	calls, max int
+}
+
+func (c *cappedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	c.calls++
+	if c.calls > c.max {
+		return relevance.Result{}, errTooManyCalls
+	}
+	return c.Scorer.Score(ctx, request)
+}
+
+// A scorer without a batch bound takes a request in one call, the far
+// candidates beside its own, as it does without Halving; a call that breaks
+// halves from the request's size.
+func TestHalving_TakesAnUnboundedScorersRequestInOneCall(t *testing.T) {
+	cases := []struct {
+		name string
+		// limit is the largest batch the inner scorer answers.
+		limit int
+		far   int
+		calls []int
+		// after is the size remembered once the request returned, 0 for
+		// none.
+		after int
+	}{
+		{"a request", 100, 0, []int{40}, 0},
+		{"a request with far candidates", 100, 3, []int{43}, 0},
+		{"a request whose call breaks", 10, 0, []int{40, 20, 10, 10, 10, 10}, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &brittleScorer{limit: tc.limit, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+			sizes := &memorySizes{}
+			scorer := relevance.Halving(&cappedScorer{Scorer: inner, max: 10}, sizes, halvingKey)
+			request := relevance.Request{Subject: "draft", Candidates: manyCandidates(40)}
+			result, err := relevance.ScoreWithFar(t.Context(), scorer, request, farCandidates(make([]int, tc.far)...))
+			if err != nil {
+				t.Fatalf("the request should end with its scores, got %v (calls of %v)", err, inner.sizes())
+			}
+			if err := relevance.CheckResult(request, result); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(inner.sizes(), tc.calls) {
+				t.Errorf("calls of %v, want %v", inner.sizes(), tc.calls)
+			}
+			if size, _ := sizes.Size(halvingKey); size != tc.after {
+				t.Errorf("remembered %d, want %d", size, tc.after)
+			}
+		})
+	}
+}
+
 // Raise lands only on the size still held.
 func TestMemoryBatchSizes_RaisesTheSizeStillHeld(t *testing.T) {
 	cases := []struct {

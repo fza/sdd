@@ -61,7 +61,8 @@ func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
 }
 
 // Halving scores a request in batches of the size sizes holds for key, the
-// inner MaxBatch while it holds none. A batch whose answer breaks
+// inner MaxBatch while it holds none, and in one call while neither bounds
+// it. A batch whose answer breaks
 // (llm.MalformedAnswerError), lacks a score (CheckResult) or runs out the
 // inner call's deadline while ctx lives is scored again in halves, down to
 // one candidate per call, and the half is remembered, so the next request
@@ -124,7 +125,9 @@ func (h halving) split(ctx context.Context, request Request, far []Candidate, si
 	out := Result{Scores: make([]float64, 0, len(request.Candidates))}
 	var room int
 	for start := 0; start < len(request.Candidates); start += room {
-		size = min(size, h.MaxBatch())
+		if limit := h.MaxBatch(); limit > 0 {
+			size = min(size, limit)
+		}
 		room = size
 		if len(far) > 0 {
 			room = max(size-len(far), 1)
