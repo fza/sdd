@@ -15,10 +15,6 @@ cancellation:
     project: test
     source: base
 framing: |
-  Local participant: Tester
-  Search: text
-  Base branch: main (configured default)
-
   ## Working principles
 
   ### The way of thinking

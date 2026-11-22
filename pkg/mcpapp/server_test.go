@@ -2592,16 +2592,17 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 		t.Fatalf("the identical unit should point at what the agent holds, got %q", same.Instructions)
 	}
 
-	// A fresh subagent sharing the handle saw no question and answers lost.
+	// A fresh subagent sharing the handle saw no question and answers lost;
+	// caller marks it as a caller the session has not served the framing.
 	subagent := newAgentMemory()
 	csSub := connectAs(t, env.srv, subagent)
 	var fresh mcpserver.ServeResult
-	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
+	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "caller": "subagent"}, &fresh)
 	if subagent.answers[0] != "lost" {
 		t.Fatalf("precondition: a fresh subagent answers lost, got %q", subagent.answers[0])
 	}
 	if !strings.Contains(fresh.Framing, "## Working principles") || !strings.Contains(fresh.Instructions, "Existing topics:") {
-		t.Fatalf("a fresh subagent should get the framing and the unit in full, got framing %q", fresh.Framing)
+		t.Fatalf("a fresh subagent marked by caller should get the framing and the unit in full, got framing %q", fresh.Framing)
 	}
 	requireFullReportSchema(t, "capture of a fresh subagent", fresh.ReportSchema)
 	if strings.Contains(fresh.Instructions, "(held: ") {
@@ -2610,9 +2611,14 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 
 	// The subagent reorients: everything serves in full again.
 	var resumed mcpserver.ResumeSessionResult
-	call(t, csSub, "resume_session", map[string]any{"session": door.Session}, &resumed)
-	if resumed.Framing == "" {
-		t.Fatal("a reorientation serves the framing in full")
+	call(t, csSub, "resume_session", map[string]any{"session": door.Session, "caller": "subagent"}, &resumed)
+	// The three open captures may leave the framing no room: it then waits,
+	// named, rather than stubbed.
+	if resumed.Framing == "" && !strings.Contains(resumed.Instructions, "framing blocks wait") {
+		t.Fatalf("a reorientation serves the framing in full, or names it as waiting:\n%s", resumed.Instructions)
+	}
+	if strings.Contains(resumed.Framing, "(held: ") {
+		t.Fatalf("a reorientation holds no framing block, got %q", resumed.Framing)
 	}
 	resumedCapture := openServe(t, resumed, "capture")
 	requireFullReportSchema(t, "resumed capture", resumedCapture.ReportSchema)
@@ -2676,8 +2682,8 @@ func TestCompactionAnswersLost(t *testing.T) {
 	agent.forget = true
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if second.Framing == "" || !strings.Contains(second.Instructions, "Existing topics:") {
-		t.Fatalf("an agent answering lost should get the framing and the unit in full, got %q", second.Instructions)
+	if second.Framing != "" || !strings.Contains(second.Instructions, "Existing topics:") {
+		t.Fatalf("an agent answering lost should get the unit in full and no unchanged framing block, got framing %q and %q", second.Framing, second.Instructions)
 	}
 	requireFullReportSchema(t, "capture after a lost answer", second.ReportSchema)
 }

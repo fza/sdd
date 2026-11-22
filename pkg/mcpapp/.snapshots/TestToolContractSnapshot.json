@@ -8,6 +8,10 @@
           "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
           "type": "string"
         },
+        "caller": {
+          "description": "set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller",
+          "type": "string"
+        },
         "instance": {
           "description": "instance handle to abandon (a move); pass session too, naming the session the move belongs to",
           "type": "string"
@@ -146,6 +150,10 @@
           "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
           "type": "string"
         },
+        "caller": {
+          "description": "set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller",
+          "type": "string"
+        },
         "cancel_ref": {
           "description": "exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref",
           "minimum": 0,
@@ -199,6 +207,10 @@
       "properties": {
         "answer": {
           "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
+        "caller": {
+          "description": "set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller",
           "type": "string"
         },
         "instance": {
@@ -297,6 +309,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "caller": {
+          "description": "set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller",
+          "type": "string"
+        },
         "session": {
           "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds",
           "type": "string"
@@ -519,6 +535,10 @@
       "properties": {
         "answer": {
           "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
+        "caller": {
+          "description": "set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller",
           "type": "string"
         },
         "canonical": {

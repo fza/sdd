@@ -292,7 +292,7 @@ type Session struct {
 	questions []askedQuestion
 	asked     map[string]bool
 	// changed folds the content hash each piece that serves once per change
-	// last served under its name.
+	// last served under its name, per caller (changedKey).
 	changed map[string]string
 	// deferred folds the deferral events: per instance whose serve left parts
 	// waiting, the pieces it sent, each by the step that sent it

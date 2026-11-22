@@ -95,30 +95,33 @@ func carried(ids []string, text string) []string {
 	return in
 }
 
-// composeFraming serves the framing blocks per block: a graph write that
-// changes one block (the recent-moves lane) re-serves that block alone, never
-// the stable aspirations or directives (I6). A block the call holds is left
-// out. A block holds the entries it carries in full; a block is never cut for
-// them. Only the first keep blocks serve; the rest wait, as instruction lanes
-// do past the result bound.
+// composeFraming serves each framing block to the call's caller once per
+// change of its content, with no proof asked (20261121-233256-d-tac-mm2): a
+// graph write that changes one block (the recent-moves lane) re-serves that
+// block alone, never the stable aspirations or directives (I6), and a caller
+// the session has not served gets every block. A block is never cut for the
+// entries it carries. Of the blocks due, the first keep serve; the rest
+// wait, as instruction lanes do past the result bound.
 func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
 	var (
 		result framingServed
 		served []string
 	)
 	for _, block := range blocks {
-		if block.Text == "" {
+		name := "framing " + block.Name
+		if block.Text == "" || !ss.root.OncePerChangeDue(name, block.Text) {
 			continue
 		}
 		result.blocks++
 		if result.blocks > keep {
+			// A block a resume owed in full that waits serves on the next
+			// call, even where the caller was sent it before.
+			ss.root.ForgetOncePerChange(name)
 			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
-		piece := ss.root.ServeText("framing "+block.Name, block.Text, ss.root.FramingFullIDs(block.Text))
-		if !piece.Held {
-			served = append(served, piece.Text)
-		}
+		ss.root.ServeOncePerChange(name, block.Text)
+		served = append(served, block.Text)
 	}
 	result.fresh = len(served)
 	result.text = strings.Join(served, "\n\n")
@@ -126,7 +129,7 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framin
 }
 
 // framingServed is a composed framing: its text, the blocks that wait, how
-// many blocks it served in full and how many the framing has.
+// many blocks it served in full and how many it had to serve.
 type framingServed struct {
 	text          string
 	waiting       []string

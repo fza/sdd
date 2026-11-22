@@ -112,8 +112,9 @@ func TestTextQuestionAnswerIsRequired(t *testing.T) {
 	}
 }
 
-// A right answer serves the repeated step text, report schema and framing
-// short; a wrong answer or lost serves them in full.
+// A right answer serves the repeated step text and report schema short; a
+// wrong answer or lost serves them in full. The framing goes to the caller
+// once per change whatever the answer (20261121-233256-d-tac-mm2).
 func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -143,8 +144,11 @@ func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 				return
 			}
 			requireFullReportSchema(t, "capture after "+tc.name, second.ReportSchema)
-			if !strings.Contains(second.Instructions, "Existing topics:") || !strings.Contains(second.Framing, "## Working principles") {
-				t.Fatalf("%s should serve the step text and framing in full, got %.400q", tc.name, second.Instructions)
+			if !strings.Contains(second.Instructions, "Existing topics:") {
+				t.Fatalf("%s should serve the step text in full, got %.400q", tc.name, second.Instructions)
+			}
+			if strings.Contains(second.Framing, "## Working principles") {
+				t.Fatalf("%s should not serve the unchanged framing again, got %.400q", tc.name, second.Framing)
 			}
 		})
 	}

@@ -50,7 +50,14 @@ type ProjectResult struct {
 // opened, the accessible projects are listed instead.
 const StatusProjectRequired = "project-required"
 
+// CallerMark tells a second caller on a session from the first, so each gets
+// the session framing once (20261121-233256-d-tac-mm2).
+type CallerMark struct {
+	Caller string `json:"caller,omitempty" jsonschema:"set it only on a session another agent already works on, such as a subagent handed its parent's handle: a short name of your own, the same on every call. sdd sends each caller the session framing once and again when it changes; a call without caller is the session's first caller"`
+}
+
 type StartProcedureArgs struct {
+	CallerMark
 	Answering
 	Session   string         `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Canonical string         `json:"canonical" jsonschema:"the procedure to start, by its stable name (e.g. capture)"`
@@ -61,6 +68,7 @@ type StartProcedureArgs struct {
 }
 
 type NextArgs struct {
+	CallerMark
 	Answering
 	RetryRef  uint64 `json:"retry_ref,omitempty" jsonschema:"exact retry reference from a failed operation; mutually exclusive with report and cancel_ref"`
 	CancelRef uint64 `json:"cancel_ref,omitempty" jsonschema:"exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref"`
@@ -73,6 +81,7 @@ type NextArgs struct {
 }
 
 type AbandonArgs struct {
+	CallerMark
 	Answering
 	Instance string `json:"instance,omitempty" jsonschema:"instance handle to abandon (a move); pass session too, naming the session the move belongs to"`
 	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing"`
@@ -93,6 +102,7 @@ type AbandonResult struct {
 }
 
 type ParkArgs struct {
+	CallerMark
 	Answering
 	Session  string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Instance string `json:"instance" jsonschema:"running move instance to park"`
@@ -195,7 +205,7 @@ type ServeResult struct {
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"recorded cancellation: return position and what the operation reports it left"`
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
 	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID)"`
-	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it"`
+	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants): a block goes to each caller once and again when it changes, no answer needed; resume_session sends every block again"`
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
@@ -245,6 +255,7 @@ type BaseServe struct {
 // --- sessions & staging ----------------------------------------------------
 
 type ResumeSessionArgs struct {
+	CallerMark
 	Session string `json:"session" jsonschema:"the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds"`
 }
 
@@ -703,6 +714,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, ServeResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	identity := s.requestIdentity(req)
 	serve, err := ss.root.Start(ctx, identity, sdd.WorkflowStartRequest{
 		Canonical: args.Canonical, Params: args.Params, Label: args.Label, Parent: args.Parent,
@@ -721,6 +733,7 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		return nil, ServeResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	if args.Instance == "" {
 		return nil, ServeResult{}, toolError("instance is required")
 	}
@@ -751,6 +764,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		return nil, AbandonResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	identity := s.requestIdentity(req)
 	result, err := ss.root.Abandon(ctx, identity, args.Instance, args.Reason)
 	if err != nil {
@@ -786,6 +800,7 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 		return nil, ParkResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	if args.Instance == "" {
 		return nil, ParkResult{}, toolError("instance is required")
 	}
@@ -860,6 +875,7 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
+	ss.root.SetCaller(args.Caller)
 	askQuestion(ctx)
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err

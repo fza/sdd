@@ -75,6 +75,6 @@ q <text name>: 2 words after "<a phrase>"? | lost
 Your next call that advances the session (start_procedure, next, park,
 abandon) must answer it in answer: the words it asks for, looked up in that
 text, or lost when you no longer see the text or saw no question. Never
-guess. A right answer serves repeated instructions, report schemas and framing
-short; lost or a wrong answer serves them in full. List in reread the name of
-a piece you no longer see: it serves in full again.`
+guess. A right answer serves repeated instructions and report schemas short;
+lost or a wrong answer serves them in full. List in reread the name of a
+piece you no longer see: it serves in full again.`
