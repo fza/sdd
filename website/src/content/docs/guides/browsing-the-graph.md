@@ -18,7 +18,7 @@ This file holds the entry `20261107-123911-d-tac-ims`. The ID reads as date and 
 - type: `s` for a signal, something noticed, or `d` for a decision, something committed to
 - layer: `stg` strategic, `cpt` conceptual, `tac` tactical, `ops` operational, `prc` process
 
-The file starts with YAML frontmatter: type, kind, layer, confidence, references to other entries, participants, topics and the one-line summary. The entry text follows. An entry with attachments has a directory of the same name next to its file. `.sdd/graph/wip/` holds the markers for work in progress.
+The file starts with YAML frontmatter: type, kind, layer, confidence, references to other entries, participants, topics and the one-line summary. The entry text follows. A frontmatter key sdd does not know, for example one a newer sdd version or another tool wrote, stays in the file: `sdd summarize`, `sdd rewrite` and `sdd lint --fix` write it back after their own keys. An entry with attachments has a directory of the same name next to its file. `.sdd/graph/wip/` holds the markers for work in progress.
 
 You can read the files in an editor or on your git host. Do not edit them. An entry never changes after it is written; a later entry closes or supersedes it. The file also does not say whether the entry is still open. For that, use `sdd show`.
 

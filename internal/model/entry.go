@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -297,6 +298,9 @@ type Entry struct {
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Summary     string    // LLM-generated summary: this entry + direct relationships
 	Warnings    []Warning // validation issues found during graph construction
+	// UnknownFields holds the frontmatter keys this binary does not read, in
+	// file order, so every rewrite of the entry writes them back.
+	UnknownFields []FrontmatterField
 	// Embedded marks a base entry compiled into the sdd binary (base
 	// procedures) rather than loaded from the graph directory. Set by the
 	// loader, never serialized. Write-side surfaces (summary regeneration,
@@ -448,14 +452,46 @@ type frontmatter struct {
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
+
+	unknown []FrontmatterField
 }
 
-// UnmarshalYAML distinguishes an absent index from an explicit null.
+// FrontmatterField is one frontmatter key with its value as parsed.
+type FrontmatterField struct {
+	Key   string
+	Value *yaml.Node
+}
+
+// knownFrontmatterKeys also lists keys earlier sdd versions wrote, so a
+// rewrite drops them: summary_hash (d-tac-y7l).
+var knownFrontmatterKeys = func() map[string]bool {
+	known := map[string]bool{"summary_hash": true}
+	t := reflect.TypeFor[frontmatter]()
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if name != "" && name != "-" {
+			known[name] = true
+		}
+	}
+	return known
+}()
+
+// UnmarshalYAML distinguishes an absent index from an explicit null and keeps
+// the keys no field reads.
 func (f *frontmatter) UnmarshalYAML(node *yaml.Node) error {
+	var unknown []FrontmatterField
 	if node.Kind == yaml.MappingNode {
-		for offset := 0; offset < len(node.Content); offset += 2 {
-			if node.Content[offset].Value == "index" && yamlNodeIsNull(node.Content[offset+1]) {
+		for offset := 0; offset+1 < len(node.Content); offset += 2 {
+			key, value := node.Content[offset], node.Content[offset+1]
+			if key.Value == "index" && yamlNodeIsNull(value) {
 				return fmt.Errorf("index cannot be null; omit it when the entry is not indexed")
+			}
+			if !knownFrontmatterKeys[key.Value] {
+				value, err := detachedYAML(value)
+				if err != nil {
+					return fmt.Errorf("frontmatter key %q: %w", key.Value, err)
+				}
+				unknown = append(unknown, FrontmatterField{Key: key.Value, Value: value})
 			}
 		}
 	}
@@ -465,7 +501,37 @@ func (f *frontmatter) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	*f = frontmatter(decoded)
+	f.unknown = unknown
 	return nil
+}
+
+// detachedYAML returns node unchanged unless it holds an alias, whose anchor
+// may sit under a key written elsewhere; such a value is resolved into a copy.
+func detachedYAML(node *yaml.Node) (*yaml.Node, error) {
+	if !yamlNodeHasAlias(node) {
+		return node, nil
+	}
+	var value any
+	if err := node.Decode(&value); err != nil {
+		return nil, err
+	}
+	var resolved yaml.Node
+	if err := resolved.Encode(value); err != nil {
+		return nil, err
+	}
+	return &resolved, nil
+}
+
+func yamlNodeHasAlias(node *yaml.Node) bool {
+	if node.Kind == yaml.AliasNode {
+		return true
+	}
+	for _, child := range node.Content {
+		if yamlNodeHasAlias(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func yamlNodeIsNull(node *yaml.Node) bool {
@@ -537,6 +603,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Content:      strings.TrimSpace(body),
 		Time:         idParts.Time,
 	}
+	e.UnknownFields = fm.unknown
 
 	// Route topics:[] based on kind. Annotation entries keep the rich shape
 	// (label, optional members); everything else flattens to plain labels and
@@ -804,7 +871,22 @@ func FormatFrontmatter(e *Entry) string {
 		fm.ServeBudget = e.ProcedureSpec.ServeBudget
 	}
 
-	data, _ := yaml.Marshal(&fm)
+	if len(e.UnknownFields) == 0 {
+		data, _ := yaml.Marshal(&fm)
+		return "---\n" + string(data) + "---\n"
+	}
+	var doc yaml.Node
+	if err := doc.Encode(&fm); err != nil {
+		panic(fmt.Sprintf("encoding frontmatter of %s: %v", e.ID, err))
+	}
+	for _, field := range e.UnknownFields {
+		key := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: field.Key}
+		doc.Content = append(doc.Content, key, field.Value)
+	}
+	data, err := yaml.Marshal(&doc)
+	if err != nil {
+		panic(fmt.Sprintf("encoding frontmatter of %s: %v", e.ID, err))
+	}
 	return "---\n" + string(data) + "---\n"
 }
 
