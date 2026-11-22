@@ -11,9 +11,31 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// Every response that starts, resumes or advances a session carries one
-// question in its question field, no question repeats within the session,
-// and no result carries a mark placed for the check or a field of a proof.
+// lastKey returns the last key of a JSON object as its text carries it.
+func lastKey(t *testing.T, text string) string {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(text))
+	if _, err := dec.Token(); err != nil {
+		t.Fatal(err)
+	}
+	var last string
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		last, _ = key.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return last
+}
+
+// Every response that starts, resumes or advances a session ends with one
+// question, no question repeats within the session, and no result carries a
+// mark placed for the check or a field of the anchor proof.
 func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
@@ -22,6 +44,9 @@ func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	check := func(tool string, res *mcp.CallToolResult) {
 		t.Helper()
 		text := contentText(res)
+		if lastKey(t, text) != "question" {
+			t.Fatalf("%s: the response should end with its question, got %.300s", tool, text)
+		}
 		var fields struct {
 			Question string `json:"question"`
 		}
