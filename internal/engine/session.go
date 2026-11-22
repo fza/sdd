@@ -539,6 +539,18 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
+// fullReads lists the entries served in full, sorted.
+func (s *Session) fullReads() []string {
+	var ids []string
+	for id, depth := range s.reads {
+		if depth == ReadFull {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // Reorient records the consumer's request for the session's position and
 // makes the call in flight serve every piece in full.
 func (s *Session) Reorient() {

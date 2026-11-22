@@ -271,11 +271,7 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	if err != nil {
 		return err
 	}
-	opened, err := w.openedHidden(ctx)
-	if err != nil {
-		return err
-	}
-	batch.Readers = append(batch.Readers, model.VerifierRelevance(entryID, ctx.Reading, findings, opened)...)
+	batch.Readers = append(batch.Readers, model.VerifierRelevance(entryID, ctx.Reading, findings, w.openedHidden(ctx))...)
 	if err := runtime.appendRelevance(w.ctx, batch); err != nil {
 		return err
 	}
@@ -301,33 +297,20 @@ func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, now time.Time)
 }
 
 // openedHidden returns the entries a verifier reading of the capture served
-// as one line that a verify delegate's session then read in full.
-func (w *WorkflowSession) openedHidden(ctx *engine.Context) ([]string, error) {
+// as one line that a verify delegate read in full, as its deliveries
+// reported: an ended delegate's openings count too.
+func (w *WorkflowSession) openedHidden(ctx *engine.Context) []string {
 	hidden := workflowStoreStrings(ctx.Store, fieldDeepHidden)
-	if len(hidden) == 0 {
-		return nil, nil
-	}
 	var opened []string
 	for _, fork := range w.session.Forks(ctx.Instance) {
 		if fork.Procedure != verifyProcedure {
 			continue
 		}
-		child := w.held[SessionID(fork.Child.Session)]
-		if child == nil {
-			linked, refusal, err := w.app.loadLinked(w.ctx, w.identity, SessionID(fork.Child.Session))
-			if err != nil {
-				return nil, fmt.Errorf("reading the verifier's openings: %w", err)
-			}
-			if refusal != "" {
-				return nil, fmt.Errorf("reading the verifier's openings: %s", refusal)
-			}
-			child = linked
-		}
 		for _, id := range hidden {
-			if child.session.ReadDepthOf(id) == engine.ReadFull && !slices.Contains(opened, id) {
+			if slices.Contains(fork.Reads, id) && !slices.Contains(opened, id) {
 				opened = append(opened, id)
 			}
 		}
 	}
-	return opened, nil
+	return opened
 }
