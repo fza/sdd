@@ -8,17 +8,9 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func effective(values []model.ConfigValue) map[string]model.ConfigValue {
-	byKey := make(map[string]model.ConfigValue, len(values))
-	for _, v := range values {
-		byKey[v.Key] = v
-	}
-	return byKey
-}
-
 // `sdd config` shows the defaults a run uses for the verify block.
 func TestEffectiveConfigValues_ShowVerifyDefaults(t *testing.T) {
-	values := effective(model.EffectiveConfigValues(model.BaseConfig{}, nil, nil))
+	values := verifyValuesByKey(model.EffectiveConfigValues(model.BaseConfig{}, nil, nil))
 	for key, want := range map[string]string{
 		"verify.mode":          "prose",
 		"verify.prefilter":     "true",
@@ -36,9 +28,17 @@ func TestEffectiveConfigValues_PrefilterSetOffShowsFalse(t *testing.T) {
 	off := false
 	project := &model.PerRepoConfig{}
 	project.Verify.Prefilter = &off
-	if got := effective(model.EffectiveConfigValues(model.BaseConfig{}, project, nil))["verify.prefilter"]; got.Value != "false" || got.Source != model.ConfigSourceProject {
+	if got := verifyValuesByKey(model.EffectiveConfigValues(model.BaseConfig{}, project, nil))["verify.prefilter"]; got.Value != "false" || got.Source != model.ConfigSourceProject {
 		t.Fatalf("a prefilter switched off should show false from the project, got %+v", got)
 	}
+}
+
+func verifyValuesByKey(values []model.ConfigValue) map[string]model.ConfigValue {
+	byKey := make(map[string]model.ConfigValue, len(values))
+	for _, v := range values {
+		byKey[v.Key] = v
+	}
+	return byKey
 }
 
 func TestGroundingPolicy_PrefilterOnByDefault(t *testing.T) {
