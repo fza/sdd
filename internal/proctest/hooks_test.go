@@ -25,9 +25,9 @@ func newHookedCaptureWorld(t *testing.T, hooks ...sdd.Hook) (*proctest.World, *p
 	return world, session, scripted
 }
 
-// openServe opens a session with the hooks configured and returns its door
+// openHookedServe opens a session with the hooks configured and returns its door
 // serve.
-func openServe(t *testing.T, hooks ...sdd.Hook) *sdd.WorkflowServe {
+func openHookedServe(t *testing.T, hooks ...sdd.Hook) *sdd.WorkflowServe {
 	t.Helper()
 	scripted := &proctest.ScriptedHooks{Configured: hooks}
 	world := proctest.NewWorld(t, proctest.WithHooks(scripted))
@@ -264,14 +264,14 @@ func TestHooks_ReopenedPlaybackRaisesNoDoneEvent(t *testing.T) {
 // says, listing the valid events.
 func TestHooks_UnknownEventIsANotice(t *testing.T) {
 	for _, event := range []string{"capture.asemble", "capture.verify.round"} {
-		serve := openServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint"}})
+		serve := openHookedServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint"}})
 		notices := strings.Join(serve.Notices, "\n")
 		if !strings.Contains(notices, `unknown event "`+event+`"`) || !strings.Contains(notices, "capture.assemble") || !strings.Contains(serve.Instructions, notices) {
 			t.Errorf("an unknown event should be a served notice listing the valid ones, got %q", serve.Notices)
 		}
 	}
 	for _, event := range []string{"capture.assemble", "capture.guide", "capture.preflight"} {
-		serve := openServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint", Findings: true}})
+		serve := openHookedServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint", Findings: true}})
 		if len(serve.Notices) > 0 {
 			t.Errorf("%s has a findings channel, got notices %q", event, serve.Notices)
 		}

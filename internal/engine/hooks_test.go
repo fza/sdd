@@ -76,13 +76,6 @@ func (h *scriptedHooks) point(t *testing.T, event string) engine.HookPoint {
 	return engine.HookPoint{}
 }
 
-type memorySink struct{ events []engine.Event }
-
-func (m *memorySink) Append(e engine.Event) (uint64, error) {
-	m.events = append(m.events, e)
-	return uint64(e.Seq), nil
-}
-
 var highLint = []query.Finding{{Severity: query.SeverityHigh, Category: "lint", Observation: "passive voice"}}
 
 type hookWorld struct {
