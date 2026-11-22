@@ -92,13 +92,15 @@ type openSession struct {
 	Step      string    `json:"step"`
 	Reason    string    `json:"reason,omitempty"`
 	Since     time.Time `json:"since"`
+	// LateCatches is the session's sdd.WorkflowSessionSummary.LateCatches.
+	LateCatches int `json:"lateCatches,omitempty"`
 }
 
 func renderSessionsJSON(writer io.Writer, sessions []sdd.WorkflowSessionSummary) error {
 	open := []openSession{}
 	for _, session := range sessions {
 		for _, instance := range session.Open {
-			item := openSession{Session: string(session.Session), Procedure: instance.Procedure, Step: instance.Step, Since: session.LastActivity}
+			item := openSession{Session: string(session.Session), Procedure: instance.Procedure, Step: instance.Step, Since: session.LastActivity, LateCatches: session.LateCatches}
 			if parked := instance.Parked; parked != nil {
 				item.Parked, item.Reason, item.Since = true, parked.Reason, parked.Since
 			}
@@ -137,6 +139,13 @@ func renderSessions(writer io.Writer, sessions []sdd.WorkflowSessionSummary, now
 		}
 		if session.Branch != "" {
 			line += " · branch " + session.Branch
+		}
+		switch session.LateCatches {
+		case 0:
+		case 1:
+			line += " · 1 compaction caught one call late"
+		default:
+			line += fmt.Sprintf(" · %d compactions caught one call late", session.LateCatches)
 		}
 		fmt.Fprintln(writer, line)
 		if session.Label != "" {
