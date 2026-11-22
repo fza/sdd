@@ -258,6 +258,9 @@ func (s *Session) Poll(instanceID string) (*Serve, error) {
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
+	}
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}

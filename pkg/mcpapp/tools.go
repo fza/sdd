@@ -587,7 +587,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
-	err := ss.root.BeginCall(proofs.Held, proofs.Reread)
+	err := ss.root.BeginCall(proofs.lists())
 	if err != nil {
 		ss.mu.Unlock()
 		return nil, err
@@ -1418,7 +1418,7 @@ func noteCallSession(ctx context.Context, identity sdd.RequestIdentity, ss *shel
 		if failed {
 			ss.root.DropProved()
 		}
-		err := ss.root.RecordServed(ctx, identity)
+		err := ss.root.RecordAnchors(ctx, identity)
 		slot.unproved = ss.root.Unproved()
 		return err
 	}

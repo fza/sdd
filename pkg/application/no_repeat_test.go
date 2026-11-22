@@ -70,7 +70,7 @@ func holdEntry(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.Request
 	if len(proofs) != 1 {
 		t.Fatalf("an entry served in full should carry one tag, got %v", proofs)
 	}
-	err := workflow.RecordServed(t.Context(), identity)
+	err := workflow.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestInjectedEntryChainsTagWhatTheyServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = workflow.RecordServed(t.Context(), identity)
+	err = workflow.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}

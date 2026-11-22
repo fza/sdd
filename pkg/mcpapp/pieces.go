@@ -11,10 +11,21 @@ import (
 )
 
 // Proofs is what a call lists about the pieces served to it before; the
-// engine decides from them which piece serves as its pointer.
+// engine decides from them which piece serves as its pointer. Pointers to
+// slices keep the argument types embedding it comparable.
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see, from every earlier result, not only the last (the unproved field names those you have not proved since): its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word"`
-	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
+	Held   *[]string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see, from every earlier result, not only the last (the unproved field names those you have not proved since): its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word"`
+	Reread *[]string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
+}
+
+func (p Proofs) lists() (held, reread []string) {
+	if p.Held != nil {
+		held = *p.Held
+	}
+	if p.Reread != nil {
+		reread = *p.Reread
+	}
+	return held, reread
 }
 
 // ResultProofs names, on a result from an attached session, the pieces

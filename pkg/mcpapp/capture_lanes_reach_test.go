@@ -73,7 +73,7 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 				}
 				text += "\n\n" + testsupport.Untagged(serve.Instructions)
 			}
-			for _, phrase := range []string{"a signal records something noticed:", "A decision's reason states what the user said in `reasonWords`", "**Topics** (`topics`)", "**Participants** (`participants`)", "**Intent** (`intent`)"} {
+			for _, phrase := range []string{"a signal records something noticed:", "**Lifecycle** (`closes`, `supersedes`)", "**Topics** (`topics`)", "**Participants** (`participants`)", "**Intent** (`intent`)"} {
 				if !strings.Contains(text, phrase) {
 					t.Errorf("the lanes served should carry %q", phrase)
 				}

@@ -5,6 +5,7 @@
 package proctest_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -162,6 +163,27 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	}
 }
 
+// Page 1 states each ref's fit as pre-flight reads it: the target's class,
+// the kinds it admits and the chosen kind's applicability.
+func TestCaptureDeep_TheReadingStatesEachRefsFit(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-ref-fit", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
+	first := resume.Open[0].Instructions
+	var admissible []string
+	for _, kind := range model.AdmissibleRefKinds(model.TargetLiveDecision) {
+		admissible = append(admissible, string(kind))
+	}
+	for _, want := range []string{
+		"refs[0] " + captureRefID + " (addresses)\nAdmissible ref kinds for this target (live-decision): " + strings.Join(admissible, ", ") + "\n",
+		"Chosen ref kind: addresses — applicable: ",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("page 1 should state the ref's fit, %q:\n%s", want, first)
+		}
+	}
+}
+
 // readingPages returns how many pages the reading page 1 opens takes.
 func readingPages(t *testing.T, first string) int {
 	t.Helper()
@@ -308,6 +330,60 @@ func TestCaptureDeep_AProposalWithMarkupCharactersMatchesItsDraft(t *testing.T) 
 	refs := []any{map[string]any{"id": captureRefID, "kind": "addresses", "desc": "realizes it while <limit> & rate > 0"}}
 	serve = session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{"refs": refs}, "")
 	proctest.RequireStep(t, serve, "playback")
+}
+
+// The proposal's header lines are JSON the verifier wrote, so an accept
+// matches them by value: key order and spacing inside an object never count.
+func TestCaptureDeep_AcceptMatchesStructuredFieldsByValue(t *testing.T) {
+	proposed := `[{"id":"` + captureRefID + `","kind":"related","desc":"the gap it widens"}]`
+	reported := func(t *testing.T, raw string) map[string]any {
+		t.Helper()
+		var refs any
+		err := json.Unmarshal([]byte(raw), &refs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return map[string]any{"refs": refs}
+	}
+	tests := []struct {
+		name    string
+		refs    string
+		refused bool
+	}{
+		{name: "no field reported"},
+		{name: "refs in the proposal's key order", refs: proposed},
+		{name: "refs in another key order and spacing", refs: `[{"desc": "the gap it widens", "id": "` + captureRefID + `", "kind": "related"}]`},
+		{name: "another ref kind", refs: `[{"id":"` + captureRefID + `","kind":"addresses","desc":"the gap it widens"}]`, refused: true},
+		{name: "another ref id", refs: `[{"id":"` + captureRef2ID + `","kind":"related","desc":"the gap it widens"}]`, refused: true},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			world, session := newDeepWorld(t, fmt.Sprintf("deep-refs-by-value-%d", i), sdd.VerifierPolicy{})
+			draft := captureDraft()
+			draft["body"] = deepBody
+			draft["refs"] = []any{}
+			x := startDeep(t, world, session, draft)
+			x.judge(t, []any{map[string]any{"verdict": "the gap names nothing it widens", "axis": "ref-fit", "severity": "medium", "edits": []any{deepEdit("refs: []", "refs: "+proposed)}}})
+			x.pickUp(t)
+			serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+			proctest.RequireStep(t, serve, "deepProposal")
+			var fields map[string]any
+			if tt.refs != "" {
+				fields = reported(t, tt.refs)
+			}
+			serve, err := session.AnswerErr(t, x.instance, "deepProposal", "accept", fields, "")
+			if tt.refused {
+				if err == nil || !strings.Contains(err.Error(), "the draft differs from the proposal") {
+					t.Fatalf("a draft other than the proposal should be refused, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a draft matching the proposal by value should be accepted, got %v", err)
+			}
+			proctest.RequireStep(t, serve, "playback")
+		})
+	}
 }
 
 func TestCaptureDeep_AnswerableFindingsAreListedApartFromTheUsers(t *testing.T) {
@@ -711,6 +787,9 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 		t.Fatalf("the serve should name the launch it fell back to and hand over no handle, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
+	if launches := launcher.Launches(); len(launches) != 1 {
+		t.Fatalf("the round's process asking for its round should launch nothing more, got %+v", launches)
+	}
 	if strings.Contains(round.Round.Prompt, string(session.ID)) {
 		t.Fatal("the launched prompt never carries the capture's session handle")
 	}

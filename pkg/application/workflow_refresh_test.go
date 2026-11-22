@@ -19,7 +19,7 @@ func TestRefreshWorkflowPreservesAttachmentAndServedMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := proofOf(t, workflow.ServeText("lane step", servedLane, nil))
-	err = workflow.RecordServed(t.Context(), identity)
+	err = workflow.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
