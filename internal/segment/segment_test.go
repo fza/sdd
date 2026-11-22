@@ -69,11 +69,11 @@ func TestDecode_RefusesAnotherKind(t *testing.T) {
 
 func TestName_IsTimeThenRandom(t *testing.T) {
 	at := time.Date(2026, 11, 9, 0, 45, 6, 123456789, time.FixedZone("x", 3600))
-	first, err := segment.Name(at)
+	first, err := segment.Name(at, segment.Ext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := segment.Name(at)
+	second, err := segment.Name(at, segment.Ext)
 	if err != nil {
 		t.Fatal(err)
 	}

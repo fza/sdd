@@ -10,8 +10,8 @@ import (
 
 func TestEventsImportExport_RoundTripsThroughTheStore(t *testing.T) {
 	f := newAppFixture(t)
-	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nevents:\n  channels:\n    recheck:\n      share: git\n")
-	lines := `{"id":"e1","channel":"recheck","type":"sdd.recheck","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["20261108-120000-d-cpt-f01","20261107-115150-d-cpt-0mu"]}}
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nevents:\n  channels:\n    test:\n      share: git\n")
+	lines := `{"id":"e1","channel":"test","type":"sdd.test","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"entries":["20261108-120000-d-cpt-f01","20261107-115150-d-cpt-0mu"]}}
 {"id":"e2","channel":"wip","type":"sdd.wip","time":"2026-11-09T12:01:00.5Z","writer":"Local Author","subject":{"uri":"https://tracker.example/issues/7"},"payload":{"step":"start"}}
 `
 	f.write(t, "in.jsonl", lines)
@@ -27,9 +27,9 @@ func TestEventsImportExport_RoundTripsThroughTheStore(t *testing.T) {
 	if err != nil || len(segments) != 2 {
 		t.Fatalf("import should write one segment per channel under .sdd/events, found %v (%v)", segments, err)
 	}
-	_, err = os.Stat(filepath.Join(f.root, ".sdd", "events", "recheck", ".gitignore"))
+	_, err = os.Stat(filepath.Join(f.root, ".sdd", "events", "test", ".gitignore"))
 	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the committed config shares recheck through Git, yet it ignores itself: %v", err)
+		t.Fatalf("the committed config shares the test channel through Git, yet it ignores itself: %v", err)
 	}
 	_, err = os.Stat(filepath.Join(f.root, ".sdd", "events", "wip", ".gitignore"))
 	if err != nil {
@@ -66,9 +66,9 @@ func TestEventsImport_NeedsOneSource(t *testing.T) {
 
 func TestEvents_RefuseAnUnknownSharingMode(t *testing.T) {
 	f := newAppFixture(t)
-	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nevents:\n  channels:\n    recheck:\n      share: hosted\n")
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nevents:\n  channels:\n    test:\n      share: hosted\n")
 	result := f.run(t, "events", "export")
-	if result.err == nil || !strings.Contains(result.err.Error(), "events.channels.recheck.share") {
+	if result.err == nil || !strings.Contains(result.err.Error(), "events.channels.test.share") {
 		t.Fatalf("export under an unknown share = %v; want an error naming the key", result.err)
 	}
 }

@@ -19,7 +19,7 @@ func TestEventSharingIsReadOnlyFromTheCommittedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("events:\n  channels:\n    recheck:\n      share: git\n"), 0o644)
+	err = os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("events:\n  channels:\n    test:\n      share: git\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestEventSharingIsReadOnlyFromTheCommittedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(channels, []string{"recheck"}) {
+	if !slices.Equal(channels, []string{"test"}) {
 		t.Errorf("git channels = %v; the committed share should hold and the local one be ignored", channels)
 	}
 }
