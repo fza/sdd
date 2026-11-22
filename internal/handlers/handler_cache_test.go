@@ -404,6 +404,88 @@ func TestCacheHandlerPruneLeavesAReplacedSetupsVersionsAlone(t *testing.T) {
 	}
 }
 
+// A process whose config root holds no repos list while it reaches this
+// machine's clones keeps them all.
+func TestCacheHandlerPruneKeepsClonesAForeignConfigLacks(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "foreign", "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "foreign-state"), DataRoot: filepath.Join(root, "data"),
+	}
+	first, _ := ownedClone(t, loc, "graph")
+	second, _ := ownedClone(t, loc, "platform")
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+	})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatalf("pruning: %v", err)
+	}
+	if !exists(t, first) || !exists(t, second) {
+		t.Error("clones no repo remove dropped should stay whatever the loaded repos list holds")
+	}
+}
+
+// A disconnected clone meeting a missing config file fails the run, recorded
+// for the next command to report, and stays.
+func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data"),
+	}
+	dir, _ := ownedClone(t, loc, "dropped")
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+	})
+	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
+	if !errors.Is(err, repos.ErrClonePassRefused) {
+		t.Errorf("the run should fail with the refused clone pass, got %v", err)
+	}
+	if !exists(t, dir) {
+		t.Error("a refused clone pass should remove nothing")
+	}
+	status, err := cacheprune.Load(loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Error, repos.ErrClonePassRefused.Error()) {
+		t.Errorf("the refusal should be recorded for the next command, got %q", status.Error)
+	}
+}
+
+// A dropped clone holding a connected one stays with it, and the run goes on.
+func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data"),
+	}
+	config := "repos:\n  - repo_id: github.com/acme/foo/bar\n    clone_url: git@github.com:acme/foo/bar.git\n"
+	if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outer, _ := ownedClone(t, loc, "foo")
+	inner, _ := ownedClone(t, loc, "foo/bar")
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/foo"); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+	})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatalf("a clone kept for the clone it holds should not fail the run: %v", err)
+	}
+	if !exists(t, filepath.Join(inner, ".git")) || !exists(t, filepath.Join(outer, ".git")) {
+		t.Error("a dropped clone holding a connected one should stay, and the connected one with it")
+	}
+}
+
 func (f pruneFixture) gate() *gitgate.Gate {
 	return synctest.Gate(f.loc.StateRoot, nil)
 }

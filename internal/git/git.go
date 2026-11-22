@@ -8,6 +8,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -81,6 +82,27 @@ func (c CLI) Commit(message string, paths ...string) error {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 	return c.RecordGraphCloneCommit(ctx)
+}
+
+// Uncommitted returns the paths git status reports a change under: staged,
+// modified, removed, or untracked and not ignored.
+func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		// Only stdout lists changes: git warns on stderr about a path whose
+		// folder does not exist yet.
+		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		status, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
+		}
+		if len(status) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out, nil
 }
 
 // Push publishes HEAD to the branch the current branch tracks, detached like
