@@ -15,7 +15,7 @@ import (
 func StableRepoRoot(dir string) (string, error) {
 	return stableRepoRootWith(dir, func(args ...string) ([]byte, error) {
 		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Env = pathEnv(nil)
+		cmd.Env = pathEnv()
 		return cmd.CombinedOutput()
 	})
 }

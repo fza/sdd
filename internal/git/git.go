@@ -49,12 +49,20 @@ func (c CLI) at(args ...string) []string {
 }
 
 // dirEnv is env, nil meaning the process environment, for a command addressed
-// through at: with Dir, pathEnv drops what would pin it to another repository.
+// through at: with Dir, it drops the inherited repositoryVariables (pathEnv).
+// A variable the caller set itself stays, such as graph move's temporary index.
 func (c CLI) dirEnv(env []string) []string {
 	if c.Dir == "" {
 		return env
 	}
-	return pathEnv(env)
+	if env == nil {
+		return pathEnv()
+	}
+	inherited := os.Environ()
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(repositoryVariables, name) && slices.Contains(inherited, kv)
+	})
 }
 
 // detachedTimeout caps a detached auto-commit or push. A signing or
@@ -588,7 +596,7 @@ func RepoRootFor(path string) string {
 // pathCommand is git run with args under pathEnv.
 func pathCommand(args ...string) *exec.Cmd {
 	cmd := exec.Command("git", args...)
-	cmd.Env = pathEnv(nil)
+	cmd.Env = pathEnv()
 	return cmd
 }
 

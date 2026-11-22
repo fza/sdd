@@ -21,7 +21,7 @@ func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) (
 		args = append(args, ":(icase)"+path)
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = pathEnv(nil)
+	cmd.Env = pathEnv()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
