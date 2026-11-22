@@ -145,15 +145,21 @@ func namesAnyKind(text string, kinds []model.KindTest) bool {
 // leaves out the rules whose guard the entry fails; the entry with its
 // referenced, closed and superseded entries, which the verifier's reading
 // pages carry; and what only pre-flight's model reads: its role, its answer
-// format, its severity scale and its reading's layout.
+// format, its severity scale and its reading's layout. It also leaves out
+// what code decides before the verifier reads (20261122-101625-d-tac-r0s):
+// the contracts code enforces, and the rules the Rubric guard drops. The
+// ref-kind vocabulary comes as a pointer to its fact.
 func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
 	ct := selectCheckType(entry, graph)
-	vocab, err := refKindVocabulary(graph)
+	fact, _, err := graph.FactBody(basefacts.RefKindsFactID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("loading ref-kind vocabulary fact: %w", err)
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
-	pctx.RefKindVocabulary = vocab
+	pctx.RefKindFact = fact
+	pctx.ActiveContracts = formatContracts(slices.DeleteFunc(graph.Contracts(), func(c *model.Entry) bool {
+		return model.CodeEnforcesContract(c.ID)
+	}))
 	pctx.rubric = true
 	for _, field := range []*string{&pctx.ProposedEntry, &pctx.ReferencedEntries, &pctx.ClosedEntries, &pctx.SupersededEntries} {
 		if *field != "" {
@@ -290,14 +296,18 @@ type preflightContext struct {
 	// load is failable). The ref-meta consistency rubric renders it instead of
 	// restating the kinds, so the vocabulary is defined once.
 	RefKindVocabulary string
-	KindFit           *model.KindFit
+	// RefKindFact is the ID of the ref-kind fact's live head, which the rules
+	// page names in place of the vocabulary.
+	RefKindFact string
+	KindFit     *model.KindFit
 
 	// rubric marks the rules page PreflightRubric renders: the guard methods
 	// below then hold only when the entry meets the guard. Pre-flight's own
 	// prompt carries every rule and lets its model apply the guards.
-	rubric      bool
-	entry       *model.Entry
-	closedKinds []model.Kind
+	rubric       bool
+	entry        *model.Entry
+	closedKinds  []model.Kind
+	unusualClose bool
 }
 
 // ProposedKind guards a rule on the proposed entry's kind and, when layers
@@ -321,14 +331,17 @@ func (p *preflightContext) ClosesKind(kinds ...string) bool {
 // judges by the same definitions.
 func (p *preflightContext) LayerGuide() string { return model.LayerGuide() }
 
-// Rubric reports the rules page PreflightRubric renders.
+// Rubric reports the rules page PreflightRubric renders. Rules that code
+// decides before the verifier reads render only outside it.
 func (p *preflightContext) Rubric() bool { return p.rubric }
 
 // HasRefs guards a rule on the proposed entry carrying refs.
 func (p *preflightContext) HasRefs() bool { return !p.rubric || len(p.entry.Refs) > 0 }
 
-// HasCloses guards a rule on the proposed entry carrying closes.
-func (p *preflightContext) HasCloses() bool { return !p.rubric || len(p.entry.Closes) > 0 }
+// UnusualCloses guards a rule on the proposed entry closing at least one
+// entry outside the standard close patterns (model.StandardClose), or one
+// that does not resolve.
+func (p *preflightContext) UnusualCloses() bool { return !p.rubric || p.unusualClose }
 
 // Settled guards a rule on the proposed entry being a settled directive.
 func (p *preflightContext) Settled() bool { return !p.rubric || p.entry.IsSettled() }
@@ -470,6 +483,9 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 		var parts []string
 		for _, id := range entry.Closes {
 			e, ok := graph.ByID[id]
+			if !ok || !model.StandardClose(entry.Type, entry.Kind, e.Type, e.Kind) {
+				pctx.unusualClose = true
+			}
 			if !ok {
 				continue
 			}
@@ -494,21 +510,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 		}
 	}
 
-	// Active contracts (always included). Sorted by full ID so the rendered
-	// block is byte-identical across captures whenever the contract set is
-	// unchanged. Contracts live in the cached universal system preamble (d-tac-fah),
-	// so a non-deterministic order would silently break prompt-cache reuse even
-	// when nothing about the contract set changed — this sort is the byte-stability
-	// invariant, not a cosmetic ordering.
-	contracts := graph.Contracts()
-	if len(contracts) > 0 {
-		sort.Slice(contracts, func(i, j int) bool { return contracts[i].ID < contracts[j].ID })
-		var parts []string
-		for _, c := range contracts {
-			parts = append(parts, FormatEntryForPrompt(c))
-		}
-		pctx.ActiveContracts = strings.Join(parts, "\n\n---\n\n")
-	}
+	pctx.ActiveContracts = formatContracts(graph.Contracts())
 
 	// Active aspirations (for aspiration-capture check — the constellation
 	// the new aspiration is joining, used to detect tensions).
@@ -524,6 +526,18 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 	}
 
 	return pctx
+}
+
+// formatContracts renders the active contracts as entry blocks sorted by full
+// ID: they live in the cached universal system preamble (d-tac-fah), so an
+// unstable order would break prompt-cache reuse while the set is unchanged.
+func formatContracts(contracts []*model.Entry) string {
+	sort.Slice(contracts, func(i, j int) bool { return contracts[i].ID < contracts[j].ID })
+	parts := make([]string, 0, len(contracts))
+	for _, c := range contracts {
+		parts = append(parts, FormatEntryForPrompt(c))
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 // formatProposedEntryForPreflight renders the proposed entry plus its stored

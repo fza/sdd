@@ -25,43 +25,9 @@ This check is deliberately narrow. Emit no finding for:
 
 ## Reference metadata consistency (apply when the entry has refs)
 
-A ref carries a `kind` — why the pointer exists, chosen from what the entry **body** asserts — and an optional `desc` naming that relationship. Both must read consistently with the body. The canonical ref-kind vocabulary follows, rendered from the graph's own ref-kind fact — the same single source agents pull; judge the chosen kind and desc against it.
+A ref carries a `kind` — why the pointer exists, chosen from what the entry **body** asserts — and an optional `desc` naming that relationship. Both must read consistently with the body.
 
-### Connecting entries: the reference kinds
-
-Reference is a contextual pointer from one entry to another. Its kind names why the pointer exists. A ref has no status effect: closure travels in `closes` and `supersedes`, never in a ref kind. Write the body first, then tag the strongest relationship it states. Kind is chosen from what the body asserts, never defaulted. Kinds are defined by relationship and direction, not by allowed target types. Whether a target is empirical (a fact, a done) or conceptual (an insight, a decision) is read from the target's kind.
-
-**Direction.** Ref is written on the source, pointing at the target: read as `source → target`. Most kinds point backward at prior context. Small forward class, `surfaces` and `required-by`, is captured on the source pointing at what comes out of it. Entries are immutable and can only reference what already exists. So kind follows capture order: whichever entry is written second carries the edge. Two relationships are order-independent pairs: `depends-on`/`required-by` and `surfaces`/`surfaced-by`. Second-captured entry takes the forward kind (`required-by`, `surfaces`) when it is the prerequisite or producer. It takes the backward kind (`depends-on`, `surfaced-by`) when it is the dependent or product. One ref connects both ways: target's downstream view shows the source. So a paired ref needs no back-ref. Never add a weak `related` just to point back.
-
-| Kind | `source → target` | Apply when | Not when |
-|---|---|---|---|
-| `grounded-in` | founded on / reasons from | the target is a basis the source rests on — a contract, aspiration, standing directive, a **fact** taken as premise or cited as empirical proof, an **insight** reasoned from, or a prior decision conformed to | you realize/operationalize it → `addresses`; you extend a closed line → `builds-on` |
-| `builds-on` | continues / extends | the target is **closed** and you extend it, or you are the next step after a finished chain | the target is active and sharpened in place → `refines`; you realize its commitment → `addresses` |
-| `refines` | sharpens (in place) | the target is **active** and you narrow/clarify its commitments without replacing it (the augmenting pattern; the refining entry closes alongside the target) | the target is closed → `builds-on`; you realize it → `addresses` |
-| `addresses` | acts on / realizes | responding to a gap/question/insight, **or** realizing a decision's commitment — operationalizing a directive, supplying a plan's AC or an activity's work (including partial, without closing) | you only reason from it → `grounded-in`; the target depends on you → `required-by`; the target is a terminal `done` → `builds-on`/`grounded-in`/`surfaced-by` |
-| `surfaces` | created / discovered (forward) | doing the source's work created or discovered the target; capture the surfaced entry first, then the source that refs it | generic neighborly context → `related` |
-| `surfaced-by` | was raised / produced by (backward) | the target's work created or discovered this entry, captured after the surfacer — the backward partner of `surfaces`, including when the surfacer is a terminal `done` | you only **reason from** the target → `grounded-in`; generic neighborly context → `related` |
-| `depends-on` | needs first (prerequisite) | your work is gated on the target landing or holding first | the target is a basis you reason from → `grounded-in` |
-| `required-by` | is the prerequisite of (forward) | this entry is what a later plan/activity/focus was waiting on, recorded from the prerequisite's side | you do/supply the target's work rather than gate it → `addresses` |
-| `related` | sibling / neighbor (the floor) | a genuine parallel sibling, or context a decision must account for but does not fulfil — when no sharper kind fits | any sharper kind fits — check the others **first** |
-
-**`grounded-in` absorbs empirical citation.** Citing a fact's or a done's measured data as proof is `grounded-in` to that entry. Empirical hardness is read from the target's kind. Put the proof nuance in the `desc` ("… as evidence of feasibility").
-
-**`refines` vs `builds-on`** turns on the target's status. Active and sharpened in place: `refines`. Closed, or a forward next step: `builds-on`.
-
-**`related` is the floor, never a default**: the most over-reached kind. For a decision target, split. Source realizes it: `addresses`. Source is context it accounts for but does not fulfil: `related`.
-
-**A terminal `done` is never "addressed".** Done records completed work: not a gap, question, insight or open commitment. So the relationship `addresses` names cannot hold for it. Taking up a follow-up a done flagged: `builds-on`. Reasoning from the done as empirical evidence: `grounded-in`. Entry the done's work raised or produced: `surfaced-by`. Choosing between `builds-on` and `grounded-in` here is a defensible-choice question, not an error.
-
-**`surfaced-by` vs `grounded-in`.** Use `surfaced-by` when the target's work raised or produced this entry: it exists because of that work. Use `grounded-in` when this entry merely reasons from the target as a basis. Split matters most when the surfacer is a terminal done. `addresses` is blocked there. Without `surfaced-by`, the raised-by relationship gets mis-anchored onto a convenient live decision.
-
-#### Mechanics
-
-The ref kinds are a closed set: grounded-in, builds-on, refines, addresses, surfaces, surfaced-by, depends-on, required-by, related.
-
-Enforced at capture: every reference carries one of these kinds, and every target must resolve or capture is blocked. Legacy values on disk (grounds, evidence) read as grounded-in and are not capturable.
-
-**Applicability is not your question.** Each referenced entry carries an `Admissible ref kinds for this target` line and a `Chosen ref kind` verdict, both computed mechanically from the target's kind and derived status. An inapplicable chosen kind is already blocked by a separate mechanical check before your findings are read. Never emit a finding about whether a kind applies, and never recommend a kind outside the listed admissible set.
+To judge whether a ref's kind or desc fits the body, open the ref-kind fact 20260828-160000-s-prc-rfk by its ID: it defines each kind, its direction and its neighbouring kinds.
 
 Two axes remain yours — both read the **body**, which the mechanical check cannot:
 
@@ -94,15 +60,6 @@ Layer: conceptual
 Kind: contract
 
 The other contract body.
-
----
-
-ID: 20260702-222259-d-cpt-7iy
-Type: decision
-Layer: conceptual
-Kind: contract
-
-The type-system contract body.
 
 ## Calibrating against active contracts
 
@@ -152,13 +109,11 @@ Genuine supersession is still distinct from augmentation. A directive that *repl
 - process: how we work, conventions and review rules (e.g. every release gets a review)
 
    A rule or behaviour of one module or component, a gap in it included, belongs at `tactical`, not `operational`: a body stating how a component behaves is tactical even when one change carries it out. A single work step or task belongs at `operational`, not `tactical`: its body names the step to take. A specific implementation detail is never `strategic`; a broad directional observation is never `operational`. Decide it in two steps: name the layer the body's first sentence is about, then compare it with `Layer`. A first sentence that says what a named module or component does, accepts or rejects is `tactical` and never borderline. Report a mismatch as `medium`, quoting that first sentence and naming the layer the entry belongs at. A body that fits two layers equally is no finding.
-5. **Acceptance criteria presence** (applies only when proposed entry is `Kind: plan`): plan decisions must include an `## Acceptance criteria` section in description with `- [ ]` checklist items. A missing AC section on a plan decision is a `high` finding. If proposed kind is not `plan`, skip this check.
 
 ## Calibration
 
 Judge ref completeness from body and referenced entries below, not from a graph-wide search. A decision must ref the entries its body reasons from, responds to, or advances. Not every tangentially-related entry needs a ref.
 
-- `high`: proposed entry is a plan decision with no `## Acceptance criteria` section in its description.
 - `medium`: body names a specific entry (by ID or unmistakable description) it depends on, but that entry is absent from refs. Or reasoning clearly leans on context no referenced entry supplies, suggesting a motivating entry is missing. Could be intentional scope narrowing.
 - `medium`: the layer clearly mismatches what the body is about (check 4).
 - `low`: style suggestion (dense summary could be split across sentences).

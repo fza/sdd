@@ -2,6 +2,7 @@ package llmops_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,8 +59,8 @@ func TestPreflightRubricLeavesTheReadingAndInapplicableRulesOut(t *testing.T) {
 		{
 			name:  "tactical plan with refs",
 			draft: &model.Entry{Type: model.TypeDecision, Kind: model.KindPlan, Layer: model.LayerTactical, Content: "Draft text two.", Refs: []model.Ref{{ID: gap.ID}}},
-			rules: []string{acPresence, refMeta},
-			not:   []string{directiveRule, directiveCal, durability, unusualClose, settled},
+			rules: []string{refMeta},
+			not:   []string{acPresence, directiveRule, directiveCal, durability, unusualClose, settled},
 		},
 		{
 			name:  "settled directive with refs",
@@ -70,8 +71,13 @@ func TestPreflightRubricLeavesTheReadingAndInapplicableRulesOut(t *testing.T) {
 		{
 			name:  "directive retiring a fact",
 			draft: &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Content: "Draft text four.", Closes: []string{fact.ID}},
-			rules: []string{retirement, retirementCal, unusualClose},
-			not:   []string{refMeta, unrelatedRefs, durability},
+			rules: []string{retirement, retirementCal},
+			not:   []string{unusualClose, refMeta, unrelatedRefs, durability},
+		},
+		{
+			name:  "gap closing a gap",
+			draft: &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "Draft text eight.", Closes: []string{gap.ID}},
+			rules: []string{unusualClose},
 		},
 		{
 			name:  "directive closing a gap",
@@ -228,4 +234,138 @@ func TestPreflightRubricLeavesPreflightOnlySectionsOut(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The rules text leaves out what code decides before the verifier reads
+// (20261122-101625-d-tac-r0s): a plan's acceptance-criteria rule, the
+// applicability paragraph, the close-pattern rule where every close is
+// standard, the contract code enforces, and the ref-kind vocabulary, which
+// one line names. Pre-flight's own prompt keeps each.
+func TestPreflightRubricLeavesOutWhatCodeDecides(t *testing.T) {
+	facts, err := basefacts.Entries(viewlayout.Vocabulary{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gap := &model.Entry{ID: "20260101-000002-s-tac-gap", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "The gap body."}
+	fact := &model.Entry{ID: "20260101-000001-s-cpt-fct", Type: model.TypeSignal, Kind: model.KindFact, Layer: model.LayerConceptual, Content: "The fact body."}
+	question := &model.Entry{ID: "20260101-000003-s-cpt-qst", Type: model.TypeSignal, Kind: model.KindQuestion, Layer: model.LayerConceptual, Content: "The question body."}
+	plan := &model.Entry{ID: "20260101-000004-d-tac-pln", Type: model.TypeDecision, Kind: model.KindPlan, Layer: model.LayerTactical, Content: "The plan body.\n\n## Acceptance criteria\n\n- [ ] one"}
+	typeSystem := &model.Entry{ID: model.TypeSystemContractID, Type: model.TypeDecision, Kind: model.KindContract, Layer: model.LayerConceptual, Content: "The type-system contract body."}
+	contract := &model.Entry{ID: "20260101-000005-d-cpt-con", Type: model.TypeDecision, Kind: model.KindContract, Layer: model.LayerConceptual, Content: "The other contract body."}
+	graph := model.NewGraph(append(slices.Clone(facts), gap, fact, question, plan, typeSystem, contract))
+
+	render := func(t *testing.T, g *model.Graph, draft *model.Entry) (prompt, rubric string) {
+		t.Helper()
+		var req llm.Request
+		runner := llm.RunnerFunc(func(_ context.Context, r llm.Request) (llm.Result, error) {
+			req = r
+			return llm.Result{Text: `{"findings":[]}`}, nil
+		})
+		_, err := llmops.Preflight(t.Context(), runner, draft, g, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rubric, err = llmops.PreflightRubric(draft, g, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req.SystemPrompt + "\n\n" + req.UserPrompt, rubric
+	}
+	refs := []model.Ref{{ID: gap.ID, Kind: model.RefKindGroundedIn}}
+
+	t.Run("a plan's acceptance criteria", func(t *testing.T) {
+		prompt, rubric := render(t, graph, &model.Entry{Type: model.TypeDecision, Kind: model.KindPlan, Layer: model.LayerTactical, Content: "Draft plan.", Refs: refs})
+		for _, rule := range []string{"**Acceptance criteria presence**", "- `high`: proposed entry is a plan decision with no `## Acceptance criteria` section"} {
+			if strings.Contains(rubric, rule) || !strings.Contains(prompt, rule) {
+				t.Errorf("the rule the draft validation decides should leave the rules text only: %q", rule)
+			}
+		}
+	})
+
+	t.Run("ref applicability and the vocabulary", func(t *testing.T) {
+		const applicability = "**Applicability is not your question.**"
+		prompt, rubric := render(t, graph, &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Content: "Draft directive.", Refs: refs})
+		if strings.Contains(rubric, applicability) || !strings.Contains(prompt, applicability) {
+			t.Errorf("the applicability paragraph should leave the rules text only")
+		}
+		_, body, err := graph.FactBody(basefacts.RefKindsFactID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := range strings.SplitSeq(body, "\n") {
+			if strings.HasPrefix(line, "| ") && strings.Contains(rubric, line) {
+				t.Errorf("the rules text should hold no row of the ref-kind table: %q", line)
+			}
+		}
+		var pointers []string
+		for line := range strings.SplitSeq(rubric, "\n") {
+			if strings.Contains(line, basefacts.RefKindsFactID) {
+				pointers = append(pointers, line)
+			}
+		}
+		if len(pointers) != 1 || !strings.Contains(pointers[0], "open the ref-kind fact") || !strings.Contains(pointers[0], "kind or desc fits the body") {
+			t.Errorf("one line should name the ref-kind fact and say when to open it, got %q", pointers)
+		}
+		fit, err := llmops.DeepRefFit([]model.RefFit{model.FitRef(graph, refs[0])})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(fit, "Admissible ref kinds for this target") || !strings.Contains(fit, "Applicability is settled mechanically. Do not flag it.") {
+			t.Errorf("each Ref fit line should still name the admissible kinds and settle applicability, got:\n%s", fit)
+		}
+	})
+
+	t.Run("close patterns", func(t *testing.T) {
+		const heading = "## Unusual close-pattern check"
+		section := func(text string) string {
+			_, rest, found := strings.Cut(text, heading)
+			if !found {
+				return ""
+			}
+			rule, _, _ := strings.Cut(rest, "\n## ")
+			return rule
+		}
+		for _, tc := range []struct {
+			name     string
+			draft    *model.Entry
+			standard bool
+		}{
+			{"plan closes a gap", &model.Entry{Type: model.TypeDecision, Kind: model.KindPlan, Layer: model.LayerTactical, Content: "Draft.", Closes: []string{gap.ID}}, true},
+			{"done closes a plan and a gap", &model.Entry{Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical, Content: "Draft.", Closes: []string{plan.ID, gap.ID}}, true},
+			{"fact closes a question", &model.Entry{Type: model.TypeSignal, Kind: model.KindFact, Layer: model.LayerConceptual, Content: "Draft.", Closes: []string{question.ID}}, true},
+			{"fact closes a fact", &model.Entry{Type: model.TypeSignal, Kind: model.KindFact, Layer: model.LayerConceptual, Content: "Draft.", Closes: []string{fact.ID}}, false},
+			{"done closes a fact beside a plan", &model.Entry{Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical, Content: "Draft.", Closes: []string{plan.ID, fact.ID}}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				prompt, rubric := render(t, graph, tc.draft)
+				want := section(prompt)
+				if want == "" {
+					t.Fatal("pre-flight's prompt should keep the close-pattern rule")
+				}
+				got := section(rubric)
+				if tc.standard && got != "" {
+					t.Errorf("a draft whose closes are all standard should get no close-pattern rule")
+				}
+				if !tc.standard && got != want {
+					t.Errorf("a draft with an unusual close should get the close-pattern rule in full, got:\n%s", got)
+				}
+			})
+		}
+	})
+
+	t.Run("contracts code enforces", func(t *testing.T) {
+		draft := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "Draft gap."}
+		prompt, rubric := render(t, graph, draft)
+		if strings.Contains(rubric, typeSystem.Content) || !strings.Contains(prompt, typeSystem.Content) {
+			t.Errorf("the contract code enforces should leave the rules text only")
+		}
+		if !strings.Contains(rubric, contract.Content) {
+			t.Errorf("a contract code does not name should stay in the rules text")
+		}
+		successor := &model.Entry{ID: "20260102-000000-d-cpt-suc", Type: model.TypeDecision, Kind: model.KindContract, Layer: model.LayerConceptual, Content: "The successor contract body.", Supersedes: []string{typeSystem.ID}}
+		_, rubric = render(t, model.NewGraph(append(slices.Clone(facts), typeSystem, successor)), draft)
+		if !strings.Contains(rubric, successor.Content) {
+			t.Errorf("a successor of the contract code enforces should stay in the rules text until code names it")
+		}
+	})
 }

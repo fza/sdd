@@ -90,9 +90,10 @@ type rubricShape struct {
 }
 
 // Pre-flight's own prompt and the rules text the deep verifier reads, per
-// draft shape. The rules text holds no line pre-flight's prompt lacks, apart
-// from the prose verifier's axes it ends with; the snapshots record both
-// texts whole, so their diff reviews any change to either.
+// draft shape. Each line of the rules text opens a line of pre-flight's
+// prompt, apart from the prose verifier's axes it ends with and the line
+// naming the ref-kind fact; the snapshots record both texts whole, so their
+// diff reviews any change to either.
 func TestPreflightPromptAndRubricPerDraftShape(t *testing.T) {
 	graph, shapes := rubricShapes(t)
 	for _, tc := range shapes {
@@ -117,7 +118,10 @@ func TestPreflightPromptAndRubricPerDraftShape(t *testing.T) {
 				t.Fatalf("the rules text should end with the prose verifier's axes")
 			}
 			for line := range strings.SplitSeq(rules, "\n") {
-				if line != "" && !slices.Contains(promptLines, line) {
+				if line == "" || strings.Contains(line, basefacts.RefKindsFactID) {
+					continue
+				}
+				if !slices.ContainsFunc(promptLines, func(p string) bool { return strings.HasPrefix(p, line) }) {
 					t.Errorf("the rules text should hold no line pre-flight's prompt lacks: %q", line)
 				}
 			}

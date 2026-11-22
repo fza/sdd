@@ -49,15 +49,6 @@ Kind: contract
 
 The other contract body.
 
----
-
-ID: 20260702-222259-d-cpt-7iy
-Type: decision
-Layer: conceptual
-Kind: contract
-
-The type-system contract body.
-
 ## Calibrating against active contracts
 
 A finding against an active contract is `high` only when entry **directly contradicts** contract's core constraint: the spirit, not the letter. Subtle deviations, missing ritual markers, or wording that doesn't precisely echo contract are `medium` or `low`. Contracts express intent; treating them as literal rules invites find-something behavior. If entry's reasoning shows the agent considered contract and made a deliberate choice, that is `low` or no finding.

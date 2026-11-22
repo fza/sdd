@@ -5,7 +5,7 @@ User message carries check-specific task, rubric and calibration for this entry,
 {{ end }}{{ if .HasRefs }}{{ template "unrelated_refs" . }}{{ end -}}
 {{ if .ProposedKind "done" }}{{ template "durability" . }}{{ end -}}
 {{ template "attachment_claim" . -}}
-{{ if .HasCloses }}{{ template "unusual_close" . }}{{ end -}}
+{{ if .UnusualCloses }}{{ template "unusual_close" . }}{{ end -}}
 {{ if .HasRefs }}{{ template "ref_meta_consistency" . }}{{ end -}}
 {{ if .Settled }}{{ template "settled_justification" . }}{{ end -}}
 {{ template "language" . -}}

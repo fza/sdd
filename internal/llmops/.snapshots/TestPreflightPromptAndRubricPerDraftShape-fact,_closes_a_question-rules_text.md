@@ -14,28 +14,6 @@ This check is deliberately narrow. Emit no finding for:
 - `high`: body asserts an attached record, and entry carries no attachment (or none matching the assertion).
 - No finding: everything else.
 
-## Unusual close-pattern check
-
-`closes` means "this entry resolves the closed entry's purpose". Standard patterns:
-
-- decision closes signal (a directive/plan/activity addressing a gap)
-- `kind: done` signal closes a decision (completion record)
-- `kind: done` signal closes a `kind: gap` signal (short-loop)
-- `kind: fact` or `kind: insight` signal closes a `kind: question` signal (dissolution)
-- `kind: directive` decision closes a stable-kind signal (`fact` / `insight`): retirement with rationale
-- `kind: directive` decision closes any decision: retirement without replacement, with rationale (a commitment abandoned rather than delivered; a `done` signal is the closer when the work actually completed)
-
-Anything outside this matrix is unusual: a same-kind close where supersede would fit, or an atypical cross-kind close. Unusual patterns are **allowed-and-flagged**. Severity depends on whether narrative captures rationale for using `closes` in this specific shape.
-
-- `high`: close pattern is unusual AND narrative lacks clear rationale explaining the intent. Examples:
-  - `fact` closes `fact`, narrative only describes new fact, no mention of why it retires without supersede
-  - `insight` closes `fact`, narrative describes the insight but never explains why the old fact is being closed
-  - `gap` closes `gap` with no rationale for not superseding with a refined gap
-- `low`: close pattern is unusual BUT rationale is clear in prose. Close is valid; surface the atypical pattern for reader awareness. Examples:
-  - `insight` closes `fact` with "Retiring this fact because the measurement was taken pre-launch and no longer applies post-market-shift"
-  - `fact` closes `fact` with "Not superseding: no updated measurement available; just retiring the stale value"
-- No finding: proposed entry carries no `closes`, OR close uses a standard pattern from the matrix above. A decision closing a signal, a done signal closing a decision, short-loop, dissolution, and directive-retires (any decision, or a stable-kind signal) are all normal and need no surfacing.
-
 ## Language check
 
 No configured graph language (default English). No language-drift check applies.
@@ -48,15 +26,6 @@ Layer: conceptual
 Kind: contract
 
 The other contract body.
-
----
-
-ID: 20260702-222259-d-cpt-7iy
-Type: decision
-Layer: conceptual
-Kind: contract
-
-The type-system contract body.
 
 ## Calibrating against active contracts
 
