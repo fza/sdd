@@ -16,14 +16,14 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// scriptedRunner answers each call from a script and records what it was asked.
-type scriptedRunner struct {
+// extractRunner answers each call from a script and records what it was asked.
+type extractRunner struct {
 	replies  []string
 	errs     []error
 	requests []llm.Request
 }
 
-func (r *scriptedRunner) Run(_ context.Context, req llm.Request) (llm.Result, error) {
+func (r *extractRunner) Run(_ context.Context, req llm.Request) (llm.Result, error) {
 	r.requests = append(r.requests, req)
 	i := len(r.requests) - 1
 	if i < len(r.errs) && r.errs[i] != nil {
@@ -36,7 +36,7 @@ func (r *scriptedRunner) Run(_ context.Context, req llm.Request) (llm.Result, er
 }
 
 func TestPreflightExtractsAfterAnUnparseableSeverity(t *testing.T) {
-	runner := &scriptedRunner{replies: []string{
+	runner := &extractRunner{replies: []string{
 		`{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"no finding"}]}`,
 		`{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`,
 	}}
@@ -78,7 +78,7 @@ func TestPreflightExtractsAfterAnUnparseableSeverity(t *testing.T) {
 }
 
 func TestPreflightMakesOneCallWhenTheFirstResponseParses(t *testing.T) {
-	runner := &scriptedRunner{replies: []string{`{"findings":[]}`}}
+	runner := &extractRunner{replies: []string{`{"findings":[]}`}}
 
 	if _, err := runPreflight(t, runner); err != nil {
 		t.Fatalf("Preflight: %v", err)
@@ -89,7 +89,7 @@ func TestPreflightMakesOneCallWhenTheFirstResponseParses(t *testing.T) {
 }
 
 func TestPreflightReportsBothPhasesWhenNeitherParses(t *testing.T) {
-	runner := &scriptedRunner{replies: []string{
+	runner := &extractRunner{replies: []string{
 		`{"findings":[{"observation":"x","category":"c","severity":"no finding"}]}`,
 		`{"findings":[{"observation":"x","category":"c","severity":"none"}]}`,
 	}}
@@ -164,7 +164,7 @@ func TestPreflightRescuesEveryObservedMalformation(t *testing.T) {
 
 	for _, tc := range observedMalformations {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &scriptedRunner{replies: []string{tc.first, extracted}}
+			runner := &extractRunner{replies: []string{tc.first, extracted}}
 
 			result, err := runPreflight(t, runner)
 			if err != nil {
@@ -183,7 +183,7 @@ func TestPreflightRescuesEveryObservedMalformation(t *testing.T) {
 // The fallback is a reformat, not a retry: a transport failure on the first
 // call has nothing to reformat and must surface as itself.
 func TestPreflightDoesNotFallBackOnATransportFailure(t *testing.T) {
-	runner := &scriptedRunner{errs: []error{fmt.Errorf("gollm mistral: timed out")}}
+	runner := &extractRunner{errs: []error{fmt.Errorf("gollm mistral: timed out")}}
 
 	if _, err := runPreflight(t, runner); err == nil {
 		t.Fatal("a transport failure must surface")
@@ -210,7 +210,7 @@ func TestPreflightFailsWhenTheFirstAnswerHoldsNoAnalysis(t *testing.T) {
 		{"flag omitted, no findings", "I'm sorry, but I can't help with reviewing this entry.", `{"findings":[]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &scriptedRunner{replies: []string{tc.first, tc.reformat}}
+			runner := &extractRunner{replies: []string{tc.first, tc.reformat}}
 
 			_, err := runPreflight(t, runner)
 			if !errors.Is(err, llmops.ErrNoAnalysis) {
@@ -227,7 +227,7 @@ func TestPreflightFailsWhenTheFirstAnswerHoldsNoAnalysis(t *testing.T) {
 }
 
 func TestPreflightParsesFindingsWhenTheReformatOmitsTheFlag(t *testing.T) {
-	runner := &scriptedRunner{replies: []string{
+	runner := &extractRunner{replies: []string{
 		"The ref holds; a low finding on its scope.",
 		`{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`,
 	}}
@@ -256,7 +256,7 @@ func schemaProperties(t *testing.T, schema json.RawMessage) map[string]json.RawM
 // it is parsed here; the rejected text still deserves the reformat.
 func TestPreflightExtractsAfterARunnerRejectedAnswer(t *testing.T) {
 	rejected := &llm.Error{Err: &llm.MalformedAnswerError{Text: `{"findings":[{"observation":"REJECTED-MARKER"}]}`, Err: fmt.Errorf("schema mismatch")}}
-	runner := &scriptedRunner{
+	runner := &extractRunner{
 		errs:    []error{rejected},
 		replies: []string{"", `{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`},
 	}
@@ -280,7 +280,7 @@ func TestPreflightReportsBothPhasesWhenTheRejectedAnswerStaysMalformed(t *testin
 	rejected := func(text string) error {
 		return &llm.Error{Err: &llm.MalformedAnswerError{Text: text, Err: fmt.Errorf("schema mismatch on %s", text)}}
 	}
-	runner := &scriptedRunner{errs: []error{rejected("first"), rejected("second")}}
+	runner := &extractRunner{errs: []error{rejected("first"), rejected("second")}}
 
 	_, err := runPreflight(t, runner)
 	if err == nil {
