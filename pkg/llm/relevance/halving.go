@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
 )
@@ -64,7 +65,9 @@ func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
 // inner MaxBatch while it holds none. A batch whose answer breaks
 // (llm.MalformedAnswerError), lacks a score (CheckResult) or runs out the
 // inner call's deadline while ctx lives is scored again in halves, down to
-// one candidate per call, and the half is remembered, so the next request
+// one candidate per call. Under a ctx deadline a call of more than one
+// candidate gets at most half the time left, so a timeout leaves room for
+// its halves. The half is remembered, so the next request
 // starts there. Any other failure, or one of a single candidate, fails the
 // request. A call answered at the remembered size doubles that size at
 // once, up to the inner MaxBatch, whatever the request's other calls do, so
@@ -150,7 +153,10 @@ func (h halving) batch(ctx context.Context, request Request, far []Candidate, br
 		call, isFar = withFar(request, far)
 	}
 	held, _ := h.sizes.Size(h.key)
-	result, err := h.Scorer.Score(ctx, call)
+	n := len(request.Candidates)
+	callCtx, cancel := callContext(ctx, n)
+	result, err := h.Scorer.Score(callCtx, call)
+	cancel()
 	if err == nil {
 		err = CheckResult(call, result)
 		if err == nil {
@@ -167,7 +173,6 @@ func (h halving) batch(ctx context.Context, request Request, far []Candidate, br
 		}
 		err = &llm.MalformedAnswerError{Err: err}
 	}
-	n := len(request.Candidates)
 	if n == 1 || ctx.Err() != nil || !halvable(err) {
 		return Result{}, err
 	}
@@ -177,6 +182,17 @@ func (h halving) batch(ctx context.Context, request Request, far []Candidate, br
 		return Result{}, err
 	}
 	return h.split(ctx, request, far, half, broke)
+}
+
+// callContext bounds a call of n candidates to half the time ctx has left,
+// so a call that runs out its time leaves room for its halves before ctx
+// ends. A single candidate cannot be halved and gets the whole time.
+func callContext(ctx context.Context, n int) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if n == 1 || !ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Until(deadline)/2)
 }
 
 // halvable is a failure a smaller batch may not repeat: a broken answer or a
