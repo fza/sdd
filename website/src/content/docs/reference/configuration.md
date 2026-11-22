@@ -526,6 +526,7 @@ The index only grows. It keeps every embedded version of every entry, so sdd ver
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `--output-schema` | Off | For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it. |
+| `--mcp-output-tokens` | `MAX_MCP_OUTPUT_TOKENS`, else none | Claude Code's MCP output limit in tokens, which lowers the [size of a result](/sdd/guides/working-with-coding-agents/#compaction) served to Claude Code. |
 
 ## Environment variables
 
@@ -535,3 +536,4 @@ The index only grows. It keeps every embedded version of every entry, so sdd ver
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
 | `XDG_STATE_HOME` | `~/.local/state` | Session logs, the relevance ledger and the logs of verifier rounds live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |
+| `MAX_MCP_OUTPUT_TOKENS` | None | Claude Code's MCP output limit in tokens, read by `sdd serve`. Same as `--mcp-output-tokens`. |

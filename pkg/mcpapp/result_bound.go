@@ -8,15 +8,21 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// The result bound (model.MaxResultChars) leaves room past what a result's
-// parts may take: textBudget for the one large text field of a read,
-// serveBudget (model.MaxServeChars) for a serve.
-const (
-	textBudget  = model.MaxResultChars - 3000
-	serveBudget = model.MaxServeChars
-)
+// callBound is the result bound of the host the call serves, which
+// toolBoundary set on ctx.
+func callBound(ctx context.Context) model.ResultBound {
+	return model.ResultBound(sdd.ResultBound(ctx))
+}
+
+// serveBudget is what a serve may take of the call's result.
+func serveBudget(ctx context.Context) int { return callBound(ctx).Serve() }
+
+// textBudget is what the one large text field of a read may take of the
+// call's result.
+func textBudget(ctx context.Context) int { return callBound(ctx).Read() }
 
 // resultChars is what v costs as a tool result: the text content carrying its
 // JSON, which the bound counts.
@@ -31,15 +37,16 @@ func resultChars(v any) (int, error) {
 // pagedText bounds text, the large field of a tool's result, to textBudget:
 // text that fits serves whole; else its pages are held for the session and
 // the first serves, ending in the call that serves the next.
-func pagedText(ss *shellSession, tool, text string) string {
-	if model.ServedChars(text) <= textBudget {
+func pagedText(ctx context.Context, ss *shellSession, tool, text string) string {
+	budget := textBudget(ctx)
+	if model.ServedChars(text) <= budget {
 		delete(ss.pages, tool)
 		return text
 	}
 	if ss.pages == nil {
 		ss.pages = map[string][]string{}
 	}
-	ss.pages[tool] = model.SplitServed(text, textBudget-500)
+	ss.pages[tool] = model.SplitServed(text, budget-500)
 	page := pageText(ss, tool, 1)
 	if ss.repeatsPaged {
 		page = fmt.Sprintf("(page 1 again: call %s with the same arguments and page 2 for the rest)\n\n%s", tool, page)
@@ -72,7 +79,7 @@ func callKey(req *mcp.CallToolRequest) string {
 // result logs its bodies as read in full only once every page has served,
 // so refsInspected never passes on a body the agent did not get.
 func (s *toolSet) pagedRead(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, tool, text string, full, summary []string) (string, error) {
-	text = pagedText(ss, tool, text)
+	text = pagedText(ctx, ss, tool, text)
 	delete(ss.pageReads, tool)
 	if pages := len(ss.pages[tool]); pages > 1 && len(full) > 0 {
 		unserved := map[int]bool{}
@@ -126,7 +133,8 @@ func pageText(ss *shellSession, tool string, page int) string {
 
 // pagedItems splits a result's list into pages that each cost at most
 // textBudget, keeping every item whole; an empty list is one empty page.
-func pagedItems[T any](items []T) ([][]T, error) {
+func pagedItems[T any](ctx context.Context, items []T) ([][]T, error) {
+	budget := textBudget(ctx)
 	pages := [][]T{nil}
 	spent := 0
 	for _, item := range items {
@@ -134,7 +142,7 @@ func pagedItems[T any](items []T) ([][]T, error) {
 		if err != nil {
 			return nil, err
 		}
-		if spent > 0 && spent+cost > textBudget {
+		if spent > 0 && spent+cost > budget {
 			pages, spent = append(pages, nil), 0
 		}
 		pages[len(pages)-1] = append(pages[len(pages)-1], item)
@@ -145,11 +153,12 @@ func pagedItems[T any](items []T) ([][]T, error) {
 
 // boundedPage ends an attachment page whose content would cost more than
 // textBudget at its last line within it, next_offset continuing there.
-func boundedPage(page ReadAttachmentResult) ReadAttachmentResult {
-	if model.ServedChars(page.Content) <= textBudget {
+func boundedPage(ctx context.Context, page ReadAttachmentResult) ReadAttachmentResult {
+	budget := textBudget(ctx)
+	if model.ServedChars(page.Content) <= budget {
 		return page
 	}
-	page.Content = model.SplitServed(page.Content, textBudget)[0]
+	page.Content = model.SplitServed(page.Content, budget)[0]
 	page.NextOffset, page.More = page.Offset+int64(len(page.Content)), true
 	return page
 }

@@ -25,9 +25,41 @@ func TestServedChars(t *testing.T) {
 // A result at the bound prints whole in Codex's code mode, which spends the
 // result's text at the rate measured there, 15,059 tokens for 29,131
 // characters, against an output budget of 10,000 tokens.
-func TestMaxResultCharsFitsCodexOutputBudget(t *testing.T) {
-	if tokens := model.MaxResultChars * 15059 / 29131; tokens > 10000 {
+func TestDefaultResultBoundFitsCodexOutputBudget(t *testing.T) {
+	if tokens := int(model.DefaultResultBound) * 15059 / 29131; tokens > 10000 {
 		t.Fatalf("a result at the bound should print within Codex's output budget, it costs %d tokens", tokens)
+	}
+}
+
+// Only Claude Code, by its exact client name, gets the larger bound, lowered
+// to two characters per token of MAX_MCP_OUTPUT_TOKENS, never below the
+// default.
+func TestResultBoundFor(t *testing.T) {
+	for _, tc := range []struct {
+		client string
+		tokens int
+		want   model.ResultBound
+	}{
+		{"claude-code", 0, model.ClaudeCodeResultBound},
+		{"claude-code", 25000, model.ClaudeCodeResultBound},
+		{"claude-code", 15000, 30000},
+		{"claude-code", 5000, model.DefaultResultBound},
+		{"claude-ai", 0, model.DefaultResultBound},
+		{"Claude-Code", 0, model.DefaultResultBound},
+		{"codex-mcp-client", 0, model.DefaultResultBound},
+		{"", 0, model.DefaultResultBound},
+	} {
+		if got := model.ResultBoundFor(tc.client, tc.tokens); got != tc.want {
+			t.Errorf("client %q with %d tokens should get its host's bound %d, got %d", tc.client, tc.tokens, tc.want, got)
+		}
+	}
+}
+
+// The larger bound stays below the 50,000 characters past which Claude Code
+// saves a result to a file.
+func TestClaudeCodeResultBoundStaysBelowItsFileThreshold(t *testing.T) {
+	if model.ClaudeCodeResultBound >= 50000 {
+		t.Fatal("Claude Code's bound should stay below its file threshold")
 	}
 }
 

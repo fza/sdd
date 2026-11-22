@@ -23,7 +23,11 @@ const (
 	appBody    = "The command renders this entry through the configured graph directory."
 )
 
-type appFixture struct{ root string }
+type appFixture struct {
+	root string
+	// client is the name the serve's MCP client reports; cli-test when empty.
+	client string
+}
 
 func newAppFixture(t *testing.T) *appFixture {
 	t.Helper()
@@ -125,7 +129,11 @@ func (f *appFixture) serveArgs(t *testing.T, flags []string, check func(*mcp.Cli
 		}
 	}()
 
-	client, err := mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	name := f.client
+	if name == "" {
+		name = "cli-test"
+	}
+	client, err := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
 	if err != nil {
 		t.Fatalf("initialize CLI MCP: %v", err)
 	}

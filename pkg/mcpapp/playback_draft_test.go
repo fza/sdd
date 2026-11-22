@@ -96,7 +96,7 @@ func TestAPlaybackServesItsDraftWholeAndFirst(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs, session, serve := largePlayback(t, playbackBody(tc.repeat), tc.bounded)
 			requireDraftWholeAndFirst(t, serve)
-			if tc.pastBound && model.ServedChars(serve.Instructions) <= model.MaxServeChars {
+			if tc.pastBound && model.ServedChars(serve.Instructions) <= model.DefaultResultBound.Serve() {
 				t.Fatalf("the draft should run past the bound alone, the fixture too small to test: %d chars", model.ServedChars(serve.Instructions))
 			}
 			for calls := 0; waitingLanes.MatchString(serve.Instructions); calls++ {

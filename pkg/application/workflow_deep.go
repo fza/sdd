@@ -19,6 +19,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
+	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
@@ -37,8 +38,7 @@ const verifyReadStep = "read"
 const (
 	fieldDeepVerdict    = "deepVerdict"
 	fieldDeepBase       = "deepBase"
-	fieldDeepPages      = "deepPages"
-	fieldDeepPageFull   = "deepPageFull"
+	fieldDeepReading    = "deepReading"
 	fieldDeepWeighing   = "deepWeighing"
 	fieldDeepHistory    = "deepHistory"
 	fieldDeepRounds     = "deepRounds"
@@ -312,7 +312,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs, fieldDeepHidden),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh, fieldDeepHidden},
+				Writes: []string{fieldDeepBase, fieldDeepReading, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionReading, fieldDeepReadIDs, fieldDeepFresh, fieldDeepHidden},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -442,7 +442,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
 		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepReplayed: nil, fieldDeepListed: nil, fieldDeepUserListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
-		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
+		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionReading: nil, fieldDeepFresh: nil,
 	}
 	if revising {
 		// The live verifier keeps the launch it started with: one sdd launched
@@ -452,11 +452,11 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	if fresh != "" {
 		writes[fieldDeepFresh] = fresh
 	}
-	pages, held, err := w.deepPages(ctx, base)
+	reading, held, err := w.deepWholeReading(ctx, base)
 	if err != nil {
 		return fmt.Errorf("prepareDeep: %w", err)
 	}
-	writes[fieldDeepPages], writes[fieldDeepPageFull] = pageTexts(pages)
+	writes[fieldDeepReading] = reading
 	writes[fieldDeepReadIDs] = held
 	writes[fieldDeepHidden] = uniqueIDs(append(workflowStoreStrings(ctx.Store, fieldDeepHidden), held.Hidden...))
 	if revising {
@@ -470,11 +470,11 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		taken, _ := ctx.Store.Get(fieldDeepRevisions)
 		number := deepRoundCount(taken) + 1
 		writes[fieldDeepRevisions] = number
-		revision, err := w.deepRevisionPages(ctx, base, number, previous)
+		revision, err := w.deepRevisionReading(ctx, base, number, previous)
 		if err != nil {
 			return fmt.Errorf("prepareDeep: %w", err)
 		}
-		writes[fieldDeepRevisionPages], writes[fieldDeepRevisionPageFull] = pageTexts(revision)
+		writes[fieldDeepRevisionReading] = revision
 	}
 	writes[fieldDeepWeighing] = nil
 	if policy.Skip == model.VerifierSkipWeighed {
@@ -560,13 +560,13 @@ func checkoutFile(checkout fs.FS, path string) (string, bool, error) {
 	return string(data), true, nil
 }
 
-// deepPages renders the verifier's whole reading, led by the draft document,
-// its refs' fit, what pre-flight raised and the changed passages since the
-// last verdict, and names the entries it serves.
-func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld, error) {
+// deepWholeReading renders the verifier's whole reading, led by the draft
+// document, its refs' fit, what pre-flight raised and the changed passages
+// since the last verdict, and names the entries it serves.
+func (w *WorkflowSession) deepWholeReading(ctx *engine.Context, base string) (model.DeepReading, deepHeld, error) {
 	refFit, err := deepRefFit(ctx)
 	if err != nil {
-		return nil, deepHeld{}, err
+		return model.DeepReading{}, deepHeld{}, err
 	}
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
@@ -623,14 +623,14 @@ func preflightRaised(store *engine.Store) string {
 	return b.String()
 }
 
-// deepReading pages lead and rules with the declared targets and the entries
+// deepReading joins lead and rules with the declared targets and the entries
 // read in full, then the briefs, in the order the reading listed them, each
 // set-aside with its code, a closed brief beside its closer short; it leaves
 // out what skip holds already, and names what it serves.
-func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld, error) {
+func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules model.DeepContinued, skip deepHeld) (model.DeepReading, deepHeld, error) {
 	graph := ctx.Graph
 	if graph == nil {
-		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}, nil
+		return model.DeepReading{Lead: lead, Rules: rules}, deepHeld{}, nil
 	}
 	heldFull := map[string]bool{}
 	for _, id := range skip.Full {
@@ -704,7 +704,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 	}
 	lanes, err := w.verifierLanes(ctx, reading, targets)
 	if err != nil {
-		return nil, deepHeld{}, err
+		return model.DeepReading{}, deepHeld{}, err
 	}
 	for _, id := range lanes.Inspect {
 		served, ok := block(id, model.LightRoleBrief, false)
@@ -727,7 +727,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			return shown[id] && !aside
 		}))
 	}
-	return model.DeepReadingPages(lead, rules, first, rest), served, nil
+	return model.DeepReading{Lead: lead, Rules: rules, First: first, Rest: rest}, served, nil
 }
 
 // verifierLanes splits the reading's listed entries for the deep verifier
@@ -789,24 +789,18 @@ func (w *WorkflowSession) verifierLanes(ctx *engine.Context, reading *captureRea
 	return model.SplitVerifierLanes(reading.listed, structural, scores, thresholds, thresholds.SetAside, seed), nil
 }
 
-func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {
-	texts := make([]string, len(pages))
-	full := make([][]string, len(pages))
-	for i, page := range pages {
-		texts[i], full[i] = page.Text, page.FullIDs
-	}
-	return texts, full
-}
-
-// preflightRules pages the rubric pre-flight's model would have judged the
-// draft by, when the verifier judges in its place.
-func preflightRules(store *engine.Store) []model.DeepReadingPage {
+// preflightRules is the rubric pre-flight's model would have judged the draft
+// by, when the verifier judges in its place.
+func preflightRules(store *engine.Store) model.DeepContinued {
 	rubric, _ := workflowStoreString(store, fieldPreflightRubric)
 	if rubric == "" {
-		return nil
+		return model.DeepContinued{}
 	}
-	return model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
-		"## Pre-flight's rules, continued\n\n", rubric)
+	return model.DeepContinued{
+		Intro:     "## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
+		Continued: "## Pre-flight's rules, continued\n\n",
+		Text:      rubric,
+	}
 }
 
 func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
@@ -1020,12 +1014,14 @@ func deepPassages(pointers []model.DeepPointer) string {
 
 // Engine-written fields of the verify task.
 const (
-	fieldVerifyBase      = "verifyBase"
-	fieldVerifyPages     = "verifyPages"
-	fieldVerifyPageFull  = "verifyPageFull"
-	fieldVerifyPageAt    = "verifyPageAt"
-	fieldVerifyPage      = "pageText"
-	fieldVerifyPageNote  = "pageNote"
+	fieldVerifyBase    = "verifyBase"
+	fieldVerifyReading = "verifyReading"
+	fieldVerifyPageAt  = "verifyPageAt"
+	// fieldVerifyPageBound is the result bound the reading was last turned
+	// under; fieldVerifyRestarted marks a turn that started the reading
+	// again because the bound changed.
+	fieldVerifyPageBound = "verifyPageBound"
+	fieldVerifyRestarted = "verifyRestarted"
 	fieldVerifyProblems  = "problems"
 	fieldVerifyRepair    = "repairSpent"
 	fieldVerifyResponded = "responseHistory"
@@ -1056,19 +1052,12 @@ func (w *WorkflowSession) dispatchingStore() (*engine.Store, error) {
 	return inst.Store, nil
 }
 
-func (w *WorkflowSession) showVerifyPage(store *engine.Store, at int) error {
-	pages := workflowStoreStrings(store, fieldVerifyPages)
-	if at >= len(pages) {
-		return fmt.Errorf("page %d of %d does not exist", at+1, len(pages))
-	}
-	note := fmt.Sprintf("Page %d of %d.", at+1, len(pages))
-	if at < len(pages)-1 {
-		note += " Report more for the next page. Findings are refused until every page is served."
-	} else {
-		note += " Every page is served."
-	}
-	for name, value := range map[string]any{fieldVerifyPageAt: at, fieldVerifyPage: pages[at], fieldVerifyPageNote: note} {
-		err := store.WriteEngine(name, value)
+// openVerifyReading writes writes, the whole reading among them, into the
+// verify task and stands it at page 1.
+func openVerifyReading(store *engine.Store, writes map[string]any) error {
+	writes[fieldVerifyPageAt], writes[fieldVerifyPageBound], writes[fieldVerifyRestarted] = 0, nil, nil
+	for _, name := range slices.Sorted(maps.Keys(writes)) {
+		err := store.WriteEngine(name, writes[name])
 		if err != nil {
 			return err
 		}
@@ -1076,37 +1065,102 @@ func (w *WorkflowSession) showVerifyPage(store *engine.Store, at int) error {
 	return nil
 }
 
+// verifyPages pages the verify task's reading for the host the current call
+// serves, and returns the page the task stands at.
+func (w *WorkflowSession) verifyPages(store *engine.Store) ([]model.DeepReadingPage, int, error) {
+	value, ok := store.Get(fieldVerifyReading)
+	if !ok || value == nil {
+		return nil, 0, errors.New("the verify task holds no reading")
+	}
+	var reading model.DeepReading
+	err := decodeStoreValue(value, &reading)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading %s: %w", fieldVerifyReading, err)
+	}
+	pages := reading.Pages(resultBound(w.ctx))
+	at, _ := store.Get(fieldVerifyPageAt)
+	return pages, min(deepRoundCount(at), len(pages)-1), nil
+}
+
+// verifyBoundChanged reports whether the current call's host takes pages of
+// another size than the one the reading was last turned under, so the page
+// the task stands at no longer follows the pages served before it.
+func (w *WorkflowSession) verifyBoundChanged(store *engine.Store) bool {
+	turned, _ := store.Get(fieldVerifyPageBound)
+	return turned != nil && deepRoundCount(turned) != int(resultBound(w.ctx))
+}
+
+// turnVerifyPage stands the reading at page at, turned under the current
+// call's bound.
+func (w *WorkflowSession) turnVerifyPage(store *engine.Store, at int, restarted bool) error {
+	writes := map[string]any{fieldVerifyPageAt: at, fieldVerifyPageBound: int(resultBound(w.ctx)), fieldVerifyRestarted: nil}
+	if restarted {
+		writes[fieldVerifyRestarted] = true
+	}
+	for _, name := range slices.Sorted(maps.Keys(writes)) {
+		err := store.WriteEngine(name, writes[name])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyPageNote(store *engine.Store, at, count int) string {
+	note := fmt.Sprintf("Page %d of %d.", at+1, count)
+	if restarted, _ := store.Get(fieldVerifyRestarted); restarted == true {
+		note = "This host takes pages of another size than the pages served before, so the reading starts again. " + note
+	}
+	if at < count-1 {
+		return note + " Report more for the next page. Findings are refused until every page is served."
+	}
+	return note + " Every page is served."
+}
+
 // verifyPageFullIDs returns the entries the current page of the reading serves
 // in full.
-func verifyPageFullIDs(store *engine.Store) ([]string, error) {
-	full, err := storeDeep[[]string](store, fieldVerifyPageFull)
+func (w *WorkflowSession) verifyPageFullIDs(store *engine.Store) ([]string, error) {
+	pages, at, err := w.verifyPages(store)
 	if err != nil {
 		return nil, err
 	}
-	at, _ := verifyPageAt(store)
-	if at >= len(full) {
-		return nil, nil
-	}
-	return full[at], nil
-}
-
-func verifyPageAt(store *engine.Store) (int, int) {
-	at, _ := store.Get(fieldVerifyPageAt)
-	return deepRoundCount(at), len(workflowStoreStrings(store, fieldVerifyPages))
+	return pages[at].FullIDs, nil
 }
 
 func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 	// The deep exchange's documents are the exchange itself: a page, the
 	// findings, the proposal and its hunks reach their reader whole, never at
-	// the store-value cap.
+	// the store-value cap. Both queries cut for the host the call serves; the
+	// registered cap is the default host's, which the authoring arithmetic
+	// sizes against.
+	pageCap := engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DefaultResultBound.DeepPage()}}
 	err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: a reading page, the findings, the proposal or its hunks, up to one page of the reading."},
+		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: the findings, the proposal or its hunks, up to one page of the reading."},
 		ServeSafe: true,
-		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DeepPageChars}},
+		Bound:     pageCap,
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			field, _ := args["field"].(string)
 			value, _ := workflowStoreString(ctx.Store, field)
-			return value, nil
+			return truncate.Bytes(value, resultBound(w.ctx).DeepPage(), ""), nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "verifyPage", Doc: "Serves the page of the reading the verify task stands at, cut for the host of the call that serves it, or with part: note the line naming the page.", Reads: []string{fieldVerifyReading, fieldVerifyPageAt, fieldVerifyRestarted}},
+		ServeSafe: true,
+		Bound:     pageCap,
+		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
+			pages, at, err := w.verifyPages(ctx.Store)
+			if err != nil {
+				return nil, err
+			}
+			text := pages[at].Text
+			if part, _ := args["part"].(string); part == "note" {
+				text = verifyPageNote(ctx.Store, at, len(pages))
+			}
+			return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: len(text), TotalBytes: len(text)}}, nil
 		},
 	})
 	if err != nil {
@@ -1142,56 +1196,52 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 	}
 	commands := []engine.Command{
 		{
-			Doc: engine.FuncDoc{Name: "loadVerifyRevision", Doc: "Loads the revised draft and the revision's reading from the capture this delegate works for, serves its page 1, and opens a fresh exchange over the revised draft.", Writes: []string{fieldVerifyBase, fieldVerifyPages, fieldVerifyPageFull, fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote, fieldVerifyRepair, fieldVerifyResponded}},
+			Doc: engine.FuncDoc{Name: "loadVerifyRevision", Doc: "Loads the revised draft and the revision's whole reading from the capture this delegate works for, stands it at page 1, and opens a fresh exchange over the revised draft.", Writes: []string{fieldVerifyBase, fieldVerifyReading, fieldVerifyPageAt, fieldVerifyPageBound, fieldVerifyRestarted, fieldVerifyRepair, fieldVerifyResponded}},
 			Fn:  w.loadVerifyRevision,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "loadVerifyInput", Doc: "Loads the draft document and the paged reading from the capture this delegate works for, and serves page 1: on start, and for a verifier that does not hold the reading.", Writes: []string{fieldVerifyBase, fieldVerifyPages, fieldVerifyPageFull, fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote}},
+			Doc: engine.FuncDoc{Name: "loadVerifyInput", Doc: "Loads the draft document and the whole reading from the capture this delegate works for, and stands it at page 1: on start, and for a verifier that does not hold the reading.", Writes: []string{fieldVerifyBase, fieldVerifyReading, fieldVerifyPageAt, fieldVerifyPageBound, fieldVerifyRestarted}},
 			Fn: func(ctx *engine.Context) error {
 				parent, err := w.dispatchingStore()
 				if err != nil {
 					return err
 				}
 				base, _ := workflowStoreString(parent, fieldDeepBase)
-				pages := workflowStoreStrings(parent, fieldDeepPages)
-				if base == "" || len(pages) == 0 {
+				reading, _ := parent.Get(fieldDeepReading)
+				if base == "" || reading == nil {
 					return errors.New("the dispatching capture holds no prepared deep exchange")
 				}
-				err = ctx.Store.WriteEngine(fieldVerifyBase, base)
-				if err != nil {
-					return err
-				}
-				err = ctx.Store.WriteEngine(fieldVerifyPages, pages)
-				if err != nil {
-					return err
-				}
-				full, err := storeDeep[[]string](parent, fieldDeepPageFull)
-				if err != nil {
-					return err
-				}
-				err = ctx.Store.WriteEngine(fieldVerifyPageFull, full)
-				if err != nil {
-					return err
-				}
-				return w.showVerifyPage(ctx.Store, 0)
+				return openVerifyReading(ctx.Store, map[string]any{fieldVerifyBase: base, fieldVerifyReading: reading})
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "turnPage", Doc: "Serves the next page of the reading.", Reads: []string{fieldVerifyPages, fieldVerifyPageAt}, Writes: []string{fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote}},
+			Doc: engine.FuncDoc{Name: "turnPage", Doc: "Serves the next page of the reading, or page 1 again when the call's host takes pages of another size than the reading was turned under.", Reads: []string{fieldVerifyReading, fieldVerifyPageAt, fieldVerifyPageBound}, Writes: []string{fieldVerifyPageAt, fieldVerifyPageBound, fieldVerifyRestarted}},
 			Fn: func(ctx *engine.Context) error {
-				at, count := verifyPageAt(ctx.Store)
-				if at+1 >= count {
+				if w.verifyBoundChanged(ctx.Store) {
+					return w.turnVerifyPage(ctx.Store, 0, true)
+				}
+				pages, at, err := w.verifyPages(ctx.Store)
+				if err != nil {
+					return err
+				}
+				if at+1 >= len(pages) {
 					return errors.New("every page is served: report judge with your findings")
 				}
-				return w.showVerifyPage(ctx.Store, at+1)
+				return w.turnVerifyPage(ctx.Store, at+1, false)
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "requireReadingServed", Doc: "Refuses findings until every page of the reading was served.", Reads: []string{fieldVerifyPages, fieldVerifyPageAt}},
+			Doc: engine.FuncDoc{Name: "requireReadingServed", Doc: "Refuses findings until every page of the reading was served at the call's page size.", Reads: []string{fieldVerifyReading, fieldVerifyPageAt, fieldVerifyPageBound}},
 			Fn: func(ctx *engine.Context) error {
-				at, count := verifyPageAt(ctx.Store)
-				if at+1 < count {
-					return fmt.Errorf("page %d of %d is the last served: report more until every page is served, then judge", at+1, count)
+				if w.verifyBoundChanged(ctx.Store) {
+					return errors.New("this host takes pages of another size than the pages served before: report more to read the reading again from page 1, then judge")
+				}
+				pages, at, err := w.verifyPages(ctx.Store)
+				if err != nil {
+					return err
+				}
+				if at+1 < len(pages) {
+					return fmt.Errorf("page %d of %d is the last served: report more until every page is served, then judge", at+1, len(pages))
 				}
 				return requireFindingsReported(ctx.Store)
 			},

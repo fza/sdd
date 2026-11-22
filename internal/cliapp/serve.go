@@ -57,6 +57,17 @@ func serveCmd() *cli.Command {
 				Name:  "output-schema",
 				Usage: "For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it.",
 			},
+			&cli.IntFlag{
+				Name:    "mcp-output-tokens",
+				Usage:   "Claude Code's MCP output limit in tokens: lowers the size of a result served to Claude Code to 2 characters per token",
+				Sources: cli.EnvVars("MAX_MCP_OUTPUT_TOKENS"),
+				Validator: func(tokens int) error {
+					if tokens < 0 {
+						return fmt.Errorf("MCP output limit %d is negative", tokens)
+					}
+					return nil
+				},
+			},
 		),
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			application, _, identity, err := localApplication(ctx, cmd, "")
@@ -75,11 +86,12 @@ func serveCmd() *cli.Command {
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
-				Application:   application,
-				LocalIdentity: identity,
-				LocalClient:   transport == "stdio",
-				Version:       cmd.Root().Version,
-				OutputSchema:  cmd.Bool("output-schema"),
+				Application:     application,
+				LocalIdentity:   identity,
+				LocalClient:     transport == "stdio",
+				Version:         cmd.Root().Version,
+				OutputSchema:    cmd.Bool("output-schema"),
+				MCPOutputTokens: cmd.Int("mcp-output-tokens"),
 			})
 			if err != nil {
 				return err
