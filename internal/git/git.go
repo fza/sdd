@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -51,7 +50,7 @@ func (c CLI) env() []string {
 	if c.Dir == "" {
 		return nil
 	}
-	return pathEnv()
+	return pathEnv(nil)
 }
 
 // command builds a git command for this adapter's repository.
@@ -59,19 +58,6 @@ func (c CLI) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
 	cmd.Env = c.env()
 	return cmd
-}
-
-// repositoryVariables are the variables git exports to hooks that pin a
-// command to the hook's repository whatever -C names.
-var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
-
-// pathEnv is the process environment without repositoryVariables, for a git
-// command that locates its repository by path.
-func pathEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(repositoryVariables, name)
-	})
 }
 
 // commitTimeout caps the detached auto-commit. A signing or credential helper
@@ -281,7 +267,7 @@ type TrackedFiles struct{}
 // root, whatever GIT_DIR the process inherited. A root in no repository git
 // can read is an error: there is no saying what it tracks.
 func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) ([]string, error) {
-	env := pathEnv()
+	env := pathEnv(nil)
 	args := []string{"-C", root, "ls-files", "-z", "--"}
 	for _, path := range paths {
 		args = append(args, ":(icase)"+path)
@@ -312,7 +298,7 @@ func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
 
 func (Repositories) Init(dir string) error {
 	cmd := exec.Command("git", "init", "--quiet", dir)
-	cmd.Env = pathEnv()
+	cmd.Env = pathEnv(nil)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
@@ -320,9 +306,11 @@ func (Repositories) Init(dir string) error {
 	return nil
 }
 
-func (Repositories) CurrentBranch(dir string) (string, error) { return currentBranch(dir, pathEnv()) }
+func (Repositories) CurrentBranch(dir string) (string, error) {
+	return currentBranch(dir, pathEnv(nil))
+}
 
-func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
+func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv(nil)) }
 
 // existingAncestor returns path, or the closest ancestor that exists on disk;
 // for a file, the folder holding it, so a graph_dir naming a file lies in the
