@@ -74,6 +74,7 @@ func captureArgs() []string {
 		"The work repository carries only the work, while signals and decisions live in a project beside it.",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "A project beside the work keeps the work history free of capture commits.",
+		"--title", "Project beside the work repository",
 	}
 }
 
