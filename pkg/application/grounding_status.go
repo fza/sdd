@@ -120,7 +120,7 @@ func (r *ProjectRuntime) hidingReport(ctx context.Context, judge Prefilter) (rep
 	if err != nil {
 		return model.HidingReport{}, err
 	}
-	return model.NewHidingReport(records, judge.Judge, judge.Revision, size, states.thresholds), nil
+	return model.NewHidingReport(records, judge.Judge, judge.Revision, size, states.thresholds, states.team), nil
 }
 
 // judgeOrigin says where judge, the ranking judge of a reading without a

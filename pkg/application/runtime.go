@@ -61,6 +61,8 @@ type ProjectRuntimeOptions struct {
 	// Proofs keeps the proof records that gate the hiding rules; nil keeps
 	// none, so no rule holds a proof.
 	Proofs ProofStore
+	// TeamProofs keeps the team's committed proof records; nil shares none.
+	TeamProofs TeamProofs
 	// CalibrationRuns admits one background calibration of the project at
 	// a time and shares its state with other processes; nil runs none.
 	CalibrationRuns CalibrationRuns

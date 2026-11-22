@@ -41,6 +41,8 @@ func proofText(state model.RuleState) string {
 	proof := state.Proof
 	var text string
 	switch {
+	case state.Team:
+		text = "step from the team's committed proof; this machine's own replays confirm it in the background"
 	case proof.Valid():
 		text = fmt.Sprintf("proof: %s of %s needed entries hidden in %s replays, bound %.3f, graph of %s", thousands(proof.Hidden), thousands(proof.Needed), thousands(proof.Checks), proof.Bound, thousands(proof.GraphSize))
 	case proof.Expired:
@@ -48,7 +50,7 @@ func proofText(state model.RuleState) string {
 	default:
 		text = "no proof yet"
 	}
-	if proof.Rule == model.RuleFarFloor && model.ProvenStep(proof) == model.StepNarrowed && !(proof.Valid() && proof.Bound >= model.ProofNarrowed) {
+	if proof.Rule == model.RuleFarFloor && !state.Team && model.ProvenStep(proof) == model.StepNarrowed && !(proof.Valid() && proof.Bound >= model.ProofNarrowed) {
 		text += "; careful form from the first check"
 	}
 	if state.Captures > 0 {

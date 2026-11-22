@@ -51,6 +51,9 @@ func (c *autoCalibrator) replayRound(ctx context.Context, runtime *ProjectRuntim
 	if selected.releaseInto(&err); err != nil {
 		return false, err
 	}
+	if err := runtime.recordTeamProof(context.WithoutCancel(ctx), judge, len(live), states, c.app.now()); err != nil {
+		return false, err
+	}
 	scanned, err := c.scanTallies(ctx, runtime, graph, judge, records, wait)
 	if err != nil || scanned {
 		return scanned, err
