@@ -56,3 +56,67 @@ func TestFramingServesEachCallerOncePerChange(t *testing.T) {
 		t.Fatalf("resume_session should carry every framing block, got %q", framing)
 	}
 }
+
+// The result ending a move lands on the session base short: the move's
+// outcome, the base step named with its choices and the moves to start, none
+// of the base step's text; resume_session serves that text in full
+// (20261121-233256-d-tac-mm2).
+func TestAMoveEndsWithAShortLanding(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSessionWhole(t, cs)
+	const baseText = "Ending is part of the arc"
+	if !strings.Contains(door.Instructions, baseText) {
+		t.Fatalf("setup: the opening should carry the base step's text, got %.300q", door.Instructions)
+	}
+
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
+	var ended mcpserver.AbandonResult
+	call(t, cs, "abandon", map[string]any{"session": door.Session, "instance": serve.Instance, "reason": "not needed"}, &ended)
+	base := ended.Base
+	if base == nil || base.Instance != door.Instance || base.Step != "junction" {
+		t.Fatalf("abandon should land on the base step, got %+v", base)
+	}
+	for _, want := range []string{"back at user-dialogue, step junction", "resume_session sends them in full", "Moves to start next: ", "capture"} {
+		if !strings.Contains(base.Instructions, want) {
+			t.Errorf("the landing should carry %q, got %q", want, base.Instructions)
+		}
+	}
+	if strings.Contains(base.Instructions, baseText) {
+		t.Errorf("the landing should not carry the base step's text, got %q", base.Instructions)
+	}
+	if base.PendingChooser == nil || len(base.PendingChooser.Options) == 0 {
+		t.Errorf("the landing should carry the base step's choices, got %+v", base.PendingChooser)
+	}
+
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	for _, open := range resumed.Open {
+		if open.Instance == door.Instance && !strings.Contains(open.Instructions, baseText) && !strings.Contains(open.Instructions, "lanes of these instructions wait") {
+			t.Fatalf("resume_session should serve the base step in full, got %.300q", open.Instructions)
+		}
+	}
+}
+
+// A landing counts none of the base step's text as served: an agent that
+// lost what it held before the move ended gets that text in full on the
+// base step's next serve.
+func TestALandingCountsNoBaseStepTextAsServed(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	agent := newAgentMemory()
+	cs := connectAs(t, env.srv, agent)
+	door := openSession(t, cs)
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
+
+	agent.lost = true
+	var ended mcpserver.AbandonResult
+	call(t, cs, "abandon", map[string]any{"session": door.Session, "instance": serve.Instance, "reason": "not needed"}, &ended)
+	agent.lost = false
+	var again mcpserver.ServeResult
+	call(t, cs, "next", map[string]any{"session": door.Session, "instance": door.Instance}, &again)
+	if !strings.Contains(again.Instructions, "Ending is part of the arc") && !strings.Contains(again.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("the base step after a landing should come in full, got %.300q", again.Instructions)
+	}
+}

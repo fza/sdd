@@ -37,6 +37,36 @@ func TestBuildDeepProposal_LabelsEachHunkByItsFinding(t *testing.T) {
 	}
 }
 
+func TestBuildDeepProposal_HunkCarriesTheChangedSpanWithAFewWordsAround(t *testing.T) {
+	base := "The capture writer, which every import runs through, drops the second attachment when two attachments share a name in one staging folder.\n"
+	_, hunks, err := model.BuildDeepProposal(base, []model.DeepChange{{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "two attachments share", New: "two staged files share"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := model.RenderDeepHunks(hunks)
+	want := "@@ h1 [f1 applied] line 1\n-…second attachment when two attachments share a name in…\n+…second attachment when two staged files share a name in…\n"
+	if got != want {
+		t.Fatalf("a hunk should carry the changed span and three words each side, not the paragraph:\n%s", got)
+	}
+}
+
+func TestDeepSettledLine(t *testing.T) {
+	finding := model.DeepFinding{Verdict: "the layer is too low", Axis: "ref-fit", Severity: "low"}
+	tests := []struct {
+		name, settled, note, want string
+	}{
+		{name: "with a note", settled: "withdrawn", note: "the dialogue\n  names the layer", want: "- f2 [low, ref-fit] withdrawn: the dialogue names the layer\n"},
+		{name: "without a note", settled: "accepted without an edit", want: "- f2 [low, ref-fit] accepted without an edit\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := model.DeepSettledLine("f2", finding, tt.settled, tt.note); got != tt.want {
+				t.Fatalf("a settled finding should render as one line with its label, outcome and note, got %q", got)
+			}
+		})
+	}
+}
+
 func TestBuildDeepProposal_RefusesNonMatchingAndOverlappingEdits(t *testing.T) {
 	_, _, err := model.BuildDeepProposal(deepBase, []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "absent text", New: "x"}}}})
 	if err == nil || !strings.Contains(err.Error(), "f1 edit 1: old text matches the draft 0 times") {
