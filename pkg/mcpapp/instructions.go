@@ -74,7 +74,7 @@ questions about texts sdd served you, one per line, such as
 q <text name>: 2 words after "<a phrase>"? | lost
 Your next call that advances the session (start_procedure, next, park,
 abandon) must answer both in answer, in their order and parted by ;, as in
-reach the ; 280: the words each asks for, looked up in its text, or lost
+reach sdd ; 280: the words each asks for, looked up in its text, or lost
 for one whose text you no longer see. A response with one question takes
 one answer; saw no question, answer lost. Never guess. Both right serve
 repeated instructions, report schemas and framing short; lost or a wrong

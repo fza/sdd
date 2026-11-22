@@ -5,7 +5,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "instance": {
@@ -169,7 +169,7 @@
           "type": "string"
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "session": {
@@ -341,7 +341,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "cancel_ref": {
@@ -795,7 +795,7 @@
           ]
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "reason": {
@@ -840,7 +840,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "instance": {
@@ -987,7 +987,7 @@
           "type": "string"
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "step": {
@@ -1664,7 +1664,7 @@
                 ]
               },
               "question": {
-                "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+                "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
                 "type": "string"
               },
               "reason": {
@@ -1761,7 +1761,7 @@
           "type": "string"
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "session": {
@@ -2054,7 +2054,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "canonical": {
@@ -2506,7 +2506,7 @@
           ]
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "reason": {
@@ -2972,7 +2972,7 @@
           ]
         },
         "question": {
-          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost",
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "reason": {
