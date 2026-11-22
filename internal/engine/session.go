@@ -310,6 +310,8 @@ type Session struct {
 	// changed folds the content hash each piece that serves once per change
 	// last served under its name, per caller (changedKey).
 	changed map[string]string
+	// onceTexts folds the text of each content those pieces served.
+	onceTexts map[Piece]string
 	// deferred folds the deferral events: per instance whose lanes wait, the
 	// pieces its serve sent, each by the step that sent it (FollowDeferral).
 	deferred map[string]map[Piece]string
