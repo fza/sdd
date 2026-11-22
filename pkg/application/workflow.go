@@ -218,7 +218,17 @@ type WorkflowResumeResult struct {
 	Open             []WorkflowServe
 	PendingOperation *WorkflowPendingOperation
 	Cancellation     *WorkflowCancellation
-	Instructions     string
+	// LastEnded is the move that ended most recently; nil while none has.
+	LastEnded    *WorkflowEndedMove
+	Instructions string
+}
+
+// WorkflowEndedMove is an ended move and the outcome it ended with:
+// completed, abandoned or cancelled.
+type WorkflowEndedMove struct {
+	Instance  string
+	Procedure string
+	Outcome   string
 }
 
 type WorkflowAbandonResult struct {
@@ -897,7 +907,7 @@ func (w *WorkflowSession) resumeHead() (WorkflowResumeResult, error) {
 	if err != nil {
 		return WorkflowResumeResult{}, err
 	}
-	result := WorkflowResumeResult{Session: w.ID(), Participant: w.session.Participant, Label: w.session.Label, Branch: w.branch, PendingOperation: w.pendingOperation(), Cancellation: workflowCancellation(cancelled)}
+	result := WorkflowResumeResult{Session: w.ID(), Participant: w.session.Participant, Label: w.session.Label, Branch: w.branch, PendingOperation: w.pendingOperation(), Cancellation: workflowCancellation(cancelled), LastEnded: w.lastEndedMove()}
 	// The notice rides the instance it belongs to; the resume carries it
 	// only when that instance no longer runs (d-tac-t6u).
 	if cancelled != nil {
@@ -906,6 +916,17 @@ func (w *WorkflowSession) resumeHead() (WorkflowResumeResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// lastEndedMove needs no shell filter: an ended shell finishes the session,
+// which no longer resumes.
+func (w *WorkflowSession) lastEndedMove() *WorkflowEndedMove {
+	ended := w.session.EndedInstances()
+	if len(ended) == 0 {
+		return nil
+	}
+	inst := ended[len(ended)-1]
+	return &WorkflowEndedMove{Instance: inst.ID, Procedure: inst.Spec.Canonical, Outcome: inst.Outcome}
 }
 
 func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity, instance, reason string) (WorkflowAbandonResult, error) {

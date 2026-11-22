@@ -63,7 +63,7 @@ In practice it often works better to avoid compaction in long work. Capture the 
 
 ## Resume a session in a fresh agent session
 
-A session you did not wrap up stays open. In a new agent session, give the agent the session ID and ask it to resume that session. It receives the open moves at their current steps and can continue an unfinished capture or implementation where the old conversation stopped. Ask your agent for the session ID before you close a conversation you may want to continue.
+A session you did not wrap up stays open. In a new agent session, give the agent the session ID and ask it to resume that session. It receives the open moves at their current steps and can continue an unfinished capture or implementation where the old conversation stopped. Where a move has ended, the resume also names the last one and how it ended, for example `Last ended move: capture i_3 (abandoned)`; the other outcomes are `completed` and `cancelled`. Ask your agent for the session ID before you close a conversation you may want to continue.
 
 How best to hand work between agent sessions this way is still being worked out. Capturing the state as entries first is the safer path.
 

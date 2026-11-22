@@ -269,6 +269,7 @@ type ResumeSessionResult struct {
 	Branch           string                  `json:"branch,omitempty" jsonschema:"the session's declared branch binding"`
 	PendingOperation *PendingOperationResult `json:"pending_operation,omitempty" jsonschema:"unfinished recorded operation; its instance's serve in open_instances carries the position"`
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"latest recorded cancellation, included even when its instance is closed or omitted"`
+	LastEndedMove    string                  `json:"last_ended_move,omitempty" jsonschema:"one line naming the session's most recent ended move and how it ended: completed, abandoned or cancelled; absent while no move has ended. open_instances lists running moves only"`
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
@@ -1776,6 +1777,9 @@ func resumeHeadResult(ss *shellSession, source sdd.WorkflowResumeResult) ResumeS
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
 		Instructions: resumeInstructionsFor(ss), PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
+	}
+	if ended := source.LastEnded; ended != nil {
+		result.LastEndedMove = fmt.Sprintf("Last ended move: %s %s (%s)", ended.Procedure, ended.Instance, ended.Outcome)
 	}
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions

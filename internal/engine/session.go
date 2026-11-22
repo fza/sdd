@@ -282,6 +282,8 @@ type Session struct {
 	counter   int
 	instances map[string]*Instance
 	order     []string
+	// ended holds instance IDs in the order they ended (noteEnded).
+	ended []string
 	// reads folds the session's read events into the deepest depth each entry
 	// was served at — what the refsInspected gate evaluates. Session-level by
 	// design: a parent's inspections count for children dispatched in the same
@@ -620,6 +622,7 @@ func (s *Session) Park(instanceID, note string) error {
 // call sites that can surface them; here the event is built centrally.
 func (s *Session) appendEvent(instance string, typ EventType, data map[string]any) uint64 {
 	s.noteAuthored(typ, data)
+	s.noteEnded(instance, typ, data)
 	if s.sinkErr != nil {
 		return 0
 	}
@@ -645,6 +648,36 @@ func (s *Session) Instances() []*Instance {
 		out = append(out, s.instances[id])
 	}
 	return out
+}
+
+// EndedInstances returns the session's ended instances in the order they
+// ended.
+func (s *Session) EndedInstances() []*Instance {
+	out := make([]*Instance, 0, len(s.ended))
+	for _, id := range s.ended {
+		if inst, ok := s.instances[id]; ok {
+			out = append(out, inst)
+		}
+	}
+	return out
+}
+
+// noteEnded records the instance an event ends, live and on replay alike: a
+// completion, an abandonment, or a cancellation with no interaction to
+// return to.
+func (s *Session) noteEnded(instance string, typ EventType, data map[string]any) {
+	switch typ {
+	case EventCompleted, EventAbandoned:
+	case EventMutationOutcome:
+		outcome, _ := data["outcome"].(string)
+		returnStep, _ := data["return_step"].(string)
+		if outcome != MutationCancelled || returnStep != "" {
+			return
+		}
+	default:
+		return
+	}
+	s.ended = append(s.ended, instance)
 }
 
 // Instance returns a session instance by ID.
@@ -1162,6 +1195,7 @@ func (s *Session) fold(events []Event, resolve SpecResolver) error {
 
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	s.noteAuthored(ev.Event, ev.Data)
+	s.noteEnded(ev.Instance, ev.Event, ev.Data)
 	switch ev.Event {
 	case EventSessionMeta:
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
