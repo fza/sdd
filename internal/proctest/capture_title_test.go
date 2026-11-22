@@ -71,7 +71,8 @@ func TestCapture_DriftedWithoutACorrectionIsRefused(t *testing.T) {
 }
 
 // The summary check has the agent pair each summary sentence with the body
-// sentence it rests on before it answers faithful.
+// sentence it rests on before it answers faithful, and asks whether the title
+// claims anything the entry denies.
 func TestCapture_SummaryCheckPairsEachSentenceWithTheBody(t *testing.T) {
 	_, session := newCaptureWorld(t, "summary-pairs")
 	serve := session.Start(t, "capture", nil)
@@ -82,6 +83,7 @@ func TestCapture_SummaryCheckPairsEachSentenceWithTheBody(t *testing.T) {
 	for _, want := range []string{
 		"Check the summary against the body sentence by sentence: for each summary sentence, name the body sentence it rests on. A summary sentence that rests on none, states a firmer modal or state than the body's, or carries an ID or hash the body does not is drift.",
 		"Answer faithful, with each summary sentence and the body sentence it rests on as the fidelity note.",
+		"Does the title claim anything the entry's text denies? Then it drifted.",
 	} {
 		if !strings.Contains(test.Untagged(serve.Instructions), want) {
 			t.Errorf("the summary check should carry %q:\n%s", want, serve.Instructions)

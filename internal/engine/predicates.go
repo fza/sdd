@@ -262,14 +262,15 @@ func registerBuiltinPredicates(r *Registry) {
 		Fn: func(ctx *Context) (bool, error) {
 			return len(uninspectedRefs(ctx)) == 0, nil
 		},
-		FailMessage: "a draft ref was not inspected at full depth this session",
+		FailMessage: "a draft ref was not inspected at full depth in the current sdd session; reads and writes of another sdd session do not count, even in the same agent conversation",
 		FailDetail: func(ctx *Context) string {
 			missing := uninspectedRefs(ctx)
 			if len(missing) == 0 {
 				return ""
 			}
-			return "refs not inspected at full depth this session: " + strings.Join(missing, ", ") +
-				"; read them with show (reads stay free), then report again"
+			return "refs not inspected at full depth in the current sdd session: " + strings.Join(missing, ", ") +
+				"; reads and writes of another sdd session do not count, even in the same agent conversation" +
+				"; read them with show in this session (reads stay free), then report again"
 		},
 	})
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
+	"github.com/networkteam/sdd/test"
 )
 
 // lifecycleDraft is a done signal closing the fixture directive.
@@ -169,6 +170,9 @@ func TestCapture_LifecycleTargetMustBeInspected(t *testing.T) {
 	_, session := newCaptureWorld(t, "lifecycle-uninspected")
 
 	serve := session.Start(t, "capture", nil)
+	if !strings.Contains(test.Untagged(serve.Instructions), "must have been served in full in the current sdd session") {
+		t.Errorf("assemble should name the current sdd session as the scope of the reads that count:\n%s", serve.Instructions)
+	}
 	draft := lifecycleDraft()
 	// captureRef2ID resolves in the fixture graph but this session never read it.
 	draft["closes"] = []any{captureRef2ID}
@@ -176,6 +180,9 @@ func TestCapture_LifecycleTargetMustBeInspected(t *testing.T) {
 	proctest.RequireStep(t, serve, "assemble")
 	if !hasDiagnostic(serve, "not inspected at full depth") || !hasDiagnostic(serve, captureRef2ID) {
 		t.Fatalf("diagnostics = %v, want the refsInspected message naming %s", serve.Diagnostics, captureRef2ID)
+	}
+	if !hasDiagnostic(serve, "in the current sdd session") || !hasDiagnostic(serve, "another sdd session do not count") {
+		t.Errorf("diagnostics = %v: the refusal should name the current sdd session as the scope of the reads that count", serve.Diagnostics)
 	}
 }
 

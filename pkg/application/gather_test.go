@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -198,6 +199,49 @@ func TestGather_SearchModeChecksTheEmbedderBeforeAnyLLMCall(t *testing.T) {
 			t.Fatalf("the query writer ran before the embedder check: %d calls", f.llm.count())
 		}
 	})
+	t.Run("unreachable model named", func(t *testing.T) {
+		down := embed.EmbedderFunc{Space: "down/v1", Run: func(context.Context, embed.Request) (embed.Result, error) {
+			identity := pkgllm.Identity{Provider: "ollama", Model: "nomic-embed-text", Host: "localhost:11434"}
+			return embed.Result{}, &pkgllm.Error{Identity: identity, Err: errors.New("connection refused")}
+		}}
+		_, err := gather(t, f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, down), sdd.GatherRequest{Draft: "A draft about alpha."})
+		if err == nil || !strings.Contains(err.Error(), "ollama/nomic-embed-text at localhost:11434 does not answer") {
+			t.Fatalf("an unreachable embedder should fail naming the model and its host, got %v", err)
+		}
+	})
+	t.Run("stalled", func(t *testing.T) {
+		var limit time.Duration
+		stalled := embed.EmbedderFunc{Space: "stalled/v1", Run: func(ctx context.Context, _ embed.Request) (embed.Result, error) {
+			deadline, ok := ctx.Deadline()
+			if ok {
+				limit = time.Until(deadline)
+			}
+			identity := pkgllm.Identity{Provider: "ollama", Model: "qwen3-embedding:8b", Host: "gpu.local"}
+			return embed.Result{}, &pkgllm.Error{Identity: identity, Err: fmt.Errorf("ollama embed request: %w", context.DeadlineExceeded)}
+		}}
+		_, err := gather(t, f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, stalled), sdd.GatherRequest{Draft: "A draft about alpha."})
+		if limit <= 0 || limit > 30*time.Second {
+			t.Fatalf("probe limit %s: the probe should run under a short limit of its own", limit)
+		}
+		if err == nil || !strings.Contains(err.Error(), "ollama/qwen3-embedding:8b at gpu.local did not answer within 30s") {
+			t.Fatalf("a stalled embedder should fail naming the model, its host and the limit, got %v", err)
+		}
+	})
+}
+
+// WarmEmbedder embeds one probe, so a served project's model loads before
+// its first gather; a project without an embedding model warms nothing.
+func TestWarmEmbedder_EmbedsTheProbeOnce(t *testing.T) {
+	f := newGatherFixture(t)
+	emb := &countingEmbeddings{}
+	err := f.app(t, sdd.GroundingPolicy{}, emb).WarmEmbedder(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	if err != nil || emb.queryEmbeds != 1 || emb.docEmbeds != 0 {
+		t.Fatalf("%d query and %d document embeds, error %v: the warm-up should embed one probe", emb.queryEmbeds, emb.docEmbeds, err)
+	}
+	err = f.app(t, sdd.GroundingPolicy{}, nil).WarmEmbedder(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	if err != nil {
+		t.Fatalf("a project without an embedding model should warm nothing, got %v", err)
+	}
 }
 
 func TestGather_SearchModeRunsTheWrittenQueriesAndTopicListings(t *testing.T) {

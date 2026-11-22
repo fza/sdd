@@ -1028,7 +1028,7 @@ func TestNewEntry_GeneratedTitle(t *testing.T) {
 		otherPurposes llm.Purpose
 	}{
 		{name: "a supplied summary costs only a title call", summary: "A supplied summary.", wantPurpose: llm.PurposeTitle, wantSummary: "A supplied summary.", otherPurposes: llm.PurposeSummarize},
-		{name: "a generated summary brings its title", wantPurpose: llm.PurposeSummarize, wantSummary: "GENERATED", otherPurposes: llm.PurposeTitle},
+		{name: "a generated summary brings its title", wantPurpose: llm.PurposeSummarize, wantSummary: "GENERATED SUMMARY TEXT", otherPurposes: llm.PurposeTitle},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1037,7 +1037,7 @@ func TestNewEntry_GeneratedTitle(t *testing.T) {
 			if err := os.MkdirAll(sddDir, 0755); err != nil {
 				t.Fatal(err)
 			}
-			runner := &stubRunner{text: "GENERATED"}
+			runner := &stubRunner{text: "GENERATED SUMMARY TEXT"}
 			h := handlers.New(handlers.Options{
 				GraphDir: tmp, SDDDir: sddDir, Reader: &fakeReader{}, Committer: &recordingCommitter{},
 				LLMRunner: runner, Stderr: &bytes.Buffer{},
@@ -1197,7 +1197,7 @@ func TestNewEntry_NormalizesTheSuppliedTitle(t *testing.T) {
 			if err := os.MkdirAll(sddDir, 0755); err != nil {
 				t.Fatal(err)
 			}
-			runner := &stubRunner{text: "GENERATED"}
+			runner := &stubRunner{text: "GENERATED SUMMARY TEXT"}
 			h := handlers.New(handlers.Options{
 				GraphDir: tmp, SDDDir: sddDir, Reader: &fakeReader{}, Committer: &recordingCommitter{},
 				LLMRunner: runner, Stderr: &bytes.Buffer{},

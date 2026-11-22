@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"unicode"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
@@ -25,10 +26,18 @@ var ErrDescribed = errors.New("entry already holds a title and a summary")
 // exceeds MaxFirstSentenceWords after the one repair call.
 var ErrLongFirstSentence = errors.New("summary's first sentence is too long")
 
+// ErrEmptySummary is returned for a summary of fewer than MinSummaryWords
+// words, such as three dots, after the one repair call.
+var ErrEmptySummary = errors.New("summary answer carries an empty summary")
+
 // MaxFirstSentenceWords bounds the sentence brief listings render alone as the
 // entry's name. Above it the sentence is a paragraph, the lede-stuffing failure
 // the summary contract exists to prevent.
 const MaxFirstSentenceWords = 25
+
+// MinSummaryWords is the fewest words, each holding a letter or a digit, a
+// summary carries; below it the summary counts as empty.
+const MinSummaryWords = 3
 
 // DescriptionResult holds a generated title and, from the paired call, a
 // generated summary. A title-only answer leaves Summary empty: the stored
@@ -159,33 +168,38 @@ func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph 
 	return result, nil
 }
 
-// Run makes the call and parses its answer. A summary whose first sentence
-// exceeds MaxFirstSentenceWords gets one repair call naming its length.
+// Run makes the call and parses its answer. An empty summary
+// (ErrEmptySummary), or a first sentence over MaxFirstSentenceWords, gets one
+// repair call naming the defect.
 func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionResult, error) {
 	output, err := runner.Run(ctx, d.Request)
 	if err != nil {
 		return DescriptionResult{}, fmt.Errorf("running %s call: %w", d.Request.Purpose, err)
 	}
 	result, err := d.Parse(output.Text)
+	words := firstSentenceWords(result.Summary)
+	var repair llm.Request
+	switch {
+	case errors.Is(err, ErrEmptySummary):
+		repair, err = d.repairRequest("summary_empty_repair_user", output.Text, 0)
+	case err != nil:
+		return DescriptionResult{}, err
+	case words <= MaxFirstSentenceWords:
+		return result, nil
+	default:
+		repair, err = d.repairRequest("summary_repair_user", output.Text, words)
+	}
 	if err != nil {
 		return DescriptionResult{}, err
-	}
-	words := firstSentenceWords(result.Summary)
-	if words <= MaxFirstSentenceWords {
-		return result, nil
 	}
 
-	repair, err := d.repairRequest(output.Text, words)
-	if err != nil {
-		return DescriptionResult{}, err
-	}
 	output, err = runner.Run(ctx, repair)
 	if err != nil {
 		return DescriptionResult{}, fmt.Errorf("running %s repair call: %w", d.Request.Purpose, err)
 	}
 	result, err = d.Parse(output.Text)
 	if err != nil {
-		return DescriptionResult{}, err
+		return DescriptionResult{}, fmt.Errorf("after the repair call: %w", err)
 	}
 	words = firstSentenceWords(result.Summary)
 	if words > MaxFirstSentenceWords {
@@ -194,19 +208,20 @@ func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionRe
 	return result, nil
 }
 
-func (d *Description) repairRequest(answer string, words int) (llm.Request, error) {
+func (d *Description) repairRequest(name, answer string, words int) (llm.Request, error) {
 	tmpl, err := template.ParseFS(summaryTemplates, "summary_templates/*.tmpl")
 	if err != nil {
 		return llm.Request{}, fmt.Errorf("parsing summary templates: %w", err)
 	}
 	var repairB strings.Builder
-	err = tmpl.ExecuteTemplate(&repairB, "summary_repair_user", struct {
-		Answer string
-		Words  int
-		Limit  int
-	}{Answer: strings.TrimSpace(answer), Words: words, Limit: MaxFirstSentenceWords})
+	err = tmpl.ExecuteTemplate(&repairB, name, struct {
+		Answer   string
+		Words    int
+		Limit    int
+		MinWords int
+	}{Answer: strings.TrimSpace(answer), Words: words, Limit: MaxFirstSentenceWords, MinWords: MinSummaryWords})
 	if err != nil {
-		return llm.Request{}, fmt.Errorf("executing summary_repair_user template: %w", err)
+		return llm.Request{}, fmt.Errorf("executing %s template: %w", name, err)
 	}
 	repair := d.Request
 	repair.UserPrompt = d.Request.UserPrompt + "\n\n" + strings.TrimSpace(repairB.String())
@@ -215,6 +230,17 @@ func (d *Description) repairRequest(answer string, words int) (llm.Request, erro
 
 func firstSentenceWords(summary string) int {
 	return len(strings.Fields(model.FirstSentence(summary)))
+}
+
+// summaryWords counts the words of a summary that hold a letter or a digit.
+func summaryWords(summary string) int {
+	n := 0
+	for _, field := range strings.Fields(summary) {
+		if strings.IndexFunc(field, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // parseSummaryResponse reads a paired call's answer. Both fields are
@@ -237,8 +263,8 @@ func parseSummaryResponse(output string) (DescriptionResult, error) {
 		return DescriptionResult{}, err
 	}
 	summary := strings.TrimSpace(resp.Summary)
-	if summary == "" {
-		return DescriptionResult{}, fmt.Errorf("summary answer carries an empty summary")
+	if summaryWords(summary) < MinSummaryWords {
+		return DescriptionResult{}, fmt.Errorf("%w: %q holds fewer than %d words", ErrEmptySummary, summary, MinSummaryWords)
 	}
 	return DescriptionResult{Title: title, Summary: summary}, nil
 }

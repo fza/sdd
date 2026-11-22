@@ -165,7 +165,7 @@ func TestNewEntryKeepsACleanStdinCopyOnARefusal(t *testing.T) {
 
 func TestNewEntryRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	graphDir := t.TempDir()
-	runner := &stubRunner{text: fixtureCredential(t, "gitlab-pat")}
+	runner := &stubRunner{text: "The key is " + fixtureCredential(t, "gitlab-pat")}
 	committer := &recordingCommitter{}
 	h := handlers.New(handlers.Options{
 		GraphDir: graphDir, SDDDir: filepath.Join(t.TempDir(), ".sdd"), Reader: &fakeReader{}, Committer: committer,
@@ -200,7 +200,7 @@ func TestSummarizeRefusesACredential(t *testing.T) {
 		}, where: "the title"},
 		{name: "generated summary", cmd: func() *command.SummarizeCmd {
 			return &command.SummarizeCmd{EntryIDs: []string{summarizedEntry}}
-		}, runner: &stubRunner{text: credential}, where: "the summary"},
+		}, runner: &stubRunner{text: "The key is " + credential}, where: "the summary"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

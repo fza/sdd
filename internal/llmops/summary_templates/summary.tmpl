@@ -43,3 +43,13 @@ Respond with one JSON object and nothing else: `{"title": "...", "summary": "...
 
 That summary's first sentence runs {{ .Words }} words, over the {{ .Limit }}-word limit. Answer again with the same JSON object. Cut the first sentence to the entry's single most important meaning by leaving material out, never by packing clauses in: what you leave out belongs in the remaining sentences or stays in the body. Every other rule still holds.
 {{- end }}
+
+{{ define "summary_empty_repair_user" -}}
+## Your previous answer
+
+{{ .Answer }}
+
+## Repair
+
+That summary holds fewer than {{ .MinWords }} words, so it says nothing about the entry. Answer again with the same JSON object, its summary written in full sentences by the rules above. Every other rule still holds.
+{{- end }}

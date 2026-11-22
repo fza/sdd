@@ -14,7 +14,7 @@ import (
 const GatherWayBack = "show or gather with its id and its tag left out of held"
 
 // RenderGather writes a gather serve: header, the entries served in full,
-// the candidates to judge and the entries set aside. Nothing is cut:
+// the candidate lines and the entries set aside. Nothing is cut:
 // every list prints whole, and what the full block leaves out is named with
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
@@ -73,9 +73,10 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "# to judge (%d)\n", len(result.ToJudge))
+	fmt.Fprintf(w, "# candidates (%d)\n", len(result.ToJudge))
 	if len(result.ToJudge) > 0 {
 		fmt.Fprintln(w)
+		fmt.Fprintln(w, "A line owes no verdict. Reference one that bears on the draft; open one with gather ids to read it in full.")
 		for _, candidate := range result.ToJudge {
 			fmt.Fprintln(w, gatherLine(g, candidate, repeats))
 		}
@@ -88,7 +89,7 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "# listed by title (%d)\n", len(result.Listed))
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "The prefilter's judge, below its first recall stage, ranks these under the lines to judge. They are listed, not shown: none gets a state at publish unless you reference it, give it a verdict or open it with gather ids.")
+		fmt.Fprintln(w, "The prefilter's judge, below its first recall stage, ranks these under the candidate lines. They are listed, not shown: none gets a state at publish unless you reference it, give it a verdict or open it with gather ids.")
 		for _, candidate := range result.Listed {
 			fmt.Fprintf(w, "- %s — %s\n", candidate.Entry.ID, candidate.Entry.ListingTitle())
 		}

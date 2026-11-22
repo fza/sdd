@@ -89,6 +89,9 @@ func TestCapture_IntentIsShownInTheUsersTerms(t *testing.T) {
 	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
 		t.Errorf("assemble should tell the agent to speak of the intent without naming the posture:\n%s", serve.Instructions)
 	}
+	if !strings.Contains(test.Untagged(serve.Instructions), "for a draft that supersedes a directive, propose that directive's intent, as your inference") {
+		t.Errorf("assemble should have the agent propose a superseded directive's intent as its inference:\n%s", serve.Instructions)
+	}
 	draft := decisionDraft("directive")
 	draft["reasonWords"] = "empty input hid upstream bugs twice"
 	serve = session.Report(t, serve.Instance, draft)

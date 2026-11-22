@@ -71,7 +71,7 @@ func (r *titleRunner) Run(_ context.Context, request llm.Request) (llm.Result, e
 	}
 	answer := map[string]string{"title": title}
 	if request.Purpose == llm.PurposeSummarize {
-		answer["summary"] = "Generated summary."
+		answer["summary"] = "A generated summary text."
 	}
 	data, err := json.Marshal(answer)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestBackfillTitlesGivesAnUnsummarizedEntryBothFromOneCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Title == "" || entry.Summary != "Generated summary." || f.runner.callCount() != 1 {
+	if entry.Title == "" || entry.Summary != "A generated summary text." || f.runner.callCount() != 1 {
 		t.Errorf("an entry without a summary should get title and summary from one call, got %+v after %d calls", entry, f.runner.callCount())
 	}
 }

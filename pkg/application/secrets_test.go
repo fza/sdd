@@ -102,7 +102,7 @@ func TestEngineRefusesACredentialBeforeAnyModelCall(t *testing.T) {
 func TestEngineRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	credential := fixtureCredential(t, "gitlab-pat")
 	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(_ context.Context, request llm.Request) (llm.Result, error) {
-		return llm.Result{Text: `{"title": "test title", "summary": "` + credential + `"}`}, nil
+		return llm.Result{Text: `{"title": "test title", "summary": "The key is ` + credential + `"}`}, nil
 	})})
 	draft := f.identifiedDraft(sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "A clean body."})
 
