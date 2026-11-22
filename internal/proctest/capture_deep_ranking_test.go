@@ -158,10 +158,11 @@ func TestCaptureDeep_AnotherHostRanksWithThePrefilterJudge(t *testing.T) {
 	}
 }
 
-// Under any other host without a prefilter judge the reading ranks by
-// similarity to the draft, read from the search index as a search filled
-// it, and its header says so.
-func TestCaptureDeep_AnotherHostRanksBySimilarityWithoutAJudge(t *testing.T) {
+// Under any other host without a prefilter judge the reading ranks by the
+// capture's searches run against the final draft, and the entries no search
+// found by similarity to the draft, read from the search index as a search
+// filled it; its header says so.
+func TestCaptureDeep_AnotherHostRanksBySearchesWithoutAJudge(t *testing.T) {
 	host := &test.ScriptedScorer{}
 	world, session := newDeepWorld(t, "zed-agent", sdd.VerifierPolicy{}, proctest.WithEntries(kappaEntries()...),
 		proctest.WithEmbedder(kappaEmbedder()),
@@ -176,13 +177,13 @@ func TestCaptureDeep_AnotherHostRanksBySimilarityWithoutAJudge(t *testing.T) {
 	if len(host.Scored()) != 0 {
 		t.Fatalf("the Claude host's judge scored %v under another host", host.Scored())
 	}
-	if !strings.Contains(reading, "Ranking source: similarity to the draft, ") && !strings.Contains(reading, " by similarity to the draft") {
-		t.Fatalf("the reading's header should name similarity as its ranking source:\n%s", reading)
+	if !strings.Contains(reading, "by the capture's searches against the final draft") || !strings.Contains(reading, " by similarity to the draft") {
+		t.Fatalf("the reading's header should name the searches and similarity as its ranking sources:\n%s", reading)
 	}
 	kappa := strings.Index(reading, "  "+kappaEntry+" {")
-	low := strings.Index(reading, "  20260603-120000-d-tac-l00 {")
-	if kappa < 0 || low < 0 || kappa > low {
-		t.Fatalf("the entry most similar to the draft should be listed first:\n%s", reading)
+	unsearched := strings.Index(reading, "  20260603-120039-d-tac-l39 {")
+	if kappa < 0 || unsearched < 0 || kappa > unsearched {
+		t.Fatalf("the entry the search with the final draft found first should be listed before one no search found:\n%s", reading)
 	}
 }
 

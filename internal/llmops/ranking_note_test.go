@@ -17,7 +17,8 @@ func TestDeepRankingNote(t *testing.T) {
 	}{
 		"judge":      {model.RankingSources{Judged: 40}, false, "Ranking source: judge chat:claude-haiku-5-5, 40 entries.\n"},
 		"similarity": {model.RankingSources{Similar: 12}, false, "Ranking source: similarity to the draft, 12 entries: no judge scored them.\n"},
-		"mixed":      {model.RankingSources{Judged: 40, Similar: 12, Listed: 3}, false, "Ranking source: mixed, 40 by judge chat:claude-haiku-5-5, 12 by similarity to the draft, 3 in listed order.\n"},
+		"searches":   {model.RankingSources{Searched: 7}, false, "Ranking source: the capture's searches against the final draft, 7 entries: no judge scored them.\n"},
+		"mixed":      {model.RankingSources{Judged: 40, Searched: 5, Similar: 12, Listed: 3}, false, "Ranking source: mixed, 40 by judge chat:claude-haiku-5-5, 5 by the capture's searches against the final draft, 12 by similarity to the draft, 3 in listed order.\n"},
 		"widened":    {model.RankingSources{Judged: 2}, true, "so the reading lists 200 lines in doubt.\n"},
 	} {
 		t.Run(name, func(t *testing.T) {

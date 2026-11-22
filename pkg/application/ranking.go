@@ -140,6 +140,35 @@ func (j *rankingJobs) begin(key rankingKey, judge Prefilter, subject string, can
 	return &rankingRun{job: job, pass: pass, judge: judge, subject: subject, pending: pending, timeout: timeout}
 }
 
+// peek waits for every pass of key's job at most wait and returns what its
+// passes scored by then, leaving the job to collect.
+func (j *rankingJobs) peek(ctx context.Context, key rankingKey, wait time.Duration) map[string]uint8 {
+	j.mu.Lock()
+	job := j.jobs[key]
+	j.mu.Unlock()
+	if job == nil {
+		return nil
+	}
+	job.mu.Lock()
+	passes := slices.Clone(job.passes)
+	job.mu.Unlock()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+waiting:
+	for _, pass := range passes {
+		select {
+		case <-pass.done:
+		case <-timer.C:
+			break waiting
+		case <-ctx.Done():
+			break waiting
+		}
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	return maps.Clone(job.scored.fresh)
+}
+
 // collect waits for every pass of key's job, each at most until its
 // deadline, then takes the job and returns what its passes scored.
 func (j *rankingJobs) collect(ctx context.Context, key rankingKey) scoredPairs {

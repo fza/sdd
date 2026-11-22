@@ -326,13 +326,14 @@ type IgnoredSetting struct {
 // RetiredConfigKeys are keys sdd no longer uses, each with what replaced it.
 // Reading them stays tolerant; `sdd config set` refuses them.
 var RetiredConfigKeys = map[string]string{
-	"sync.cooldown":         retiredSyncReason,
-	"sync.mode":             retiredSyncReason,
-	"sync.interval":         retiredSyncReason,
-	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text",
-	"relevance.commit":      retiredRelevanceReason,
-	"relevance.content":     retiredRelevanceReason,
-	"contribution":          "contribution mode was removed; graph writes are allowed on every branch",
+	"sync.cooldown":          retiredSyncReason,
+	"sync.mode":              retiredSyncReason,
+	"sync.interval":          retiredSyncReason,
+	"sessions.token_saving":  "sdd serves a piece again as a pointer only when the agent proves it still holds the text",
+	"relevance.commit":       retiredRelevanceReason,
+	"relevance.content":      retiredRelevanceReason,
+	"contribution":           "contribution mode was removed; graph writes are allowed on every branch",
+	"verify.brief_all_below": "a graph check searches on a graph of any size",
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"

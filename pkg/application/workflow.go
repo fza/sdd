@@ -279,6 +279,9 @@ type WorkflowSession struct {
 	startClient     *string
 	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
 	cutRepeats bool
+	// checks holds, per capture, the lines its last graph check keeps for
+	// pages built when asked for (heldCheck).
+	checks map[string]*heldCheck
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string
@@ -787,6 +790,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		serve   *engine.Serve
 		err     error
 		settled string
+		landed  string
 	)
 	chooser, hasChooser := request.Report["chooser"].(string)
 	choice, hasChoice := request.Report["choice"].(string)
@@ -831,6 +835,10 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			settled, err = w.answerBatch(ctx, identity, chooser, words, batch)
 		}
 	} else {
+		landed, err = w.listLanded(ctx, identity, request.Instance, request.Report)
+		if err != nil {
+			return nil, err
+		}
 		serve, err = w.session.Report(request.Instance, request.Report)
 	}
 	if err != nil {
@@ -867,6 +875,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	}
 	if settled != "" {
 		result.Instructions = strings.TrimSpace(result.Instructions + "\n\n" + settled)
+	}
+	if landed != "" {
+		result.Instructions = strings.TrimSpace(result.Instructions + "\n\n" + landed)
 	}
 	result.Dispatches = dispatches
 	if forked != nil {

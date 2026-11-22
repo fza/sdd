@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/networkteam/slogutils"
 
@@ -42,12 +43,17 @@ type rankingPlan struct {
 	// recorded are the entries whose score only a background pass's record
 	// holds (rankedScores), not yet the reading.
 	recorded []string
+	// mark is the final draft the searches ran against; nil without them.
+	mark *model.DraftMark
 }
 
-// planRanking places an instance's reading by the scores its ranking judge
-// gave the draft, under the judge's calibration; a weak ranking health
-// widens the reading's tiers.
-func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store *engine.Store, credited *model.Reading) (rankingPlan, error) {
+// planRanking places an instance's reading by the judgements the capture
+// keeps and the scores its ranking judge gave the draft, under the judge's
+// calibration; a weak ranking health widens the reading's tiers. With
+// search, the capture's searches run again against the final draft, their
+// merged order places the candidates, and the kept low judgements due a
+// second look are left to score (20261121-233807-d-tac-4iw).
+func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store *engine.Store, credited *model.Reading, search bool) (rankingPlan, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(instance), AccessRead)
 	if err != nil {
 		return rankingPlan{}, err
@@ -64,11 +70,16 @@ func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store
 	draft := w.draftFromStore(store)
 	plan.subject = model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
 	subject := model.RelevanceSubjectHash(plan.subject)
-	held, _ := credited.Scores(plan.judge.Judge, subject)
 	reading := captureReadingOf(store, credited)
-	plan.input = model.VerifierReading{Listed: reading.listed, Full: reading.full, Verdicts: storeVerdictIDs(store), Scores: maps.Clone(held), Thresholds: thresholds}
+	plan.input = model.VerifierReading{Listed: reading.listed, Full: reading.full, Verdicts: storeVerdictIDs(store), Scores: maps.Clone(credited.Kept(plan.judge.Judge)), Thresholds: thresholds}
 	if plan.input.Scores == nil {
 		plan.input.Scores = map[string]uint8{}
+	}
+	if search {
+		err := w.searchAgain(&plan, runtime, store, draft, credited)
+		if err != nil {
+			return rankingPlan{}, err
+		}
 	}
 	if plan.judge.Scorer != nil {
 		ranked, err := w.rankedScores(instance, plan.judge.Judge, subject)
@@ -92,6 +103,86 @@ func (w *WorkflowSession) planRanking(instance string, graph *model.Graph, store
 	plan.placement = model.PlaceVerifierReading(graph, plan.draft, plan.input)
 	plan.unscored = model.VerifierUnscored(plan.placement, plan.input)
 	return plan, nil
+}
+
+// searchAgain runs the capture's searches against the final draft for the
+// deep verifier's reading: the search by meaning with its text, each search
+// phrase and keyword term the capture's checks passed, and the listing of
+// each of its topics. It orders the candidates no search found by their
+// similarity to the draft and takes from the plan's scores the kept low
+// judgements due a second look (model.SecondLook).
+func (w *WorkflowSession) searchAgain(plan *rankingPlan, runtime *ProjectRuntime, store *engine.Store, draft EntryDraft, credited *model.Reading) (err error) {
+	if strings.TrimSpace(draft.Body) == "" {
+		return nil
+	}
+	target, _ := w.effectiveTarget(store)
+	selected, err := acquireSnapshotForSearch(w.ctx, runtime, target.Branch, "")
+	if err != nil {
+		return err
+	}
+	defer selected.releaseInto(&err)
+	live := model.GroundingPopulation(plan.graph)
+	candidate := make(map[string]bool, len(live))
+	for _, e := range live {
+		candidate[e.ID] = true
+	}
+	searches := []GatherRequest{{SyncMode: SearchSyncLocal, Draft: draft.Body}}
+	var terms []string
+	for _, read := range credited.Reads {
+		switch {
+		case read.Mode == model.GroundingSemantic && read.Text != "" && !slices.ContainsFunc(searches, func(r GatherRequest) bool { return r.Query == read.Text }):
+			searches = append(searches, GatherRequest{SyncMode: SearchSyncLocal, Query: read.Text})
+		case read.Mode == model.GroundingKeyword && !slices.Contains(terms, read.Text):
+			terms = append(terms, read.Text)
+		}
+	}
+	searches[0].Terms = terms
+	var reads []model.GroundingRead
+	for _, search := range searches {
+		found, err := w.app.gatherSearches(w.ctx, runtime, selected, search, candidate)
+		if err != nil {
+			return fmt.Errorf("the verifier's reading: %w", err)
+		}
+		reads = append(reads, found...)
+	}
+	for _, label := range draft.Topics {
+		path, err := model.ParseTopicPath(label)
+		if err != nil {
+			continue
+		}
+		var ids []string
+		for _, e := range model.TopicListing(plan.graph, live, path) {
+			ids = append(ids, e.ID)
+		}
+		reads = append(reads, model.GroundingRead{Mode: model.GroundingListing, Text: path.String(), IDs: ids})
+	}
+	plan.input.Reads = reads
+	candidates := model.VerifierCandidates(plan.graph, plan.draft, plan.input)
+	plan.input.Similarity, err = plan.runtime.draftSimilarity(w.ctx, plan.subject, model.Unsearched(candidates, reads))
+	if err != nil {
+		return fmt.Errorf("the verifier's reading: similarity to the draft: %w", err)
+	}
+	candidates = model.VerifierCandidates(plan.graph, plan.draft, plan.input)
+
+	plan.mark = &model.DraftMark{Topics: slices.Clone(draft.Topics), References: captureAnswered(store)}
+	if len(reads) > 0 && reads[0].Mode == model.GroundingSemantic && reads[0].Text == "" {
+		plan.mark.Nearest = slices.Clone(reads[0].IDs[:min(model.SecondLookTop, len(reads[0].IDs))])
+	}
+	judged := credited.JudgedDraft()
+	moved := model.DraftMoved(judged, plan.mark.Nearest)
+	plan.mark.Judged = judged == nil || moved
+	order := make([]string, len(candidates))
+	for i, c := range candidates {
+		order[i] = c.Entry.ID
+	}
+	due := model.SecondLook{
+		Graph: plan.graph, Live: live, Kept: credited.Stale(plan.judge.Judge, model.RelevanceSubjectHash(plan.subject)), Thresholds: plan.input.Thresholds, Order: order,
+		Previous: credited.LastDraft(), Current: *plan.mark, Moved: moved,
+	}.Due()
+	for _, id := range due {
+		delete(plan.input.Scores, id)
+	}
+	return nil
 }
 
 func (w *WorkflowSession) rankingKey(instance string, plan rankingPlan) rankingKey {
@@ -234,7 +325,7 @@ func (w *WorkflowSession) rankInBackground(instance string) error {
 	if err != nil {
 		return err
 	}
-	plan, err := w.planRanking(inst.ID, graph, inst.Store, inst.Reading())
+	plan, err := w.planRanking(inst.ID, graph, inst.Store, inst.Reading(), false)
 	if err != nil || plan.judge.Scorer == nil || len(plan.unscored) == 0 {
 		return err
 	}
@@ -242,16 +333,19 @@ func (w *WorkflowSession) rankInBackground(instance string) error {
 }
 
 // verifierPlacement is the deep verifier's placement of the reading
-// (model.PlaceVerifierReading). The ranking judge scores what the reading
-// holds no score for where the rank decides, the pass begun at gather
-// collected, each fresh score recorded in the reading, which publish writes
-// to the ledger. What the judge left unscored by the time limit ranks by
-// similarity to the draft.
+// (model.PlaceVerifierReading), over the capture's searches run again
+// against the final draft. The ranking judge scores what the reading holds
+// no judgement for, or a low one due a second look, where the rank decides,
+// the pass begun at gather collected, each fresh score and the final draft
+// recorded in the reading, which publish writes to the ledger. What the
+// judge left unscored by the time limit keeps its kept judgement, or its
+// place in the merged order.
 func (w *WorkflowSession) verifierPlacement(ctx *engine.Context) (verifierPlaced, error) {
-	plan, err := w.planRanking(ctx.Instance, ctx.Graph, ctx.Store, ctx.Reading)
+	plan, err := w.planRanking(ctx.Instance, ctx.Graph, ctx.Store, ctx.Reading, true)
 	if err != nil {
 		return verifierPlaced{}, err
 	}
+	kept := maps.Clone(ctx.Reading.Kept(plan.judge.Judge))
 	logger := slogutils.FromContext(w.ctx)
 	if plan.judge.Scorer != nil {
 		fresh := map[string]uint8{}
@@ -272,24 +366,23 @@ func (w *WorkflowSession) verifierPlacement(ctx *engine.Context) (verifierPlaced
 				}
 			}
 		}
+		grounding := model.ReadPayload{Draft: plan.mark}
 		if len(fresh) > 0 {
-			payload := &model.PrefilterPayload{Judge: plan.judge.Judge, Forward: plan.judge.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(plan.subject), Scores: fresh}
-			if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: model.ReadPayload{Prefilter: payload}}); err != nil {
+			grounding.Prefilter = &model.PrefilterPayload{Judge: plan.judge.Judge, Forward: plan.judge.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(plan.subject), Scores: fresh}
+		}
+		if !grounding.Empty() {
+			if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: grounding}); err != nil {
 				return verifierPlaced{}, err
 			}
-			maps.Copy(plan.input.Scores, fresh)
-			plan.placement = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
+		}
+		maps.Copy(plan.input.Scores, fresh)
+	}
+	for id, score := range kept {
+		if _, scored := plan.input.Scores[id]; !scored {
+			plan.input.Scores[id] = score
 		}
 	}
-	if still := model.VerifierUnscored(plan.placement, plan.input); len(still) > 0 {
-		similarity, err := plan.runtime.draftSimilarity(w.ctx, plan.subject, still)
-		if err != nil {
-			logger.Warn("the verifier's reading keeps listed order for the entries no judge scored: similarity to the draft failed", "error", err)
-		} else if len(similarity) > 0 {
-			plan.input.Similarity = similarity
-			plan.placement = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
-		}
-	}
+	plan.placement = model.PlaceVerifierReading(plan.graph, plan.draft, plan.input)
 	return verifierPlaced{placement: plan.placement, input: plan.input, judge: plan.judge.Judge}, nil
 }
 

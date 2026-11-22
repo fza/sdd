@@ -91,12 +91,16 @@
           "type": "string"
         },
         "page": {
-          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "description": "a later page of this tool's last result too large for one, as its page line names, leaving the other arguments aside; with instance, the next page of that capture's graph check, built from the scores that arrived by then",
           "type": "integer"
         },
         "query": {
           "description": "your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism",
           "type": "string"
+        },
+        "rejudge": {
+          "description": "have the ranking judge score every candidate against the draft as it stands, the judgements the capture keeps from earlier drafts included",
+          "type": "boolean"
         },
         "reread": {
           "description": "names of served pieces you no longer see; they serve in full again",

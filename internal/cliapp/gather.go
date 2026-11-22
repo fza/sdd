@@ -29,6 +29,7 @@ func gatherCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each (repeatable)"},
 			&cli.StringFlag{Name: "subject", Usage: "An existing entry the reading grounds: its text stands in for the draft, and stored verdicts against it answer repeat pairs"},
 			&cli.BoolFlag{Name: "wait", Usage: "Have the ranking judge score until the minimum is judged, without its time limit"},
+			&cli.BoolFlag{Name: "rejudge", Usage: "Have the ranking judge score every candidate against the draft as it stands, the capture's kept judgements included"},
 		), sessionFlags()...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			draft := cmd.String("draft")
@@ -87,7 +88,7 @@ func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, d
 	}
 	return session.workflow.Gather(ctx, session.identity, sdd.WorkflowGatherRequest{
 		Instance: instance, IDs: cmd.Args().Slice(), Draft: draft, Topics: cmd.StringSlice("topic"),
-		Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Wait: cmd.Bool("wait"), SyncMode: sdd.SearchSyncAll,
+		Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Wait: cmd.Bool("wait"), Rejudge: cmd.Bool("rejudge"), SyncMode: sdd.SearchSyncAll,
 	})
 }
 

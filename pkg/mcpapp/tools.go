@@ -438,7 +438,8 @@ type GatherArgs struct {
 	Query    string   `json:"query,omitempty" jsonschema:"your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism"`
 	Terms    []string `json:"terms,omitempty" jsonschema:"your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess"`
 	Wait     bool     `json:"wait,omitempty" jsonschema:"have the ranking judge score until the minimum is judged, without its time limit: what to pass, with the same searches, when a check judged too few and the person chose to wait"`
-	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
+	Rejudge  bool     `json:"rejudge,omitempty" jsonschema:"have the ranking judge score every candidate against the draft as it stands, the judgements the capture keeps from earlier drafts included"`
+	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names, leaving the other arguments aside; with instance, the next page of that capture's graph check, built from the scores that arrived by then"`
 }
 
 type GatherResult struct {
@@ -1406,13 +1407,14 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 		return nil, GatherResult{}, err
 	}
 	defer ss.mu.Unlock()
-	if args.Page > 1 {
+	instance := strings.TrimSpace(args.Instance)
+	if args.Page > 1 && instance == "" {
 		serve, err := heldPage(ss, "gather", args.Page)
 		return nil, GatherResult{Serve: serve}, err
 	}
 	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
-		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
-		Query: args.Query, Terms: args.Terms, Wait: args.Wait, SyncMode: s.searchSyncMode,
+		Instance: instance, IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
+		Query: args.Query, Terms: args.Terms, Wait: args.Wait, Rejudge: args.Rejudge, Paged: true, Page: args.Page, SyncMode: s.searchSyncMode,
 	})
 	if err != nil {
 		return nil, GatherResult{}, err

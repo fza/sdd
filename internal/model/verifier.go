@@ -180,7 +180,6 @@ type VerifyConfig struct {
 	JudgeTimeout  JudgeDuration        `yaml:"judge_timeout,omitempty"`
 	JudgeMinimum  *int                 `yaml:"judge_minimum,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
-	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
@@ -521,9 +520,6 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	if overlay.Depth.Up != nil {
 		out.Depth.Up = overlay.Depth.Up
-	}
-	if overlay.BriefAllBelow != nil {
-		out.BriefAllBelow = overlay.BriefAllBelow
 	}
 	if overlay.Prefilter != nil {
 		out.Prefilter = overlay.Prefilter

@@ -1,9 +1,6 @@
 package model
 
-import (
-	"cmp"
-	"slices"
-)
+import "slices"
 
 // VerifierDraft is what the deep verifier's reading order reads of a draft:
 // the entries it declares as refs, supersedes, closes and approves.
@@ -30,11 +27,14 @@ const (
 // ranking health is weak (RankingHealth).
 type VerifierReading struct {
 	Listed, Full, Verdicts []string
-	Scores                 map[string]uint8
-	Thresholds             RelevanceThresholds
-	Seed                   string
-	Similarity             map[string]float64
-	Widened                bool
+	// Reads are the capture's searches run again against the final draft,
+	// whose merged order places the candidates (OrderGatherCandidates).
+	Reads      []GroundingRead
+	Scores     map[string]uint8
+	Thresholds RelevanceThresholds
+	Seed       string
+	Similarity map[string]float64
+	Widened    bool
 }
 
 // VerifierPlacement is the deep verifier's start: the declared targets in
@@ -56,49 +56,23 @@ func (p VerifierPlacement) Candidates() []string {
 
 // PlaceVerifierReading places the deep verifier's start. Only the declared
 // targets come in full. The candidates are the listed entries, those the
-// drafter read in full and every lifecycle neighbour of a target; they pass
-// through the placement a graph check uses (PlaceLines), with the lifecycle
-// neighbours marked by their reason and the entries one reference from a
-// target carrying the hop. Unscored candidates stand by falling similarity
-// to the draft, then in listed order, done entries after all others. With no
-// candidate scored the placement is judged by the verifier: the first
-// unscored carry the mark. An entry with a drafter's verdict is a line with
-// its first summary sentence, never a title line or a count
-// (20261122-101625-d-tac-r0s).
+// drafter read in full, those the capture's searches found again against
+// the final draft and every lifecycle neighbour of a target; they stand in
+// the merged order of those searches (OrderGatherCandidates), the ones no
+// search found by falling similarity to the draft, done entries last among
+// the unscored. They pass through the placement a graph check uses
+// (PlaceLines), with the lifecycle neighbours marked by their reason and the
+// entries one reference from a target carrying the hop. With no candidate
+// scored the placement is judged by the verifier: the first unscored carry
+// the mark. An entry with a drafter's verdict is a line with its first
+// summary sentence, never a title line or a count (20261122-101625-d-tac-r0s).
 func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading) VerifierPlacement {
-	var placement VerifierPlacement
-	seen := map[string]bool{}
-	for _, id := range draft.Targets {
-		if g.ByID[id] != nil && !seen[id] {
-			seen[id] = true
-			placement.Targets = append(placement.Targets, id)
-		}
-	}
+	placement := VerifierPlacement{Targets: verifierTargets(g, draft)}
 	lifecycle := verifierLifecycle(g, placement.Targets)
-	var order []string
-	for _, id := range slices.Concat(reading.Listed, reading.Full, lifecycle.order) {
-		if g.ByID[id] != nil && !seen[id] {
-			seen[id] = true
-			order = append(order, id)
-		}
-	}
-	done := func(id string) bool { return g.ByID[id].Kind == KindDone }
-	slices.SortStableFunc(order, func(a, b string) int {
-		if c := cmp.Compare(rankLast(done(a)), rankLast(done(b))); c != 0 {
-			return c
-		}
-		similarA, nearA := reading.Similarity[a]
-		similarB, nearB := reading.Similarity[b]
-		if c := cmp.Compare(rankLast(!nearA), rankLast(!nearB)); c != 0 {
-			return c
-		}
-		return cmp.Compare(similarB, similarA)
-	})
+	candidates := VerifierCandidates(g, draft, reading)
 	scored := false
-	candidates := make([]GatherCandidate, 0, len(order))
-	for _, id := range order {
-		candidates = append(candidates, GatherCandidate{Entry: g.ByID[id]})
-		_, ok := reading.Scores[id]
+	for _, candidate := range candidates {
+		_, ok := reading.Scores[candidate.Entry.ID]
 		scored = scored || ok
 	}
 	hops := RefHops(g, placement.Targets)
@@ -138,6 +112,38 @@ func PlaceVerifierReading(g *Graph, draft VerifierDraft, reading VerifierReading
 		return true
 	})
 	return placement
+}
+
+// VerifierCandidates returns the deep verifier's candidates in the merged
+// order PlaceVerifierReading places them by.
+func VerifierCandidates(g *Graph, draft VerifierDraft, reading VerifierReading) []GatherCandidate {
+	targets := verifierTargets(g, draft)
+	seen := map[string]bool{}
+	for _, id := range targets {
+		seen[id] = true
+	}
+	var found []string
+	for _, read := range reading.Reads {
+		found = append(found, read.IDs...)
+	}
+	var candidates []GatherCandidate
+	for _, id := range slices.Concat(reading.Listed, reading.Full, found, verifierLifecycle(g, targets).order) {
+		if g.ByID[id] != nil && !seen[id] {
+			seen[id] = true
+			candidates = append(candidates, GatherCandidate{Entry: g.ByID[id]})
+		}
+	}
+	return OrderGatherCandidates(g, candidates, reading.Reads, reading.Similarity, targets)
+}
+
+func verifierTargets(g *Graph, draft VerifierDraft) []string {
+	var targets []string
+	for _, id := range draft.Targets {
+		if g.ByID[id] != nil && !slices.Contains(targets, id) {
+			targets = append(targets, id)
+		}
+	}
+	return targets
 }
 
 func rankLast(last bool) int {
@@ -198,23 +204,26 @@ func VerifierUnscored(placement VerifierPlacement, reading VerifierReading) []st
 }
 
 // RankingSources counts the entries a reading's rank placed by what ranked
-// each: the judge's score, similarity to the draft, or listed order.
+// each: the judge's score, the merged order of the searches that found it,
+// similarity to the draft, or listed order.
 type RankingSources struct {
-	Judged, Similar, Listed int
+	Judged, Searched, Similar, Listed int
 }
 
-// Kind names the source: judge or similarity when one ranked every entry,
-// listed order when neither ranked any, mixed otherwise; empty when the rank
-// placed no entry.
+// Kind names the source: judge, searches or similarity when one ranked every
+// entry, listed order when none ranked any, mixed otherwise; empty when the
+// rank placed no entry.
 func (s RankingSources) Kind() string {
 	switch {
-	case s.Judged+s.Similar+s.Listed == 0:
+	case s.Judged+s.Searched+s.Similar+s.Listed == 0:
 		return ""
-	case s.Judged > 0 && s.Similar == 0 && s.Listed == 0:
+	case s.Judged > 0 && s.Searched+s.Similar+s.Listed == 0:
 		return "judge"
-	case s.Similar > 0 && s.Judged == 0 && s.Listed == 0:
+	case s.Searched > 0 && s.Judged+s.Similar+s.Listed == 0:
+		return "searches"
+	case s.Similar > 0 && s.Judged+s.Searched+s.Listed == 0:
 		return "similarity"
-	case s.Judged == 0 && s.Similar == 0:
+	case s.Judged+s.Searched+s.Similar == 0:
 		return "listed order"
 	}
 	return "mixed"
@@ -224,12 +233,25 @@ func (s RankingSources) Kind() string {
 // ranked them in reading.
 func VerifierRankingSources(placement VerifierPlacement, reading VerifierReading) RankingSources {
 	var sources RankingSources
+	searched := map[string]bool{}
+	for _, read := range reading.Reads {
+		if read.Mode == GroundingSemantic || read.Mode == GroundingKeyword {
+			for _, id := range read.IDs {
+				searched[id] = true
+			}
+		}
+	}
 	for _, id := range placement.Candidates() {
-		if _, scored := reading.Scores[id]; scored {
+		_, scored := reading.Scores[id]
+		_, near := reading.Similarity[id]
+		switch {
+		case scored:
 			sources.Judged++
-		} else if _, near := reading.Similarity[id]; near {
+		case searched[id]:
+			sources.Searched++
+		case near:
 			sources.Similar++
-		} else {
+		default:
 			sources.Listed++
 		}
 	}
