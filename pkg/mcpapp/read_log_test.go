@@ -66,7 +66,7 @@ func TestGatherServesAnEntryInFullAgainOnALaterCall(t *testing.T) {
 	for range 2 {
 		var opened mcpserver.GatherResult
 		call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &opened)
-		if !strings.Contains(opened.Serve, "# relevant") || !strings.Contains(opened.Serve, "id: "+fixtureGapID) || strings.Contains(opened.Serve, pointerMark) {
+		if !strings.Contains(opened.Serve, "## opened (1)") || !strings.Contains(opened.Serve, "id: "+fixtureGapID) || strings.Contains(opened.Serve, pointerMark) {
 			t.Fatalf("gather with ids should serve the entry in full on every call:\n%s", opened.Serve)
 		}
 	}
@@ -96,12 +96,12 @@ func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
 	if !strings.Contains(first.Serve, "(page 1 of ") {
 		t.Fatalf("the fixture's gather should page past the result bound:\n%.400s", first.Serve)
 	}
-	_, toJudge, ok := strings.Cut(first.Serve, "# candidates (")
+	_, toJudge, ok := strings.Cut(first.Serve, "## in doubt (")
 	if !ok {
-		t.Fatalf("the first page should open the candidates section:\n%.400s", first.Serve)
+		t.Fatalf("the first page should open the in-doubt section:\n%.400s", first.Serve)
 	}
-	if !strings.Contains(toJudge, "\n- ") {
-		t.Fatalf("the first page should carry candidates to judge, got:\n%s", toJudge)
+	if !strings.Contains(toJudge, "\n  ? ") {
+		t.Fatalf("the first page should carry lines in doubt, got:\n%s", toJudge)
 	}
 }
 

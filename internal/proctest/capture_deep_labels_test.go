@@ -55,12 +55,12 @@ func TestCaptureDeep_AnOpenedHiddenEntryIsAMissOnlyUnderAFinding(t *testing.T) {
 	var hidden []string
 	for i := range 40 {
 		id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i)
-		if strings.Contains(reading, "\n"+id+"  Low directive") {
+		if readingLine(reading, id) == "" {
 			hidden = append(hidden, id)
 		}
 	}
 	if len(hidden) < 2 {
-		t.Fatalf("the reading should hide the low entries:\n%s", reading)
+		t.Fatalf("the reading should set the low entries aside:\n%s", reading)
 	}
 	missed, opened := hidden[0], hidden[1]
 	x.delegate.LogRead(t, "show", []string{missed, opened}, nil)
@@ -117,13 +117,13 @@ func TestCaptureDeep_AnEndedVerifiersOpeningCountsAtPublish(t *testing.T) {
 	reading := verifierReading(t, x)
 	opened := ""
 	for i := range 40 {
-		if id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i); strings.Contains(reading, "\n"+id+"  Low directive") {
+		if id := fmt.Sprintf("20260603-1200%02d-d-tac-l%02d", i, i); readingLine(reading, id) == "" {
 			opened = id
 			break
 		}
 	}
 	if opened == "" {
-		t.Fatalf("the reading should hide the low entries:\n%s", reading)
+		t.Fatalf("the reading should set the low entries aside:\n%s", reading)
 	}
 	x.delegate.LogRead(t, "show", []string{opened}, nil)
 	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": subjectFinding("observes something.")}, "")

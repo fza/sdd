@@ -139,26 +139,29 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 					t.Fatalf("far entry %s should reach no part of the serve:\n%s", id, result.Text)
 				}
 			}
-			floored, filtered := setAsideLine(result.Text, model.SetAsideFloor), setAsideLine(result.Text, model.SetAsideFiltered)
+			floored := setAsideCount(result.Text, model.SetAsideFloor)
+			audited := 0
 			for _, id := range []string{floorPlain, floorTopic} {
-				if !strings.Contains(floored, id) && !slices.Contains(result.SummaryIDs, id) || strings.Contains(filtered, id) {
-					t.Fatalf("%s, rated no higher than the floor, should be set aside by it, but for an audit line:\n%s", id, result.Text)
+				if slices.Contains(result.SummaryIDs, id) {
+					audited++
+					if !strings.HasPrefix(lineOf(result.Text, id), "  ?") {
+						t.Fatalf("%s, rated no higher than the floor, should show only as an audit line:\n%s", id, result.Text)
+					}
 				}
+			}
+			if floored+audited != 2 {
+				t.Fatalf("%d below the floor: the two rated no higher than the floor, and only they, should be set aside by it, but for an audit line:\n%s", floored, result.Text)
 			}
 			for _, id := range []string{floorTwoReads, floorNear} {
-				if strings.Contains(floored, id) {
-					t.Fatalf("%s should never lie below the floor:\n%s", id, result.Text)
-				}
 				if !tc.calibrated && !slices.Contains(result.SummaryIDs, id) {
-					t.Fatalf("%s should stay to judge:\n%s", id, result.Text)
+					t.Fatalf("%s should stay a line:\n%s", id, result.Text)
 				}
 			}
-			if strings.Contains(floored, floorHigh) || strings.Contains(filtered, floorHigh) {
-				t.Fatalf("a candidate rated above the floor should not be set aside:\n%s", result.Text)
+			if line := lineOf(result.Text, floorHigh); line == "" || strings.HasPrefix(line[1:], " ?") {
+				t.Fatalf("a candidate rated above the floor should stay a scored line:\n%s", result.Text)
 			}
-			count := strings.Count(floored, "20260103-")
-			if count == 0 || !strings.Contains(result.Text, fmt.Sprintf("; the far floor set aside %d\n", count)) {
-				t.Fatalf("the prefilter note should name the %d candidates the floor set aside:\n%s", count, result.Text)
+			if floored == 0 || !strings.Contains(result.Text, fmt.Sprintf("; the far floor set aside %d\n", floored)) {
+				t.Fatalf("the prefilter note should name the %d candidates the floor set aside:\n%s", floored, result.Text)
 			}
 		})
 	}
@@ -178,8 +181,7 @@ func TestGather_FarFloorReadsASubjectsOwnReferences(t *testing.T) {
 	if len(scorer.requests) != 1 || !slices.Equal(farIn(scorer.requests[0]), floorFar) {
 		t.Fatalf("%d calls: the subject's topic and reference should give the reading a floor", len(scorer.requests))
 	}
-	floored := setAsideLine(result.Text, model.SetAsideFloor)
-	if strings.Contains(floored, floorNear) || strings.Count(floored, "20260103-") != 1 {
+	if !slices.Contains(result.SummaryIDs, floorNear) || setAsideCount(result.Text, model.SetAsideFloor) != 1 {
 		t.Fatalf("the candidate next to the subject's reference should stay above the floor, which sets aside the two low-rated ones but for an audit line:\n%s", result.Text)
 	}
 }
@@ -204,7 +206,7 @@ func TestGather_FarFloorRidesEveryPartOfAHalvedCall(t *testing.T) {
 	if !slices.Equal(lines, []int{8, 5, 5, 4}) {
 		t.Fatalf("calls of %v lines: the broken call of eight should be scored again in parts of five", lines)
 	}
-	if setAsideLine(result.Text, model.SetAsideFloor) == "" || !strings.Contains(result.Text, "prefilter: ok: ") {
+	if setAsideCount(result.Text, model.SetAsideFloor) == 0 || !strings.Contains(result.Text, "prefilter: ok: ") {
 		t.Fatalf("the halved pass should score every candidate and set aside below the floor:\n%s", result.Text)
 	}
 }

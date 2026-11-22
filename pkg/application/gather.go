@@ -93,6 +93,9 @@ type GatherRequest struct {
 	// client is the session's MCP client, which picks the ranking judge
 	// (rankingJudge); empty for a reading without one.
 	client string
+	// openOnly opens the IDs alone in a capture whose draft fills the
+	// request: no search, listing or judge call.
+	openOnly bool
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -144,6 +147,8 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			return GatherResult{}, fmt.Errorf("sdd: gather: entry %s does not resolve", id)
 		}
 	}
+	openOnly := request.openOnly || request.reading == nil && len(opened) > 0 && strings.TrimSpace(request.Draft) == "" && request.Query == "" &&
+		len(request.Terms) == 0 && len(request.Topics) == 0 && request.Subject == ""
 
 	if request.Subject != "" {
 		resolved, err := graph.ResolveIDs([]string{request.Subject})
@@ -170,6 +175,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	var reads []model.GroundingRead
 	switch {
+	case openOnly:
 	case len(live) < policy.BriefAllBelow:
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
@@ -199,6 +205,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			"sdd: gather needs the draft: the graph holds %d live entries, at or above verify.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
 	}
 	landed := request.since.Since(liveIDs)
+	if openOnly {
+		landed = slices.DeleteFunc(landed, request.reading.IsListed)
+	}
 	if len(landed) > 0 {
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingNew, IDs: landed})
 	}
@@ -238,90 +247,74 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		}
 	}
 
-	pass, err := runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held, floor)
-	if err != nil {
-		return GatherResult{}, err
+	pass := prefilterPass{status: model.PrefilterOff, note: "ids only: no search, listing or judge call", scores: held}
+	if !openOnly {
+		pass, err = runPrefilter(ctx, prefilter, policy, subject, graph, split.Undecided, held, floor)
+		if err != nil {
+			return GatherResult{}, err
+		}
 	}
 	for _, id := range pass.below {
 		below[id] = true
-	}
-	placed := model.PlacePrefiltered(split.Undecided, pass.scores, below, thresholds, model.JudgeRankingHealth(labels).Weak())
-	if len(placed.Listed)+len(placed.Counted) > 0 {
-		pass.note += fmt.Sprintf("; below its first recall stage, so the top %d scored stay to judge, %d more go by title and %d are counted", len(placed.ToJudge)-unscored(placed.ToJudge), len(placed.Listed), len(placed.Counted))
 	}
 	seed := model.NewCorpusMark(liveIDs).Hash
 	if request.since != nil {
 		seed = request.since.Hash
 	}
-	audit, kept := model.AuditSample(slices.Concat(placed.SetAside, placed.BelowFloor), seed)
-	var filtered, floored []string
-	for _, id := range kept {
-		if below[id] {
-			floored = append(floored, id)
-		} else {
-			filtered = append(filtered, id)
+	marked := map[string]string{}
+	for _, candidate := range split.Relevant {
+		marked[candidate.Entry.ID] = ""
+	}
+	lines := model.PlaceLines(model.LineInput{
+		Candidates: slices.Concat(split.Relevant, split.Undecided),
+		Scores:     pass.scores, BelowFloor: below, Thresholds: thresholds,
+		Widened:    model.JudgeRankingHealth(labels).Weak(),
+		SelfJudged: !openOnly && subject != "" && (pass.status == model.PrefilterOff || pass.status == model.PrefilterFailed),
+		Hops:       model.RefHops(graph, request.References), Marked: marked, Seed: seed,
+	})
+	setAside = append(setAside, lines.SetAside...)
+	floored := 0
+	for _, group := range lines.SetAside {
+		if group.Reason == model.SetAsideFloor {
+			floored = len(group.IDs)
 		}
 	}
-	if len(filtered) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: filtered})
-	}
-	if len(floored) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFloor, IDs: floored})
-	}
-	if pass.floored || len(floored) > 0 {
-		clause := fmt.Sprintf("the far floor set aside %d", len(floored))
+	if pass.floored || floored > 0 {
+		clause := fmt.Sprintf("the far floor set aside %d", floored)
 		if pass.note != "" {
 			clause = "; " + clause
 		}
 		pass.note += clause
 	}
-	var samples []model.GatherCandidate
-	for _, candidate := range split.Undecided {
-		if slices.Contains(audit, candidate.Entry.ID) {
-			samples = append(samples, candidate)
-		}
-	}
-	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
-		ToJudge: candidates, Listed: placed.Listed, Counted: len(placed.Counted), SetAside: setAside,
+		Found: len(candidates), Judged: lines.Judged + len(split.NotRelevant), Lines: lines, SetAside: setAside,
+	}
+	for _, candidate := range split.Relevant {
+		if _, scored := pass.scores[candidate.Entry.ID]; !scored {
+			served.Judged++
+		}
 	}
 	if request.Held != nil {
 		served.Held, served.Served = request.Held, request.Served
 	}
-	full := slices.Clone(opened)
-	for _, candidate := range append(split.Relevant, placed.Relevant...) {
-		full = append(full, candidate.Entry.ID)
-	}
-	if len(full) > query.GatherFullCap {
-		for _, id := range full[query.GatherFullCap:] {
-			served.Overflow = append(served.Overflow, graph.ByID[id])
-		}
-		full = full[:query.GatherFullCap]
-	}
-	if len(full) > 0 {
-		shown, err := snapshot.finder.Show(query.ShowQuery{IDs: full})
+	if len(opened) > 0 {
+		shown, err := snapshot.finder.Show(query.ShowQuery{IDs: opened})
 		if err != nil {
 			return GatherResult{}, err
 		}
-		served.Full = shown
+		served.Opened = shown
 	}
-	result := GatherResult{Project: runtime.options.Project, FullIDs: slices.Clone(full)}
-	for _, candidate := range candidates {
-		result.SummaryIDs = append(result.SummaryIDs, candidate.Entry.ID)
-	}
-	for _, e := range served.Overflow {
-		result.SummaryIDs = append(result.SummaryIDs, e.ID)
-	}
+	result := GatherResult{Project: runtime.options.Project, FullIDs: slices.Clone(opened), SummaryIDs: lines.Shown()}
 	var rendered bytes.Buffer
 	err = presenters.RenderGather(&rendered, served)
 	if err != nil {
 		return GatherResult{}, err
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
-	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
-	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: audit}
+	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(opened), Shown: slices.Clone(result.SummaryIDs), Marked: lines.MarkedIDs(), Corpus: served.Corpus}
+	if len(pass.fresh) > 0 || len(lines.Audit) > 0 {
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: lines.Audit}
 	}
 	return result, nil
 }
@@ -451,16 +444,6 @@ func (a *Application) WarmEmbedder(ctx context.Context, identity RequestIdentity
 		return fmt.Errorf("sdd: warming the embedding model%s: %w", embedderAt(err), err)
 	}
 	return nil
-}
-
-func unscored(candidates []model.GatherCandidate) int {
-	n := 0
-	for _, candidate := range candidates {
-		if candidate.Score == nil {
-			n++
-		}
-	}
-	return n
 }
 
 func uniqueIDs(ids []string) []string {

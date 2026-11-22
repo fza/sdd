@@ -8,28 +8,23 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func placesOf(slots []model.VerifierSlot) map[string]model.VerifierSlot {
-	places := map[string]model.VerifierSlot{}
-	for _, slot := range slots {
-		places[slot.ID] = slot
-	}
-	return places
+func gap(id string) *model.Entry {
+	return &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap}
 }
 
-func slotIDs(slots []model.VerifierSlot) []string {
-	ids := make([]string, len(slots))
-	for i, slot := range slots {
-		ids[i] = slot.ID
+func bearingReasons(placement model.VerifierPlacement) map[string]string {
+	reasons := map[string]string{}
+	for _, line := range placement.Lines.Bearing {
+		reasons[line.Entry.ID] = line.Reason
 	}
-	return ids
+	return reasons
 }
 
-// The declared targets, the drafter's full reads and every listed entry
-// closing or superseding a target, or closed or superseded by one, are
-// served in full however many there are; a verdict's entries come as lines
-// with their summary sentence; an entry one ref away from a target is listed by title and first
-// summary sentence whatever its rank.
-func TestPlaceVerifierReading_ServesThePrioritySetsInFull(t *testing.T) {
+// Only the declared targets come in full. A lifecycle neighbour of a target
+// is a marked line with its reason in both directions, listed or not; the
+// drafter's full reads and one-ref neighbours are lines, the latter with the
+// hop; an entry given a verdict is a line with its summary sentence.
+func TestPlaceVerifierReading_ServesOnlyTheTargetsInFull(t *testing.T) {
 	const (
 		target     = "20260101-000000-d-tac-tgt"
 		outbound   = "20260101-000001-s-tac-out"
@@ -38,341 +33,180 @@ func TestPlaceVerifierReading_ServesThePrioritySetsInFull(t *testing.T) {
 		full       = "20260101-000007-s-tac-ful"
 		verdict    = "20260101-000008-s-tac-ver"
 		plain      = "20260101-000009-s-tac-pln"
+		closer     = "20260102-000000-s-tac-cls"
 	)
-	entries := []*model.Entry{
-		{ID: target, Type: model.TypeDecision, Kind: model.KindDirective, Refs: []model.Ref{{ID: outbound}}, Supersedes: []string{superseded}},
-		{ID: outbound, Type: model.TypeSignal, Kind: model.KindGap},
-		{ID: inbound, Type: model.TypeSignal, Kind: model.KindGap, Refs: []model.Ref{{ID: target}}},
-		{ID: superseded, Type: model.TypeDecision, Kind: model.KindDirective},
-		{ID: full, Type: model.TypeSignal, Kind: model.KindGap},
-		{ID: verdict, Type: model.TypeSignal, Kind: model.KindGap},
-		{ID: plain, Type: model.TypeSignal, Kind: model.KindGap},
+	targetEntry := &model.Entry{ID: target, Type: model.TypeDecision, Kind: model.KindDirective, Refs: []model.Ref{{ID: outbound}}, Supersedes: []string{superseded}}
+	closing := &model.Entry{ID: closer, Type: model.TypeSignal, Kind: model.KindDone, Closes: []string{target}}
+	inboundEntry := gap(inbound)
+	inboundEntry.Refs = []model.Ref{{ID: target}}
+	g := model.NewGraph([]*model.Entry{targetEntry, gap(outbound), inboundEntry, {ID: superseded, Type: model.TypeDecision, Kind: model.KindDirective}, gap(full), gap(verdict), gap(plain), closing})
+	reading := model.VerifierReading{
+		Listed: []string{plain, outbound, inbound, verdict}, Full: []string{full}, Verdicts: []string{verdict},
+		Scores: map[string]uint8{plain: 10, outbound: 10, inbound: 10, verdict: 10, full: 10},
 	}
-	listed := []string{plain, outbound, inbound, superseded, full, verdict}
-	var closers []string
-	for i := range model.DeepTopRanked + 5 {
-		id := fmt.Sprintf("20260102-%06d-s-tac-cls", i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindDone, Closes: []string{target}})
-		closers = append(closers, id)
-		listed = append(listed, id)
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{Targets: []string{target}}, reading)
+	if !slices.Equal(placement.Targets, []string{target}) {
+		t.Fatalf("targets %v: only the declared target should come in full", placement.Targets)
 	}
-	g := model.NewGraph(entries)
-	draft := model.VerifierDraft{Targets: []string{target}}
-
-	slots := model.PlaceVerifierReading(g, draft, model.VerifierReading{Listed: listed, Full: []string{full}, Verdicts: []string{verdict}})
-	places := placesOf(slots)
-	want := map[string]model.VerifierRole{target: model.VerifierRoleTarget, full: model.VerifierRoleRead, superseded: model.VerifierRoleLifecycle}
-	for _, id := range closers {
-		want[id] = model.VerifierRoleLifecycle
+	reasons := bearingReasons(placement)
+	if reasons[closer] != model.VerifierClosesTarget || reasons[superseded] != model.VerifierTargetSupersedes || len(reasons) != 2 {
+		t.Fatalf("marked %v: both lifecycle directions should be marked with their reason, unlisted ones too", reasons)
 	}
-	for id, role := range want {
-		if slot, ok := places[id]; !ok || slot.Place != model.VerifierPlaceFull || slot.Role != role {
-			t.Errorf("%s placed %+v, want served in full as %s", id, slot, role)
+	doubt := map[string]model.Line{}
+	for _, line := range placement.Lines.Doubt {
+		doubt[line.Entry.ID] = line
+	}
+	for _, id := range []string{plain, full, outbound, inbound, verdict} {
+		if _, ok := doubt[id]; !ok {
+			t.Fatalf("doubt %v: %s should be a line", lineIDs(placement.Lines.Doubt), id)
 		}
 	}
-	for _, id := range []string{outbound, inbound} {
-		if slot := places[id]; slot.Place != model.VerifierPlaceSummary || slot.Role != model.VerifierRoleHop {
-			t.Errorf("%s placed %+v, want listed with its first summary sentence as one ref from a target", id, slot)
-		}
+	if !doubt[verdict].Summary {
+		t.Fatal("the entry given a verdict should be a line with its summary sentence")
 	}
-	if slot := places[verdict]; slot.Place != model.VerifierPlaceSummary || slot.Role != model.VerifierRoleVerdict {
-		t.Errorf("verdict entry placed %+v, want a line with its summary sentence, given a verdict", slot)
-	}
-	if slot := places[plain]; slot.Role != model.VerifierRoleRanked || slot.Place != model.VerifierPlaceFull {
-		t.Errorf("the one ranked entry placed %+v, want top-ranked in full", slot)
-	}
-	if len(slots) != len(listed)+1 {
-		t.Fatalf("%d slots for %d listed entries and one target: each entry once", len(slots), len(listed))
-	}
-	if got := slotIDs(slots)[:2]; !slices.Equal(got, []string{target, full}) {
-		t.Fatalf("reading opens with %v, want the target, then the full read", got)
+	if !doubt[outbound].Hop || !doubt[inbound].Hop || doubt[plain].Hop || doubt[full].Hop {
+		t.Fatal("the entries one reference from the target, and only they, should carry the hop")
 	}
 }
 
-// The ranked entries go by falling score: the top ones served in full, the
-// next listed with their first summary sentence, the rest by title.
-func TestPlaceVerifierReading_CutsTheRankedEntriesByScore(t *testing.T) {
-	count := model.DeepTopRanked + model.DeepSummaryRanked + 5
+// The shared order marks what it places as likely bearing; a marked entry
+// with a drafter's verdict stays a marked line.
+func TestPlaceVerifierReading_MarksWhatTheSharedOrderPlacesAsLikelyBearing(t *testing.T) {
+	g := model.NewGraph([]*model.Entry{gap("high"), gap("dismissed"), gap("low")})
+	reading := model.VerifierReading{
+		Listed: []string{"high", "dismissed", "low"}, Verdicts: []string{"dismissed"},
+		Scores:     map[string]uint8{"high": 250, "dismissed": 240, "low": 60},
+		Thresholds: model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9},
+	}
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
+	reasons := bearingReasons(placement)
+	if reasons["high"] != model.VerifierLikelyBearing || reasons["dismissed"] != model.VerifierLikelyBearing {
+		t.Fatalf("marked %v: both scores at the relevant threshold should be marked lines", reasons)
+	}
+	if got := lineIDs(placement.Lines.Doubt); !slices.Equal(got, []string{"low"}) {
+		t.Fatalf("doubt %v: the band between the thresholds should stay in doubt", got)
+	}
+}
+
+// Without any score the verifier judges the reading: its first unscored
+// candidates carry the mark, standing by falling similarity, then listed
+// order, done entries after all others.
+func TestPlaceVerifierReading_MarksTheFirstUnscoredWithoutAJudge(t *testing.T) {
+	var entries []*model.Entry
+	var listed []string
+	for i := range 8 {
+		id := fmt.Sprintf("e%d", i)
+		entries = append(entries, gap(id))
+		listed = append(listed, id)
+	}
+	entries[0].Kind = model.KindDone
+	g := model.NewGraph(entries)
+	reading := model.VerifierReading{Listed: listed, Similarity: map[string]float64{"e0": 0.99, "e6": 0.9, "e7": 0.8}}
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
+	if got := lineIDs(placement.Lines.Bearing); !slices.Equal(got, []string{"e6", "e7", "e1", "e2", "e3"}) {
+		t.Fatalf("marked %v: the first five unscored by similarity, then listed order, done last", got)
+	}
+	if got := lineIDs(placement.Lines.Doubt); !slices.Equal(got, []string{"e4", "e5", "e0"}) {
+		t.Fatalf("doubt %v: the rest in the same order, the done entry last", got)
+	}
+}
+
+// The verifier's start keeps the limits a graph check keeps, and counts
+// what passes them.
+func TestPlaceVerifierReading_KeepsTheSharedLimits(t *testing.T) {
 	var entries []*model.Entry
 	var listed []string
 	scores := map[string]uint8{}
-	for i := range count {
-		id := fmt.Sprintf("20260101-%06d-s-tac-r%02d", i, i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
+	for i := range 450 {
+		id := fmt.Sprintf("20260101-%06d-s-tac-r%03d", i, i)
+		entries = append(entries, gap(id))
 		listed = append(listed, id)
-		scores[id] = uint8(i)
+		scores[id] = uint8(100 - i/5)
 	}
-	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: scores})
-	if len(slots) != count {
-		t.Fatalf("%d slots for %d ranked entries", len(slots), count)
-	}
-	for i, slot := range slots {
-		want := model.VerifierPlaceTitle
-		switch {
-		case i < model.DeepTopRanked:
-			want = model.VerifierPlaceFull
-		case i < model.DeepTopRanked+model.DeepSummaryRanked:
-			want = model.VerifierPlaceSummary
+	for _, widened := range []bool{false, true} {
+		placement := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: scores, Widened: widened})
+		lines := model.DoubtLines
+		if widened {
+			lines *= 2
 		}
-		if slot.ID != listed[count-1-i] || slot.Place != want || slot.Hidden {
-			t.Fatalf("slot %d = %+v, want %s placed %d: falling score, cut at %d and %d", i, slot, listed[count-1-i], want, model.DeepTopRanked, model.DeepTopRanked+model.DeepSummaryRanked)
+		if len(placement.Lines.Doubt) != lines || len(placement.Lines.Titles) != min(model.TitleLines, 450-lines) || len(placement.Lines.Counted) != max(0, 450-lines-model.TitleLines) {
+			t.Fatalf("%d lines, %d titles, %d counted: the limits of a graph check should hold", len(placement.Lines.Doubt), len(placement.Lines.Titles), len(placement.Lines.Counted))
 		}
 	}
 }
 
-// An unscored entry is served in full only while every ranked entry fits the
-// top: past it, only a score ranks an entry among the top.
-func TestPlaceVerifierReading_ServesUnscoredEntriesInFullOnlyWhenAllFit(t *testing.T) {
-	var entries []*model.Entry
-	var listed []string
-	for i := range model.DeepTopRanked + 1 {
-		id := fmt.Sprintf("20260101-%06d-s-tac-u%02d", i, i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed = append(listed, id)
-	}
-	g := model.NewGraph(entries)
-	for _, slot := range model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: listed[:model.DeepTopRanked]}) {
-		if slot.Place != model.VerifierPlaceFull {
-			t.Fatalf("slot %+v: ranked entries that all fit the top are served in full unscored", slot)
-		}
-	}
-	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: map[string]uint8{listed[3]: 1}})
-	for _, slot := range slots {
-		if want := slot.ID == listed[3]; (slot.Place == model.VerifierPlaceFull) != want {
-			t.Fatalf("slot %+v: past the top only a scored entry is served in full", slot)
-		}
-	}
-}
-
-// A done entry ranks below every other ranked entry, whatever its score,
-// and is never served in full.
-func TestPlaceVerifierReading_RanksDoneEntriesLastAndListsThem(t *testing.T) {
-	const (
-		done = "20260101-000000-s-tac-don"
-		gap  = "20260101-000001-s-tac-gap"
-	)
-	g := model.NewGraph([]*model.Entry{
-		{ID: done, Type: model.TypeSignal, Kind: model.KindDone},
-		{ID: gap, Type: model.TypeSignal, Kind: model.KindGap},
-	})
-	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, model.VerifierReading{Listed: []string{done, gap}, Scores: map[string]uint8{done: 250, gap: 1}})
-	if !slices.Equal(slotIDs(slots), []string{gap, done}) {
-		t.Fatalf("order %v: a done entry should rank below the rest", slotIDs(slots))
-	}
-	if slots[1].Place != model.VerifierPlaceSummary {
-		t.Fatalf("done entry placed %+v, want listed, never served in full", slots[1])
-	}
-}
-
-// Once calibrated, a ranked entry scoring below the set-aside threshold is
-// listed by title as hidden, last; the audit share of them returns blind
-// among the ranked entries.
-func TestPlaceVerifierReading_HidesWhatScoresBelowTheThreshold(t *testing.T) {
+// An entry the drafter dismissed is a line with its summary sentence and its
+// score wherever the limits would place it, never a title line or a count
+// (20261122-101625-d-tac-r0s).
+func TestPlaceVerifierReading_ListsEveryDismissedEntryAsALine(t *testing.T) {
 	var entries []*model.Entry
 	var listed []string
 	scores := map[string]uint8{}
-	for i := range 100 {
-		id := fmt.Sprintf("20260101-%06d-s-tac-low", i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
+	for i := range 450 {
+		id := fmt.Sprintf("20260101-%06d-s-tac-r%03d", i, i)
+		entries = append(entries, gap(id))
+		listed = append(listed, id)
+		scores[id] = uint8(100 - i/5)
+	}
+	titled, counted := listed[model.DoubtLines], listed[449]
+	reading := model.VerifierReading{Listed: listed, Scores: scores, Verdicts: []string{titled, counted}}
+	placement := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, reading)
+	doubt := map[string]model.Line{}
+	for _, line := range placement.Lines.Doubt {
+		doubt[line.Entry.ID] = line
+	}
+	for _, id := range []string{titled, counted} {
+		line, ok := doubt[id]
+		if !ok || !line.Summary || line.Score == nil {
+			t.Fatalf("%s placed %+v: a dismissed entry should be a scored line with its summary sentence", id, line)
+		}
+		if slices.ContainsFunc(placement.Lines.Titles, func(l model.Line) bool { return l.Entry.ID == id }) || slices.Contains(placement.Lines.Counted, id) {
+			t.Fatalf("%s should not also be a title line or counted", id)
+		}
+	}
+}
+
+// A calibrated judge's set-aside threshold sets a candidate aside, but for
+// the blind audit share shown among the lines in doubt.
+func TestPlaceVerifierReading_SetsAsideBelowTheThreshold(t *testing.T) {
+	var entries []*model.Entry
+	var listed []string
+	scores := map[string]uint8{}
+	for i := range 40 {
+		id := fmt.Sprintf("low%02d", i)
+		entries = append(entries, gap(id))
 		listed = append(listed, id)
 		scores[id] = 1
 	}
-	const high = "20260102-000000-s-tac-hig"
-	entries = append(entries, &model.Entry{ID: high, Type: model.TypeSignal, Kind: model.KindGap})
-	listed = append(listed, high)
-	scores[high] = 250
-	reading := model.VerifierReading{Listed: listed, Scores: scores, Thresholds: model.RelevanceThresholds{Valid: true, SetAside: 0.5, Relevant: 0.9}, Seed: "seed"}
-	g := model.NewGraph(entries)
-
-	slots := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
-	hidden := 0
-	for i, slot := range slots {
-		if slot.Hidden {
-			hidden++
-			if slot.Place != model.VerifierPlaceTitle || i < len(slots)-97 {
-				t.Fatalf("hidden slot %d = %+v: hidden entries go last, by title", i, slot)
-			}
-		}
-	}
-	if hidden != 97 || len(slots) != 101 {
-		t.Fatalf("%d hidden of %d: ceil(3%%) of the 100 below the threshold should return blind", hidden, len(slots))
-	}
-	again := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
-	if !slices.Equal(slotIDs(again), slotIDs(slots)) {
-		t.Fatal("one seed should place the same samples at the same positions")
-	}
-	uncalibrated := reading
-	uncalibrated.Thresholds = model.RelevanceThresholds{}
-	for _, slot := range model.PlaceVerifierReading(g, model.VerifierDraft{}, uncalibrated) {
-		if slot.Hidden {
-			t.Fatalf("%s hidden without a calibration", slot.ID)
-		}
+	reading := model.VerifierReading{Listed: listed, Scores: scores, Thresholds: model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, Seed: "seed"}
+	placement := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, reading)
+	if len(placement.Lines.Audit) == 0 || len(setAsideIDs(placement.Lines.SetAside, model.SetAsideFiltered))+len(placement.Lines.Audit) != 40 {
+		t.Fatalf("set aside %v, audit %v: every low score should be set aside but for the audit share", placement.Lines.SetAside, placement.Lines.Audit)
 	}
 }
 
-// Once calibrated, the threshold replaces the summary count: every ranked
-// entry past the top that scores at or above it is listed with its first
-// summary sentence, however many there are.
-func TestPlaceVerifierReading_ListsEverythingAboveTheThresholdWithItsSummary(t *testing.T) {
-	count := model.DeepTopRanked + model.DeepSummaryRanked + 5
-	var entries []*model.Entry
-	var listed []string
-	scores := map[string]uint8{}
-	for i := range count {
-		id := fmt.Sprintf("20260101-%06d-s-tac-a%03d", i, i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed = append(listed, id)
-		scores[id] = 200
-	}
-	reading := model.VerifierReading{Listed: listed, Scores: scores, Thresholds: model.RelevanceThresholds{Valid: true, SetAside: 0.5, Relevant: 0.9}, Seed: "seed"}
-	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, reading)
-	for i, slot := range slots {
-		want := model.VerifierPlaceSummary
-		if i < model.DeepTopRanked {
-			want = model.VerifierPlaceFull
-		}
-		if slot.Place != want || slot.Hidden {
-			t.Fatalf("slot %d = %+v, want placed %d: above the threshold nothing is listed by title alone", i, slot, want)
-		}
-	}
-}
-
-func TestVerifierUnscored_AsksForScoresOnlyWhereTheRankDecides(t *testing.T) {
-	var slots []model.VerifierSlot
-	for i := range model.DeepTopRanked {
-		slots = append(slots, model.VerifierSlot{ID: fmt.Sprintf("r%d", i), Role: model.VerifierRoleRanked})
-	}
-	slots = append(slots, model.VerifierSlot{ID: "target", Role: model.VerifierRoleTarget})
-	if got := model.VerifierUnscored(slots, model.VerifierReading{}); len(got) != 0 {
-		t.Fatalf("unscored %v: ranked entries that all fit the top need no score", got)
-	}
-	if got := model.VerifierUnscored(slots, model.VerifierReading{Scores: map[string]uint8{"r0": 1}, Thresholds: model.RelevanceThresholds{Valid: true}}); len(got) != model.DeepTopRanked-1 || slices.Contains(got, "r0") || slices.Contains(got, "target") {
-		t.Fatalf("unscored %v: a calibration hides by score, so every unscored ranked entry needs one", got)
-	}
-	slots = append(slots, model.VerifierSlot{ID: "extra", Role: model.VerifierRoleRanked})
-	if got := model.VerifierUnscored(slots, model.VerifierReading{}); len(got) != model.DeepTopRanked+1 {
-		t.Fatalf("unscored %v: past the top cut the rank decides, so every ranked entry needs a score", got)
-	}
-	var hops []model.VerifierSlot
-	for i := range model.DeepHopListed + 1 {
-		hops = append(hops, model.VerifierSlot{ID: fmt.Sprintf("h%d", i), Role: model.VerifierRoleHop})
-	}
-	if got := model.VerifierUnscored(hops[:model.DeepHopListed], model.VerifierReading{Thresholds: model.RelevanceThresholds{Valid: true}}); len(got) != 0 {
-		t.Fatalf("unscored %v: ref neighbours that all fit their ceiling need no score", got)
-	}
-	if got := model.VerifierUnscored(hops, model.VerifierReading{}); len(got) != model.DeepHopListed+1 {
-		t.Fatalf("unscored %v: past their ceiling the rank decides which ref neighbours are listed", got)
-	}
-}
-
-// Past their ceilings, the ref neighbours and the entries listed by title
-// are counted, not listed, the lowest-ranked first.
-func TestPlaceVerifierReading_CountsWhatPassesTheCeilings(t *testing.T) {
+// The candidates whose class waits on a score are those without one and
+// without a mark of their own.
+func TestVerifierUnscored_AsksForScoresWhereTheClassWaitsOnThem(t *testing.T) {
 	const target = "20260101-000000-d-tac-tgt"
-	entries := []*model.Entry{{ID: target, Type: model.TypeDecision, Kind: model.KindDirective}}
-	var listed, hops []string
-	scores := map[string]uint8{}
-	for i := range model.DeepHopListed + 3 {
-		id := fmt.Sprintf("20260102-%06d-s-tac-hop", i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap, Refs: []model.Ref{{ID: target}}})
-		listed, hops = append(listed, id), append(hops, id)
-		scores[id] = uint8(i)
-	}
-	rankedCount := model.DeepTopRanked + model.DeepSummaryRanked + model.DeepTitleListed + 4
-	for i := range rankedCount {
-		id := fmt.Sprintf("20260103-%06d-s-tac-rnk", i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed = append(listed, id)
-		scores[id] = uint8(i % 256)
-	}
-	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{Targets: []string{target}}, model.VerifierReading{Listed: listed, Scores: scores})
-	counted := map[model.VerifierRole]int{}
-	for _, slot := range slots {
-		if slot.Place == model.VerifierPlaceCounted {
-			counted[slot.Role]++
-		}
-	}
-	if counted[model.VerifierRoleHop] != 3 || counted[model.VerifierRoleRanked] != 4 {
-		t.Fatalf("counted %v: 3 ref neighbours past %d and 4 titles past %d", counted, model.DeepHopListed, model.DeepTitleListed)
-	}
-	places := placesOf(slots)
-	for i := range 3 {
-		if places[hops[i]].Place != model.VerifierPlaceCounted {
-			t.Fatalf("ref neighbour %s placed %+v: the lowest-scored past the ceiling should be counted", hops[i], places[hops[i]])
-		}
+	closing := &model.Entry{ID: "closer", Type: model.TypeSignal, Kind: model.KindDone, Closes: []string{target}}
+	g := model.NewGraph([]*model.Entry{gap(target), closing, gap("scored"), gap("unscored"), gap("dismissed")})
+	reading := model.VerifierReading{Listed: []string{"scored", "unscored", "dismissed"}, Verdicts: []string{"dismissed"}, Scores: map[string]uint8{"scored": 100}}
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{Targets: []string{target}}, reading)
+	got := model.VerifierUnscored(placement, reading)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"dismissed", "unscored"}) {
+		t.Fatalf("unscored %v: every candidate without a score or a mark of its own should be asked for one", got)
 	}
 }
 
-// Past the judge, unscored entries rank by their similarity to the draft,
-// the most similar first, then the rest in listed order; similarity alone
-// serves none in full.
-func TestPlaceVerifierReading_RanksUnscoredEntriesBySimilarity(t *testing.T) {
-	var entries []*model.Entry
-	var listed []string
-	for i := range model.DeepTopRanked + 3 {
-		id := fmt.Sprintf("20260101-%06d-s-tac-s%02d", i, i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed = append(listed, id)
-	}
-	scored, near, far := listed[4], listed[6], listed[1]
-	reading := model.VerifierReading{
-		Listed:     listed,
-		Scores:     map[string]uint8{scored: 10},
-		Similarity: map[string]float64{near: 0.9, far: 0.2},
-	}
-	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, reading)
-	want := []string{scored, near, far, listed[0], listed[2], listed[3], listed[5], listed[7]}
-	if !slices.Equal(slotIDs(slots), want) {
-		t.Fatalf("order %v, want %v: the scored first, then by falling similarity, then in listed order", slotIDs(slots), want)
-	}
-	for _, slot := range slots[1:] {
-		if slot.Place == model.VerifierPlaceFull {
-			t.Fatalf("slot %+v: similarity alone should serve no entry in full", slot)
-		}
-	}
-}
-
-// A widened reading doubles the top served in full and the summary lines.
-func TestPlaceVerifierReading_WidenedDoublesTheTiers(t *testing.T) {
-	count := 2*(model.DeepTopRanked+model.DeepSummaryRanked) + 5
-	var entries []*model.Entry
-	var listed []string
-	scores := map[string]uint8{}
-	for i := range count {
-		id := fmt.Sprintf("20260101-%06d-s-tac-w%03d", i, i)
-		entries = append(entries, &model.Entry{ID: id, Type: model.TypeSignal, Kind: model.KindGap})
-		listed = append(listed, id)
-		scores[id] = uint8(255 - i%200)
-	}
-	slots := model.PlaceVerifierReading(model.NewGraph(entries), model.VerifierDraft{}, model.VerifierReading{Listed: listed, Scores: scores, Widened: true})
-	places := map[model.VerifierPlace]int{}
-	for _, slot := range slots {
-		places[slot.Place]++
-	}
-	if places[model.VerifierPlaceFull] != 2*model.DeepTopRanked || places[model.VerifierPlaceSummary] != 2*model.DeepSummaryRanked {
-		t.Fatalf("places %v: a widened reading serves %d in full and lists %d with their summary", places, 2*model.DeepTopRanked, 2*model.DeepSummaryRanked)
-	}
-	var top []model.VerifierSlot
-	for i := range 2 * model.DeepTopRanked {
-		top = append(top, model.VerifierSlot{ID: fmt.Sprintf("r%d", i), Role: model.VerifierRoleRanked})
-	}
-	if got := model.VerifierUnscored(top, model.VerifierReading{Widened: true}); len(got) != 0 {
-		t.Fatalf("unscored %v: ranked entries that all fit the widened top need no score", got)
-	}
-}
-
-// The ranking sources count the entries the rank places by what ranked
-// them: the judge's score, similarity to the draft, or listed order.
+// The ranking sources count the candidates by what ranked them: the judge's
+// score, similarity to the draft, or listed order.
 func TestVerifierRankingSources_CountsWhatRankedEachEntry(t *testing.T) {
-	slots := []model.VerifierSlot{
-		{ID: "target", Role: model.VerifierRoleTarget},
-		{ID: "a", Role: model.VerifierRoleRanked},
-		{ID: "b", Role: model.VerifierRoleHop},
-		{ID: "c", Role: model.VerifierRoleRanked},
-		{ID: "d", Role: model.VerifierRoleRanked},
-	}
-	reading := model.VerifierReading{Scores: map[string]uint8{"a": 1, "target": 2}, Similarity: map[string]float64{"b": 0.5}}
-	got := model.VerifierRankingSources(slots, reading)
+	g := model.NewGraph([]*model.Entry{gap("target"), gap("a"), gap("b"), gap("c"), gap("d")})
+	reading := model.VerifierReading{Listed: []string{"a", "b", "c", "d"}, Scores: map[string]uint8{"a": 1, "target": 2}, Similarity: map[string]float64{"b": 0.5}}
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{Targets: []string{"target"}}, reading)
+	got := model.VerifierRankingSources(placement, reading)
 	if got != (model.RankingSources{Judged: 1, Similar: 1, Listed: 2}) {
 		t.Fatalf("sources %+v: one judged, one by similarity, two in listed order; the target is not ranked", got)
 	}

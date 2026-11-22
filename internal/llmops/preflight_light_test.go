@@ -154,58 +154,51 @@ func TestDeepReadingBlock(t *testing.T) {
 	}
 }
 
-// The closing block lists the next-ranked by title and first summary
-// sentence, the rest by title, grouped under one heading each: the drafter's
-// dismissals with score, code and status, the implicit dismissals, then the
-// entries below the prefilter's threshold, then the others, in rank order
-// within a group.
-func TestDeepListedBlock_GroupsTheLinesUnderHeadings(t *testing.T) {
-	summary := readingEntry("20261101-090000-s-tac-sum", "Shown and left unanswered. More words after.", "Body.", "capture/attachments")
-	summary.Title = "Unanswered entry"
-	titled := readingEntry("20261101-100000-s-tac-ttl", "Listed by title. Never this sentence.", "Body.", "capture/attachments")
-	titled.Title = "Title only"
-	hidden := readingEntry("20261101-110000-s-tac-hid", "Below the threshold.", "Body.", "capture/attachments")
-	both := readingEntry("20261101-120000-s-tac-bth", "Unanswered and below.", "Body.", "capture/attachments")
-	other := readingEntry("20261101-130000-s-tac-oth", "Another listed one.", "Body.", "capture/attachments")
-	dismissed := readingEntry("20261101-140000-s-tac-dis", "Dismissed by the drafter. More words after.", "Body.", "capture/attachments")
+// The closing block lists the marked lines with why sdd marked them and what
+// the drafter did, then the lines in doubt, a dismissal among them in the one
+// line format with its verdict code (20261122-101625-d-tac-r0s), the title
+// lines, a count of the rest and one count per set-aside reason, without IDs.
+func TestDeepLinesBlock_ListsTheGroupsWithTheirNotes(t *testing.T) {
+	marked := readingEntry("20261101-090000-s-tac-mrk", "Closes the target. More words after.", "Body.", "capture/attachments")
+	marked.Title = "Marked entry"
+	doubt := readingEntry("20261101-100000-s-tac-dbt", "In doubt. Never this sentence.", "Body.", "capture/attachments")
+	doubt.Title = "Doubtful entry"
+	titled := readingEntry("20261101-110000-s-tac-ttl", "By title.", "Body.", "capture/attachments")
+	dismissed := readingEntry("20261101-130000-s-tac-dis", "Dismissed by the drafter. More words after.", "Body.", "capture/attachments")
 	dismissed.Title = "Dismissed entry"
-	unjudged := readingEntry("20261101-150000-s-tac-unj", "Dismissed and never scored.", "Body.", "capture/attachments")
-	score := 0.86
-	block := llmops.DeepListedBlock([]llmops.DeepListedLine{
-		{Entry: summary, Summary: true, Implicit: true},
-		{Entry: titled},
-		{Entry: dismissed, Dismissed: model.VerdictTopicOnly, Score: &score, Status: model.Status{Kind: model.StatusOpen}},
-		{Entry: hidden, Hidden: true},
-		{Entry: both, Hidden: true, Implicit: true},
-		{Entry: unjudged, Dismissed: model.VerdictCovered, Status: model.Status{Kind: model.StatusClosedBy, By: other.ID}},
-		{Entry: other},
-	}, 7)
-	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
-	want := "Dismissed by the drafter:\n" +
-		"  .86 drafter: dismissed, topic-only  " + dismissed.ID + " {open}  Dismissed entry\n" +
-		"      Dismissed by the drafter.\n" +
-		"  ?   drafter: dismissed, covered  " + unjudged.ID + " {closed-by " + other.ID + "}  Dismissed and never scored.\n" +
-		"\nShown to the capture and left unanswered (implicitly dismissed):\n" +
-		summary.ID + "  Unanswered entry: Shown and left unanswered.\n" +
-		both.ID + "  Unanswered and below.\n" +
-		"\nBelow the prefilter's threshold:\n" +
-		hidden.ID + "  Below the threshold.\n" +
-		"\nOther listed entries:\n" +
-		titled.ID + "  Title only\n" +
-		other.ID + "  Another listed one.\n" +
-		"\n7 more listed, open with search or show"
-	if block.ID != llmops.DeepListedID || lines != want || !strings.Contains(block.Text, "## Listed, not served (7)") {
-		t.Errorf("each entry should keep one line of its tier in its group, got:\n%s", block.Text)
+	graph := lightGraph(t, marked, doubt, titled, dismissed)
+	score, dismissedScore := 0.42, 0.86
+	lines := model.Lines{
+		Bearing:  []model.Line{{Entry: marked, Marked: true, Reason: model.VerifierClosesTarget}},
+		Doubt:    []model.Line{{Entry: doubt, Score: &score, Hop: true}, {Entry: dismissed, Score: &dismissedScore, Summary: true}},
+		Titles:   []model.Line{{Entry: titled}},
+		Counted:  []string{"a", "b"},
+		SetAside: []model.GatherSetAside{{Reason: model.SetAsideFiltered, IDs: []string{"20261101-120000-s-tac-asd"}}},
 	}
-}
-
-// With only unmarked entries the closing block prints no group heading.
-func TestDeepListedBlock_OmitsTheHeadingOfALoneOtherGroup(t *testing.T) {
-	titled := readingEntry("20261101-100000-s-tac-ttl", "Listed by title.", "Body.", "capture/attachments")
-	block := llmops.DeepListedBlock([]llmops.DeepListedLine{{Entry: titled}}, 0)
-	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
-	if want := titled.ID + "  Listed by title."; lines != want {
-		t.Errorf("a lone other group should list its lines without a heading, got:\n%s", block.Text)
+	drafter := func(id string) string {
+		switch id {
+		case doubt.ID:
+			return "drafter: read"
+		case dismissed.ID:
+			return "drafter: dismissed, " + model.VerdictTopicOnly
+		}
+		return ""
+	}
+	block := llmops.DeepLinesBlock(graph, lines, drafter)
+	for _, want := range []string{
+		"## marked for you (1)",
+		"! ?         " + marked.ID + " {open}  Marked entry — " + model.VerifierClosesTarget + "\n      Closes the target.\n",
+		"## in doubt (2)\n\n  .42 ~ref  " + doubt.ID + " {open}  Doubtful entry — drafter: read\n",
+		"  .86       " + dismissed.ID + " {open}  Dismissed entry — drafter: dismissed, topic-only\n      Dismissed by the drafter.\n\n",
+		"## by title (1)\n\n  " + titled.ID + "  By title.\n  +2 more, not listed\n",
+		"## set aside (1)\n\n  1 " + model.SetAsideFiltered,
+	} {
+		if !strings.Contains(block.Text, want) {
+			t.Errorf("the block lacks %q:\n%s", want, block.Text)
+		}
+	}
+	if block.ID != llmops.DeepListedID || strings.Contains(block.Text, "20261101-120000-s-tac-asd") {
+		t.Errorf("the block should count a set-aside entry without its ID:\n%s", block.Text)
 	}
 }
 

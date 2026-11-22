@@ -100,12 +100,12 @@ func (e GroundingEvidence) Unlisted() []string {
 	return out
 }
 
-// OpenFullReads returns the entries served in full inside the reading that end
-// neither in the draft's refs nor in a verdict.
-func (e GroundingEvidence) OpenFullReads() []string {
+// OpenMarked returns the lines the reading marked as likely bearing that end
+// neither in the draft's refs nor in a verdict: each owes an answer.
+func (e GroundingEvidence) OpenMarked() []string {
 	answered := e.answered()
 	var out []string
-	for _, id := range e.Reading.Full() {
+	for _, id := range e.Reading.Marked() {
 		if !answered[id] {
 			out = append(out, id)
 		}

@@ -162,32 +162,6 @@ func TestFarFloor_Below(t *testing.T) {
 	}
 }
 
-func TestPlacePrefiltered_SetsAsideBelowTheFarFloor(t *testing.T) {
-	candidates := []model.GatherCandidate{{Entry: &model.Entry{ID: "high"}}, {Entry: &model.Entry{ID: "mid"}}, {Entry: &model.Entry{ID: "low"}}, {Entry: &model.Entry{ID: "floored-b"}}, {Entry: &model.Entry{ID: "floored-a"}}}
-	scores := map[string]uint8{"high": 250, "mid": 120, "low": 5, "floored-b": 30, "floored-a": 240}
-	below := map[string]bool{"floored-a": true, "floored-b": true}
-	for _, tc := range []struct {
-		name       string
-		thresholds model.RelevanceThresholds
-		toJudge    []string
-		relevant   []string
-		setAside   []string
-	}{
-		{name: "without thresholds", toJudge: []string{"high", "mid", "low"}},
-		{name: "with thresholds", thresholds: model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}, toJudge: []string{"mid"}, relevant: []string{"high"}, setAside: []string{"low"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			placed := model.PlacePrefiltered(candidates, scores, below, tc.thresholds, false)
-			if !slices.Equal(placed.BelowFloor, []string{"floored-a", "floored-b"}) {
-				t.Fatalf("below the floor %v: both verdicts should set their candidate aside, sorted", placed.BelowFloor)
-			}
-			if !slices.Equal(ids(placed.ToJudge), tc.toJudge) || !slices.Equal(ids(placed.Relevant), tc.relevant) || !slices.Equal(placed.SetAside, tc.setAside) {
-				t.Fatalf("to judge %v, relevant %v, set aside %v: a candidate below the floor belongs to no other group", ids(placed.ToJudge), ids(placed.Relevant), placed.SetAside)
-			}
-		})
-	}
-}
-
 // A floor verdict rides the reading with its score: the first one a
 // candidate got stands, whatever a later record says.
 func TestReadingBelowFloor_KeepsTheFirstVerdict(t *testing.T) {

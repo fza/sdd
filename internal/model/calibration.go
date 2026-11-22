@@ -362,17 +362,6 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 	return report
 }
 
-// InsertBlind places audit samples among the lines to judge at positions drawn
-// from seed, unscored, so nothing tells them from the band the prefilter left.
-func InsertBlind(toJudge, audit []GatherCandidate, seed string) []GatherCandidate {
-	out := slices.Clone(toJudge)
-	for _, candidate := range audit {
-		candidate.Score = nil
-		out = slices.Insert(out, blindPosition(seed, candidate.Entry.ID, len(out)), candidate)
-	}
-	return out
-}
-
 // blindPosition draws where an audit sample goes among n lines from seed.
 func blindPosition(seed, id string, n int) int {
 	sum := sha256.Sum256([]byte(seed + "\naudit\n" + id))

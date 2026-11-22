@@ -13,6 +13,7 @@ func gateReading() *model.Reading {
 	r.Fold(model.ReadPayload{
 		Reads:  []model.GroundingRead{{Mode: model.GroundingSemantic, Text: "q", IDs: []string{"a"}}, {Mode: model.GroundingKeyword, Text: "t", IDs: []string{"b"}}},
 		Full:   []string{"b"},
+		Marked: []string{"a"},
 		Corpus: model.NewCorpusMark([]string{"a", "b"}),
 	})
 	return &r
@@ -34,14 +35,21 @@ func TestGroundingEvidence_OwedReads(t *testing.T) {
 	}
 }
 
-func TestGroundingEvidence_FullReadsAndVerdicts(t *testing.T) {
+// A marked line owes an answer; an entry opened in full without the mark owes
+// none.
+func TestGroundingEvidence_MarkedLinesAndVerdicts(t *testing.T) {
 	e := model.GroundingEvidence{Reading: gateReading()}
-	if open := e.OpenFullReads(); !slices.Equal(open, []string{"b"}) {
-		t.Fatalf("open = %v, want the entry served in full", open)
+	if open := e.OpenMarked(); !slices.Equal(open, []string{"a"}) {
+		t.Fatalf("open = %v: the marked line should owe an answer and the opened entry none", open)
 	}
-	e.Verdicts = []model.GroundingVerdict{{IDs: []string{"b", "z"}, Code: model.VerdictCovered}}
-	if open := e.OpenFullReads(); len(open) != 0 {
-		t.Fatalf("a verdict should answer the full read, got %v", open)
+	e.Answered = []string{"a"}
+	if open := e.OpenMarked(); len(open) != 0 {
+		t.Fatalf("open = %v: a reference should answer the marked line", open)
+	}
+	e.Answered = nil
+	e.Verdicts = []model.GroundingVerdict{{IDs: []string{"a", "z"}, Code: model.VerdictCovered}}
+	if open := e.OpenMarked(); len(open) != 0 {
+		t.Fatalf("open = %v: a verdict should answer the marked line", open)
 	}
 	if unlisted := e.UnlistedVerdicts(); !slices.Equal(unlisted, []string{"z"}) {
 		t.Fatalf("unlisted = %v, want the verdict ID no read listed", unlisted)

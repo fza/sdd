@@ -36,20 +36,6 @@ func TestAuditSample_ShowsAStableShareBlind(t *testing.T) {
 	}
 }
 
-func TestInsertBlind_HidesTheSampleScore(t *testing.T) {
-	score := 0.01
-	toJudge := []model.GatherCandidate{{Entry: &model.Entry{ID: "a"}}, {Entry: &model.Entry{ID: "b"}}}
-	got := model.InsertBlind(toJudge, []model.GatherCandidate{{Entry: &model.Entry{ID: "s"}, Score: &score}}, "seed")
-	if len(got) != 3 {
-		t.Fatalf("%d lines: the sample should join the lines to judge", len(got))
-	}
-	for _, candidate := range got {
-		if candidate.Entry.ID == "s" && candidate.Score != nil {
-			t.Fatal("an audit sample should carry no score")
-		}
-	}
-}
-
 // driftLabels returns a calibrated label set plus count audit labels by
 // subject entries after base, misses of them referenced.
 func driftLabels(count, misses int) []model.RelevanceLabel {

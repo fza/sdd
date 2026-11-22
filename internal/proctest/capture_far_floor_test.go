@@ -14,13 +14,8 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
-func floorLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "- "+model.SetAsideFloor+":") {
-			return line
-		}
-	}
-	return ""
+func floorCount(text string) int {
+	return setAsideCount(text, model.SetAsideFloor)
 }
 
 // A candidate next to an entry the draft references never falls below the
@@ -62,11 +57,11 @@ func TestCaptureGrounding_FarFloorSparesTheNeighbourhoodOfReferencesAlone(t *tes
 	session.Report(t, instance, draft)
 
 	gathered := session.Gather(t, instance)
-	setAside := floorLine(gathered.Text)
-	if !slices.Contains(gathered.SummaryIDs, nearReference) || strings.Contains(setAside, nearReference) {
+	floored := floorCount(gathered.Text)
+	if !strings.HasPrefix(readingLine(gathered.Text, nearReference), "  .10") {
 		t.Fatalf("a candidate next to the draft's reference should stay to judge:\n%s", gathered.Text)
 	}
-	if strings.Count(setAside, "20260201-") != 2 || len(gathered.SummaryIDs) != 2 {
+	if floored != 2 || len(gathered.SummaryIDs) != 2 {
 		t.Fatalf("the candidate next to the dismissed entry should fall below the floor with the two plain ones, one of the three shown blind:\n%s", gathered.Text)
 	}
 }
@@ -102,8 +97,8 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 	session.Report(t, instance, draft)
 
 	first := session.Gather(t, instance)
-	setAside := floorLine(first.Text)
-	if strings.Count(setAside, "-s-tac-omg") != 5 || len(first.SummaryIDs) != 1 || !slices.Contains(candidates, first.SummaryIDs[0]) {
+	floored := floorCount(first.Text)
+	if floored != 5 || len(first.SummaryIDs) != 1 || !slices.Contains(candidates, first.SummaryIDs[0]) {
 		t.Fatalf("every candidate rated at the floor should be set aside by it, one of them shown blind:\n%s", first.Text)
 	}
 	sample := first.SummaryIDs[0]
@@ -122,7 +117,7 @@ func TestCaptureGrounding_FarFloorVerdictsRideTheReadingToTheLedger(t *testing.T
 	if len(scorer.Scored()) != len(scored) {
 		t.Fatalf("a second gather scored %d more lines: the reading's scores should be reused", len(scorer.Scored())-len(scored))
 	}
-	if floorLine(second.Text) != setAside || !slices.Equal(second.SummaryIDs, first.SummaryIDs) {
+	if floorCount(second.Text) != floored || !slices.Equal(second.SummaryIDs, first.SummaryIDs) {
 		t.Fatalf("a second gather should keep the verdicts the reading holds:\n%s", second.Text)
 	}
 
@@ -192,11 +187,11 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 				session.Report(t, instance, draft)
 			},
 			check: func(t *testing.T, second sdd.GatherResult, neighbour string, other [2]string) {
-				setAside := floorLine(second.Text)
-				if strings.Contains(setAside, neighbour) || !slices.Contains(second.SummaryIDs, neighbour) {
+				floored := floorCount(second.Text)
+				if !strings.HasPrefix(readingLine(second.Text, neighbour), "  .") {
 					t.Fatalf("the candidate next to the new reference should return to the lines to judge:\n%s", second.Text)
 				}
-				if !strings.Contains(setAside, other[0]) || !strings.Contains(setAside, other[1]) {
+				if floored == 0 || slices.Contains(second.SummaryIDs, other[0]) || slices.Contains(second.SummaryIDs, other[1]) {
 					t.Fatalf("a candidate far from the new reference should keep its verdict:\n%s", second.Text)
 				}
 			},
@@ -220,7 +215,7 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 				}
 			},
 			check: func(t *testing.T, second sdd.GatherResult, _ string, _ [2]string) {
-				if floorLine(second.Text) != "" || len(second.SummaryIDs) != 2*len(pairs) {
+				if floorCount(second.Text) != 0 || len(second.SummaryIDs) != 2*len(pairs) {
 					t.Fatalf("a floor that is off should set nothing aside, held verdicts included:\n%s", second.Text)
 				}
 			},
@@ -240,7 +235,7 @@ func TestCaptureGrounding_HeldFarFloorVerdictsYieldToALaterReferenceAndASwitchOf
 			session.Report(t, instance, draft)
 
 			first := session.Gather(t, instance)
-			if strings.Count(floorLine(first.Text), "-s-tac-omg") != 2*len(pairs)-1 || len(first.SummaryIDs) != 1 {
+			if floorCount(first.Text) != 2*len(pairs)-1 || len(first.SummaryIDs) != 1 {
 				t.Fatalf("every candidate rated at the floor should be set aside by it, one of them shown blind:\n%s", first.Text)
 			}
 			var free [][2]string

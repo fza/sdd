@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,22 +47,54 @@ func TestCaptureGrounding_RefusesUntilTheCaptureIsRead(t *testing.T) {
 		t.Fatalf("a guided capture without hooks owes only its reading, got %v", serve.Diagnostics)
 	}
 
-	session.Gather(t, instance)
-	serve = session.Report(t, instance, map[string]any{"confidence": "medium"})
+	gathered := session.Gather(t, instance)
+	serve = session.Report(t, instance, answerMarked(gathered.Text, map[string]any{"confidence": "medium"}))
 	proctest.RequireStep(t, serve, "playback")
 }
 
-func TestCaptureGrounding_FullReadsEndAsRefOrVerdict(t *testing.T) {
-	_, session := newGroundingWorld(t, "grounding-full")
+// markedLines returns the IDs of the lines a graph check marks as likely
+// bearing.
+func markedLines(text string) []string {
+	var ids []string
+	for line := range strings.Lines(text) {
+		if !strings.HasPrefix(line, "! ") || len(line) < 12 {
+			continue
+		}
+		id, _, _ := strings.Cut(line[12:], " ")
+		ids = append(ids, strings.TrimSpace(id))
+	}
+	return ids
+}
+
+// A check without a judge marks its first five lines; each holds the report
+// until a verdict or a reference answers it. An entry opened in full owes
+// nothing.
+func TestCaptureGrounding_AMarkedLineHoldsTheReport(t *testing.T) {
+	_, session := newGroundingWorld(t, "grounding-marked")
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "topics": []any{"cli/ux"}})
+	gathered := session.Gather(t, instance)
+	marked := markedLines(gathered.Text)
+	if len(marked) != model.FallbackMarks || len(gathered.FullIDs) != 0 {
+		t.Fatalf("marked %v, full %v: a check without a judge should mark its first five lines and serve nothing in full:\n%s", marked, gathered.FullIDs, gathered.Text)
+	}
 	session.Gather(t, instance, captureRef2ID)
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "assemble")
-	requireDiagnostics(t, serve, "neither in refs nor in verdicts", captureRef2ID, "report each in refs or in verdicts")
+	var owed []any
+	for _, id := range marked {
+		if id != captureRefID {
+			requireDiagnostics(t, serve, "lines marked ! end neither in refs nor in verdicts", id)
+			owed = append(owed, id)
+		}
+	}
+	if hasDiagnostic(serve, captureRef2ID) && !slices.Contains(marked, captureRef2ID) {
+		t.Fatalf("an opened entry without the mark should owe nothing, got %v", serve.Diagnostics)
+	}
 
-	serve = session.Report(t, instance, map[string]any{"verdicts": []any{map[string]any{"ids": []any{captureRef2ID}, "code": model.VerdictCovered}}})
+	serve = session.Report(t, instance, map[string]any{"verdicts": []any{map[string]any{"ids": owed, "code": model.VerdictCovered}}})
 	proctest.RequireStep(t, serve, "playback")
 }
 
@@ -101,7 +134,7 @@ func TestCaptureGrounding_EntryLandedSinceTheReadingMustBeListed(t *testing.T) {
 	if !strings.Contains(gathered.Text, "new since the reading began") || !strings.Contains(gathered.Text, landed.ID) {
 		t.Fatalf("a later gather should list the landed entry:\n%s", gathered.Text)
 	}
-	serve = session.Report(t, instance, map[string]any{"confidence": "medium"})
+	serve = session.Report(t, instance, answerMarked(gathered.Text, map[string]any{"confidence": "medium"}))
 	proctest.RequireStep(t, serve, "playback")
 }
 
@@ -390,7 +423,7 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 			if strings.Contains(again.Text, "lines to judge run by falling score") == tc.fail {
 				t.Fatalf("the second gather should name the order by score only over the scores the reading holds:\n%s", again.Text)
 			}
-			serve = session.Report(t, instance, captureDraft())
+			serve = session.Report(t, instance, answerMarked(again.Text, captureDraft()))
 			proctest.RequireStep(t, serve, "playback")
 			session.Gather(t, instance)
 			if !tc.fail && scorer.scored == first {
@@ -552,5 +585,37 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 				t.Fatalf("the held late entry should list as its pointer only while cuts are on:\n%s", serve.Instructions)
 			}
 		})
+	}
+}
+
+// answerMarked adds to fields a verdict for every line a graph check marked
+// that the fixture draft does not reference.
+func answerMarked(text string, fields map[string]any) map[string]any {
+	var ids []any
+	for _, id := range markedLines(text) {
+		if id != captureRefID {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > 0 {
+		fields["verdicts"] = []any{map[string]any{"ids": ids, "code": model.VerdictCovered}}
+	}
+	return fields
+}
+
+// Inside a begun reading, a check naming only IDs opens those entries in
+// full and runs no search, listing or judge call.
+func TestCaptureGrounding_OpeningByIDRunsNothingElse(t *testing.T) {
+	scorer := &countingScorer{score: 0.25}
+	_, session := newCaptureWorld(t, "grounding-open",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "topics": []any{"cli/ux"}})
+	session.Gather(t, instance)
+	paid := scorer.scored
+	opened := session.Gather(t, instance, captureRef2ID, captureRefID)
+	if scorer.scored != paid || len(opened.FullIDs) != 2 || len(opened.SummaryIDs) != 0 || strings.Contains(opened.Text, "reads: ") {
+		t.Fatalf("full %v, lines %v, %d judge calls: opening by ID should serve both entries and run nothing else:\n%s", opened.FullIDs, opened.SummaryIDs, scorer.scored-paid, opened.Text)
 	}
 }

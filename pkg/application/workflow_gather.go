@@ -22,7 +22,9 @@ type WorkflowGatherRequest struct {
 
 // Gather runs the reading and, naming a running instance, records it as the
 // instance's credited read: only reads made through it inside the instance
-// count for the capture's grounding.
+// count for the capture's grounding. Inside a reading already begun, a call
+// naming only IDs opens those entries and lists the ones landed since that no
+// credited read listed, and runs nothing else.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
 	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs}
@@ -59,6 +61,7 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 		gather.Answered = append(slices.Clone(gather.References), storeVerdictIDs(inst.Store)...)
 		gather.since = inst.Reading().Corpus
 		gather.reading = inst.Reading()
+		gather.openOnly = len(request.IDs) > 0 && request.Draft == "" && len(request.Topics) == 0 && gather.since != nil
 	}
 	w.demandProject(project)
 	result, err := w.app.Gather(ctx, identity, project, gather)

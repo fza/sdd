@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/relevance"
 	"github.com/networkteam/sdd/internal/segment"
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -277,7 +278,7 @@ func TestGather_SearchHitsCountOnlyCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, `keyword "alpha": 2 entries`) {
+	if !strings.Contains(result.Text, `keyword "alpha" 2`) {
 		t.Fatalf("the alpha search should count the live alpha gap and the successor alone:\n%s", result.Text)
 	}
 }
@@ -293,7 +294,7 @@ func TestGather_CutsNoTextAndDropsNoListItem(t *testing.T) {
 	}
 	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
 
-	result, err := gather(t, application, sdd.GatherRequest{IDs: ids[:15]})
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft.", IDs: ids[:15]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,8 +306,51 @@ func TestGather_CutsNoTextAndDropsNoListItem(t *testing.T) {
 	if strings.Count(result.Text, "and ends here.") < 60 {
 		t.Errorf("a brief or body was cut: %d whole texts in the serve", strings.Count(result.Text, "and ends here."))
 	}
-	if !strings.Contains(result.Text, "+3 opened entries past the full-serve cap of 12") {
-		t.Errorf("the entries past the full-serve cap should be named with the call that opens them:\n%s", result.Text)
+	if !slices.Equal(result.FullIDs, ids[:15]) {
+		t.Errorf("full %v: one call should open every entry it names, with no cap", result.FullIDs)
+	}
+}
+
+// A graph check serves no entry in full: it serves lines with their marks,
+// the counts and the instruction, word for word.
+func TestGather_ServesLinesAndTheInstruction(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.FullIDs) != 0 || strings.Contains(result.Text, "id: ") {
+		t.Fatalf("full %v: a check should serve no entry in full:\n%s", result.FullIDs, result.Text)
+	}
+	if !strings.Contains(result.Text, presenters.GatherInstruction) || presenters.GatherInstruction != "Open every entry you would reference and every entry that could contradict the draft. Then open those that look like bearing on the topic." {
+		t.Fatalf("the check should carry the instruction word for word:\n%s", result.Text)
+	}
+	n := len(result.SummaryIDs)
+	if !strings.HasPrefix(result.Text, fmt.Sprintf("# graph check   %d candidates · judged 0 of %d · %d shown · 0 set aside\n", n, n, n)) || n < model.FallbackMarks {
+		t.Fatalf("the header should count the candidates found, judged, shown and set aside:\n%s", result.Text)
+	}
+}
+
+// Opening entries by ID inside a begun reading runs no search, listing or
+// judge call; outside one, a call naming only IDs opens them alone.
+func TestGather_OpeningByIDRunsNothingElse(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	scorer := &scriptedScorer{}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge}
+	emb := &countingEmbeddings{}
+	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize, Prefilter: true, PrefilterFrom: 1}, emb)
+	result, err := gather(t, application, sdd.GatherRequest{IDs: []string{gatherAlpha, gatherBeta}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.llm.count() != 0 || emb.queryEmbeds != 0 || scorer.calls() != 0 {
+		t.Fatalf("%d LLM calls, %d query embeds, %d judge calls: opening by ID should run nothing else", f.llm.count(), emb.queryEmbeds, scorer.calls())
+	}
+	if !slices.Equal(result.FullIDs, []string{gatherAlpha, gatherBeta}) || len(result.SummaryIDs) != 0 {
+		t.Fatalf("full %v, lines %v: the call should open both entries and list nothing else", result.FullIDs, result.SummaryIDs)
 	}
 }
 
@@ -349,11 +393,11 @@ func TestGather_StoredVerdictsAnswerRepeatPairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, model.SetAsideJudged+": 1: "+gatherBeta) {
-		t.Errorf("a stored dismissal should set its pair aside without a new judgment:\n%s", result.Text)
+	if setAsideCount(result.Text, model.SetAsideJudged) != 1 {
+		t.Errorf("a stored dismissal should set its pair aside without a new judgment, counted without its ID:\n%s", result.Text)
 	}
-	if !slices.Contains(result.FullIDs, gatherTopicOnly) {
-		t.Errorf("a stored reference should serve its pair in full: full %v", result.FullIDs)
+	if line := lineOf(result.Text, gatherTopicOnly); !strings.HasPrefix(line, "!") {
+		t.Errorf("a stored reference should mark its pair as likely bearing:\n%s", result.Text)
 	}
 	if slices.Contains(result.SummaryIDs, gatherBeta) || slices.Contains(result.SummaryIDs, gatherAlpha) {
 		t.Errorf("neither the subject nor a decided pair stays to judge: %v", result.SummaryIDs)

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
@@ -345,7 +347,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, apart from those only the user can settle, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepRounds}},
+			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, apart from those only the user can settle, with which lines marked for the verifier it opened, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase, fieldDeepReadIDs}, Writes: []string{fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepRounds}},
 			Fn:     w.readDeepFindings,
 			Rounds: true,
 		},
@@ -605,9 +607,17 @@ func deepWholeReading(ctx *engine.Context, base string, placed verifierPlaced) (
 type deepHeld struct {
 	Full   []string `json:"full,omitempty"`
 	Listed []string `json:"listed,omitempty"`
-	// Hidden are the listed entries the reading served as one line.
+	// Hidden are the entries the reading set aside and only counted.
 	Hidden []string `json:"hidden,omitempty"`
+	// Marked are the lines the reading marked for the verifier.
+	Marked []string `json:"marked,omitempty"`
+	// Read are the entries the drafter had read in full by the reading.
+	Read []string `json:"read,omitempty"`
 }
+
+// deepRoleTarget is the role line of a declared target in the verifier's
+// reading.
+const deepRoleTarget model.LightRole = "declared target"
 
 // deepRefFit renders each ref of the draft against the applicability matrix,
 // as pre-flight reads it, for the verifier's ref-fit axis.
@@ -640,10 +650,10 @@ func preflightRaised(store *engine.Store) string {
 	return b.String()
 }
 
-// deepReading joins lead and rules with the entries placed serves in full,
-// then one closing block listing the rest, an entry the drafter dismissed
-// with its verdict's code; it leaves out what skip holds already, and names
-// what it serves.
+// deepReading joins lead and rules with the declared targets in full, then
+// the lines of the shared placement in one closing block, an entry the
+// drafter dismissed among them with its verdict's code; it leaves out what
+// skip holds already, and names what it serves.
 func deepReading(ctx *engine.Context, lead string, rules model.DeepContinued, skip deepHeld, placed verifierPlaced) (model.DeepReading, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
@@ -665,9 +675,12 @@ func deepReading(ctx *engine.Context, lead string, rules model.DeepContinued, sk
 		}
 	}
 	reading := instanceReading(ctx)
-	shown := map[string]bool{}
+	shown, read := map[string]bool{}, map[string]bool{}
 	for _, id := range reading.shown {
 		shown[id] = true
+	}
+	for _, id := range reading.full {
+		read[id] = true
 	}
 	seen := map[string]bool{}
 	var first, rest []model.DeepReadingBlock
@@ -683,58 +696,104 @@ func deepReading(ctx *engine.Context, lead string, rules model.DeepContinued, sk
 		served.Full = append(served.Full, id)
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
-		} else if shown[id] && role != "declared target" && role != model.LightRoleFull {
+		} else if shown[id] && role != deepRoleTarget {
 			role = model.LightRoleImplicit
 		}
 		return llmops.DeepReadingBlock(graph, e, role, codes[id]), true
 	}
-	slots := placed.slots
-	lead += llmops.DeepRankingNote(model.VerifierRankingSources(slots, placed.input), placed.judge, placed.input.Widened)
-	var lines []llmops.DeepListedLine
-	counted := 0
-	for _, slot := range slots {
-		switch slot.Place {
-		case model.VerifierPlaceCounted:
-			if !seen[slot.ID] && !heldAny[slot.ID] {
-				counted++
-			}
-		case model.VerifierPlaceFull:
-			role := model.LightRole(slot.Role)
-			if slot.Role == model.VerifierRoleRead {
-				role = model.LightRoleFull
-			}
-			served, ok := block(slot.ID, role)
-			if !ok {
-				continue
-			}
+	placement := placed.placement
+	lead += llmops.DeepRankingNote(model.VerifierRankingSources(placement, placed.input), placed.judge, placed.input.Widened)
+	for _, id := range placement.Targets {
+		if served, ok := block(id, deepRoleTarget); ok {
 			first = append(first, served)
-		default:
-			if seen[slot.ID] || heldAny[slot.ID] {
-				continue
-			}
-			seen[slot.ID] = true
-			served.Listed = append(served.Listed, slot.ID)
-			if slot.Hidden {
-				served.Hidden = append(served.Hidden, slot.ID)
-			}
-			e := graph.ByID[slot.ID]
-			line := llmops.DeepListedLine{Entry: e, Summary: slot.Place == model.VerifierPlaceSummary, Hidden: slot.Hidden}
-			if code, aside := codes[slot.ID]; aside {
-				line.Dismissed, line.Status = code, graph.DerivedStatus(e)
-				if score, scored := placed.input.Scores[slot.ID]; scored {
-					value := model.ScoreValue(score)
-					line.Score = &value
-				}
-			} else {
-				line.Implicit = shown[slot.ID]
-			}
-			lines = append(lines, line)
 		}
 	}
-	if len(lines) > 0 || counted > 0 {
-		rest = append(rest, llmops.DeepListedBlock(lines, counted))
+	// A revision serves in full what the drafter read in full since the
+	// verifier's last reading; the start serves the targets alone.
+	served.Read = slices.Clone(reading.full)
+	if len(skip.Full)+len(skip.Listed) > 0 {
+		for _, id := range reading.full {
+			if slices.Contains(skip.Read, id) {
+				continue
+			}
+			if served, ok := block(id, model.LightRoleFull); ok {
+				first = append(first, served)
+			}
+		}
+	}
+	lines := placement.Lines
+	unheld := func(lines []model.Line) []model.Line {
+		return slices.DeleteFunc(slices.Clone(lines), func(line model.Line) bool { return heldAny[line.Entry.ID] || seen[line.Entry.ID] })
+	}
+	lines.Bearing, lines.Doubt, lines.Titles = unheld(lines.Bearing), unheld(lines.Doubt), unheld(lines.Titles)
+	lines.Counted = slices.DeleteFunc(slices.Clone(lines.Counted), func(id string) bool { return heldAny[id] || seen[id] })
+	for _, group := range lines.SetAside {
+		served.Hidden = append(served.Hidden, group.IDs...)
+	}
+	marked := map[string]bool{}
+	for _, line := range slices.Concat(lines.Bearing, lines.Doubt, lines.Titles) {
+		served.Listed = append(served.Listed, line.Entry.ID)
+		if line.Marked {
+			marked[line.Entry.ID] = true
+			served.Marked = append(served.Marked, line.Entry.ID)
+		}
+	}
+	drafter := func(id string) string {
+		switch {
+		case codes[id] != "":
+			return "drafter: dismissed, " + codes[id]
+		case read[id]:
+			return "drafter: read"
+		case shown[id]:
+			return "drafter: shown, left unanswered"
+		case marked[id]:
+			return "not read by the drafter"
+		}
+		return ""
+	}
+	if len(lines.Bearing)+len(lines.Doubt)+len(lines.Titles)+len(lines.Counted)+len(lines.SetAside) > 0 {
+		rest = append(rest, llmops.DeepLinesBlock(graph, lines, drafter))
 	}
 	return model.DeepReading{Lead: lead, Rules: rules, First: first, Rest: rest}, served
+}
+
+// markedOpened states, for each line the verifier's reading marked, whether
+// a verify delegate of the capture opened it, as its deliveries reported, and
+// logs the statement; empty when the reading marked none.
+func (w *WorkflowSession) markedOpened(ctx *engine.Context) (string, error) {
+	var held deepHeld
+	if value, ok := ctx.Store.Get(fieldDeepReadIDs); ok && value != nil {
+		err := decodeStoreValue(value, &held)
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", fieldDeepReadIDs, err)
+		}
+	}
+	if len(held.Marked) == 0 {
+		return "", nil
+	}
+	var reads []string
+	for _, fork := range w.session.Forks(ctx.Instance) {
+		if fork.Procedure == verifyProcedure {
+			reads = append(reads, fork.Reads...)
+		}
+	}
+	var opened, unopened []string
+	for _, id := range held.Marked {
+		if slices.Contains(reads, id) {
+			opened = append(opened, id)
+		} else {
+			unopened = append(unopened, id)
+		}
+	}
+	slogutils.FromContext(w.ctx).Info("the verifier's marked lines", "instance", ctx.Instance, "opened", opened, "unopened", unopened)
+	statement := fmt.Sprintf("The verifier opened %d of the %d lines sdd marked for it", len(opened), len(held.Marked))
+	if len(opened) > 0 {
+		statement += ": " + strings.Join(opened, ", ")
+	}
+	if len(unopened) > 0 {
+		statement += "; not opened: " + strings.Join(unopened, ", ")
+	}
+	return statement + ".", nil
 }
 
 // preflightRules is the rubric pre-flight's model would have judged the draft
@@ -790,6 +849,13 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 			}
 		}
 		listed.WriteString("\n")
+	}
+	opened, err := w.markedOpened(ctx)
+	if err != nil {
+		return err
+	}
+	if opened != "" && answerable.Len() > 0 {
+		answerable.WriteString("\n" + opened + "\n")
 	}
 	err = ctx.Store.WriteEngine(fieldDeepListed, answerable.String())
 	if err != nil {

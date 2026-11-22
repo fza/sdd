@@ -27,7 +27,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 		Doc: engine.FuncDoc{
 			Name: "groundingRead",
 			Doc: "Where verify.mode enforces grounding, the capture's credited reading is complete: the reads it owes ran through gather inside the capture, " +
-				"every entry that landed since the reading began is listed, every entry served in full ends in refs or verdicts, every verdict and strain names a listed entry, and the draft cites no single entry of an unhealed strain. " +
+				"every entry that landed since the reading began is listed, every line marked ! ends in refs or verdicts, every verdict and strain names a listed entry, and the draft cites no single entry of an unhealed strain. " +
 				"Passes without enforcement, with skipGrounding, and for actor and role drafts.",
 			Reads: reads,
 		},
@@ -152,10 +152,10 @@ func (w *WorkflowSession) groundingRefusals(ctx *engine.Context) ([]string, erro
 	if len(unlisted) > 0 {
 		refusals = append(refusals, "entries landed since the reading began: "+strings.Join(unlisted, ", ")+": "+gather+" to list them, then report again")
 	}
-	open := evidence.OpenFullReads()
+	open := evidence.OpenMarked()
 	if len(open) > 0 {
-		refusals = append(refusals, "entries served in full end neither in refs nor in verdicts: "+strings.Join(open, ", ")+
-			": report each in refs or in verdicts [{ids, code}] (codes: "+strings.Join(model.GroundingVerdictCodes(), ", ")+")")
+		refusals = append(refusals, "lines marked ! end neither in refs nor in verdicts: "+strings.Join(open, ", ")+
+			": report each in verdicts [{ids, code}] (codes: "+strings.Join(model.GroundingVerdictCodes(), ", ")+"), or open it with "+gather+" and ids, then reference it in refs")
 	}
 	unlistedVerdicts := evidence.UnlistedVerdicts()
 	if len(unlistedVerdicts) > 0 {

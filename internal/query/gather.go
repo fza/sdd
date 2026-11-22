@@ -2,12 +2,9 @@ package query
 
 import "github.com/networkteam/sdd/internal/model"
 
-// GatherFullCap bounds the entries one gather serves in full; the rest list as
-// lines with the call that opens them.
-const GatherFullCap = 12
-
-// GatherResult is one gather serve: the reads as run, the entries served in
-// full, the candidates to judge and the entries set aside.
+// GatherResult is one graph check: the reads as run, the entries opened by
+// ID in full, and the candidates placed as marked lines (model.PlaceLines)
+// with the set-aside groups.
 type GatherResult struct {
 	Graph  *model.Graph
 	Reads  []model.GroundingRead
@@ -16,16 +13,13 @@ type GatherResult struct {
 	Prefilter string
 	// PrefilterNote says what the prefilter did or why it did not run.
 	PrefilterNote string
-	// Full holds the entries served in full, at most GatherFullCap; Overflow
-	// the opened entries past the cap.
-	Full     *ShowResult
-	Overflow []*model.Entry
-	ToJudge  []model.GatherCandidate
-	// Listed are the candidates an uncalibrated judge ranked below the lines
-	// to judge, listed by title and never shown (model.PlacePrefiltered);
-	// Counted counts those past the title ceiling.
-	Listed   []model.GatherCandidate
-	Counted  int
+	// Found counts the candidates the reads found; Judged those a judgment
+	// places, by the judge's score or a stored verdict.
+	Found  int
+	Judged int
+	// Opened holds the entries opened by ID, every one in full.
+	Opened   *ShowResult
+	Lines    model.Lines
 	SetAside []model.GatherSetAside
 	// Held reports whether the consumer already holds an entry in full that
 	// the serve did not open by ID: it prints as a pointer with the brief and
