@@ -772,7 +772,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			}
 			return result, nil
 		}
-		result.Base, err = w.ServeShell(ctx, identity)
+		result.Base, err = w.landShell(ctx, identity)
 		if err != nil {
 			return result, fmt.Errorf("serving session shell after advancing %s: %w", request.Instance, err)
 		}
@@ -790,6 +790,31 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	return w.publicServe(serve)
+}
+
+// landShell is the session shell's serve as a move's end lands on it: the
+// base step named with its goal, chooser and the moves to start next, its
+// text left out (20261121-233256-d-tac-mm2); resume_session serves it in
+// full.
+func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentity) (*WorkflowServe, error) {
+	mark := w.session.PieceMark()
+	serve, err := w.ServeShell(ctx, identity)
+	if err != nil || serve == nil {
+		return serve, err
+	}
+	graph, err := w.graphs.Current()
+	if err != nil {
+		return nil, err
+	}
+	landing := fmt.Sprintf("The move ended; the dialogue is back at %s, step %s. Its instructions stand as served earlier; resume_session sends them in full.", serve.Procedure, serve.Step)
+	if moves := graph.MoveCanonicals(); len(moves) > 0 {
+		landing += " Moves to start next: " + strings.Join(moves, ", ") + "."
+	}
+	// Pieces the left-out text placed never reach the agent.
+	w.session.DropPiecesSince(mark)
+	serve.InstructionLanes = nil
+	serve.Instructions = serve.ComposeInstructions(landing)
+	return serve, nil
 }
 
 func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity) (WorkflowResumeResult, error) {
@@ -909,7 +934,7 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
-	base, err := w.ServeShell(ctx, identity)
+	base, err := w.landShell(ctx, identity)
 	if err != nil {
 		return result, fmt.Errorf("serving session shell after abandoning %s: %w", instance, err)
 	}

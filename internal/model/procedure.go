@@ -105,6 +105,27 @@ func (c *ProcedureChain) Forked() bool {
 	return c != nil && len(c.LiveHeads) > 1
 }
 
+// StartsAsMove reports whether a session starts the chain's head as a move:
+// a live procedure with a canonical, neither a shell, which enters through
+// the session door, nor a task, which a delegate runs.
+func (c *ProcedureChain) StartsAsMove() bool {
+	head := c.Head
+	return head != nil && head.Canonical != "" && !head.IsShellProcedure() && !head.IsTaskProcedure() && len(c.LiveHeads) > 0
+}
+
+// MoveCanonicals lists the canonicals of the procedures a session starts as
+// moves (StartsAsMove), sorted.
+func (g *Graph) MoveCanonicals() []string {
+	var canonicals []string
+	for _, chain := range g.ProcedureChains() {
+		if chain.StartsAsMove() {
+			canonicals = append(canonicals, chain.Head.Canonical)
+		}
+	}
+	sort.Strings(canonicals)
+	return canonicals
+}
+
 // ProcedureChains groups all kind: procedure decisions into supersession
 // chains and resolves each chain's execution head under the project-head-
 // wins fork rule. Pure computation — no I/O. Returned in deterministic

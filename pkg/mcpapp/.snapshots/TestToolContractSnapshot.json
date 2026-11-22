@@ -283,6 +283,36 @@
     "name": "read_attachment"
   },
   {
+    "description": "Read one value a move of the session collected, whole, in pages where it runs past one result. resume_session carries the small values and names the larger ones under collected_large; this returns one of those.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "instance": {
+          "description": "the move whose value to read, as resume_session names it",
+          "type": "string"
+        },
+        "name": {
+          "description": "the value's name, as collected_large lists it",
+          "type": "string"
+        },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
+        },
+        "session": {
+          "description": "attached session's handle; required",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instance",
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "read_value"
+  },
+  {
     "description": "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
     "inputSchema": {
       "additionalProperties": false,

@@ -534,7 +534,7 @@ func renderProcedureList(graph *model.Graph) string {
 	var lines []string
 	for _, chain := range graph.ProcedureChains() {
 		head := chain.Head
-		if head == nil || head.Canonical == "" || head.IsShellProcedure() || head.IsTaskProcedure() || len(chain.LiveHeads) == 0 {
+		if !chain.StartsAsMove() {
 			continue
 		}
 		signature, err := publicProcedureSignature(head)
