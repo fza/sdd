@@ -753,10 +753,6 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
-	teamProofs, err := localadapter.NewGitTeamProofs(sddDir, graphDir)
-	if err != nil {
-		return nil, err
-	}
 	calibrationRuns, err := localadapter.NewFilesystemCalibrationRuns(relevanceLedgerDir(locations.StateRoot, baseRepoKey))
 	if err != nil {
 		return nil, err
@@ -777,7 +773,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 		Events:    events,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
-		Relevance: verdicts, Proofs: proofs, TeamProofs: teamProofs, CalibrationRuns: calibrationRuns,
+		Relevance: verdicts, Proofs: proofs, CalibrationRuns: calibrationRuns,
 		Prefilter: prefilter,
 		Ranking:   ranking,
 	})

@@ -185,7 +185,7 @@ func TestNewHidingReport(t *testing.T) {
 		},
 		Misses: []model.Miss{{Rule: model.RuleThreshold, Detector: model.DetectScan, Judge: "j"}},
 	}
-	report := model.NewHidingReport(records, "j", "r", 100, thresholds, nil)
+	report := model.NewHidingReport(records, "j", "r", 100, thresholds)
 	threshold := report.Rules[0]
 	if threshold.Rule != model.RuleThreshold || threshold.Checks != 1 || threshold.Hid != 2 || threshold.Would != 5 || threshold.Misses[model.DetectScan] != 1 {
 		t.Fatalf("threshold %+v: the judge's tallies and misses alone count", threshold)

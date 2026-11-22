@@ -221,9 +221,6 @@ type RuleState struct {
 	Misses   int
 	Captures int
 	Step     HidingStep
-	// Team reports a step taken from the committed team record while the
-	// machine's own replays prove nothing yet (ApplyTeamProof).
-	Team bool
 }
 
 // HidingState folds the proof of rule and judge's misses since its latest
@@ -232,37 +229,17 @@ type RuleState struct {
 // lifts it again.
 func HidingState(rule HidingRule, records ProofRecords, judge, revision string, graphSize int, thresholds RelevanceThresholds) RuleState {
 	state := RuleState{Proof: ProveRule(rule, records.Replays, judge, revision, graphSize, thresholds)}
-	state.stepDown(ProvenStep(state.Proof), rule, records, judge, state.Proof.Latest)
-	return state
-}
-
-// ApplyTeamProof lets team, the committed record, set the step of a rule
-// whose local replays prove nothing yet, where it applies to judge at
-// revision on a graph of graphSize: the record's step, taken down by the
-// misses since it was written. A local proof always wins.
-func ApplyTeamProof(state RuleState, team *TeamProof, records ProofRecords, judge, revision string, graphSize int) RuleState {
-	if state.Proof.Valid() || team == nil || !team.Applies(judge, revision, graphSize) {
-		return state
-	}
-	rule := state.Proof.Rule
-	state.Team = true
-	state.stepDown(team.Rule(rule).Step, rule, records, judge, team.At)
-	return state
-}
-
-// stepDown sets the step from base, one step lower for every
-// MissesPerStep misses of rule from as many captures after since.
-func (s *RuleState) stepDown(base HidingStep, rule HidingRule, records ProofRecords, judge string, since time.Time) {
-	s.Misses = 0
 	captures := map[string]bool{}
 	for _, miss := range records.Misses {
-		if miss.Rule == rule && CanonicalJudge(miss.Judge) == CanonicalJudge(judge) && miss.At.After(since) {
-			s.Misses++
+		if miss.Rule == rule && CanonicalJudge(miss.Judge) == CanonicalJudge(judge) && miss.At.After(state.Proof.Latest) {
+			state.Misses++
 			captures[miss.Capture] = true
 		}
 	}
-	s.Captures = len(captures)
-	s.Step = HidingStep(max(int(base)-s.Captures/MissesPerStep, int(StepComputeOnly)))
+	state.Captures = len(captures)
+	step := int(ProvenStep(state.Proof)) - state.Captures/MissesPerStep
+	state.Step = HidingStep(max(step, int(StepComputeOnly)))
+	return state
 }
 
 // SteppedThresholds returns thresholds as a threshold at step may hide
@@ -442,9 +419,8 @@ type MarginReport struct {
 }
 
 // NewHidingReport folds records into the report of judge at revision on a
-// graph of graphSize live entries, the threshold calibrated as thresholds,
-// a rule its replays do not prove taking its step from team (ApplyTeamProof).
-func NewHidingReport(records ProofRecords, judge, revision string, graphSize int, thresholds RelevanceThresholds, team *TeamProof) HidingReport {
+// graph of graphSize live entries, the threshold calibrated as thresholds.
+func NewHidingReport(records ProofRecords, judge, revision string, graphSize int, thresholds RelevanceThresholds) HidingReport {
 	valid := ValidReplays(records.Replays, judge, revision, graphSize)
 	report := HidingReport{Judge: judge, Revision: revision, GraphSize: graphSize, Replays: len(valid)}
 	if thresholds.Valid {
@@ -452,7 +428,7 @@ func NewHidingReport(records ProofRecords, judge, revision string, graphSize int
 	}
 	report.Detection, report.Planted = DetectionRate(valid)
 	for _, rule := range HidingRules() {
-		rr := RuleReport{Rule: rule, State: ApplyTeamProof(HidingState(rule, records, judge, revision, graphSize, thresholds), team, records, judge, revision, graphSize), Misses: map[MissDetector]int{}}
+		rr := RuleReport{Rule: rule, State: HidingState(rule, records, judge, revision, graphSize, thresholds), Misses: map[MissDetector]int{}}
 		for _, tally := range records.Tallies {
 			if CanonicalJudge(tally.Judge) != CanonicalJudge(judge) {
 				continue

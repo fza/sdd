@@ -2,9 +2,7 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -59,8 +57,6 @@ type hidingStates struct {
 	thresholds model.RelevanceThresholds
 	threshold  model.RuleState
 	floor      model.RuleState
-	// team is the committed record of the judge, nil without one.
-	team *model.TeamProof
 }
 
 // judgeHiding loads the ledger and the proof records and folds judge's
@@ -80,63 +76,5 @@ func (r *ProjectRuntime) judgeHiding(ctx context.Context, judge Prefilter, graph
 	states := hidingStates{thresholds: model.Calibrate(model.CheckedLabels(ledger.Labels(judge.Judge), records.Replays, judge.Judge, judge.Revision), ledger.Steps(), judge.Judge)}
 	states.threshold = model.HidingState(model.RuleThreshold, records, judge.Judge, judge.Revision, graphSize, states.thresholds)
 	states.floor = model.HidingState(model.RuleFarFloor, records, judge.Judge, judge.Revision, graphSize, states.thresholds)
-	if states.team, err = r.teamProof(ctx, judge.Judge); err != nil {
-		return nil, model.ProofRecords{}, hidingStates{}, err
-	}
-	// A machine whose own replays prove nothing yet starts at the team's step.
-	if !states.threshold.Proof.Valid() && states.team != nil && states.team.Applies(judge.Judge, judge.Revision, graphSize) && states.team.Thresholds.Valid {
-		states.thresholds = states.team.TeamThresholds()
-	}
-	states.threshold = model.ApplyTeamProof(states.threshold, states.team, records, judge.Judge, judge.Revision, graphSize)
-	states.floor = model.ApplyTeamProof(states.floor, states.team, records, judge.Judge, judge.Revision, graphSize)
 	return ledger, records, states, nil
-}
-
-// TeamProofs reads and commits the team's proof records (model.TeamProof)
-// in the graph's repository, one per judge key (model.TeamProofKey), so a
-// machine that newly joins a graph starts at the team's step.
-type TeamProofs interface {
-	ReadTeamProof(ctx context.Context, key string) (data []byte, found bool, err error)
-	WriteTeamProof(ctx context.Context, key string, data []byte) error
-}
-
-// teamProof reads judge's committed record, nil without one or without a
-// store.
-func (r *ProjectRuntime) teamProof(ctx context.Context, judge string) (*model.TeamProof, error) {
-	if r.options.TeamProofs == nil {
-		return nil, nil
-	}
-	key := model.TeamProofKey(judge)
-	data, found, err := r.options.TeamProofs.ReadTeamProof(ctx, key)
-	if err != nil || !found {
-		return nil, err
-	}
-	var team model.TeamProof
-	if err := json.Unmarshal(data, &team); err != nil {
-		return nil, fmt.Errorf("reading the team proof %s: %w", key, err)
-	}
-	return &team, nil
-}
-
-// recordTeamProof commits the machine's standing for judge as the team's
-// record when it differs from the committed one in what a newcomer would
-// start at (model.TeamProofDue). A standing taken from the record keeps
-// the record's graph size.
-func (r *ProjectRuntime) recordTeamProof(ctx context.Context, judge Prefilter, graphSize int, states hidingStates, now time.Time) error {
-	if r.options.TeamProofs == nil {
-		return nil
-	}
-	base := graphSize
-	if states.team != nil && (states.threshold.Team || states.floor.Team) {
-		base = states.team.GraphSize
-	}
-	current := model.NewTeamProof(judge.Judge, judge.Revision, base, states.thresholds, []model.RuleState{states.threshold, states.floor}, now)
-	if !model.TeamProofDue(states.team, current, graphSize) {
-		return nil
-	}
-	data, err := json.MarshalIndent(current, "", "  ")
-	if err != nil {
-		return err
-	}
-	return r.options.TeamProofs.WriteTeamProof(ctx, model.TeamProofKey(judge.Judge), append(data, '\n'))
 }
