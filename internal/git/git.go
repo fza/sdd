@@ -324,14 +324,19 @@ func (Repositories) CurrentBranch(dir string) (string, error) { return currentBr
 
 func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
 
-// existingAncestor returns path, or the closest ancestor that exists on disk.
+// existingAncestor returns path, or the closest ancestor that exists on disk;
+// for a file, the folder holding it, so a graph_dir naming a file lies in the
+// repository its folder does.
 func existingAncestor(path string) string {
 	dir, err := filepath.Abs(path)
 	if err != nil {
 		return ""
 	}
 	for {
-		if _, err := os.Stat(dir); err == nil {
+		if info, err := os.Stat(dir); err == nil {
+			if !info.IsDir() {
+				return filepath.Dir(dir)
+			}
 			return dir
 		}
 		parent := filepath.Dir(dir)
