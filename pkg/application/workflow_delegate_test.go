@@ -255,6 +255,18 @@ func TestDelegatePromptEndsTheTurnOnlyOnAWaitingServe(t *testing.T) {
 	}
 }
 
+// Results reach the dispatching move through sdd, so both prompts hold the
+// delegate's final reply to one line.
+func TestDelegatePromptsAskForAOneLineFinalReply(t *testing.T) {
+	f := newDelegateApplication(t, nil)
+	_, dispatch := f.fork(t)
+	for _, prompt := range []string{dispatch.Prompt, dispatch.ContinuePrompt} {
+		if !strings.HasSuffix(prompt, " Final reply: one line, delivered, waiting for the dispatching move, or failed with the reason. Results travel only through sdd, never in your reply.") {
+			t.Fatalf("the prompt should end asking for a one-line final reply, got %q", prompt)
+		}
+	}
+}
+
 func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 	f := newDelegateApplication(t, nil)
 	serve, dispatch := f.fork(t)

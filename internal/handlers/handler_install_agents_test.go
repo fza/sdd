@@ -29,15 +29,17 @@ func installFor(t *testing.T, h *handlers.Handler, target model.AgentTarget, roo
 }
 
 // The delegate's launch configuration installs beside the skills, per
-// harness, granting the sdd MCP tools, read-only tools and the web only.
+// harness, granting the sdd MCP tools, read-only tools and the web only, and
+// holding the delegate's final reply to one line.
 func TestInstallSkills_InstallsTheDelegateAgentDefinition(t *testing.T) {
+	const finalReply = "Your final reply is one line: delivered, waiting for the dispatching move, or failed with the reason. Results travel only through sdd: never repeat them in your reply."
 	cases := []struct {
 		target model.AgentTarget
 		path   []string
 		want   []string
 	}{
-		{target: model.AgentClaude, path: []string{".claude", "agents", "sdd_delegate.md"}, want: []string{"name: sdd_delegate\n", "tools: mcp__sdd__*, Read, Grep, Glob, WebFetch, WebSearch\n", "sdd-content-hash: "}},
-		{target: model.AgentCodex, path: []string{".codex", "agents", "sdd_delegate.toml"}, want: []string{"# sdd-version: v0.2.0\n# sdd-content-hash: ", `name = "sdd_delegate"`, "\nweb_search = \"live\"\n", "shell_tool = false"}},
+		{target: model.AgentClaude, path: []string{".claude", "agents", "sdd_delegate.md"}, want: []string{"name: sdd_delegate\n", "tools: mcp__sdd__*, Read, Grep, Glob, WebFetch, WebSearch\n", "sdd-content-hash: ", finalReply}},
+		{target: model.AgentCodex, path: []string{".codex", "agents", "sdd_delegate.toml"}, want: []string{"# sdd-version: v0.2.0\n# sdd-content-hash: ", `name = "sdd_delegate"`, "\nweb_search = \"live\"\n", "shell_tool = false", finalReply}},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.target), func(t *testing.T) {
