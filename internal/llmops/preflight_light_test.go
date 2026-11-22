@@ -393,7 +393,7 @@ func TestPreflightLight_ReformatFlagsWhetherTheFirstAnswerHoldsAnalysis(t *testi
 		{"analysis with nothing to report", "Nothing in the reading conflicts with the draft.", `{"analysis":true,"findings":[]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &scriptedRunner{replies: []string{tc.first, tc.reformat}}
+			runner := &extractRunner{replies: []string{tc.first, tc.reformat}}
 
 			_, err := llmops.PreflightLight(t.Context(), runner, lightDraft, lightGraph(t), "", llmops.LightReading{}, 1_000_000, nil)
 			if errors.Is(err, llmops.ErrNoAnalysis) != tc.noAnalysis {
