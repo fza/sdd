@@ -141,7 +141,7 @@ func TestIgnoredSettings_ReportsUnknownVerifyKinds(t *testing.T) {
 	var layer model.BaseConfig
 	layer.Verify.Kinds = map[model.Kind]model.VerifyMode{"done": "deeep", "gapp": model.VerifyDeep}
 	reasons := map[string]string{}
-	for _, s := range model.IgnoredSettings(layer, true) {
+	for _, s := range model.IgnoredSettings(layer, model.ConfigSourceProject) {
 		reasons[s.Key] = s.Reason
 	}
 	if !strings.Contains(reasons["verify.kinds.done"], `"deeep" is not`) {

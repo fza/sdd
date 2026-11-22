@@ -189,59 +189,16 @@ func DialogueModes() []DialogueMode {
 	return []DialogueMode{DialogueGuided, DialogueAuto}
 }
 
-// IgnoredSetting is a setting a config layer carries that sdd reads past:
-// a value it does not know, or a key that layer may not set.
-type IgnoredSetting struct {
-	Key    string
-	Reason string
-}
-
-// IgnoredSettings returns the settings in one config layer that sdd reads
-// past. committed marks the shared .sdd/config.yaml.
-func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
-	var ignored []IgnoredSetting
-	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
-		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
-	}
-	ignored = append(ignored, ignoredVerifyValues(layer.Verify)...)
-	return ignored
-}
-
-const personalOnlyReason = "only the user-global config or config.local.yaml may set it"
-
 func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 	switch {
 	case mode == "":
 		return ""
 	case committed:
-		return personalOnlyReason
+		return personalOnly.reason()
 	case mode != DialogueGuided && mode != DialogueAuto:
 		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAuto)
 	}
 	return ""
-}
-
-// HonoredLocal returns the machine-local layer without the settings only the
-// committed config sets.
-func HonoredLocal(local *PerRepoConfig) *PerRepoConfig {
-	if local == nil || (len(local.Events.Channels) == 0 && len(local.Recheck.Responsible) == 0) {
-		return local
-	}
-	honored := *local
-	honored.Events = EventsConfig{}
-	honored.Recheck = RecheckConfig{}
-	return &honored
-}
-
-// HonoredCommitted returns the committed layer without the settings only a
-// person's own config may make.
-func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || committed.Dialogue.Mode == "" {
-		return committed
-	}
-	honored := *committed
-	honored.Dialogue.Mode = ""
-	return &honored
 }
 
 // SessionsConfig holds settings for engine session lifetime.
