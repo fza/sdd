@@ -383,7 +383,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's settled findings as shown once a playback that carried them is answered, so no later round carries them again.", Writes: []string{fieldDeepReplayed}},
+			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's settled findings as shown once a playback that carried them is adjusted, so no later round carries them again.", Writes: []string{fieldDeepReplayed}},
 			Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine(fieldDeepReplayed, true) },
 		},
 		{
