@@ -491,6 +491,10 @@ type EmbeddingConfig struct {
 	RateLimitRPS float64 `yaml:"rate_limit_rps,omitempty"`
 	// Timeout is a Go duration string (e.g. "30s") applied per Embed call.
 	Timeout string `yaml:"timeout,omitempty"`
+	// KeepAlive is how long Ollama keeps the embedding model loaded after a
+	// request, a Go duration such as "30m"; a negative one keeps it loaded.
+	// Empty keeps it 30 minutes. The openai provider ignores it.
+	KeepAlive string `yaml:"keep_alive,omitempty"`
 	// Dimensions optionally overrides the embedded vector size — used for
 	// OpenAI's matryoshka-style truncation. Zero means "use the model's
 	// native dimension".
@@ -919,6 +923,9 @@ func mergeEmbeddingConfig(base, overlay EmbeddingConfig) EmbeddingConfig {
 	}
 	if overlay.Timeout != "" {
 		out.Timeout = overlay.Timeout
+	}
+	if overlay.KeepAlive != "" {
+		out.KeepAlive = overlay.KeepAlive
 	}
 	if overlay.Dimensions != 0 {
 		out.Dimensions = overlay.Dimensions

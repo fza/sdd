@@ -161,7 +161,8 @@ Without an `llm_prefilter` block the judge depends on the client. A session whos
 | `embedding.api_keys.openai` | None | API key, required for `openai`. sdd does not fall back to `llm.api_keys.openai`. |
 | `embedding.endpoint` | `https://api.openai.com` | Base URL of an OpenAI-compatible embeddings service, for `openai` only. sdd appends `/v1/embeddings`, so leave `/v1` off. |
 | `embedding.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. Independent of `llm.ollama_endpoint`. |
-| `embedding.timeout` | `2m` | Time limit for one request. |
+| `embedding.timeout` | `2m` | Time limit for one request. Before it searches, gather sends one probe and waits at most 30 seconds for it; its error names the model and its host. |
+| `embedding.keep_alive` | `30m` | How long Ollama keeps the model loaded after sdd's last request, as a Go duration. A negative one, such as `-1s`, keeps it loaded; `0` unloads it at once. Ollama's own default unloads it after 5 idle minutes, so a capture after a pause waits for a reload. `sdd serve` loads the model when it starts. `openai` ignores it. Upstream sdd does not know the key: any config that sets it makes upstream sdd warn `ignoring unknown config key`. |
 | `embedding.batch_size` | `100` for `openai`, `64` for `ollama` | Texts sent in one request. |
 | `embedding.dimensions` | The model's own size | Shorter vectors, for `openai` models that support it, such as `text-embedding-3-small`. `ollama` ignores it. |
 | `embedding.rate_limit_rps` | `5` for `text-embedding-3` models, `3` for other `openai` models | Maximum requests per second to `openai`. `ollama` has no limit. |
