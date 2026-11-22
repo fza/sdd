@@ -15,11 +15,27 @@ import (
 type shellSession struct {
 	mu   sync.Mutex
 	root *sdd.WorkflowSession
+	// ask marks the call in flight as one that starts, resumes or advances
+	// the session, so its response ends with a question.
+	ask bool
 }
 
-// flushServed records the anchors this call issued into the session ledger.
+// flushServed records the pieces this call served into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	return ss.root.RecordAnchors(ctx, identity)
+	return ss.root.RecordPieces(ctx, identity)
+}
+
+// question is the line a response of the call in flight ends with: the text
+// question (20261121-230157-d-tac-ym8) when the call starts, resumes or
+// advances the session, else empty. Called once the response is composed.
+func (ss *shellSession) question(ctx context.Context, identity sdd.RequestIdentity) (string, error) {
+	if !ss.ask {
+		return "", nil
+	}
+	if err := ss.flushServed(ctx, identity); err != nil {
+		return "", err
+	}
+	return ss.root.Question(ctx, identity)
 }
 
 // sessionCache holds the loaded sessions by ID.

@@ -2,133 +2,240 @@ package engine_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
+	test "github.com/networkteam/sdd/internal/testsupport"
 )
 
-const pieceText = "Draft one entry, dialogue first, then check its grounding against the graph."
+const (
+	stepText  = "Draft one entry with the user, dialogue first. Check its grounding against the graph before you write. Keep the summary under 280 characters so the listing stays short."
+	introText = "Open the session with a short briefing. Name the open threads the dialogue carries, then ask the user where to begin today."
+)
 
-func placeIn(text string) engine.AnchorPlacer {
-	return func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-		return model.PlaceAnchor(text, tag, rnd)
-	}
-}
+var (
+	stepLane  = engine.Piece{Name: "lane step", Hash: "h1"}
+	introLane = engine.Piece{Name: "lane intro", Hash: "h2"}
+	entry     = engine.Piece{Name: "20260101-000000-s-tac-aaa", Hash: "e1"}
+)
 
 func newPieceSession(sink engine.EventSink) *engine.Session {
 	return engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_pieces", "tester", sink)
 }
 
-func servedInFull(t *testing.T, session *engine.Session, piece engine.Piece, covers ...engine.Piece) model.Proof {
+func serve(session *engine.Session, p engine.Piece, text string) bool {
+	return session.ServePiece(p, nil, text)
+}
+
+// respond serves the pieces as one response and returns the question it ends
+// with.
+func respond(t *testing.T, session *engine.Session, answer string, pieces map[engine.Piece]string) (held map[engine.Piece]bool, question string) {
 	t.Helper()
-	served := session.ServePiece(piece, covers, placeIn(pieceText))
-	if served.Held || served.Anchor.Tag == "" {
-		t.Fatalf("the piece should serve in full under a fresh tag, got %+v", served)
+	session.BeginCall(answer, nil)
+	held = map[engine.Piece]bool{}
+	for p, text := range pieces {
+		held[p] = serve(session, p, text)
 	}
-	return model.Proof{Tag: served.Anchor.Tag, Word: served.Anchor.Word}
+	session.RecordServed()
+	return held, session.Ask()
 }
 
-func TestServePieceServesInFullUntilTheCallProvesIt(t *testing.T) {
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
-	session := newPieceSession(nil)
-
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane)
-	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
-		t.Errorf("a repeat within the same call should point at the tag just served, got %+v", served)
+// answer answers question from texts as an agent holding them would.
+func answer(t *testing.T, question string, texts ...string) string {
+	t.Helper()
+	_, ask, ok := test.LastQuestion(question)
+	if !ok {
+		t.Fatalf("a response should end with a question, got %q", question)
 	}
-	session.RecordAnchors()
-
-	session.BeginCall(nil, nil)
-	if again := servedInFull(t, session, lane); again.Tag == proof.Tag {
-		t.Error("a call without the proof should get the piece in full under a fresh tag")
+	words, ok := test.AnswerQuestion(ask, texts)
+	if !ok {
+		t.Fatalf("the question should be answerable from the texts served, got %q", question)
 	}
-
-	session.BeginCall([]model.Proof{proof}, nil)
-	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
-		t.Errorf("a call proving the piece should get its pointer, got %+v", served)
-	}
+	return words
 }
 
-func TestServePieceRefusesProofsThatDoNotMatch(t *testing.T) {
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
-	other := engine.Piece{Name: "lane intro", Hash: "h2"}
+func TestARightAnswerServesRepeatsShort(t *testing.T) {
 	session := newPieceSession(nil)
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane)
-	otherProof := servedInFull(t, session, other)
-	session.RecordAnchors()
+	pieces := map[engine.Piece]string{stepLane: stepText, introLane: introText}
+	held, question := respond(t, session, "", pieces)
+	if held[stepLane] || held[introLane] {
+		t.Fatal("a first serve should send every piece in full")
+	}
 
-	cases := []struct {
-		name   string
-		held   []model.Proof
-		reread []string
-		piece  engine.Piece
+	tests := []struct {
+		name  string
+		given string
+		short bool
 	}{
-		{name: "wrong word", held: []model.Proof{{Tag: proof.Tag, Word: "elsewhere"}}, piece: lane},
-		{name: "never issued", held: []model.Proof{{Tag: "zzzz", Word: proof.Word}}, piece: lane},
-		{name: "another piece's proof", held: []model.Proof{otherProof}, piece: lane},
-		{name: "changed content", held: []model.Proof{proof}, piece: engine.Piece{Name: lane.Name, Hash: "h1-changed"}},
-		{name: "reread by tag", held: []model.Proof{proof}, reread: []string{"⟦" + proof.Tag + "⟧"}, piece: lane},
-		{name: "reread by name", held: []model.Proof{proof}, reread: []string{"Lane Step"}, piece: lane},
+		{"lost", model.LostAnswer, false},
+		{"wrong", "nothing here", false},
+		{"none", "", false},
+		{"right", answer(t, question, stepText, introText), true},
 	}
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			session.BeginCall(tc.held, tc.reread)
-			servedInFull(t, session, tc.piece)
+			session.BeginCall(tc.given, nil)
+			for p, text := range pieces {
+				if got := serve(session, p, text); got != tc.short {
+					t.Errorf("%s should serve short only after a right answer", p.Name)
+				}
+			}
 		})
 	}
 }
 
-func TestServePieceHoldsTheEntriesAProvedPieceCarried(t *testing.T) {
-	framing := engine.Piece{Name: "framing principles", Hash: "h1"}
-	carried := engine.Piece{Name: "20260101-000000-s-tac-aaa", Hash: "e1"}
+func TestTheFirstQuestionAsksAboutTheResponsesOwnText(t *testing.T) {
 	session := newPieceSession(nil)
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, framing, carried)
-	if _, held := session.Holds(carried); !held {
-		t.Error("an entry the piece just served carries should be held within the call")
-	}
-	session.RecordAnchors()
-
-	session.BeginCall(nil, nil)
-	if _, held := session.Holds(carried); held {
-		t.Error("without the carrying piece's proof the entry should serve in full")
-	}
-	session.BeginCall([]model.Proof{proof}, nil)
-	if tag, held := session.Holds(carried); !held || tag != proof.Tag {
-		t.Errorf("the carrying piece's proof should hold the entry under its tag, got %q %v", tag, held)
-	}
-	if _, held := session.Holds(engine.Piece{Name: "20260101-000000-s-tac-bbb", Hash: "e1"}); held {
-		t.Error("an entry the piece did not carry should not be held")
-	}
-	if _, held := session.Holds(engine.Piece{Name: carried.Name, Hash: "e2"}); held {
-		t.Error("an entry edited in place since the piece carried it should not be held")
+	_, question := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	if name, _, ok := test.LastQuestion(question); !ok || name != stepLane.Name {
+		t.Errorf("the first response should ask about its own text, got %q", question)
 	}
 }
 
-func TestReorientServesTheCallInFull(t *testing.T) {
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+func TestTheQuestionAsksAboutTheOldestTextByItsLatestCopy(t *testing.T) {
 	session := newPieceSession(nil)
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane)
-	session.RecordAnchors()
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	_, q = respond(t, session, answer(t, q, stepText), map[engine.Piece]string{introLane: introText})
+	if name, _, _ := test.LastQuestion(q); name != stepLane.Name {
+		t.Errorf("the question should ask about the text served longest ago, got %q", q)
+	}
+	// lost serves the step text again, which makes intro the oldest copy.
+	_, q = respond(t, session, model.LostAnswer, map[engine.Piece]string{stepLane: stepText})
+	if name, _, _ := test.LastQuestion(q); name != introLane.Name {
+		t.Errorf("a text served in full again should no longer be the oldest, got %q", q)
+	}
+}
 
-	session.BeginCall([]model.Proof{proof}, nil)
+func TestNoQuestionIsAskedTwice(t *testing.T) {
+	session := newPieceSession(nil)
+	asked := map[string]bool{}
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	for range 60 {
+		if asked[q] {
+			t.Fatalf("a question should never be asked twice, got %q again", q)
+		}
+		asked[q] = true
+		_, q = respond(t, session, answer(t, q, stepText), map[engine.Piece]string{stepLane: stepText})
+		if q == "" {
+			break
+		}
+	}
+}
+
+func TestNoAnswerAnswersTwoQuestions(t *testing.T) {
+	session := newPieceSession(nil)
+	var given []string
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	for q != "" {
+		words := answer(t, q, stepText)
+		for _, earlier := range given {
+			if (model.TextQuestion{Answer: earlier}).Answered(words) {
+				t.Fatalf("an answer given before should answer no later question, got %q again for %q", words, q)
+			}
+		}
+		given = append(given, words)
+		_, q = respond(t, session, words, map[engine.Piece]string{stepLane: stepText})
+	}
+}
+
+func TestAnAnswerCountsAgainstEveryOpenQuestion(t *testing.T) {
+	session := newPieceSession(nil)
+	_, first := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	// A second agent on the handle answers lost and gets everything in full.
+	held, _ := respond(t, session, model.LostAnswer, map[engine.Piece]string{stepLane: stepText})
+	if held[stepLane] {
+		t.Fatal("a lost answer should serve the text in full")
+	}
+	// The first agent answers the question it was asked.
+	right := answer(t, first, stepText)
+	held, _ = respond(t, session, right, map[engine.Piece]string{stepLane: stepText})
+	if !held[stepLane] {
+		t.Error("a right answer to an earlier open question should still serve short")
+	}
+	session.BeginCall(right, nil)
+	if session.Answered() {
+		t.Error("a question answered once should not count an answer again")
+	}
+}
+
+func TestAFailedCallKeepsItsQuestionOpen(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	right := answer(t, q, stepText)
+	session.BeginCall(right, nil)
+	session.DropAnswer()
+	session.RecordServed()
+	session.BeginCall(right, nil)
+	if !session.Answered() {
+		t.Error("the question of a call that failed should stay open for the next call")
+	}
+}
+
+func TestEntriesServeInFullInEveryCall(t *testing.T) {
+	session := newPieceSession(nil)
+	session.BeginCall("", nil)
+	if session.ServeEntry(entry) {
+		t.Fatal("an entry should serve in full the first time")
+	}
+	if !session.ServeEntry(entry) {
+		t.Error("an entry served earlier in the same call should serve as its pointer")
+	}
+	serve(session, stepLane, stepText)
+	session.RecordServed()
+	q := session.Ask()
+
+	session.BeginCall(answer(t, q, stepText), nil)
+	if session.ServeEntry(entry) {
+		t.Error("a right answer should not hold an entry served in an earlier call")
+	}
+}
+
+func TestACarriedEntryIsHeldForTheRestOfTheCall(t *testing.T) {
+	session := newPieceSession(nil)
+	session.BeginCall("", nil)
+	session.ServePiece(stepLane, []engine.Piece{entry}, stepText)
+	if !session.HoldsEntry(entry) {
+		t.Error("an entry a piece carried whole should be held for the rest of the call")
+	}
+}
+
+func TestRereadAndReorientServeInFull(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText, introLane: introText})
+	right := answer(t, q, stepText, introText)
+
+	session.BeginCall(right, []string{"Lane Step"})
+	if serve(session, stepLane, stepText) {
+		t.Error("a piece listed in reread should serve in full")
+	}
+	if !serve(session, introLane, introText) {
+		t.Error("a piece not listed in reread should serve short after a right answer")
+	}
+
+	session.BeginCall(right, nil)
 	session.Reorient()
-	servedInFull(t, session, lane)
+	if serve(session, introLane, introText) {
+		t.Error("a reorienting call should serve every piece in full")
+	}
 }
 
-func TestAnchorsSurviveARestart(t *testing.T) {
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
-	entry := engine.Piece{Name: "20260101-000000-s-tac-aaa", Hash: "e1"}
+func TestAChangedTextServesInFull(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	session.BeginCall(answer(t, q, stepText), nil)
+	changed := engine.Piece{Name: stepLane.Name, Hash: "h-changed"}
+	if serve(session, changed, stepText+" Then stop.") {
+		t.Error("a piece whose content changed should serve in full")
+	}
+}
+
+func TestTextsAndQuestionsSurviveARestart(t *testing.T) {
 	var log bytes.Buffer
 	session := newPieceSession(engine.NewWriterSink(&log))
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane, entry)
-	session.RecordAnchors()
-	log.WriteString(`{"v":1,"seq":99,"event":"served_blocks","data":{"hashes":["written-before-the-anchor-proof"]}}` + "\n")
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	log.WriteString(`{"v":1,"seq":98,"event":"served_blocks","data":{"hashes":["written-before-the-text-question"]}}` + "\n")
 
 	events, err := engine.ReadEvents(&log)
 	if err != nil {
@@ -137,121 +244,34 @@ func TestAnchorsSurviveARestart(t *testing.T) {
 	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).
 		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return nil, nil }, nil)
 	if err != nil {
-		t.Fatalf("replaying a log carrying anchors and an older served-blocks event: %v", err)
+		t.Fatalf("replaying a log with texts, a question and an older served-memory event: %v", err)
 	}
-	replayed.BeginCall([]model.Proof{proof}, nil)
-	if served := replayed.ServePiece(lane, nil, placeIn(pieceText)); !served.Held {
-		t.Error("a proof issued before the restart should still hold the piece")
+	replayed.BeginCall(answer(t, q, stepText), nil)
+	if !serve(replayed, stepLane, stepText) {
+		t.Error("a question asked before the restart should still be checked, and its text held")
 	}
-	if _, held := replayed.Holds(entry); !held {
-		t.Error("a proof issued before the restart should still hold the entries its piece carried")
+	replayed.RecordServed()
+	if next := replayed.Ask(); next == q || next == "" {
+		t.Errorf("a restarted session should ask a new question, got %q", next)
 	}
 }
 
 func TestDropPiecesSinceWithdrawsWhatACutKeptFromTheAgent(t *testing.T) {
-	kept := engine.Piece{Name: "lane step", Hash: "h1"}
-	cut := engine.Piece{Name: "20260101-000000-s-tac-aaa"}
 	session := newPieceSession(nil)
-	session.BeginCall(nil, nil)
-	servedInFull(t, session, kept)
+	session.BeginCall("", nil)
+	serve(session, stepLane, stepText)
 	mark := session.PieceMark()
-	servedInFull(t, session, cut)
+	serve(session, introLane, introText)
 	session.DropPiecesSince(mark)
 
-	if _, held := session.Holds(cut); held {
+	if session.Holds(introLane) {
 		t.Error("a piece withdrawn after a cut should not count as served earlier in the call")
 	}
-	if _, held := session.Holds(kept); !held {
+	if !session.Holds(stepLane) {
 		t.Error("a piece served before the mark should stay served")
 	}
-}
-
-// A piece with no word to tag serves in full every call: no proof can hold
-// it, so none is recorded.
-func TestServePieceWithoutAWordToTagServesInFull(t *testing.T) {
-	piece := engine.Piece{Name: "lane bare", Hash: "h1"}
-	session := newPieceSession(nil)
-	for range 2 {
-		session.BeginCall([]model.Proof{{Tag: "zzzz", Word: "of"}}, nil)
-		served := session.ServePiece(piece, nil, placeIn("— of a"))
-		if served.Held || served.Anchor.Tag != "" {
-			t.Fatalf("a piece with no word to tag should serve in full untagged, got %+v", served)
-		}
-		session.RecordAnchors()
-	}
-}
-
-// A proof works once: the pointer it earns names the next one, a word of the
-// piece's text, so replaying an earlier call's proof never holds the piece,
-// and the piece serves in full once its challenges are spent.
-func TestServePieceRotatesItsProofs(t *testing.T) {
-	text := "Draft one entry, dialogue first, then check its grounding against the graph before the write lands."
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
-	var log bytes.Buffer
-	session := newPieceSession(engine.NewWriterSink(&log))
-	session.BeginCall(nil, nil)
-	served := session.ServePiece(lane, nil, placeIn(text))
-	if len(served.Anchor.Challenges) == 0 {
-		t.Fatal("a piece served in full should carry later challenges")
-	}
-	session.RecordAnchors()
-	proof := model.Proof{Tag: served.Anchor.Tag, Word: served.Anchor.Word}
-
-	for _, challenge := range served.Anchor.Challenges {
-		session.BeginCall([]model.Proof{proof}, nil)
-		pointed := session.ServePiece(lane, nil, placeIn(text))
-		if !pointed.Held || pointed.Next != challenge.Prompt {
-			t.Fatalf("a proved piece should serve its pointer naming the next challenge, got %+v", pointed)
-		}
-		session.RecordAnchors()
-		session.BeginCall([]model.Proof{proof}, nil)
-		if _, held := session.Holds(lane); held {
-			t.Fatal("a spent proof replayed should not hold the piece")
-		}
-		proof = model.Proof{Tag: proof.Tag, Word: challenge.Answer}
-	}
-
-	session.BeginCall([]model.Proof{proof}, nil)
-	if last := session.ServePiece(lane, nil, placeIn(text)); !last.Held || last.Next != "" {
-		t.Fatalf("the last challenge's proof should earn a pointer naming no next proof, got %+v", last)
-	}
-	session.RecordAnchors()
-	session.BeginCall([]model.Proof{proof}, nil)
-	servedInFull(t, session, lane)
-
-	events, err := engine.ReadEvents(&log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return nil, nil }, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed.BeginCall([]model.Proof{proof}, nil)
-	if _, held := replayed.Holds(lane); held {
-		t.Error("spent proofs should stay spent after a restart")
-	}
-}
-
-// A pointer withdrawn by a cut never reached the agent, so the proof it rested
-// on stays unspent.
-func TestDropPiecesSinceLeavesAWithdrawnPointersProofUnspent(t *testing.T) {
-	lane := engine.Piece{Name: "lane step", Hash: "h1"}
-	session := newPieceSession(nil)
-	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane)
-	session.RecordAnchors()
-
-	session.BeginCall([]model.Proof{proof}, nil)
-	mark := session.PieceMark()
-	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held {
-		t.Fatalf("precondition: the proof should hold the lane, got %+v", served)
-	}
-	session.DropPiecesSince(mark)
-	session.RecordAnchors()
-
-	session.BeginCall([]model.Proof{proof}, nil)
-	if _, held := session.Holds(lane); !held {
-		t.Error("the proof of a pointer the cut withdrew should still hold the lane")
+	session.RecordServed()
+	if q := session.Ask(); strings.Contains(q, introLane.Name) {
+		t.Errorf("a withdrawn text should be no question's text, got %q", q)
 	}
 }

@@ -9,11 +9,10 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// Piece is one unit of the served memory: a
-// lane, a framing block, a report schema, an entry served in full. Name is
-// what an agent names in reread, an entry's ID for an entry; Hash keys the
-// content, so a piece edited in place since it was served serves in full
-// again.
+// Piece is one unit of the served memory: a lane, a framing block, a report
+// schema, an entry served in full. Name is what an agent names in reread, an
+// entry's ID for an entry; Hash keys the content, an entry's
+// model.EntryHash, so a piece edited since it was served is a new text.
 type Piece struct {
 	Name string
 	Hash string
@@ -22,321 +21,348 @@ type Piece struct {
 // key is how a piece another piece carries whole is named in its covers.
 func (p Piece) key() string { return p.Name + "@" + p.Hash }
 
-// Served is how the call in flight serves a piece.
-type Served struct {
-	// Held reports that the call proved it holds the piece, or received it in
-	// full earlier in the same call: the caller serves its pointer, under Tag.
-	Held bool
-	Tag  string
-	// Next is the word, once in the piece's text, whose follower the next
-	// proof of Tag names; empty when the pointer needs none or the piece
-	// serves in full the next time.
-	Next string
-	// Anchor is the fresh anchor to render into the piece served in full; its
-	// Tag is empty when the text took none.
-	Anchor model.Anchor
+// heldText is a text the session served in full: what a question about it is
+// made from, and its latest copy, the number of its newest serve in full.
+type heldText struct {
+	text   string
+	latest int
 }
 
-// AnchorPlacer places tag in a piece's content, drawing the position from
-// rnd; false when the content holds no word to anchor.
-type AnchorPlacer func(tag string, rnd model.RandomSource) (model.Anchor, bool)
-
-// issuedAnchor is a tag served with a piece: proof number step names the
-// word after the tag, each later one a challenge's answer, so a proof
-// replayed from an earlier call never holds.
-type issuedAnchor struct {
-	piece      Piece
-	word       string
-	covers     []string
-	challenges []model.Challenge
-	step       int
-}
-
-// answer is the word the anchor's next proof names; false once its
-// challenges are spent.
-func (a issuedAnchor) answer() (string, bool) {
-	if a.step == 0 {
-		return a.word, true
-	}
-	if a.step-1 < len(a.challenges) {
-		return a.challenges[a.step-1].Answer, true
-	}
-	return "", false
-}
-
-// nextPrompt is the prompt the proof after this one answers.
-func (a issuedAnchor) nextPrompt() string {
-	if a.step < len(a.challenges) {
-		return a.challenges[a.step].Prompt
-	}
-	return ""
+// askedQuestion is a question a response ended with, about piece as its
+// latest copy stood then.
+type askedQuestion struct {
+	piece    Piece
+	question model.TextQuestion
+	latest   int
+	answered bool
 }
 
 // pieceCall is what one tool call carries and has served so far.
 type pieceCall struct {
-	held    []model.Proof
-	reread  map[string]bool
-	full    bool
-	issued  map[Piece]string
-	covered map[string]string
-	pending []pendingAnchor
-	// proved are the tags whose proof a pointer of the call spent, each
-	// with the step of the call it was spent at.
-	proved map[string]int
-	// steps counts what the call served in full or spent, for PieceMark.
-	steps int
+	// answered numbers the question the call's answer answers from 1, 0 for
+	// none; held then are the texts whose latest copy is at least provedFrom.
+	answered   int
+	provedFrom int
+	reread     map[string]bool
+	full       bool
+	issued     map[Piece]bool
+	covered    map[string]bool
+	pending    []pendingServe
+	// seq orders the pieces the call serves, so a mark withdraws them.
+	seq int
 }
 
-// pendingAnchor is a piece the call served in full, not yet recorded.
-type pendingAnchor struct {
-	step       int
-	piece      Piece
-	tag        string
-	word       string
-	covers     []string
-	challenges []model.Challenge
+// pendingServe is a piece the call served in full, not yet recorded: text is
+// what a question about it is made from, empty for an entry; changed marks
+// one that serves once per change of its content.
+type pendingServe struct {
+	piece   Piece
+	text    string
+	covers  []string
+	changed bool
+	seq     int
 }
 
-// BeginCall starts a call carrying the proofs an agent lists for pieces it
-// still holds and the tags or piece names it lists in reread, which serve in
-// full.
-func (s *Session) BeginCall(held []model.Proof, reread []string) {
-	s.call = pieceCall{held: held, reread: map[string]bool{}}
+func (s *Session) nextSeq() int {
+	s.call.seq++
+	return s.call.seq - 1
+}
+
+// BeginCall starts a call carrying answer, the agent's answer to a question
+// a response asked, and the piece names it lists in reread, which serve in
+// full. An answer that names the words of a question still unanswered makes
+// the texts whose latest copy is at least that question's hold for the call;
+// lost, a wrong answer or none holds nothing.
+func (s *Session) BeginCall(answer string, reread []string) {
+	s.call = pieceCall{reread: map[string]bool{}}
 	for _, r := range reread {
-		s.call.reread[strings.ToLower(strings.Trim(strings.TrimSpace(r), "⟦⟧"))] = true
+		s.call.reread[strings.ToLower(strings.TrimSpace(r))] = true
+	}
+	if strings.TrimSpace(answer) == "" || model.IsLost(answer) {
+		return
+	}
+	for i, asked := range s.questions {
+		if asked.answered || !asked.question.Answered(answer) {
+			continue
+		}
+		if s.call.answered == 0 || asked.latest < s.call.provedFrom {
+			s.call.answered, s.call.provedFrom = i+1, asked.latest
+		}
 	}
 }
 
-// Holds reports whether the call in flight holds the piece, with the tag it
-// holds it under: received earlier in this call, or proved by tag and word.
-// An entry also counts as held when the proved piece carried it whole.
-func (s *Session) Holds(p Piece) (string, bool) {
-	tag, _, ok := s.holds(p)
-	return tag, ok
-}
+// Answered reports whether the call's answer answers a question still
+// unanswered.
+func (s *Session) Answered() bool { return s.call.answered > 0 }
 
-// Point is Holds for a pointer the call serves: a proof it rests on is spent,
-// and Next names the word the following proof answers.
-func (s *Session) Point(p Piece) Served {
-	tag, proved, ok := s.holds(p)
-	if !ok {
-		return Served{}
-	}
-	if !proved {
-		return Served{Held: true, Tag: tag}
-	}
-	if s.call.proved == nil {
-		s.call.proved = map[string]int{}
-	}
-	if _, spent := s.call.proved[tag]; !spent {
-		s.call.proved[tag] = s.call.steps
-		s.call.steps++
-	}
-	return Served{Held: true, Tag: tag, Next: s.anchors[tag].nextPrompt()}
-}
+// Holds reports whether the call in flight holds the piece: received earlier
+// in this call, carried whole by a piece received in it, or held by a right
+// answer. A piece the call lists in reread is never held, nor one it
+// receives in full again.
+func (s *Session) Holds(p Piece) bool { return s.holds(p, true) }
 
-func (s *Session) holds(p Piece) (string, bool, bool) {
-	if tag, ok := s.call.issued[p]; ok {
-		return tag, false, true
-	}
-	if tag, ok := s.call.covered[p.key()]; ok {
-		return tag, false, true
+func (s *Session) holds(p Piece, byAnswer bool) bool {
+	if s.call.issued[p] || s.call.covered[p.key()] {
+		return true
 	}
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
-		return "", false, false
+		return false
 	}
-	for _, proof := range s.call.held {
-		if s.call.reread[proof.Tag] {
-			continue
-		}
-		issued, ok := s.anchors[proof.Tag]
-		if !ok {
-			continue
-		}
-		answer, ok := issued.answer()
-		if !ok || !model.ProofWordMatches(answer, proof.Word) {
-			continue
-		}
-		if issued.piece == p || slices.Contains(issued.covers, p.key()) {
-			return proof.Tag, true, true
-		}
-	}
-	return "", false, false
+	held, ok := s.texts[p]
+	return byAnswer && ok && s.call.answered > 0 && held.latest >= s.call.provedFrom
 }
 
-// ServePiece decides how the call in flight serves p: its pointer when the
-// call holds it, otherwise in full under a fresh tag place puts into the
-// content. covers are the entries the piece carries whole, held from then
-// on under the same tag. The issued anchor is recorded by RecordAnchors.
-func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Served {
+// ServePiece decides how the call in flight serves p: true for its pointer
+// when the call holds it, false for in full. text is what a later question
+// about it is made from. carried are the entries the piece carries whole,
+// held for the rest of the call. The serve is recorded by RecordServed.
+func (s *Session) ServePiece(p Piece, carried []Piece, text string) bool {
+	if s.Holds(p) {
+		return true
+	}
+	s.issue(p, carried, text)
+	return false
+}
+
+// ServeEntry is ServePiece for an entry: a right answer never holds it, so
+// an entry served in an earlier call serves in full again (Holds without the
+// answer). It is no question's text.
+func (s *Session) ServeEntry(p Piece) bool {
+	if s.holds(p, false) {
+		return true
+	}
+	s.issue(p, nil, "")
+	return false
+}
+
+// HoldsEntry reports whether the call holds an entry, as ServeEntry reads it.
+func (s *Session) HoldsEntry(p Piece) bool { return s.holds(p, false) }
+
+func (s *Session) issue(p Piece, carried []Piece, text string) {
 	covers := make([]string, len(carried))
 	for i, c := range carried {
 		covers[i] = c.key()
 	}
-	if served := s.Point(p); served.Held {
-		return served
-	}
-	tag := s.freshTag()
-	anchor, ok := place(tag, s.random())
-	if !ok {
-		tag, anchor = "", model.Anchor{}
-	}
 	if s.call.issued == nil {
-		s.call.issued, s.call.covered = map[Piece]string{}, map[string]string{}
+		s.call.issued, s.call.covered = map[Piece]bool{}, map[string]bool{}
 	}
-	s.call.issued[p] = tag
-	for _, id := range covers {
-		if _, ok := s.call.covered[id]; !ok {
-			s.call.covered[id] = tag
-		}
+	s.call.issued[p] = true
+	for _, key := range covers {
+		s.call.covered[key] = true
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{step: s.call.steps, piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges})
-	s.call.steps++
-	return Served{Anchor: anchor}
+	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, covers: covers, seq: s.nextSeq()})
 }
 
-// PieceMark marks what the call has served in full or spent so far.
-func (s *Session) PieceMark() int { return s.call.steps }
+// ServeChanged reports whether the call serves p, a piece that serves once per
+// change of its content: while its content differs from the last the session
+// served under p.Name, or when the call serves every piece in full. An empty
+// Hash withdraws the content, so the next one serves again; it serves
+// nothing. The change is recorded by RecordServed.
+func (s *Session) ServeChanged(p Piece) bool {
+	last := s.changed[p.Name]
+	if p.Hash == "" {
+		if last != "" {
+			s.call.pending = append(s.call.pending, pendingServe{piece: p, changed: true, seq: s.nextSeq()})
+		}
+		return false
+	}
+	if last == p.Hash && !s.call.full {
+		return false
+	}
+	s.call.pending = append(s.call.pending, pendingServe{piece: p, changed: true, seq: s.nextSeq()})
+	return true
+}
+
+// PieceMark marks the pieces the call has served so far.
+func (s *Session) PieceMark() int { return s.call.seq }
 
 // DropPiecesSince withdraws the pieces served in full after mark, for text
-// cut before it reached the agent, and leaves the proofs the withdrawn
-// pointers rested on unspent.
+// cut before it reached the agent.
 func (s *Session) DropPiecesSince(mark int) {
-	kept := s.call.pending[:0]
-	for _, p := range s.call.pending {
-		if p.step < mark {
-			kept = append(kept, p)
-			continue
-		}
-		delete(s.call.issued, p.piece)
-		for _, id := range p.covers {
-			if s.call.covered[id] == p.tag {
-				delete(s.call.covered, id)
-			}
-		}
+	if mark < 0 || mark > s.call.seq {
+		return
 	}
-	s.call.pending = kept
-	for tag, step := range s.call.proved {
-		if step >= mark {
-			delete(s.call.proved, tag)
-		}
+	cut := s.pendingSince(mark)
+	for _, dropped := range s.call.pending[cut:] {
+		s.unissue(dropped)
+	}
+	s.call.pending = s.call.pending[:cut]
+}
+
+// pendingSince is the index of the first pending piece served at or after
+// mark.
+func (s *Session) pendingSince(mark int) int {
+	i, _ := slices.BinarySearchFunc(s.call.pending, mark, func(p pendingServe, mark int) int { return p.seq - mark })
+	return i
+}
+
+func (s *Session) unissue(p pendingServe) {
+	delete(s.call.issued, p.piece)
+	for _, key := range p.covers {
+		delete(s.call.covered, key)
 	}
 }
 
-// RecordAnchors logs the anchors the call issued since the last record, so a
-// restarted server still checks their proofs, and spends the proofs its
-// pointers rested on.
-func (s *Session) RecordAnchors() {
+// RecordServed logs what the call served in full since the last record, each
+// text with its content the first time the session serves it, so a
+// restarted server still makes and checks questions about it, and the
+// question the call's answer answered.
+func (s *Session) RecordServed() {
 	var records []any
 	for _, p := range s.call.pending {
-		if p.tag == "" {
+		if p.text == "" && !p.changed {
 			continue
 		}
-		record := map[string]any{"tag": p.tag, "name": p.piece.Name, "word": p.word}
+		record := map[string]any{"name": p.piece.Name}
 		if p.piece.Hash != "" {
 			record["hash"] = p.piece.Hash
 		}
-		if len(p.covers) > 0 {
-			record["covers"] = p.covers
+		if p.changed {
+			record["changed"] = true
+		} else if _, known := s.texts[p.piece]; !known {
+			record["text"] = p.text
 		}
-		if len(p.challenges) > 0 {
-			challenges := make([]any, len(p.challenges))
-			for i, c := range p.challenges {
-				challenges[i] = []any{c.Prompt, c.Answer}
-			}
-			record["challenges"] = challenges
-		}
-		s.foldAnchor(record)
+		s.foldText(record)
 		records = append(records, record)
 	}
 	s.call.pending = nil
+	data := map[string]any{}
 	if len(records) > 0 {
-		s.appendEvent("", EventAnchors, map[string]any{"anchors": records})
+		data["texts"] = records
 	}
-	if len(s.call.proved) == 0 {
+	if n := s.call.answered - 1; n >= 0 && !s.questions[n].answered {
+		data["answered"] = n
+		s.questions[n].answered = true
+	}
+	if len(data) == 0 {
 		return
 	}
-	steps := map[string]any{}
-	for _, tag := range slices.Sorted(maps.Keys(s.call.proved)) {
-		issued, ok := s.anchors[tag]
-		if !ok {
-			continue
-		}
-		issued.step++
-		s.anchors[tag] = issued
-		steps[tag] = issued.step
-	}
-	s.call.proved = nil
-	s.appendEvent("", EventAnchorSteps, map[string]any{"steps": steps})
+	s.appendEvent("", EventTexts, data)
 }
 
-func (s *Session) foldAnchor(record any) {
-	fields, _ := record.(map[string]any)
-	tag, _ := fields["tag"].(string)
-	if tag == "" {
-		return
+// DropAnswer keeps the call's answer from counting a question answered, for
+// a call that failed: its question stays open for a later call.
+func (s *Session) DropAnswer() { s.call.answered = 0 }
+
+// Ask ends a response with a question: about the text held longest by its
+// latest copy, the next oldest where that text yields no question not asked
+// before, its phrase occurring in no other held text and its answer no
+// earlier question's, so an answer replayed from the call history answers
+// nothing. It logs the question and returns its line, empty when no held
+// text yields one.
+func (s *Session) Ask() string {
+	pieces := slices.Collect(maps.Keys(s.texts))
+	slices.SortFunc(pieces, func(a, b Piece) int {
+		if d := s.texts[a].latest - s.texts[b].latest; d != 0 {
+			return d
+		}
+		return strings.Compare(a.key(), b.key())
+	})
+	lower := make(map[Piece]string, len(pieces))
+	for _, p := range pieces {
+		lower[p] = strings.ToLower(s.texts[p].text)
 	}
-	name, _ := fields["name"].(string)
-	hash, _ := fields["hash"].(string)
-	word, _ := fields["word"].(string)
-	issued := issuedAnchor{piece: Piece{Name: name, Hash: hash}, word: word}
-	switch covers := fields["covers"].(type) {
-	case []string:
-		issued.covers = covers
-	case []any:
-		for _, v := range covers {
-			if id, ok := v.(string); ok {
-				issued.covers = append(issued.covers, id)
+	elsewhere := func(own Piece, phrase string) bool {
+		phrase = strings.ToLower(phrase)
+		for p, text := range lower {
+			if p != own && phrase != "" && strings.Contains(text, phrase) {
+				return true
 			}
 		}
+		return false
 	}
-	challenges, _ := fields["challenges"].([]any)
-	for _, v := range challenges {
-		pair, _ := v.([]any)
-		if len(pair) != 2 {
-			continue
-		}
-		prompt, _ := pair[0].(string)
-		answer, _ := pair[1].(string)
-		if prompt != "" && answer != "" {
-			issued.challenges = append(issued.challenges, model.Challenge{Prompt: prompt, Answer: answer})
-		}
+	answeredBefore := func(answer string) bool {
+		return slices.ContainsFunc(s.questions, func(asked askedQuestion) bool { return asked.question.Answered(answer) })
 	}
-	if s.anchors == nil {
-		s.anchors = map[string]issuedAnchor{}
-	}
-	s.anchors[tag] = issued
-}
-
-// foldAnchorSteps replays the proofs earlier calls spent.
-func (s *Session) foldAnchorSteps(data map[string]any) {
-	steps, _ := data["steps"].(map[string]any)
-	for tag, v := range steps {
-		issued, ok := s.anchors[tag]
+	for _, p := range pieces {
+		held := s.texts[p]
+		q, ok := model.DrawQuestion(held.text, s.random(), func(q model.TextQuestion) bool {
+			return !s.asked[p.key()+"|"+q.Key()] && !elsewhere(p, q.Phrase) && !elsewhere(p, q.Second) && !answeredBefore(q.Answer)
+		})
 		if !ok {
 			continue
 		}
-		switch n := v.(type) {
-		case int:
-			issued.step = n
-		case float64:
-			issued.step = int(n)
+		data := map[string]any{
+			"name": p.Name, "hash": p.Hash, "latest": held.latest,
+			"kind": string(q.Kind), "phrase": q.Phrase, "answer": q.Answer,
 		}
-		s.anchors[tag] = issued
+		if q.Second != "" {
+			data["second"] = q.Second
+		}
+		s.foldQuestion(data)
+		s.appendEvent("", EventQuestion, data)
+		return q.Line(p.Name)
+	}
+	return ""
+}
+
+// foldTexts folds a texts event: the texts it served, then the question it
+// answered.
+func (s *Session) foldTexts(data map[string]any) {
+	records, _ := data["texts"].([]any)
+	for _, record := range records {
+		fields, _ := record.(map[string]any)
+		s.foldText(fields)
+	}
+	if n, ok := intValue(data["answered"]); ok && n >= 0 && n < len(s.questions) {
+		s.questions[n].answered = true
 	}
 }
 
-func (s *Session) freshTag() string {
-	for {
-		tag := model.NewAnchorTag(s.random())
-		if _, taken := s.anchors[tag]; taken {
-			continue
+func (s *Session) foldText(fields map[string]any) {
+	name, _ := fields["name"].(string)
+	hash, _ := fields["hash"].(string)
+	if fields["changed"] == true {
+		if s.changed == nil {
+			s.changed = map[string]string{}
 		}
-		if slices.ContainsFunc(s.call.pending, func(p pendingAnchor) bool { return p.tag == tag }) {
-			continue
-		}
-		return tag
+		s.changed[name] = hash
+		return
 	}
+	p := Piece{Name: name, Hash: hash}
+	if s.texts == nil {
+		s.texts = map[Piece]*heldText{}
+	}
+	s.copies++
+	if held, ok := s.texts[p]; ok {
+		held.latest = s.copies
+		return
+	}
+	text, _ := fields["text"].(string)
+	if text == "" {
+		return
+	}
+	s.texts[p] = &heldText{text: text, latest: s.copies}
+}
+
+func (s *Session) foldQuestion(data map[string]any) {
+	str := func(key string) string {
+		v, _ := data[key].(string)
+		return v
+	}
+	latest, _ := intValue(data["latest"])
+	asked := askedQuestion{
+		piece:  Piece{Name: str("name"), Hash: str("hash")},
+		latest: latest,
+		question: model.TextQuestion{
+			Kind: model.QuestionKind(str("kind")), Phrase: str("phrase"), Second: str("second"), Answer: str("answer"),
+		},
+	}
+	s.questions = append(s.questions, asked)
+	if s.asked == nil {
+		s.asked = map[string]bool{}
+	}
+	s.asked[asked.piece.key()+"|"+asked.question.Key()] = true
+}
+
+func intValue(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	}
+	return 0, false
 }
 
 func (s *Session) random() model.RandomSource {

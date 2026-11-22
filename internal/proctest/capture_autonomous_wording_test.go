@@ -6,7 +6,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
-	test "github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -24,7 +23,7 @@ type wordingMode struct {
 
 func requireWording(t *testing.T, serve *sdd.WorkflowServe, mode wordingMode) {
 	t.Helper()
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	for _, want := range mode.want {
 		if !strings.Contains(text, want) {
 			t.Errorf("the %s capture should carry %q:\n%s", mode.name, want, text)

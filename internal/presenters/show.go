@@ -64,7 +64,7 @@ func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, opts.Repeats.anchor(g.Primary, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel)))
+	fmt.Fprintln(w, opts.Repeats.serve(g.Primary, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel)))
 	renderShowChains(w, g, opts)
 }
 

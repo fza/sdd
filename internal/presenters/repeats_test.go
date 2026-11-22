@@ -2,11 +2,10 @@ package presenters_test
 
 import (
 	"bytes"
-	"io"
-	"math/rand/v2"
+	"slices"
+
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
@@ -15,14 +14,7 @@ import (
 )
 
 func heldOnly(ids ...string) *presenters.Repeats {
-	return &presenters.Repeats{Held: func(id, _ string) (string, string, bool) {
-		for _, held := range ids {
-			if held == id {
-				return "ab12", "", true
-			}
-		}
-		return "", "", false
-	}, Anchor: func(_, _, body, _ string) string { return "⟦zz99⟧ " + body }}
+	return &presenters.Repeats{Held: func(id, _ string) bool { return slices.Contains(ids, id) }}
 }
 
 // Every view renderer prints a held entry as its pointer and keeps the rest.
@@ -54,11 +46,11 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 			presenters.RenderViewRepeats(&buf, &query.ViewResult{Graph: g, Sections: []query.SectionResult{tc.section}}, heldOnly(ids...))
 			got := buf.String()
 			for _, e := range tc.held {
-				if !strings.Contains(got, heldPointer(e, "ab12")) {
+				if !strings.Contains(got, heldPointer(e)) {
 					t.Errorf("a held entry should print as its pointer:\n%s", got)
 				}
 			}
-			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, heldPointer(other, "ab12"))) {
+			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, heldPointer(other))) {
 				t.Errorf("an entry not held should print its own line:\n%s", got)
 			}
 			if !strings.Contains(got, presenters.GatherWayBack) {
@@ -69,8 +61,8 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 }
 
 // heldPointer is the pointer an entry heldOnly holds prints as.
-func heldPointer(e *model.Entry, tag string) string {
-	return e.ID + " — " + model.EntryBrief(e) + " (held as ⟦" + tag + "⟧"
+func heldPointer(e *model.Entry) string {
+	return e.ID + " — " + model.EntryBrief(e) + " (served in full above)"
 }
 
 // A held entry on a show chain prints as its pointer on the bullet.
@@ -85,11 +77,11 @@ func TestRenderShow_HeldChainEntryPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderShow(&buf, result, presenters.ShowOptions{Repeats: heldOnly(basis.ID)})
 	got := buf.String()
-	if !strings.Contains(got, heldPointer(basis, "ab12")) {
+	if !strings.Contains(got, heldPointer(basis)) {
 		t.Fatalf("a held chain entry should print as its pointer:\n%s", got)
 	}
-	if !strings.Contains(got, "# body") || !strings.Contains(got, "⟦zz99⟧ Decision on the basis.") {
-		t.Fatalf("the primary not held should print in full with its tag:\n%s", got)
+	if !strings.Contains(got, "# body") || !strings.Contains(got, "Decision on the basis.") {
+		t.Fatalf("the primary not held should print in full:\n%s", got)
 	}
 }
 
@@ -106,50 +98,35 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderSearchRepeats(&buf, result, g, heldOnly(local.ID, remote.ID))
 	got := buf.String()
-	if !strings.Contains(got, local.ID+" — Held entry. (held as ⟦ab12⟧)") || strings.Contains(got, "local-snippet") {
+	if !strings.Contains(got, local.ID+" — Held entry. (served in full above)") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)
 	}
-	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — Remote entry. (held") {
+	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — Remote entry. (served") {
 		t.Errorf("a connected repo's hit should keep its line and citations:\n%s", got)
 	}
 }
 
-// An entry body is anchored over the whole result it is served in, so a
-// naive agent finds each prompt once: the body's heading, identity line and
-// the entries beside it hold none of them.
-func TestRenderWithin_AnchorsEntriesOverTheWholeResult(t *testing.T) {
-	first := entry("20260101-100000-d-tac-one", withContent("## The user's choice\n\nLater the user approves drafts before every write lands."))
-	second := entry("20260101-110000-d-tac-two", withContent("Drafts wait until the reviewer approves them."))
-	g := model.NewGraph([]*model.Entry{first, second})
-	section := query.SectionResult{Render: "as-bodies", Data: model.Bodies{Entries: []*model.Entry{first, second}}}
-	for seed := range uint64(100) {
-		var challenges []model.Challenge
-		repeats := &presenters.Repeats{
-			Held: func(string, string) (string, string, bool) { return "", "", false },
-			Anchor: func(_, _, body, field string) string {
-				if field == "" {
-					field = body
-				}
-				anchor, _ := model.PlaceAnchorIn(body, field, "ab12", rand.New(rand.NewPCG(seed, seed)))
-				challenges = append(challenges, anchor.Challenges...)
-				return anchor.Render(body)
-			},
-		}
-		var buf bytes.Buffer
-		presenters.RenderWithin(&buf, repeats, func(w io.Writer, r *presenters.Repeats) {
-			presenters.RenderViewRepeats(w, &query.ViewResult{Graph: g, Sections: []query.SectionResult{section}}, r)
-		})
-		runs := strings.FieldsFunc(strings.ToLower(model.StripAnchorTags(buf.String())), func(r rune) bool { return !unicode.IsLetter(r) })
-		for _, c := range challenges {
-			n := 0
-			for _, run := range runs {
-				if run == strings.ToLower(c.Prompt) {
-					n++
-				}
-			}
-			if n != 1 {
-				t.Fatalf("prompt %q occurs %d times as a word in the result:\n%s", c.Prompt, n, buf.String())
-			}
-		}
+// Every entry served in full is recorded with the body it prints; a held one
+// is not.
+func TestRenderShow_RecordsEntriesServedInFull(t *testing.T) {
+	basis := entry("20260410-100000-s-stg-aaa", withSummary("Basis signal."))
+	primary := entry("20260410-100200-d-tac-ccc", withContent("Decision on the basis."), withRefs(basis.ID))
+	g := model.NewGraph([]*model.Entry{basis, primary})
+	result, err := finders.New(finders.Options{}).OnGraph(g).Show(query.ShowQuery{IDs: []string{primary.ID, basis.ID}, UpDepth: 0, DownDepth: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := map[string]string{}
+	r := &presenters.Repeats{
+		Held:   func(id, _ string) bool { return id == basis.ID },
+		Served: func(id, _, body string) { served[id] = body },
+	}
+	var buf bytes.Buffer
+	presenters.RenderShow(&buf, result, presenters.ShowOptions{Repeats: r})
+	if !strings.Contains(served[primary.ID], "Decision on the basis.") {
+		t.Errorf("the entry served in full should be recorded with its body, got %q", served[primary.ID])
+	}
+	if _, ok := served[basis.ID]; ok {
+		t.Error("a held entry should not be recorded as served in full")
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	test "github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -115,7 +114,7 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	session := world.Open(t, "reason-why-not-what")
 	serve := session.Start(t, "capture", nil)
 	want := "No decision owes a reason, and no directive owes the user's words for its intent. Words the user gives for a decision's reason go to `reasonWords`, and for a directive's intent to `intentWords`, quoted as the user said them. The reason states why, never what: words stating the decision itself never fill `reasonWords`."
-	if !strings.Contains(test.Untagged(serve.Instructions), want) {
+	if !strings.Contains(serve.Instructions, want) {
 		t.Fatalf("assemble should tell the agent no words are owed and the reason states why:\n%s", serve.Instructions)
 	}
 }
@@ -127,12 +126,12 @@ func TestCapture_IntentIsNamedInTheUsersTerms(t *testing.T) {
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "intent-users-terms")
 	serve := session.Start(t, "capture", nil)
-	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+	if !strings.Contains(serve.Instructions, noPosture) {
 		t.Errorf("assemble should tell the agent to speak of the intent without naming the posture:\n%s", serve.Instructions)
 	}
 	serve = session.Report(t, serve.Instance, decisionDraft("directive"))
 	proctest.RequireStep(t, serve, "playback")
-	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+	if !strings.Contains(serve.Instructions, noPosture) {
 		t.Errorf("playback should tell the agent to show the intent without naming the posture:\n%s", serve.Instructions)
 	}
 }

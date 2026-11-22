@@ -73,6 +73,22 @@ func GroundingPopulation(g *Graph) []*Entry {
 	return live
 }
 
+// EntryBrief is an entry's brief: the first line of its summary, else of its
+// body. Never cut.
+func EntryBrief(e *Entry) string {
+	brief := strings.TrimSpace(e.Summary)
+	if i := strings.IndexAny(brief, "\n"); i >= 0 {
+		brief = brief[:i]
+	}
+	if brief == "" {
+		brief = strings.TrimSpace(e.Content)
+		if i := strings.IndexAny(brief, "\n"); i >= 0 {
+			brief = brief[:i]
+		}
+	}
+	return brief
+}
+
 // TopicListing returns the live entries whose effective topics carry label
 // as a component-wise prefix, the listing a reading runs per draft topic.
 func TopicListing(g *Graph, live []*Entry, label TopicPath) []*Entry {

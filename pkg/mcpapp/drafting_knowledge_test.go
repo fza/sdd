@@ -29,14 +29,20 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 	if strings.Contains(second.Instructions, "a signal records something noticed:") {
 		t.Fatalf("a second capture start in the same session must not repeat the overview body")
 	}
-	if !strings.Contains(second.Instructions, basefacts.OverviewFactID) {
+	if !pointsAtOverview(second.Instructions) {
 		t.Errorf("the suppressed serve must still point at the overview fact")
 	}
 }
 
+// pointsAtOverview reports whether a capture serve points at the type-system
+// overview: by its ID, or by the held typeSystem lane whose text names it.
+func pointsAtOverview(instructions string) bool {
+	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, "lane typeSystem")
+}
+
 // The overview grounding is durable session state: a second server over the
 // same stores — a real restart, not an in-process resume — still points the
-// agent that proves it holds the overview at it, and serves it in full to an
+// agent that answers right at it, and serves it in full to an
 // agent context that holds nothing.
 func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, t.TempDir(), "")
@@ -56,7 +62,7 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	if strings.Contains(again.Instructions, "a signal records something noticed:") {
 		t.Fatalf("the overview grounding must survive a server restart — the re-serve repeated the body")
 	}
-	if !strings.Contains(again.Instructions, basefacts.OverviewFactID) {
+	if !pointsAtOverview(again.Instructions) {
 		t.Errorf("the re-served capture must still point at the overview fact")
 	}
 
