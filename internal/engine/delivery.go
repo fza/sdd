@@ -608,7 +608,7 @@ func (s *Session) exchangeLane(inst *Instance) (*ServeLane, []truncate.Cut) {
 			fmt.Fprintf(&b, "  (not delivered: %s)\n", item.Refused)
 		}
 	}
-	return &ServeLane{Name: "exchange", Text: strings.TrimSpace(b.String())}, cuts
+	return &ServeLane{Name: "exchange", Text: strings.TrimSpace(b.String()), Authored: true}, cuts
 }
 
 func exchangeValue(v any) string {

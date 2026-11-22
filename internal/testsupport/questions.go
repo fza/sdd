@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // questionLine reads a text question as sdd ends a response with it.
@@ -14,27 +13,6 @@ var questionForms = []struct {
 	form   *regexp.Regexp
 	answer func(text string, phrases []string) (string, bool)
 }{
-	{regexp.MustCompile(`^first 2 words of the sentence after the one with "(.+)"\?$`), func(text string, p []string) (string, bool) {
-		_, end, ok := sentenceAround(text, p[0])
-		if !ok {
-			return "", false
-		}
-		return firstWords(text[end:], 2)
-	}},
-	{regexp.MustCompile(`^first 2 words of the sentence with "(.+)"\?$`), func(text string, p []string) (string, bool) {
-		start, end, ok := sentenceAround(text, p[0])
-		if !ok {
-			return "", false
-		}
-		return firstWords(text[start:end], 2)
-	}},
-	{regexp.MustCompile(`^last 2 words of the sentence with "(.+)"\?$`), func(text string, p []string) (string, bool) {
-		start, end, ok := sentenceAround(text, p[0])
-		if !ok {
-			return "", false
-		}
-		return lastWords(text[start:end], 2)
-	}},
 	{regexp.MustCompile(`^word between "(.+)" and "(.+)"\?$`), func(text string, p []string) (string, bool) {
 		at := strings.Index(text, p[0]+" ")
 		if at < 0 {
@@ -42,7 +20,7 @@ var questionForms = []struct {
 		}
 		rest := text[at+len(p[0])+1:]
 		word, _, ok := strings.Cut(rest, " "+p[1])
-		return word, ok && !strings.Contains(word, " ")
+		return strings.TrimRight(word, ","), ok && !strings.Contains(word, " ")
 	}},
 	{regexp.MustCompile(`^number after "(.+)"\?$`), func(text string, p []string) (string, bool) {
 		at := strings.Index(text, p[0])
@@ -67,15 +45,40 @@ var questionForms = []struct {
 	}},
 }
 
-// LastQuestion returns the last text question in s, a served result, with
-// the name of the text it asks about.
-func LastQuestion(s string) (name, ask string, ok bool) {
-	found := questionLine.FindAllStringSubmatch(s, -1)
-	if len(found) == 0 {
-		return "", "", false
+// Question is a text question a served result ends with: the name of the
+// text it asks about and the question without it.
+type Question struct {
+	Name string
+	Ask  string
+}
+
+// Questions returns the text questions in s, a served result, in order.
+func Questions(s string) []Question {
+	var out []Question
+	for _, found := range questionLine.FindAllStringSubmatch(s, -1) {
+		out = append(out, Question{Name: found[1], Ask: found[2]})
 	}
-	last := found[len(found)-1]
-	return last[1], last[2], true
+	return out
+}
+
+// AnswerAll answers the questions of s, a served result's question field, as
+// an agent holding texts does: in order, parted by " ; ", lost for one no
+// text answers. It reports false when s holds no question or one is lost.
+func AnswerAll(s string, texts []string) (string, bool) {
+	questions := Questions(s)
+	if len(questions) == 0 {
+		return "", false
+	}
+	answers := make([]string, len(questions))
+	all := true
+	for i, q := range questions {
+		words, ok := AnswerQuestion(q.Ask, texts)
+		if !ok {
+			words, all = "lost", false
+		}
+		answers[i] = words
+	}
+	return strings.Join(answers, " ; "), all
 }
 
 // AnswerQuestion answers ask, a text question without its name, as an agent
@@ -100,55 +103,8 @@ func AnswerQuestion(ask string, texts []string) (string, bool) {
 	return "", false
 }
 
-// sentenceAround returns the bounds of the sentence of text holding phrase:
-// a sentence ends at a full stop, question or exclamation mark before a
-// space, or at a line break unless the next line goes on in lower case.
-func sentenceAround(text, phrase string) (int, int, bool) {
-	at := strings.Index(text, phrase)
-	if at < 0 {
-		return 0, 0, false
-	}
-	start := 0
-	for i := at - 1; i >= 0; i-- {
-		if boundaryAfter(text, i) {
-			start = i + 1
-			break
-		}
-	}
-	end := len(text)
-	for i := at + len(phrase); i < len(text); i++ {
-		if boundaryAfter(text, i) {
-			end = i + 1
-			break
-		}
-	}
-	return start, end, true
-}
-
-func boundaryAfter(text string, i int) bool {
-	switch text[i] {
-	case '\n':
-		next, _ := utf8.DecodeRuneInString(strings.TrimLeft(text[i+1:], " \t"))
-		return !unicode.IsLower(next)
-	case '.', '!', '?':
-		rest := strings.TrimLeft(text[i+1:], ")]\"'*_`")
-		token := text[strings.LastIndexAny(text[:i], " \n")+1 : i]
-		abbreviation := strings.Contains(strings.TrimLeft(token, "([\"'*_`"), ".")
-		return !abbreviation && (rest == "" || rest[0] == ' ' || rest[0] == '\n')
-	}
-	return false
-}
-
-func firstWords(s string, n int) (string, bool) {
-	words := wordsOf(s)
-	if len(words) < n {
-		return "", false
-	}
-	return strings.Join(words[:n], " "), true
-}
-
-// wordsAfter is firstWords for s that starts inside a line, where a number
-// such as the "1." ending a sentence is a word, not a list marker.
+// wordsAfter lists the first n words of s, which starts inside a line, where
+// a number such as the "1." ending a sentence is a word, not a list marker.
 func wordsAfter(s string, n int) (string, bool) {
 	line, rest, _ := strings.Cut(s, "\n")
 	var words []string

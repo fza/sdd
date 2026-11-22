@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	stepText  = "Draft one entry with the user, dialogue first. Check its grounding against the graph before you write. Keep the summary under 280 characters so the listing stays short."
-	introText = "Open the session with a short briefing. Name the open threads the dialogue carries, then ask the user where to begin today."
+	stepText   = "Draft one entry with the user, dialogue first. Check its grounding against the graph before you write. Keep the summary under 280 characters so the listing stays short."
+	introText  = "Open the session with a short briefing. Name the open threads the dialogue carries, then ask the user where to begin today."
+	reportText = "Report the outcome in one line. Name every entry the move wrote and the open threads it leaves for the next dialogue."
 )
 
 var (
@@ -42,18 +43,24 @@ func respond(t *testing.T, session *engine.Session, answer string, pieces map[en
 	return held, session.Ask()
 }
 
-// answer answers question from texts as an agent holding them would.
+// answer answers the questions a response ended with from texts as an agent
+// holding them would.
 func answer(t *testing.T, question string, texts ...string) string {
 	t.Helper()
-	_, ask, ok := test.LastQuestion(question)
+	words, ok := test.AnswerAll(question, texts)
 	if !ok {
-		t.Fatalf("a response should end with a question, got %q", question)
-	}
-	words, ok := test.AnswerQuestion(ask, texts)
-	if !ok {
-		t.Fatalf("the question should be answerable from the texts served, got %q", question)
+		t.Fatalf("the questions should be answerable from the texts served, got %q", question)
 	}
 	return words
+}
+
+// names lists the texts a response's questions ask about.
+func names(question string) []string {
+	var out []string
+	for _, q := range test.Questions(question) {
+		out = append(out, q.Name)
+	}
+	return out
 }
 
 func TestARightAnswerServesRepeatsShort(t *testing.T) {
@@ -89,22 +96,85 @@ func TestARightAnswerServesRepeatsShort(t *testing.T) {
 func TestTheFirstQuestionAsksAboutTheResponsesOwnText(t *testing.T) {
 	session := newPieceSession(nil)
 	_, question := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
-	if name, _, ok := test.LastQuestion(question); !ok || name != stepLane.Name {
+	if got := names(question); len(got) == 0 || got[0] != stepLane.Name {
 		t.Errorf("the first response should ask about its own text, got %q", question)
 	}
 }
 
-func TestTheQuestionAsksAboutTheOldestTextByItsLatestCopy(t *testing.T) {
+func TestTheFirstQuestionAsksAboutTheOldestTextByItsLatestCopy(t *testing.T) {
 	session := newPieceSession(nil)
 	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
 	_, q = respond(t, session, answer(t, q, stepText), map[engine.Piece]string{introLane: introText})
-	if name, _, _ := test.LastQuestion(q); name != stepLane.Name {
-		t.Errorf("the question should ask about the text served longest ago, got %q", q)
+	if got := names(q); got[0] != stepLane.Name {
+		t.Errorf("the first question should ask about the text served longest ago, got %q", q)
 	}
 	// lost serves the step text again, which makes intro the oldest copy.
 	_, q = respond(t, session, model.LostAnswer, map[engine.Piece]string{stepLane: stepText})
-	if name, _, _ := test.LastQuestion(q); name != introLane.Name {
+	if got := names(q); got[0] != introLane.Name {
 		t.Errorf("a text served in full again should no longer be the oldest, got %q", q)
+	}
+}
+
+func TestAResponseAsksTwoQuestionsAboutTwoTexts(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText, introLane: introText})
+	got := names(q)
+	if len(got) != 2 || got[0] == got[1] {
+		t.Errorf("a response should ask two questions about two different held texts, got %q", q)
+	}
+}
+
+func TestOneTextYieldsTwoQuestionsAtTwoSpots(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	questions := test.Questions(q)
+	if len(questions) != 2 || questions[0].Name != stepLane.Name || questions[1].Name != stepLane.Name {
+		t.Fatalf("a response holding one text should ask two questions about it, got %q", q)
+	}
+	if questions[0].Ask == questions[1].Ask {
+		t.Errorf("the two questions should ask about two spots of the text, got %q", q)
+	}
+}
+
+func TestBothAnswersMustBeRight(t *testing.T) {
+	pieces := map[engine.Piece]string{stepLane: stepText, introLane: introText}
+	tests := []struct {
+		name  string
+		given func(right []string) string
+		short bool
+	}{
+		{"both right", func(r []string) string { return r[0] + " ; " + r[1] }, true},
+		{"swapped", func(r []string) string { return r[1] + " ; " + r[0] }, true},
+		{"one lost", func(r []string) string { return r[0] + " ; " + model.LostAnswer }, false},
+		{"one wrong", func(r []string) string { return "nothing here ; " + r[1] }, false},
+		{"one of two", func(r []string) string { return r[0] }, false},
+		{"lost", func([]string) string { return model.LostAnswer }, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := newPieceSession(nil)
+			_, q := respond(t, session, "", pieces)
+			right := strings.Split(answer(t, q, stepText, introText), " ; ")
+			if len(right) != 2 {
+				t.Fatalf("the response should ask two questions, got %q", q)
+			}
+			held, q := respond(t, session, tc.given(right), pieces)
+			for p := range pieces {
+				if held[p] != tc.short {
+					t.Errorf("%s should serve short only when both answers are right", p.Name)
+				}
+			}
+			if tc.short {
+				return
+			}
+			// The copies served in full count as held by the next round.
+			held, _ = respond(t, session, answer(t, q, stepText, introText), pieces)
+			for p := range pieces {
+				if !held[p] {
+					t.Errorf("%s served in full after a miss should count as held again", p.Name)
+				}
+			}
+		})
 	}
 }
 
@@ -113,10 +183,12 @@ func TestNoQuestionIsAskedTwice(t *testing.T) {
 	asked := map[string]bool{}
 	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
 	for range 60 {
-		if asked[q] {
-			t.Fatalf("a question should never be asked twice, got %q again", q)
+		for _, question := range test.Questions(q) {
+			if asked[question.Ask] {
+				t.Fatalf("a question should never be asked twice, got %q again", question.Ask)
+			}
+			asked[question.Ask] = true
 		}
-		asked[q] = true
 		_, q = respond(t, session, answer(t, q, stepText), map[engine.Piece]string{stepLane: stepText})
 		if q == "" {
 			break
@@ -130,13 +202,135 @@ func TestNoAnswerAnswersTwoQuestions(t *testing.T) {
 	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
 	for q != "" {
 		words := answer(t, q, stepText)
-		for _, earlier := range given {
-			if (model.TextQuestion{Answer: earlier}).Answered(words) {
-				t.Fatalf("an answer given before should answer no later question, got %q again for %q", words, q)
+		parts := strings.Split(words, " ; ")
+		for _, part := range parts {
+			for _, earlier := range given {
+				if (model.TextQuestion{Answer: earlier}).Answered(part) {
+					t.Fatalf("an answer given before should answer no later question, got %q again for %q", part, q)
+				}
 			}
 		}
-		given = append(given, words)
+		given = append(given, parts...)
 		_, q = respond(t, session, words, map[engine.Piece]string{stepLane: stepText})
+	}
+}
+
+func TestNoQuestionAsksAboutAnAuthoredText(t *testing.T) {
+	session := newPieceSession(nil)
+	draft := engine.Piece{Name: "lane draft", Hash: "d1"}
+	session.BeginCall("", nil)
+	session.ServeAuthored(draft, stepText)
+	session.RecordServed()
+	if q := session.Ask(); q != "" {
+		t.Errorf("no question should ask about a text the agent wrote, got %q", q)
+	}
+
+	_, q := respond(t, session, "", map[engine.Piece]string{introLane: introText})
+	for _, name := range names(q) {
+		if name == draft.Name {
+			t.Errorf("no question should ask about a text the agent wrote, got %q", q)
+		}
+	}
+	// A draft served after the text asked about is held by the right answer.
+	revised := engine.Piece{Name: "lane draft", Hash: "d2"}
+	session.BeginCall(answer(t, q, introText), nil)
+	session.ServeAuthored(revised, reportText)
+	session.RecordServed()
+	q = session.Ask()
+	session.BeginCall(answer(t, q, introText), nil)
+	if !session.ServeAuthored(revised, reportText) {
+		t.Error("a held authored text should still serve as its pointer after a right answer")
+	}
+}
+
+// echoSpec is a procedure whose report takes a note, the agent's own words.
+const echoSpec = `state:
+    note: {type: prose, desc: the agent's words}
+    goal: {type: text, optional: true, desc: closer}
+steps:
+    - id: draft
+      collect: [note, "goal?"]
+      transitions:
+          - when: hasGoal
+            to: end(completed)`
+
+func echoEntry(t *testing.T) *model.Entry {
+	t.Helper()
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: echoproc\n" + echoSpec + "\n---\n\necho procedure\n\n## unit: draft\n\nWrite a note.\n"
+	entry, err := model.ParseEntry("20260826-140100-d-prc-ech.md", content)
+	if err != nil {
+		t.Fatalf("fixture entry: %v", err)
+	}
+	return entry
+}
+
+func TestNoQuestionPhraseOccursInWhatTheAgentReported(t *testing.T) {
+	spec, err := engine.ParseSpec(echoEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	sv, err := session.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The agent's note quotes the step text, as a summary would quote it.
+	if _, err := session.Report(sv.Instance, map[string]any{"note": "I keep this:\n" + strings.ToUpper(stepText)}); err != nil {
+		t.Fatal(err)
+	}
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	if q != "" {
+		t.Errorf("no question's phrase should occur in what the agent reported, got %q", q)
+	}
+
+	events, err := engine.ReadEvents(&log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).
+		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return spec, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed.BeginCall("", nil)
+	if q := replayed.Ask(); q != "" {
+		t.Errorf("after a restart, no question's phrase should occur in what the agent reported, got %q", q)
+	}
+}
+
+func TestALostAnswerRightAfterAShortServeCountsALateCatch(t *testing.T) {
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	pieces := map[engine.Piece]string{stepLane: stepText, introLane: introText}
+	catches := func() int {
+		events, err := engine.ReadEvents(bytes.NewReader(log.Bytes()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return engine.LateCatches(events)
+	}
+
+	_, _ = respond(t, session, "", pieces)
+	// lost after a full serve is no late catch.
+	_, q := respond(t, session, model.LostAnswer, pieces)
+	if got := catches(); got != 0 {
+		t.Fatalf("a lost answer after a full serve should count no late catch, got %d", got)
+	}
+	held, _ := respond(t, session, answer(t, q, stepText, introText), pieces)
+	if !held[stepLane] {
+		t.Fatal("a right answer should serve short")
+	}
+	// The next call answers lost: the text the short serve leant on was gone.
+	session.BeginCall(model.LostAnswer, nil)
+	session.RecordServed()
+	if got := catches(); got != 1 {
+		t.Errorf("a lost answer right after a short serve should count one late catch, got %d", got)
+	}
+	session.BeginCall(model.LostAnswer, nil)
+	session.RecordServed()
+	if got := catches(); got != 1 {
+		t.Errorf("a second lost answer in a row should count no further catch, got %d", got)
 	}
 }
 
