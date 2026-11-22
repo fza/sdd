@@ -267,7 +267,7 @@ A judge's ranking recall is the weighted share of its referenced labels it score
 | `sync.default.https.per_minute` | A tenth of `https.per_hour` | The same for HTTPS with credentials. |
 | `sync.default.https.per_minute_unauthenticated` | A tenth of `https.per_hour_unauthenticated` | The same for HTTPS without credentials. |
 | `sync.hosts.<host>.<limit>` | The `sync.default` value | The same limits for one remote host, such as `github.com`. |
-| `sessions.retention` | `14d` | The [daily sweep](#the-daily-sweep) deletes a session that ended longer ago than this, with its staged attachments. Accepts days, such as `14d`, or a duration, such as `336h`. Read from the user-global file only. |
+| `sessions.retention` | `14d` | The [daily sweep](#the-daily-sweep) deletes a session that ended longer ago than this, and an open session whose log holds no event younger than this and that has no move in progress, each with its staged attachments. Accepts days, such as `14d`, or a duration, such as `336h`. Read from the user-global file only. |
 | `cache.retention` | `90d` | The daily sweep deletes cache, state and data that nothing used for longer than this. Same forms. Read from the user-global file only. |
 | `index.replaced_retention` | `14d` | The daily sweep deletes replaced search index data this long after its replacement or last use, whichever is later. Same forms. Read from the user-global file only. |
 
@@ -572,9 +572,10 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 
 | What | When it goes |
 | --- | --- |
-| A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended, also one older sdd versions logged in the `.sdd/sessions` of a checkout sdd recorded. An open session stays, however long it is idle. |
+| A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended, also one older sdd versions logged in the `.sdd/sessions` of a checkout sdd recorded. |
+| An open session, with its staged attachments | `sessions.retention` after the last event in its log, once no move is in progress in it, also one logged in the `.sdd/sessions` of a checkout sdd recorded. A session with a move in progress stays, however long it is idle, whether the move was parked or left mid-step. The dialogue itself is no move. |
 | A staged attachment | Once the entry it is attached to is published, unless another capture in progress names it; the rest of a session's when the session ends. One a pending capture still needs stays until that capture is retried or cancelled. |
-| A project's relevance ledger and its empty session folder | After `cache.retention` without the project being used. Open sessions stay. |
+| A project's relevance ledger and its empty session folder | After `cache.retention` without the project being used. Sessions the rules above keep stay. |
 | A project's staged attachments no session owns | After `cache.retention` without the project being used. Those of a session open in a checkout's `.sdd/sessions`, where older sdd versions logged sessions, stay: sdd records each checkout it opens the project from and reads the sessions there. So do all the project's staged attachments while no checkout is recorded, or while a recorded one is missing from disk, as on an unmounted volume. |
 | A recorded checkout gone from disk, such as a removed worktree | Its record line once it has been missing for `cache.retention`; until then it may be an unmounted volume. Then also the staged attachments, untouched for `cache.retention`, of sessions no log names any more, while the project is in use too. |
 | An older version of an entry in the search index | `index.replaced_retention` after a newer version replaced it, unless a checkout that searched the index within `cache.retention` still reads it. The version the current checkout searches always stays. |

@@ -81,17 +81,17 @@ func newCollectFixture(t *testing.T) collectFixture {
 	}
 }
 
-// writeSession creates a session and, when ended is non-zero, closes it out with
-// a terminal record of that act at that time.
-func (f collectFixture) writeSession(t *testing.T, id sdd.SessionID, ended time.Time, act sdd.SessionEndAct) {
+// writeSession creates a session last updated at updated and, when ended is
+// non-zero, closes it out with a terminal record of that act at that time.
+func (f collectFixture) writeSession(t *testing.T, id sdd.SessionID, updated, ended time.Time, act sdd.SessionEndAct) {
 	t.Helper()
 	metadata := sdd.SessionMetadata{
 		ID: id, Subject: collectSubject, Project: f.project, Participant: "Example",
 		Attachment: &sdd.Attachment{
 			Subject: collectSubject, ClientName: "c-" + string(id),
-			LastActivity: f.now.Add(-72 * time.Hour),
+			LastActivity: updated,
 		},
-		UpdatedAt: f.now.Add(-72 * time.Hour),
+		UpdatedAt: updated,
 	}
 	created, err := f.sessions.Create(t.Context(), metadata)
 	if err != nil {
@@ -157,28 +157,30 @@ func (f collectFixture) listedIDs(t *testing.T) []string {
 // them.
 func TestExternalCollectionThroughExportedAPI(t *testing.T) {
 	f := newCollectFixture(t)
-	f.writeSession(t, "ended-old", f.now.Add(-48*time.Hour), sdd.SessionConcluded)
-	f.writeSession(t, "ended-recent", f.now.Add(-1*time.Hour), sdd.SessionAbandoned)
-	f.writeSession(t, "still-open", time.Time{}, "")
+	idle := f.now.Add(-72 * time.Hour)
+	f.writeSession(t, "ended-old", idle, f.now.Add(-48*time.Hour), sdd.SessionConcluded)
+	f.writeSession(t, "ended-recent", idle, f.now.Add(-1*time.Hour), sdd.SessionAbandoned)
+	f.writeSession(t, "idle-open", idle, time.Time{}, "")
+	f.writeSession(t, "still-open", f.now.Add(-1*time.Hour), time.Time{}, "")
 	blobs := map[sdd.SessionID]sdd.StagedBlob{}
-	for _, id := range []sdd.SessionID{"ended-old", "ended-recent", "still-open"} {
+	for _, id := range []sdd.SessionID{"ended-old", "ended-recent", "idle-open", "still-open"} {
 		blobs[id] = f.stage(t, id)
 	}
 
 	result := f.collect(t, 24*time.Hour)
 
-	if got, want := result.RemovedSessions, []sdd.SessionID{"ended-old"}; !slices.Equal(got, want) {
+	if got, want := result.RemovedSessions, []sdd.SessionID{"ended-old", "idle-open"}; !slices.Equal(got, want) {
 		t.Fatalf("RemovedSessions = %v, want %v", got, want)
 	}
 	if got, want := f.listedIDs(t), []string{"ended-recent", "still-open"}; !slices.Equal(got, want) {
 		t.Fatalf("listed = %v, want %v", got, want)
 	}
-	if got, want := result.RemovedStaged, []sdd.SessionRef{{Subject: collectSubject, Session: "ended-old"}}; !slices.Equal(got, want) {
+	if got, want := result.RemovedStaged, []sdd.SessionRef{{Subject: collectSubject, Session: "ended-old"}, {Subject: collectSubject, Session: "idle-open"}}; !slices.Equal(got, want) {
 		t.Fatalf("RemovedStaged = %v, want %v", got, want)
 	}
 	for id, blob := range blobs {
 		reader, err := f.blobs.Open(t.Context(), sdd.SessionRef{Subject: collectSubject, Session: id}, blob.ID)
-		if id == "ended-old" {
+		if id == "ended-old" || id == "idle-open" {
 			if err == nil {
 				_ = reader.Close()
 				t.Fatal("collected session's blob remains readable")

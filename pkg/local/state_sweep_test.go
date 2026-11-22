@@ -10,6 +10,8 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -41,8 +43,44 @@ func (f stateFixture) location(key string) localadapter.StoreLocation {
 }
 
 // session writes a session of the project under key, ended at ended unless
-// that is zero, with one staged attachment.
+// that is zero, with one staged attachment. An open one holds a move in
+// progress.
 func (f stateFixture) session(t *testing.T, key string, id sdd.SessionID, ended time.Time) {
+	t.Helper()
+	sessions, created := f.idleSession(t, key, id)
+	if ended.IsZero() {
+		startMove(t, sessions, created)
+		return
+	}
+	metadata := created.Metadata
+	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
+	payload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), id, created.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startMove logs a move started in a session and left mid-step.
+func startMove(t *testing.T, sessions *localadapter.FilesystemSessionStore, stored sdd.StoredSession) {
+	t.Helper()
+	payload, err := json.Marshal(engine.Event{
+		V: 1, TS: stored.Metadata.UpdatedAt, Session: string(stored.Metadata.ID), Seq: 1, Instance: "i_capture", Event: engine.EventStarted,
+		Data: map[string]any{"procedure": "capture", "class": string(model.ProcedureClassMove)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), stored.Metadata.ID, stored.Version, sdd.SessionAppend{Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.WorkflowEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// idleSession writes an open session of the project under key, last updated
+// 200 days ago and holding no move, with one staged attachment.
+func (f stateFixture) idleSession(t *testing.T, key string, id sdd.SessionID) (*localadapter.FilesystemSessionStore, sdd.StoredSession) {
 	t.Helper()
 	location := f.location(key)
 	sessions, err := localadapter.NewFilesystemSessionStore(location)
@@ -61,17 +99,7 @@ func (f stateFixture) session(t *testing.T, key string, id sdd.SessionID, ended 
 	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: id}, "evidence.md", strings.NewReader("evidence")); err != nil {
 		t.Fatal(err)
 	}
-	if ended.IsZero() {
-		return
-	}
-	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
-	payload, err := json.Marshal(metadata.Ended)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := sessions.Append(t.Context(), id, created.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
-		t.Fatal(err)
-	}
+	return sessions, created
 }
 
 func (f stateFixture) relevance(t *testing.T, key string) string {
@@ -117,7 +145,9 @@ func (f stateFixture) stagedExists(t *testing.T, key string, id sdd.SessionID) b
 }
 
 // Rule 2: an ended session goes once sessions.retention passed since it
-// ended, with its staged attachments; open sessions and unreadable logs stay.
+// ended, with its staged attachments, and so does an open session untouched
+// for sessions.retention with no move in progress; an open session with a
+// move in progress and unreadable logs stay.
 func TestStateSweepCollectsSessions(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
@@ -125,6 +155,7 @@ func TestStateSweepCollectsSessions(t *testing.T) {
 	f.session(t, key, "s_old", f.now.Add(-sweepSessionRetention-time.Hour))
 	f.session(t, key, "s_recent", f.now.Add(-sweepSessionRetention+time.Hour))
 	f.session(t, key, "s_open", time.Time{})
+	f.idleSession(t, key, "s_idle")
 	unreadable := filepath.Join(f.location(key).Sessions, "s_unreadable.jsonl")
 	if err := os.WriteFile(unreadable, []byte("{not json\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -132,10 +163,10 @@ func TestStateSweepCollectsSessions(t *testing.T) {
 
 	removed := f.sweep(t)
 
-	if removed.Sessions != 1 || removed.Unreadable != 1 {
-		t.Errorf("the sweep should remove one ended session and report one unreadable log, got %+v", removed)
+	if removed.Sessions != 2 || removed.Unreadable != 1 {
+		t.Errorf("the sweep should remove one ended and one idle open session and report one unreadable log, got %+v", removed)
 	}
-	for id, wantKept := range map[sdd.SessionID]bool{"s_old": false, "s_recent": true, "s_open": true} {
+	for id, wantKept := range map[sdd.SessionID]bool{"s_old": false, "s_recent": true, "s_open": true, "s_idle": false} {
 		if kept := f.logExists(t, key, id); kept != wantKept {
 			t.Errorf("session %s kept should be %v", id, wantKept)
 		}
@@ -206,7 +237,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 		}
 	}
 	if !f.logExists(t, unusedOpen, "s_open") || !f.stagedExists(t, unusedOpen, "s_open") {
-		t.Error("an open session and its attachments stay however long the project was unused")
+		t.Error("an open session with a move in progress and its attachments stay however long the project was unused")
 	}
 	if !f.logExists(t, retained, "s_recent") || !f.stagedExists(t, retained, "s_recent") {
 		t.Error("an ended session not yet collected keeps its attachments however long the project was unused")
@@ -275,6 +306,7 @@ func TestStateSweepRetiresAnUnusedProjectOnceItsLastSessionIsCollected(t *testin
 // inRepoSession writes a session an older sdd logged into checkout's
 // .sdd/sessions, ended at ended unless that is zero, and stages one attachment
 // of it in the project's state folder, where sdd stages for every location.
+// An open one holds a move in progress.
 func (f stateFixture) inRepoSession(t *testing.T, key, checkout string, id sdd.SessionID, ended time.Time) {
 	t.Helper()
 	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(checkout, ".sdd", "sessions"))
@@ -282,8 +314,12 @@ func (f stateFixture) inRepoSession(t *testing.T, key, checkout string, id sdd.S
 		t.Fatal(err)
 	}
 	metadata := sdd.SessionMetadata{ID: id, Subject: "local", Project: "local", Participant: "Christopher", UpdatedAt: f.now.Add(-200 * 24 * time.Hour)}
-	if _, err := sessions.Create(t.Context(), metadata); err != nil {
+	created, err := sessions.Create(t.Context(), metadata)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if ended.IsZero() {
+		startMove(t, sessions, created)
 	}
 	blobs, err := localadapter.NewFilesystemStagedBlobStore(f.location(key))
 	if err != nil {

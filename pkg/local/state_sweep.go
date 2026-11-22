@@ -263,13 +263,13 @@ func (s *StateSwept) add(o StateSwept) {
 
 // StateSweep removes the per-project state under StateRoot nothing needs, of
 // the projects this sdd holds a record of using (projectKeys) and of no other:
-// ended sessions past their retention with their staged attachments, those
-// logged in a recorded checkout's .sdd/sessions (RecordCheckout) too, and the
-// relevance ledger and empty session folder of a project unused for longer
-// than the unused retention. It never removes an open session, a log it
-// cannot read, or the staged attachments of either, nor staged attachments
-// whose owner may lie in a checkout it cannot read: none recorded, or one
-// missing from disk.
+// sessions past their retention as app.CollectSessions rules them, with their
+// staged attachments, those logged in a recorded checkout's .sdd/sessions
+// (RecordCheckout) too, and the relevance ledger and empty session folder of
+// a project unused for longer than the unused retention. It never removes an
+// open session with a move in progress, a log it cannot read, or the staged
+// attachments of either, nor staged attachments whose owner may lie in a
+// checkout it cannot read: none recorded, or one missing from disk.
 type StateSweep struct {
 	StateRoot string
 }
@@ -362,7 +362,7 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 	return counts, nil
 }
 
-// collectIn collects the ended sessions logged under location, with their
+// collectIn collects the sessions logged under location, with their
 // staged attachments in any of staged.
 func collectIn(ctx context.Context, key string, location StoreLocation, staged []StoreLocation, now time.Time, retention time.Duration) (StateSwept, error) {
 	var counts StateSwept

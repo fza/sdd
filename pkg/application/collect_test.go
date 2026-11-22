@@ -156,10 +156,10 @@ func (f collectFixture) stagedIDs(t *testing.T) []string {
 	return ids
 }
 
-// TestCollectRemovesOnlyEndedSessionsPastRetention covers the pass's whole
-// removal rule in one shape: ended and past the window goes with its blobs,
-// ended but inside the window stays, and never-ended stays regardless of age.
-func TestCollectRemovesOnlyEndedSessionsPastRetention(t *testing.T) {
+// TestCollectRemovesEndedSessionsPastRetention covers the rule for ended
+// sessions: ended and past the window goes with its blobs, ended but inside
+// the window stays, and so does an open session active inside the window.
+func TestCollectRemovesEndedSessionsPastRetention(t *testing.T) {
 	f := newCollectFixture(t)
 	retention := 14 * 24 * time.Hour
 
@@ -191,6 +191,77 @@ func TestCollectRemovesOnlyEndedSessionsPastRetention(t *testing.T) {
 	}
 }
 
+// TestCollectOpenSessions covers the rule for open sessions: one idle past the
+// retention goes with its staged attachments unless a move is in progress in
+// it, parked or left mid-step; one active inside the retention stays.
+func TestCollectOpenSessions(t *testing.T) {
+	const retention = 14 * 24 * time.Hour
+	for _, tc := range []struct {
+		name        string
+		idle        time.Duration
+		move        func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity)
+		wantRemoved bool
+	}{
+		{name: "no move, idle past the retention", idle: retention + time.Hour, wantRemoved: true},
+		{name: "abandoned move, idle past the retention", idle: retention + time.Hour, wantRemoved: true, move: func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) {
+			serve := startCapture(t, workflow, identity)
+			if _, err := workflow.Abandon(t.Context(), identity, serve.Instance, "dropped"); err != nil {
+				t.Fatalf("Abandon: %v", err)
+			}
+		}},
+		{name: "parked move, idle past the retention", idle: retention + time.Hour, move: func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) {
+			serve := startCapture(t, workflow, identity)
+			if _, err := workflow.Park(t.Context(), identity, serve.Instance, "later"); err != nil {
+				t.Fatalf("Park: %v", err)
+			}
+		}},
+		{name: "move left mid-step, idle past the retention", idle: retention + time.Hour, move: func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) {
+			startCapture(t, workflow, identity)
+		}},
+		{name: "no move, active inside the retention", idle: retention - time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The store stamps each append with the wall clock, so the
+			// application's clock starts there and moves on from it.
+			now := time.Now().UTC()
+			f := newCollectFixture(t, func(options *sdd.ApplicationOptions) {
+				options.Clock = sdd.ClockFunc(func() time.Time { return now })
+			})
+			workflow, _, err := f.app.OpenWorkflow(t.Context(), f.identity, f.project, sdd.WorkflowOpenRequest{ClientName: "test"})
+			if err != nil {
+				t.Fatalf("OpenWorkflow: %v", err)
+			}
+			if tc.move != nil {
+				tc.move(t, workflow, f.identity)
+			}
+			f.stage(t, workflow.ID())
+			now = now.Add(tc.idle)
+
+			result := f.collect(t, retention)
+
+			removed := slices.Contains(result.RemovedSessions, workflow.ID())
+			if removed != tc.wantRemoved {
+				t.Fatalf("session removed should be %v, removed %v", tc.wantRemoved, result.RemovedSessions)
+			}
+			if listed := slices.Contains(f.listedIDs(t), string(workflow.ID())); listed == tc.wantRemoved {
+				t.Fatalf("session log kept should be %v", !tc.wantRemoved)
+			}
+			if staged := len(f.stagedIDs(t)) == 1; staged == tc.wantRemoved {
+				t.Fatalf("staged attachments kept should be %v", !tc.wantRemoved)
+			}
+		})
+	}
+}
+
+func startCapture(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) *sdd.WorkflowServe {
+	t.Helper()
+	serve, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "capture"})
+	if err != nil {
+		t.Fatalf("Start capture: %v", err)
+	}
+	return serve
+}
+
 // TestCollectPagesToConvergence pins the bounded shape: one pass processes a
 // page of sessions and names where it stopped, repeating until Next is empty
 // removes everything due, and a session the pass keeps never starves the pages
@@ -206,7 +277,7 @@ func TestCollectPagesToConvergence(t *testing.T) {
 
 	var removed []string
 	passes := 0
-	cmd := sdd.CollectSessionsCmd{Retention: time.Hour, Limit: 2}
+	cmd := sdd.CollectSessionsCmd{Retention: 14 * 24 * time.Hour, Limit: 2}
 	for {
 		result, err := f.app.CollectSessions(t.Context(), cmd)
 		if err != nil {
@@ -370,7 +441,7 @@ func TestCollectDoesNotExecutePendingWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := f.collect(t, time.Hour)
+	result := f.collect(t, 14*24*time.Hour)
 	if !slices.Equal(result.RemovedSessions, []sdd.SessionID{"s_ended"}) {
 		t.Fatalf("removed = %v", result.RemovedSessions)
 	}

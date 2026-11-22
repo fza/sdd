@@ -7,8 +7,9 @@ import (
 	"github.com/networkteam/slogutils"
 )
 
-// CollectSessionsCmd asks for one page of ended-session reclamation. Retention
-// is how long an ended session is kept; zero removes it after ending. Limit zero
+// CollectSessionsCmd asks for one page of session reclamation. Retention is how
+// long a session is kept after it ended, or after its log's last event while
+// it is open with no move in progress; zero removes it at once. Limit zero
 // means every match. After continues from a previous result's Next cursor.
 type CollectSessionsCmd struct {
 	Retention time.Duration
@@ -25,10 +26,12 @@ type CollectSessionsResult struct {
 	Next            SessionID
 }
 
-// CollectSessions removes resources before deleting their ended session. A
-// failed resource deletion leaves the session available for the next pass.
-// Collection never executes pending user writes. Ended sessions cannot resume,
-// while open sessions remain regardless of inactivity or pending work.
+// CollectSessions removes resources before deleting their session. A failed
+// resource deletion leaves the session available for the next pass.
+// Collection never executes pending user writes. It removes a session ended
+// longer than the retention ago, and an open one whose log holds no event
+// inside the retention and no move in progress, parked or left mid-step; the
+// shell's own instance is no move (20261121-223858-d-tac-cg2).
 func (a *Application) CollectSessions(ctx context.Context, cmd CollectSessionsCmd) (CollectSessionsResult, error) {
 	return collectSessions(ctx, a.sessions, a.blobs, a.now(), cmd)
 }
@@ -56,20 +59,21 @@ func OpenSessionsIn(ctx context.Context, sessions SessionStore) ([]SessionID, er
 }
 
 func collectSessions(ctx context.Context, sessions SessionStore, blobs StagedBlobStore, now time.Time, cmd CollectSessionsCmd) (CollectSessionsResult, error) {
-	endedBefore := now.UTC().Add(-cmd.Retention)
-	page, err := sessions.List(ctx, SessionFilter{EndedBefore: &endedBefore, After: cmd.After, Limit: cmd.Limit})
+	cutoff := now.UTC().Add(-cmd.Retention)
+	page, err := sessions.List(ctx, SessionFilter{After: cmd.After, Limit: cmd.Limit})
 	if err != nil {
 		return CollectSessionsResult{}, err
 	}
 	result := CollectSessionsResult{Skipped: page.Unreadable}
 	for _, session := range page.Sessions {
 		id := session.Metadata.ID
-		if err := validateStoredSession(session); err != nil {
+		due, err := collectable(session, cutoff)
+		if err != nil {
 			slogutils.FromContext(ctx).Warn("skipping unreadable session", "session", id, "err", err)
 			result.Skipped = append(result.Skipped, id)
 			continue
 		}
-		if end := session.Metadata.Ended; end == nil || !end.EndedAt.Before(endedBefore) {
+		if !due {
 			continue
 		}
 		ref := SessionRef{Subject: session.Metadata.Subject, Session: id}
@@ -84,4 +88,39 @@ func collectSessions(ctx context.Context, sessions SessionStore, blobs StagedBlo
 	}
 	result.Next = page.Next
 	return result, nil
+}
+
+// collectable reports whether a session is due at cutoff under the rule
+// CollectSessions states.
+func collectable(session StoredSession, cutoff time.Time) (bool, error) {
+	if err := validateStoredSession(session); err != nil {
+		return false, err
+	}
+	if end := session.Metadata.Ended; end != nil {
+		return end.EndedAt.Before(cutoff), nil
+	}
+	events, err := decodeWorkflowEvents(session.Events)
+	if err != nil {
+		return false, err
+	}
+	summary := deriveWorkflowSummary(session.Metadata.ID, events)
+	if len(summary.Open) > 0 {
+		return false, nil
+	}
+	return lastLogged(session, summary.LastActivity).Before(cutoff), nil
+}
+
+// lastLogged is the latest time a session log records: an event's append
+// time, a workflow event's own time or the metadata's last update.
+func lastLogged(session StoredSession, lastWorkflowEvent time.Time) time.Time {
+	last := session.Metadata.UpdatedAt
+	if lastWorkflowEvent.After(last) {
+		last = lastWorkflowEvent
+	}
+	for _, event := range session.Events {
+		if event.CreatedAt.After(last) {
+			last = event.CreatedAt
+		}
+	}
+	return last
 }
