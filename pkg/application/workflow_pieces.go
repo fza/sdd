@@ -102,7 +102,7 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 	if text != "" {
 		hash = contentHash(text)
 	}
-	if !w.session.ServeChanged(engine.Piece{Name: name, Hash: hash}) {
+	if !w.session.ServeChanged(engine.Piece{Name: name, Hash: hash}, w.neutral(text)) {
 		return ""
 	}
 	return text
@@ -117,13 +117,13 @@ func (w *WorkflowSession) SetCaller(caller string) { w.session.SetCaller(caller)
 // from the last this caller was served under name, or the call serves
 // everything in full.
 func (w *WorkflowSession) ServeOncePerChange(name, text string) bool {
-	return w.session.ServeChanged(engine.Piece{Name: name, Hash: contentHash(text)})
+	return w.session.ServeChanged(engine.Piece{Name: name, Hash: contentHash(text)}, w.neutral(text))
 }
 
 // ForgetOncePerChange records that the call's caller holds no text under
 // name, so the next call serves it whatever it holds.
 func (w *WorkflowSession) ForgetOncePerChange(name string) {
-	w.session.ServeChanged(engine.Piece{Name: name})
+	w.session.ServeChanged(engine.Piece{Name: name}, "")
 }
 
 // OncePerChangeDue is ServeOncePerChange recording nothing.
