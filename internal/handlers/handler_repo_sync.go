@@ -233,8 +233,10 @@ func (h *Handler) syncConnected(ctx context.Context, repo repos.ConnectedRepo, m
 	if err != nil {
 		return *h.failedOutcome(ctx, repo, err), true
 	}
-	if len(blocks) > 0 {
-		return *h.failed(ctx, repo, blocks[0].Reason()), true
+	for _, block := range blocks {
+		if !block.TitlesFailed() {
+			return *h.failed(ctx, repo, block.Reason()), true
+		}
 	}
 	switch {
 	case skipped:

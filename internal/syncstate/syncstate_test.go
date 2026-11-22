@@ -180,3 +180,21 @@ func TestDetachedHeadKeepsNoRecord(t *testing.T) {
 		t.Errorf("a detached HEAD should keep no record, got %+v", got)
 	}
 }
+
+func TestTitlesLockKeepsOneBackfillPerCheckout(t *testing.T) {
+	locks := syncstate.CheckoutLocks{GraphDir: t.TempDir()}
+	release, err := locks.TryLockTitles(t.Context())
+	if err != nil || release == nil {
+		t.Fatalf("a free lock should be taken, got %v", err)
+	}
+	second, err := locks.TryLockTitles(t.Context())
+	if err != nil || second != nil {
+		t.Fatalf("a running backfill should make a second start a no-op, got %v", err)
+	}
+	release()
+	third, err := locks.TryLockTitles(t.Context())
+	if err != nil || third == nil {
+		t.Fatalf("a released lock should be taken again, got %v", err)
+	}
+	third()
+}

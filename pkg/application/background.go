@@ -40,8 +40,9 @@ func (b *background) stop(ctx context.Context) error {
 }
 
 // Shutdown waits for the work the application runs past the calls that
-// started it, each sync round a call stopped waiting for, and starts no more
-// of it. It returns ctx's cause when ctx ends first.
+// started it, each sync round a call stopped waiting for and each title
+// backfill, and starts no more of it. It returns ctx's cause when ctx ends
+// first.
 func (a *Application) Shutdown(ctx context.Context) error {
 	return a.background.stop(ctx)
 }

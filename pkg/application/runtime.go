@@ -84,6 +84,10 @@ type GraphSync interface {
 	SyncDue(ctx context.Context, branch string) (bool, error)
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
 	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
+	// BackfillTitles titles the untitled entries of branch's graph through
+	// runner and records a failure for the sync notice; it returns at once
+	// while another backfill runs in the checkout.
+	BackfillTitles(ctx context.Context, branch string, trigger SyncTrigger, runner llm.Runner) error
 }
 
 // SyncBlocked is what blocks automatic sync of a graph repository, since
@@ -107,11 +111,19 @@ type SyncBlocked struct {
 type SyncTrigger string
 
 const (
-	// SyncOnCall: an engine call.
+	// SyncOnCall: an engine call; its title backfill waits out the backfill
+	// cooldown.
 	SyncOnCall SyncTrigger = "call"
 	// SyncOnTimer: the timer of a running server, once a round is due.
 	SyncOnTimer SyncTrigger = "timer"
+	// SyncOnSessionStart: a session opening; it starts the title backfill
+	// alone, which always runs.
+	SyncOnSessionStart SyncTrigger = "session-start"
 )
+
+// titleBackfillTimeout bounds one background title backfill, whose title
+// calls the injected runner bounds in turn.
+const titleBackfillTimeout = 10 * time.Minute
 
 // syncGraph runs a sync round for branch, the base branch when empty. A
 // sync failure never blocks the session it precedes; it is logged.
@@ -126,6 +138,26 @@ func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string, trigger S
 	err := r.options.Sync.SyncGraph(ctx, branch, trigger)
 	if err != nil {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
+	}
+}
+
+// backfillTitles runs the title backfill of branch's graph, the base branch
+// when empty. It outlives ctx: a backfill commits, and a commit cut short
+// leaves the repository locked. Its failures reach the sync notice through
+// the record; only a failure to run it at all is logged.
+func (r *ProjectRuntime) backfillTitles(ctx context.Context, branch string, trigger SyncTrigger) {
+	if r.options.Sync == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleBackfillTimeout)
+	defer cancel()
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return
+	}
+	err := r.options.Sync.BackfillTitles(ctx, branch, trigger, r.options.LLM)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("title backfill: %v", err), "branch", branch)
 	}
 }
 
@@ -264,6 +296,7 @@ func (r *ProjectRuntime) syncGraphWhenDue(ctx context.Context, branch string) {
 	}
 	if due {
 		r.syncGraph(ctx, branch, SyncOnTimer)
+		r.backfillTitles(ctx, branch, SyncOnTimer)
 	}
 }
 

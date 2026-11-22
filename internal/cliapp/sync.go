@@ -55,7 +55,7 @@ func syncCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				return handlers.New(opts).SyncPull(ctx, &command.SyncPullCmd{
+				err = handlers.New(opts).SyncPull(ctx, &command.SyncPullCmd{
 					OnPulled: func(output string) {
 						if output != "" {
 							fmt.Fprintln(cmd.Writer, output)
@@ -63,6 +63,10 @@ func syncCmd() *cli.Command {
 					},
 					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "fetch", next) },
 				})
+				if err != nil {
+					return err
+				}
+				return backfillTitles(ctx, cmd, dir)
 			}
 			syncMode, err := graphSyncMode(dir)
 			if err != nil {
@@ -75,9 +79,13 @@ func syncCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{Explicit: true, OnDeferred: func(operation string, next time.Time) {
+			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{Explicit: true, OnDeferred: func(operation string, next time.Time) {
 				printDeferred(cmd.Writer, operation, next)
 			}})
+			if err != nil {
+				return err
+			}
+			return backfillTitles(ctx, cmd, dir)
 		}),
 	}
 }
@@ -127,6 +135,42 @@ func fetchAndReport(ctx context.Context, cmd *cli.Command, graphDir string) erro
 // gate deferred, and when it may run.
 func printDeferred(w io.Writer, operation string, next time.Time) {
 	fmt.Fprintf(w, "sync: %s skipped, next allowed at %s\n", operation, next.Local().Format("15:04"))
+}
+
+// backfillTitles titles the untitled entries of graphDir after an explicit
+// sync where titles.backfill is on, waiting for it. A failure is recorded and
+// printed as the sync banner, as a blocked sync is, and leaves the sync
+// itself successful.
+func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) error {
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	backfill := &command.BackfillTitlesCmd{Enabled: cfg != nil && cfg.Titles.Backfills(), SDDDir: sddDir}
+	opts := handlers.Options{Stderr: cmd.ErrWriter, SDDDir: sddDir}
+	if backfill.Enabled {
+		// A runner that cannot be built leaves none: the backfill records that
+		// no LLM is configured, as the background backfill does.
+		runner, err := newRunner(cmd, "")
+		if err != nil {
+			slogutils.FromContext(ctx).Warn("title backfill: building the LLM runner", "err", err)
+			runner = nil
+		}
+		opts.Reader = finders.New(finders.Options{Config: cfg})
+		opts.LLMRunner = runner
+		opts.Committer = graphGit(graphDir)
+		opts.Language = configLanguage(cfg)
+		opts = withTitleSearch(cmd, opts)
+	}
+	opts, err = syncstate.TitlesOptions(ctx, graphDir, opts)
+	if err != nil {
+		return err
+	}
+	return handlers.New(opts).BackfillTitles(ctx, backfill)
 }
 
 // graphSyncOptions adds the git surfaces and sync state of graphDir's

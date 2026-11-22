@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -194,6 +195,44 @@ func ResolveGraphDir(repoRoot string, cfg *model.PerRepoConfig) string {
 // TmpDir returns the path to .sdd/tmp/ given the .sdd/ directory path.
 func TmpDir(sddDir string) string {
 	return filepath.Join(sddDir, "tmp")
+}
+
+// LastTitlesPath returns the path to the marker of the last background title
+// backfill, which bounds its retries by model.TitleBackfillCooldown.
+func LastTitlesPath(sddDir string) string {
+	return filepath.Join(TmpDir(sddDir), "last-titles")
+}
+
+// ReadLastTitles returns the mtime of the last-titles marker, the zero time
+// when it does not exist.
+func ReadLastTitles(sddDir string) (time.Time, error) {
+	info, err := os.Stat(LastTitlesPath(sddDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
+// TouchLastTitles stamps the last-titles marker with the current time.
+func TouchLastTitles(sddDir string) error {
+	if err := os.MkdirAll(TmpDir(sddDir), 0o755); err != nil {
+		return err
+	}
+	path := LastTitlesPath(sddDir)
+	now := time.Now()
+	if _, err := os.Stat(path); err == nil {
+		return os.Chtimes(path, now, now)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // IsSDDMetaDir returns true if the directory entry is the .sdd metadata
