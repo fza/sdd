@@ -38,10 +38,13 @@ const (
 	EventOpResult        EventType = "op_result"
 	EventMutationIntent  EventType = "mutation_intent"
 	EventMutationOutcome EventType = "mutation_outcome"
-	EventServed          EventType = "served"
-	EventTransition      EventType = "transition"
-	EventCompleted       EventType = "completed"
-	EventAbandoned       EventType = "abandoned"
+	// EventMutationCommitted records engine writes a running operation
+	// committed ahead of its outcome (Context.Commit).
+	EventMutationCommitted EventType = "mutation_committed"
+	EventServed            EventType = "served"
+	EventTransition        EventType = "transition"
+	EventCompleted         EventType = "completed"
+	EventAbandoned         EventType = "abandoned"
 	// EventRead records what a read surface served to the session: the tool,
 	// the entry IDs, and the depth — metadata only, never payloads. Reads stay
 	// free and ungated; tracking is logging, not gating (d-tac-dbk). The read
@@ -300,7 +303,9 @@ type Session struct {
 	intent      *MutationIntent
 	intentStore *Store
 	intentDone  bool
-	cancelled   *MutationCancellation
+	// intentCommitted folds what the pending intent's attempts committed.
+	intentCommitted map[string]any
+	cancelled       *MutationCancellation
 	// progressing counts the transitions in flight that passed
 	// checkProgression, which Readmit checks again after a fold.
 	progressing int
@@ -544,6 +549,18 @@ func (s *Session) foldReads(ids []string, depth ReadDepth) []string {
 // at (empty when never served).
 func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
+}
+
+// fullReads lists the entries served in full, sorted.
+func (s *Session) fullReads() []string {
+	var ids []string
+	for id, depth := range s.reads {
+		if depth == ReadFull {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // Reorient records the consumer's request for the session's position and
@@ -1242,6 +1259,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 
 	case EventMutationIntent:
 		return s.restoreIntent(ev)
+
+	case EventMutationCommitted:
+		if err := s.validateOutcome(ev); err != nil {
+			return err
+		}
+		writes, _ := ev.Data["writes"].(map[string]any)
+		s.foldCommitted(writes)
 
 	case EventOpResult, EventMutationOutcome:
 		inst, err := s.replayInstance(ev)

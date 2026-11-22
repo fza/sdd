@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ const (
 	anchorTagLen    = 4
 	anchorAlphabet  = "0123456789abcdefghijklmnopqrstuvwxyz"
 	anchorMinLetter = 3
+	anchorMaxLetter = 12
 )
 
 // RandomSource draws anchor tags and positions; math/rand/v2's *rand.Rand
@@ -70,13 +72,15 @@ func letterRuns(text string) map[string]int {
 
 // pickChallenges draws up to n challenges from text: content words whose
 // letter run count names once, each with the content word right after it on
-// the same line. It takes the ones nearest at, the tag's offset, so the agent
-// finds each prompt beside the tag it holds.
+// the same line. Pairs of plain words go first, the rest only when the text
+// holds no such pair. It takes the ones nearest at, the tag's offset, so the
+// agent finds each prompt beside the tag it holds.
 func pickChallenges(text string, count map[string]int, at, n int) []Challenge {
 	words := contentWords(text)
 	type candidate struct {
 		challenge Challenge
 		distance  int
+		plain     bool
 	}
 	// Every proof names another word, so none answers what an earlier one did.
 	used := map[string]bool{}
@@ -100,7 +104,10 @@ func pickChallenges(text string, count map[string]int, at, n int) []Challenge {
 		if distance < 0 {
 			distance = -distance
 		}
-		candidates = append(candidates, candidate{Challenge{Prompt: w.text, Answer: next.text}, distance})
+		candidates = append(candidates, candidate{Challenge{Prompt: w.text, Answer: next.text}, distance, w.plain && next.plain})
+	}
+	if slices.ContainsFunc(candidates, func(c candidate) bool { return c.plain }) {
+		candidates = slices.DeleteFunc(candidates, func(c candidate) bool { return !c.plain })
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].distance < candidates[j].distance })
 	var picked []Challenge
@@ -139,8 +146,9 @@ func AnchorMark(tag string) string { return anchorTagOpen + tag + anchorTagClose
 // after it reads as its proof.
 func TagName(tag string) string { return "tag " + tag }
 
-// PlaceAnchor places tag before a content word of text drawn from rnd. It
-// reports false when the text holds no content word outside code.
+// PlaceAnchor places tag before a content word of text drawn from rnd, between
+// plain words where the text has such a place. It reports false when the text
+// holds no content word outside code.
 func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
 	return PlaceAnchorIn(text, text, tag, rnd)
 }
@@ -149,7 +157,7 @@ func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
 // result text it is joined into: each later proof's prompt occurs once in
 // field.
 func PlaceAnchorIn(text, field, tag string, rnd RandomSource) (Anchor, bool) {
-	words := contentWords(text)
+	words := preferPlainPlaces(contentWords(text), func(w textWord) textWord { return w })
 	if len(words) == 0 {
 		return Anchor{}, false
 	}
@@ -213,6 +221,7 @@ func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anc
 			spots = append(spots, spot{path: path, text: text, word: w})
 		}
 	})
+	spots = preferPlainPlaces(spots, func(s spot) textWord { return s.word })
 	if len(spots) == 0 {
 		return Anchor{}, false
 	}
@@ -356,6 +365,46 @@ func validAnchorTag(tag string) bool {
 type textWord struct {
 	text   string
 	offset int
+	// plain marks a word whose token is a plain word; afterPlain one whose
+	// token right before it on its line is one (plainWord).
+	plain, afterPlain bool
+}
+
+// preferPlainPlaces keeps the places whose word and the word before it are
+// plain, or all of them when none is.
+func preferPlainPlaces[T any](places []T, word func(T) textWord) []T {
+	var plain []T
+	for _, p := range places {
+		if w := word(p); w.plain && w.afterPlain {
+			plain = append(plain, p)
+		}
+	}
+	if len(plain) == 0 {
+		return places
+	}
+	return plain
+}
+
+// plainWord reports whether token, its surrounding brackets, quotes, emphasis
+// and sentence punctuation trimmed, is a plain word: letters, a hyphen only
+// inside, no capital after a small letter, 3 to 12 letters. An agent types
+// such a word back reliably and tells it from its neighbour, unlike a URL,
+// path, entry ID, identifier or number.
+func plainWord(token string) bool {
+	word := strings.TrimRight(strings.TrimLeft(token, `([{"'*_`), `)]}"'*_.,;:!?`)
+	letters, lower, hyphen := 0, false, true
+	for _, r := range word {
+		switch {
+		case r == '-' && !hyphen:
+			hyphen, lower = true, false
+		case unicode.IsLetter(r) && (!lower || !unicode.IsUpper(r)):
+			letters++
+			hyphen, lower = false, unicode.IsLower(r)
+		default:
+			return false
+		}
+	}
+	return !hyphen && letters >= anchorMinLetter && letters <= anchorMaxLetter
 }
 
 // contentWords lists the words a tag may stand before: letters only, at
@@ -379,13 +428,14 @@ func contentWords(text string) []textWord {
 
 func lineContentWords(line string, base int) []textWord {
 	var words []textWord
-	inCode, afterTag := false, false
+	inCode, afterTag, afterPlain := false, false, false
 	i := 0
 	for i < len(line) {
 		r, size := utf8.DecodeRuneInString(line[i:])
 		switch {
 		case r == '`':
 			inCode = !inCode
+			afterPlain = false
 			i += size
 		case unicode.IsSpace(r):
 			i += size
@@ -399,14 +449,17 @@ func lineContentWords(line string, base int) []textWord {
 				end += size
 			}
 			token := line[i:end]
+			plain := !inCode && plainWord(token)
 			// The word after another tag is that tag's proof.
 			if !inCode && !afterTag {
 				if w, ok := tokenContentWord(token); ok {
 					w.offset += base + i
+					w.plain, w.afterPlain = plain, afterPlain
 					words = append(words, w)
 				}
 			}
 			afterTag = strings.Contains(token, anchorTagOpen)
+			afterPlain = plain
 			i = end
 		}
 	}

@@ -123,6 +123,9 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 			results[i], errs[i] = runJSONCheck(ctx, runner, req, preflightLightExtraction, func(output string) (*PreflightResult, error) {
 				return parseLightResult(output, allowed)
 			})
+			if errs[i] == nil {
+				results[i].Findings = flagKindFitUnnamed(results[i].Findings, kindFit)
+			}
 		}()
 	}
 	wg.Wait()
