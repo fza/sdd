@@ -333,6 +333,7 @@ var RetiredConfigKeys = map[string]string{
 	"relevance.commit":      retiredRelevanceReason,
 	"relevance.content":     retiredRelevanceReason,
 	"contribution":          "contribution mode was removed; graph writes are allowed on every branch",
+	"verify.brief_all_below": "a graph check searches on a graph of any size",
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
