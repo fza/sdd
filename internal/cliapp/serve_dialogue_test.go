@@ -2,7 +2,6 @@ package cliapp_test
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,13 +46,4 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 			}
 		})
 	}
-}
-
-func readFile(t *testing.T, name string) string {
-	t.Helper()
-	content, err := os.ReadFile(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(content)
 }
