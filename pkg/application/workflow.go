@@ -929,7 +929,6 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 // text left out (20261121-233256-d-tac-mm2); resume_session serves it in
 // full.
 func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentity) (*WorkflowServe, error) {
-	mark := w.session.PieceMark()
 	serve, err := w.ServeShell(ctx, identity)
 	if err != nil || serve == nil {
 		return serve, err
@@ -942,8 +941,6 @@ func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentit
 	if moves := graph.MoveCanonicals(); len(moves) > 0 {
 		landing += " Moves to start next: " + strings.Join(moves, ", ") + "."
 	}
-	// Pieces the left-out text placed never reach the agent.
-	w.session.DropPiecesSince(mark)
 	serve.InstructionLanes = nil
 	serve.Instructions = serve.ComposeInstructions(landing)
 	return serve, nil
