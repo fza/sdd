@@ -101,8 +101,11 @@ func TestTheQuestionAsksAboutTheOldestTextByItsLatestCopy(t *testing.T) {
 	if name, _, _ := test.LastQuestion(q); name != stepLane.Name {
 		t.Errorf("the question should ask about the text served longest ago, got %q", q)
 	}
-	// lost serves the step text again, which makes intro the oldest copy.
-	_, q = respond(t, session, model.LostAnswer, map[engine.Piece]string{stepLane: stepText})
+	// A reread serves the step text again, which makes intro the oldest copy.
+	session.BeginCall(answer(t, q, stepText, introText), []string{stepLane.Name})
+	serve(session, stepLane, stepText)
+	session.RecordServed()
+	q = session.Ask()
 	if name, _, _ := test.LastQuestion(q); name != introLane.Name {
 		t.Errorf("a text served in full again should no longer be the oldest, got %q", q)
 	}

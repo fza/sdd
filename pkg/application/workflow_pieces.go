@@ -39,7 +39,8 @@ func (w *WorkflowSession) Answered() bool { return w.session.Answered() }
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, held for the rest of the call.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	held := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers), text, jsonEscaped(text))
+	neutral := w.neutral(text)
+	held := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(neutral)}, w.entryPieces(covers), neutral, jsonEscaped(text))
 	if held {
 		return ServedPiece{Held: true}
 	}
@@ -53,7 +54,7 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (bool,
 	if err != nil {
 		return false, fmt.Errorf("encoding the %s report schema: %w", name, err)
 	}
-	return w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil, model.SchemaDescriptions(schema), string(raw)), nil
+	return w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(w.neutral(string(raw)))}, nil, w.neutral(model.SchemaDescriptions(schema)), string(raw)), nil
 }
 
 // ServeMark marks the pieces the call has served so far.
@@ -74,7 +75,7 @@ func (w *WorkflowSession) FollowDeferral(instance string) {
 // name at the instance's step, when the call would serve text, its content
 // now, in full all the same.
 func (w *WorkflowSession) Resent(instance, name, text string) bool {
-	return w.session.Resent(instance, engine.Piece{Name: name, Hash: contentHash(text)})
+	return w.session.Resent(instance, engine.Piece{Name: name, Hash: contentHash(w.neutral(text))})
 }
 
 // EndDeferral ends the instance's deferral, as a serve of it settles it.
@@ -216,6 +217,12 @@ func (w *WorkflowSession) entryPieces(ids []string) []engine.Piece {
 		pieces[i] = w.entryPiece(id)
 	}
 	return pieces
+}
+
+// neutral is text as held texts compare across linked sessions, without the
+// session's handle.
+func (w *WorkflowSession) neutral(text string) string {
+	return model.SessionNeutral(text, string(w.ID()))
 }
 
 func contentHash(text string) string {
