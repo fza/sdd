@@ -160,6 +160,7 @@ func TestAutoCalibrate_ReplaysNothingWithoutAProofStoreOrAnEmbedder(t *testing.T
 			if tc.embed {
 				application = f.app(t, policy, &countingEmbeddings{})
 			} else {
+				f.withoutEmbedder = true
 				application = f.app(t, policy, nil)
 			}
 			stop := startAutoCalibrate(t, application, sdd.AutoCalibrationRequest{})

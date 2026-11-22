@@ -286,7 +286,7 @@ func TestGather_FarFloorTakesTheFormItsStepAllows(t *testing.T) {
 			scorer := &scriptedScorer{maxBatch: 5}
 			f := floorFixture(t, scorer, 3)
 			f.proofs = tc.proofs(t)
-			result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), floorRequest())
+			result, err := gather(t, f.app(t, floorPolicy(), nil), floorRequest())
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -534,10 +533,4 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	if !strings.Contains(reopened.Text, "id: "+gatherAlpha) {
 		t.Fatalf("an entry opened by ID without its proof should serve in full:\n%s", reopened.Text)
 	}
-}
-
-// blindShare is how many of setAside candidates, the audited lines among
-// them, a gather shows blind (model.AuditSample).
-func blindShare(setAside int) int {
-	return int(math.Ceil(model.AuditShare * float64(setAside)))
 }
