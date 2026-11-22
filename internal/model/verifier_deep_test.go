@@ -38,6 +38,19 @@ func TestBuildDeepProposal_LabelsEachHunkByItsFinding(t *testing.T) {
 	}
 }
 
+func TestBuildDeepProposal_HunkCarriesTheChangedSpanWithAFewWordsAround(t *testing.T) {
+	base := "The capture writer, which every import runs through, drops the second attachment when two attachments share a name in one staging folder.\n"
+	_, hunks, err := model.BuildDeepProposal(base, []model.DeepChange{{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "two attachments share", New: "two staged files share"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := model.RenderDeepHunks(hunks)
+	want := "@@ h1 [f1 applied] line 1\n-…second attachment when two attachments share a name in…\n+…second attachment when two staged files share a name in…\n"
+	if got != want {
+		t.Fatalf("a hunk should carry the changed span and three words each side, not the paragraph:\n%s", got)
+	}
+}
+
 func TestBuildDeepProposal_RefusesNonMatchingAndOverlappingEdits(t *testing.T) {
 	_, _, err := model.BuildDeepProposal(deepBase, []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "absent text", New: "x"}}}})
 	if err == nil || !strings.Contains(err.Error(), "f1 edit 1: old text matches the draft 0 times") {
