@@ -91,6 +91,8 @@ type Instance struct {
 	// reading folds the grounding reads credited to this instance; replay
 	// restores it from the read events.
 	reading model.Reading
+	// foreign marks a move an earlier build started (procedureRevision).
+	foreign bool
 }
 
 // Reading returns the instance's credited grounding reads.
@@ -587,6 +589,13 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			sv.Instructions = CancellationNotice(cancellation)
 			sv.Lanes = []ServeLane{{Name: "cancellation", Text: sv.Instructions}}
 		}
+		return sv, nil
+	}
+	if inst.foreign {
+		sv.Step = inst.loggedStep()
+		sv.Goal = ForeignMoveGoal
+		sv.Instructions = foreignMoveInstructions
+		sv.Sizes = []PartSize{{Part: "foreign", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
 
