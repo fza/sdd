@@ -323,7 +323,7 @@ func (x *deepExchange) judgeEditAndNoEdit(t *testing.T) {
 	x.pickUp(t)
 	serve := x.session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepProposal")
-	if !strings.Contains(serve.Instructions, "f2 [low, inconsistent]: the confidence outruns one observation") || !strings.Contains(serve.Instructions, "report the fix with accept") {
+	if !strings.Contains(serve.Instructions, "f2 [low, inconsistent] accepted without an edit") || strings.Contains(serve.Instructions, "the confidence outruns") || !strings.Contains(serve.Instructions, "report the fix with accept") {
 		t.Fatalf("the proposal should list the finding without an edit as the drafter's to fix through accept:\n%s", serve.Instructions)
 	}
 }
