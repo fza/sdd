@@ -111,7 +111,7 @@ func runPreflight(t *testing.T, runner llm.Runner) (*llmops.PreflightResult, err
 		Type:         model.TypeSignal,
 		Layer:        model.LayerTactical,
 		Kind:         model.KindGap,
-		Participants: []string{"Felix Zandanel"},
+		Participants: []string{"Alex Example"},
 		Content:      "A gap worth naming.",
 	}
 	return llmops.Preflight(context.Background(), runner, entry, graph, "")

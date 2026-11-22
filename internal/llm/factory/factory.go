@@ -68,8 +68,8 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 // free to spend twice the configured timeout; reformatting text the model
 // already produced needs far less than a reasoning pass.
 func boundedPerPurpose(runner llm.Runner, timeout, extractTimeout time.Duration) llm.Runner {
-	reasoning := llm.Bounded(runner, timeout)
-	extraction := llm.Bounded(runner, extractTimeout)
+	reasoning := namedTimeout(llm.Bounded(runner, timeout), bound{timeout: timeout, setting: "llm.timeout"})
+	extraction := namedTimeout(llm.Bounded(runner, extractTimeout), bound{timeout: extractTimeout, setting: "llm.extract_timeout"})
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
 		switch req.Purpose {
 		case llm.PurposePreflightExtract, llm.PurposeWritingGuideExtract:

@@ -108,7 +108,8 @@ func reportsNoAnalysis(text string) bool {
 		Analysis *bool             `json:"analysis"`
 		Findings []json.RawMessage `json:"findings"`
 	}
-	if err := json.Unmarshal([]byte(jsonText), &answer); err != nil {
+	err = json.Unmarshal([]byte(jsonText), &answer)
+	if err != nil {
 		return false
 	}
 	if answer.Analysis == nil {
