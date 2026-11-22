@@ -284,7 +284,7 @@ func (r *ProjectRuntime) vectorResult(graph *model.Graph, request query.SearchQu
 		}
 		result.Entries = append(result.Entries, *row)
 	}
-	sort.Slice(result.Entries, func(i, j int) bool { return result.Entries[i].Score > result.Entries[j].Score })
+	sortHits(result.Entries)
 	if len(result.Entries) > request.EffectiveLimit() {
 		result.Entries = result.Entries[:request.EffectiveLimit()]
 	}
@@ -371,11 +371,22 @@ func hybridResult(text, vector *query.SearchResult, limit int) *query.SearchResu
 	for _, row := range rows {
 		result.Entries = append(result.Entries, *row)
 	}
-	sort.Slice(result.Entries, func(i, j int) bool { return result.Entries[i].Score > result.Entries[j].Score })
+	sortHits(result.Entries)
 	if len(result.Entries) > limit {
 		result.Entries = result.Entries[:limit]
 	}
 	return result
+}
+
+// sortHits orders hits by falling score and equal scores by entry ID, so the
+// limit cuts a repeated search alike.
+func sortHits(entries []query.SearchEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Score != entries[j].Score {
+			return entries[i].Score > entries[j].Score
+		}
+		return entries[i].Entry.ID < entries[j].Entry.ID
+	})
 }
 
 func publicStatusMultiplier(kind model.StatusKind) float32 {
