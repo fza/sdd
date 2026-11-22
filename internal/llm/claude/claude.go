@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/networkteam/slogutils"
 
@@ -61,6 +63,8 @@ var parentSessionEnvVars = []string{
 	"CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
 }
 
+const waitDelay = 2 * time.Second
+
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
@@ -89,6 +93,11 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 		args = append(args, "--setting-sources", "")
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
+	// The CLI's own children may hold stdout open: a cancel kills its
+	// whole process group, and Wait gives up on the pipes after waitDelay.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = waitDelay
 	cmd.Dir = workDir
 	// Go sets PWD itself only for a nil Env.
 	cmd.Env = append(env, "PWD="+workDir)
@@ -96,6 +105,9 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	out, runErr := cmd.Output()
 	if runErr != nil && ctx.Err() == context.DeadlineExceeded {
 		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")}
+	}
+	if runErr != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p: %w", ctx.Err())}
 	}
 
 	var resp claudeResponse
