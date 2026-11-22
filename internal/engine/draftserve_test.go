@@ -43,6 +43,25 @@ func longBody() string {
 // TestDraftServe_Rounds drives the full arc: bounded first round, item-level
 // list delta, scalar whole-when-changed, prose content diff, an explicit
 // nothing-changed round, and the rehydrate serve whole.
+// The draft lane leads the serve, ahead of the step's own guidance.
+func TestDraftServe_TheDraftLeads(t *testing.T) {
+	spec, err := engine.ParseSpec(draftServeEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_leads", "tester", &recordingSink{})
+	sv, err := sess.Start(spec, map[string]any{"body": longBody()}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sv.Lanes) < 2 || sv.Lanes[0].Name != engine.DraftLane {
+		t.Fatalf("the draft lane should lead, got %+v", sv.Lanes)
+	}
+	if !strings.HasPrefix(sv.UnitText, "Draft as it stands") || !strings.HasSuffix(sv.UnitText, "Draft guidance.") {
+		t.Errorf("the unit text should open with the draft, then the guidance, got %q", sv.UnitText)
+	}
+}
+
 func TestDraftServe_Rounds(t *testing.T) {
 	spec, err := engine.ParseSpec(draftServeEntry(t))
 	if err != nil {

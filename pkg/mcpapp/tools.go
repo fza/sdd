@@ -1536,6 +1536,7 @@ const (
 // without framing, which it carries once for every move, as a move whose
 // lanes all wait resumes through next. It returns what the result holds; the
 // caller records what it served and, through recordDeferral, what waits.
+// The leading draft lane never waits (leadingLanes).
 func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, heldLanes, error) {
 	ss.root.EndDeferral(serve.Instance)
 	pageFull := ss.root.TakeStepFullIDs()
@@ -1558,7 +1559,7 @@ func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		held.framing = framingNone
 	}
 	if serve.Base != nil {
-		for held.base = len(serve.Base.InstructionLanes); held.base > 0; held.base-- {
+		for held.base = len(serve.Base.InstructionLanes); held.base > leadingLanes(serve.Base); held.base-- {
 			res, kept, _, fits, err := compose(held)
 			if err != nil || fits {
 				return res, kept, err
@@ -1571,7 +1572,7 @@ func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss
 	}
 	ss.root.WithdrawServedSince(mark)
 	held.resent = true
-	alone := -1
+	floor, alone := leadingLanes(serve), -1
 	for held.keep = lanes; ; held.keep-- {
 		res, kept, count, fits, err := compose(held)
 		if err != nil {
@@ -1583,11 +1584,11 @@ func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		if fits && (held.keep == lanes || count.lanes > 0 || !progress) {
 			return res, kept, nil
 		}
-		if held.keep == 0 && !progress {
+		if held.keep == floor && !progress {
 			return res, kept, nil
 		}
 		ss.root.WithdrawServedSince(mark)
-		if held.keep == 0 {
+		if held.keep == floor {
 			break
 		}
 	}
@@ -1637,6 +1638,16 @@ func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		}
 		ss.root.WithdrawServedSince(mark)
 	}
+}
+
+// leadingLanes counts the first lanes of serve that serve whatever the bound:
+// its draft lane (types.DraftLane), served past the bound where it fills a
+// result alone.
+func leadingLanes(serve *sdd.WorkflowServe) int {
+	if len(serve.InstructionLanes) > 0 && serve.InstructionLanes[0].Name == types.DraftLane {
+		return 1
+	}
+	return 0
 }
 
 // recordDeferral records a serve, or the session shell's serve it lands in,
@@ -1732,7 +1743,7 @@ func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolReques
 		if err != nil {
 			return nil, err
 		}
-		if cost <= budget || keep == 0 {
+		if cost <= budget || keep == leadingLanes(serve) {
 			break
 		}
 		ss.root.WithdrawServedSince(mark)
