@@ -152,13 +152,18 @@ func TestCaptureDismissals_LightReadingMarksImplicitDismissals(t *testing.T) {
 	}
 }
 
-// The assemble instructions name the four states every shown entry ends in.
-func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
+// The assemble instructions ask a ref or a verdict only of an entry served in
+// full; a candidate line owes neither.
+func TestCaptureDismissals_AssembleOwesAVerdictOnlyForEntriesServedInFull(t *testing.T) {
 	_, session := newGroundingWorld(t, "dismissals-served")
 	serve := session.Start(t, "capture", nil)
 	proctest.RequireStep(t, serve, "assemble")
-	if !strings.Contains(serve.Instructions, "every entry shown ends referenced, opened, dismissed in `verdicts`") || !strings.Contains(serve.Instructions, "or else implicitly at publish") {
-		t.Fatalf("the assemble step should state the four states a shown entry ends in:\n%s", serve.Instructions)
+	instructions := test.Untagged(serve.Instructions)
+	if !strings.Contains(instructions, "an entry served in full needs a ref or a verdict in `verdicts`") || !strings.Contains(instructions, "A candidate line owes neither") {
+		t.Fatalf("the assemble step should owe a verdict only for an entry served in full:\n%s", serve.Instructions)
+	}
+	if strings.Contains(instructions, "every entry shown ends") {
+		t.Fatalf("the assemble step should not ask a state of every entry shown:\n%s", serve.Instructions)
 	}
 }
 

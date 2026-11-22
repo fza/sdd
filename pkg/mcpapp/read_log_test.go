@@ -118,9 +118,9 @@ func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
 	if !strings.Contains(first.Serve, "(page 1 of ") {
 		t.Fatalf("the fixture's gather should page past the result bound:\n%.400s", first.Serve)
 	}
-	_, toJudge, ok := strings.Cut(first.Serve, "# to judge (")
+	_, toJudge, ok := strings.Cut(first.Serve, "# candidates (")
 	if !ok {
-		t.Fatalf("the first page should open the to-judge section:\n%.400s", first.Serve)
+		t.Fatalf("the first page should open the candidates section:\n%.400s", first.Serve)
 	}
 	if !strings.Contains(toJudge, "\n- ") {
 		t.Fatalf("the first page should carry candidates to judge, got:\n%s", toJudge)

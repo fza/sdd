@@ -8,6 +8,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 // In an assisted session the agent drafts and checks a capture alone, as in
@@ -78,18 +79,28 @@ func TestAssisted_TheAgentCannotApprove(t *testing.T) {
 	}
 }
 
-// The play-back shows the drafted reason and names a directive's intent
-// plainly; it asks the person no separate reason question, for one draft or
-// several.
+// The play-back shows the drafted reason and a directive's intent in the
+// person's terms, never by its posture, proposing a superseded directive's
+// intent as the agent's inference; it asks the person no separate reason
+// question, for one draft or several.
 func TestAssisted_ThePlaybackShowsTheDraftedReason(t *testing.T) {
 	_, session := authorshipWorld(t, proctest.WithAssistedDialogue())
 	serve := session.Start(t, "capture", nil)
 	first := serve.Instance
 	serve = session.Report(t, first, assistedDirective())
 	proctest.RequireStep(t, serve, "playback")
-	for _, want := range []string{"`guiding`: a standing guideline", "through the AskUserQuestion tool", "reason: " + assistedReason, "the drafted reason and a directive's intent with it"} {
-		if !strings.Contains(serve.Instructions, want) {
+	for _, want := range []string{
+		"Show a directive's intent in the person's terms (does it apply from now on, or is it work still to be done?), and never name the posture.",
+		"For a draft that supersedes a directive, propose that directive's intent as your inference.",
+		"through the AskUserQuestion tool", "reason: " + assistedReason, "the drafted reason and a directive's intent with it",
+	} {
+		if !strings.Contains(test.Untagged(serve.Instructions), want) {
 			t.Errorf("the playback should say %q, got:\n%s", want, serve.Instructions)
+		}
+	}
+	for _, posture := range []string{"`pending`: needs follow-up", "`guiding`: a standing guideline", "`settled`: closed when written"} {
+		if strings.Contains(serve.Instructions, posture) {
+			t.Errorf("the playback should not gloss the posture %q:\n%s", posture, serve.Instructions)
 		}
 	}
 	second := assistedDirective()
