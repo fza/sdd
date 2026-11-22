@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -44,6 +45,9 @@ func NewGitWorktreeAcquirer(options GitWorktreeAcquirerOptions) (*GitWorktreeAcq
 }
 
 func runGitTargetCommand(ctx context.Context, args ...string) ([]byte, error) {
+	if len(args) > 1 && args[0] == "-C" {
+		return git.CommandAt(ctx, args[1], args[2:]...).CombinedOutput()
+	}
 	return exec.CommandContext(ctx, "git", args...).CombinedOutput()
 }
 

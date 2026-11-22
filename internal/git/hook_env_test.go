@@ -91,12 +91,19 @@ func TestPathAddressedCallsReachTheRepositoryAtThePathFromAHook(t *testing.T) {
 			graphHead := gitIn(t, graphRepo, "rev-parse", "HEAD")
 			hookHead := gitIn(t, hookRepo, "rev-parse", "HEAD")
 			outside := t.TempDir()
+			graphAuthority, err := git.StableRepoRoot(graphRepo)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			leave := runAsHook(t, hookRepo, env.vars(hookRepo))
 			ctx := t.Context()
 			head, headErr := git.CLI{}.HeadRevision(ctx, graphDir)
 			outsideInWorkTree := git.CLI{}.InWorkTree(ctx, outside)
 			pullErr := git.CLI{}.PullFFOnly(ctx, cache)
+			authority, authorityErr := git.StableRepoRoot(graphDir)
+			sourceErr := git.AuthorizeInTreeSessionSource(ctx, graphRepo, graphAuthority,
+				filepath.Join(graphRepo, ".sdd", "sessions"), filepath.Join(graphRepo, ".sdd", "staged-blobs"))
 			leave()
 
 			if headErr != nil || head != graphHead {
@@ -110,6 +117,12 @@ func TestPathAddressedCallsReachTheRepositoryAtThePathFromAHook(t *testing.T) {
 			}
 			if cacheHead := gitIn(t, cache, "rev-parse", "HEAD"); cacheHead != graphHead {
 				t.Errorf("the cache at the path should reach %q, HEAD is %q", graphHead, cacheHead)
+			}
+			if authorityErr != nil || authority != graphAuthority {
+				t.Errorf("StableRepoRoot should name the repository at the path: got %q (%v), want %q", authority, authorityErr, graphAuthority)
+			}
+			if sourceErr != nil {
+				t.Errorf("AuthorizeInTreeSessionSource should check the repository at the path: %v", sourceErr)
 			}
 			if got := gitIn(t, hookRepo, "rev-parse", "HEAD"); got != hookHead {
 				t.Errorf("the hook's repository should stay at %q, HEAD is %q", hookHead, got)

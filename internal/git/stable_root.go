@@ -14,7 +14,9 @@ import (
 // while resolving an actual Git worktree surface.
 func StableRepoRoot(dir string) (string, error) {
 	return stableRepoRootWith(dir, func(args ...string) ([]byte, error) {
-		return exec.Command(args[0], args[1:]...).CombinedOutput()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Env = pathEnv(nil)
+		return cmd.CombinedOutput()
 	})
 }
 
