@@ -10,8 +10,8 @@ import (
 
 // RenderCalibration writes `sdd grounding status --verbose`: the judge's
 // labels, recall bound and stage, thresholds, background calibration, audit
-// and drift state, and how the pairs it would serve in full were answered,
-// per reason code.
+// and drift state, and how the live labelled pairs it would serve in full
+// were answered, per reason code.
 func RenderCalibration(w io.Writer, report model.CalibrationReport, auto GroundingAuto) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
 	sources := fmt.Sprintf("sources: %d live labels, %d replayed from past captures", report.Live, report.Replay)
@@ -67,10 +67,10 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport, auto Groundi
 		}
 	}
 	if report.PassedInFull == 0 {
-		fmt.Fprintln(w, "precision: no labelled pair scores at or above the relevant threshold")
+		fmt.Fprintln(w, "precision: no live labelled pair scores at or above the relevant threshold; replayed labels not counted")
 		return
 	}
-	fmt.Fprintf(w, "precision: %d of %d pairs passed in full were referenced (%.1f%%)\n", report.Referenced, report.PassedInFull, report.Precision()*100)
+	fmt.Fprintf(w, "precision: %d of %d live labelled pairs passed in full were referenced (%.1f%%); replayed labels not counted\n", report.Referenced, report.PassedInFull, report.Precision()*100)
 	for _, code := range report.SetAside {
 		fmt.Fprintf(w, "- set aside as %s: %d\n", code.Code, code.Count)
 	}

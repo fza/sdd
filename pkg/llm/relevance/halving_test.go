@@ -27,6 +27,13 @@ func (m *memorySizes) Lower(key string, size int) error {
 	return m.MemoryBatchSizes.Lower(key, size)
 }
 
+func (m *memorySizes) Broke(key string, size int) error {
+	if m.err != nil {
+		return m.err
+	}
+	return m.MemoryBatchSizes.Broke(key, size)
+}
+
 func (m *memorySizes) Raise(key string, from, size int) error {
 	if m.err != nil {
 		return m.err
@@ -404,7 +411,7 @@ func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 		{"doubling stops at the inner MaxBatch", 60, 100, []int{100, 100}, []int{100, 100}},
 		{"a request smaller than the remembered size proves nothing", 12, 100, []int{8}, []int{12}},
 		{"a request that halved leaves the half standing", 8, 4, []int{16}, []int{4}},
-		{"a size that fails again halves again", 4, 4, []int{8, 8, 8}, []int{8, 4, 8}},
+		{"a size that broke is not raised to again", 4, 4, []int{8, 8, 8}, []int{8, 4, 4}},
 		{"nothing remembered leaves nothing to grow", 0, 100, []int{100}, []int{0}},
 	}
 	for _, tc := range cases {
@@ -432,32 +439,189 @@ func TestHalving_GrowsBackOnceTheRememberedSizeHolds(t *testing.T) {
 	}
 }
 
-// Raise lands only on the size still held.
+var errTooManyCalls = errors.New("too many calls")
+
+// cappedScorer fails every call after its first max, so a request that
+// would not end does.
+type cappedScorer struct {
+	relevance.Scorer
+	calls, max int
+}
+
+func (c *cappedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	c.calls++
+	if c.calls > c.max {
+		return relevance.Result{}, errTooManyCalls
+	}
+	return c.Scorer.Score(ctx, request)
+}
+
+// A scorer without a batch bound takes a request in one call, the far
+// candidates beside its own, as it does without Halving; a call that breaks
+// halves from the request's size.
+func TestHalving_TakesAnUnboundedScorersRequestInOneCall(t *testing.T) {
+	cases := []struct {
+		name string
+		// limit is the largest batch the inner scorer answers.
+		limit int
+		far   int
+		calls []int
+		// after is the size remembered once the request returned, 0 for
+		// none.
+		after int
+	}{
+		{"a request", 100, 0, []int{40}, 0},
+		{"a request with far candidates", 100, 3, []int{43}, 0},
+		{"a request whose call breaks", 10, 0, []int{40, 20, 10, 10, 10, 10}, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &brittleScorer{limit: tc.limit, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+			sizes := &memorySizes{}
+			scorer := relevance.Halving(&cappedScorer{Scorer: inner, max: 10}, sizes, halvingKey)
+			request := relevance.Request{Subject: "draft", Candidates: manyCandidates(40)}
+			result, err := relevance.ScoreWithFar(t.Context(), scorer, request, farCandidates(make([]int, tc.far)...))
+			if err != nil {
+				t.Fatalf("the request should end with its scores, got %v (calls of %v)", err, inner.sizes())
+			}
+			if err := relevance.CheckResult(request, result); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(inner.sizes(), tc.calls) {
+				t.Errorf("calls of %v, want %v", inner.sizes(), tc.calls)
+			}
+			if size, _ := sizes.Size(halvingKey); size != tc.after {
+				t.Errorf("remembered %d, want %d", size, tc.after)
+			}
+		})
+	}
+}
+
+// A judge failing above some size pays for a call there once per
+// relevance.FailedBatchRest, not every second request.
+func TestHalving_RaisesNoSizeThatBrokeUntilItRested(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 4, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+		sizes := remembering(4)
+		scorer := relevance.Halving(inner, sizes, halvingKey)
+		steps := []struct {
+			// wait is the time that passes before the request.
+			wait  time.Duration
+			calls []int
+			after int
+		}{
+			{0, []int{4, 4}, 8},
+			{0, []int{8, 4, 4}, 4},
+			{0, []int{4, 4}, 4},
+			{relevance.FailedBatchRest - time.Second, []int{4, 4}, 4},
+			{time.Second, []int{4, 4}, 8},
+			{0, []int{8, 4, 4}, 4},
+			{0, []int{4, 4}, 4},
+		}
+		for i, step := range steps {
+			time.Sleep(step.wait)
+			inner.requests = nil
+			if _, err := scorer.Score(t.Context(), relevance.Request{Candidates: manyCandidates(8)}); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(inner.sizes(), step.calls) {
+				t.Errorf("request %d: calls of %v, want %v", i+1, inner.sizes(), step.calls)
+			}
+			if size, _ := sizes.Size(halvingKey); size != step.after {
+				t.Fatalf("request %d left size %d, want %d", i+1, size, step.after)
+			}
+		}
+	})
+}
+
+// Raise lands only on the size still held, and not on a size that broke
+// until it rested.
 func TestMemoryBatchSizes_RaisesTheSizeStillHeld(t *testing.T) {
 	cases := []struct {
 		name string
 		held int
 		from int
-		want int
+		// broke is the size of a call that broke, 0 for none, rested
+		// whether relevance.FailedBatchRest passed since.
+		broke  int
+		rested bool
+		want   int
 	}{
-		{"the size still held", 4, 4, 8},
-		{"a size lowered meanwhile", 2, 4, 2},
-		{"no size held", 0, 0, 0},
+		{name: "the size still held", held: 4, from: 4, want: 8},
+		{name: "a size lowered meanwhile", held: 2, from: 4, want: 2},
+		{name: "no size held", want: 0},
+		{name: "a size that broke", held: 4, from: 4, broke: 8, want: 4},
+		{name: "a size above one that broke", held: 4, from: 4, broke: 6, want: 4},
+		{name: "a size below one that broke", held: 4, from: 4, broke: 9, want: 8},
+		{name: "a size that broke and rested", held: 4, from: 4, broke: 8, rested: true, want: 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sizes := &relevance.MemoryBatchSizes{}
-			if tc.held > 0 {
-				if err := sizes.Lower(halvingKey, tc.held); err != nil {
+			synctest.Test(t, func(t *testing.T) {
+				sizes := &relevance.MemoryBatchSizes{}
+				if tc.held > 0 {
+					if err := sizes.Lower(halvingKey, tc.held); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.broke > 0 {
+					if err := sizes.Broke(halvingKey, tc.broke); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.rested {
+					time.Sleep(relevance.FailedBatchRest)
+				}
+				if err := sizes.Raise(halvingKey, tc.from, 8); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := sizes.Raise(halvingKey, tc.from, 8); err != nil {
-				t.Fatal(err)
-			}
-			if got, _ := sizes.Size(halvingKey); got != tc.want {
-				t.Errorf("size %d, want %d: a raise should land only on the size it answered at", got, tc.want)
-			}
+				if got, _ := sizes.Size(halvingKey); got != tc.want {
+					t.Errorf("size %d, want %d: a raise should land only on the size it answered at, short of a size that broke", got, tc.want)
+				}
+			})
+		})
+	}
+}
+
+// Of two sizes that broke the smaller bars a raise, and only its own break
+// restarts its rest.
+func TestMemoryBatchSizes_RemembersTheSmallestSizeThatBroke(t *testing.T) {
+	cases := []struct {
+		name string
+		// again is the size that breaks half a rest after a call of 8 broke.
+		again int
+		// barred is whether a raise from 4 to 8 lands neither at once nor
+		// a rest after the call of 8 broke.
+		barred []bool
+	}{
+		{"a larger size", 16, []bool{true, false}},
+		{"the same size", 8, []bool{true, true}},
+		{"a smaller size", 6, []bool{true, true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sizes := &relevance.MemoryBatchSizes{}
+				if err := sizes.Broke(halvingKey, 8); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(relevance.FailedBatchRest / 2)
+				if err := sizes.Broke(halvingKey, tc.again); err != nil {
+					t.Fatal(err)
+				}
+				for i, barred := range tc.barred {
+					time.Sleep(time.Duration(i) * relevance.FailedBatchRest / 2)
+					if err := sizes.Lower(halvingKey, 4); err != nil {
+						t.Fatal(err)
+					}
+					if err := sizes.Raise(halvingKey, 4, 8); err != nil {
+						t.Fatal(err)
+					}
+					if got, _ := sizes.Size(halvingKey); (got == 4) != barred {
+						t.Errorf("raise %d left size %d: a break should bar the raise for a rest after the smallest size broke", i+1, got)
+					}
+				}
+			})
 		})
 	}
 }
@@ -480,18 +644,24 @@ func (m *meddlingScorer) Score(ctx context.Context, request relevance.Request) (
 }
 
 // A request one batch of which broke raises nothing, even where another
-// request raised the size back to the one it started at.
+// request, once the size that broke rested, raised the size back to the one
+// it started at.
 func TestHalving_ARequestThatBrokeRaisesNothing(t *testing.T) {
-	sizes := remembering(8)
-	inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 4, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
-	other := &meddlingScorer{Scorer: inner, at: 5, meanwhile: func() { _ = sizes.Raise(halvingKey, 4, 8) }}
-	if _, err := relevance.Halving(other, sizes, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(16)}); err != nil {
-		t.Fatal(err)
-	}
-	if want := []int{8, 4, 4, 4, 4}; !slices.Equal(inner.sizes(), want) {
-		t.Fatalf("calls of %v, want %v", inner.sizes(), want)
-	}
-	if size, _ := sizes.Size(halvingKey); size != 8 {
-		t.Errorf("size %d: the request that broke at 8 should leave the other request's 8 standing", size)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		sizes := remembering(8)
+		inner := &brittleScorer{fixedScorer: fixedScorer{maxBatch: 100}, limit: 4, fail: &llm.MalformedAnswerError{Err: errors.New("unparsable")}}
+		other := &meddlingScorer{Scorer: inner, at: 5, meanwhile: func() {
+			time.Sleep(relevance.FailedBatchRest)
+			_ = sizes.Raise(halvingKey, 4, 8)
+		}}
+		if _, err := relevance.Halving(other, sizes, halvingKey).Score(t.Context(), relevance.Request{Candidates: manyCandidates(16)}); err != nil {
+			t.Fatal(err)
+		}
+		if want := []int{8, 4, 4, 4, 4}; !slices.Equal(inner.sizes(), want) {
+			t.Fatalf("calls of %v, want %v", inner.sizes(), want)
+		}
+		if size, _ := sizes.Size(halvingKey); size != 8 {
+			t.Errorf("size %d: the request that broke at 8 should leave the other request's 8 standing", size)
+		}
+	})
 }

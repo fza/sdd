@@ -67,11 +67,12 @@ func (s usedRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
 	return s.FilesystemRelevanceStore.Segments(ctx)
 }
 
-// chatBatchSizes opens the batch sizes chat judges start at: machine state
-// beside the relevance ledgers, one file for every project, since a size is
-// the model's.
+// chatBatchSizes opens the batch sizes chat judges start at and the sizes
+// that broke: machine state beside the relevance ledgers, one file each for
+// every project, since a size is the model's.
 func chatBatchSizes(stateRoot string) (*localadapter.FilesystemBatchSizes, error) {
-	return localadapter.NewFilesystemBatchSizes(filepath.Join(stateRoot, model.RelevanceDirName, "chat-batch-sizes.json"))
+	dir := filepath.Join(stateRoot, model.RelevanceDirName)
+	return localadapter.NewFilesystemBatchSizes(filepath.Join(dir, "chat-batch-sizes.json"), filepath.Join(dir, "chat-batch-failures.json"))
 }
 
 // projectPrefilter composes the prefilter verify.prefilter switches on;

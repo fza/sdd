@@ -9,6 +9,29 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 )
 
+// The precision line says it counts the live labels.
+func TestRenderCalibration_NamesTheLabelsPrecisionCounts(t *testing.T) {
+	cases := []struct {
+		name   string
+		report model.CalibrationReport
+		want   string
+	}{
+		{"pairs passed in full", model.CalibrationReport{PassedInFull: 1367, Referenced: 448},
+			"precision: 448 of 1367 live labelled pairs passed in full were referenced (32.8%); replayed labels not counted\n"},
+		{"none passed in full", model.CalibrationReport{},
+			"precision: no live labelled pair scores at or above the relevant threshold; replayed labels not counted\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var verbose bytes.Buffer
+			presenters.RenderCalibration(&verbose, tc.report, presenters.GroundingAuto{})
+			if !strings.Contains(verbose.String(), tc.want) {
+				t.Errorf("the verbose status should name the labels the line counts:\n%s", verbose.String())
+			}
+		})
+	}
+}
+
 func TestRenderCalibration_NamesTheFarFloor(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
