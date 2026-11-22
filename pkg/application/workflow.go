@@ -1871,7 +1871,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		result.Execution = ExecutionForkPreferred
 	}
 	if ok && w.cutRepeats && inst.Spec.Canonical == verifyProcedure && serve.Step == verifyReadStep {
-		full, err := verifyPageFullIDs(inst.Store)
+		full, err := w.verifyPageFullIDs(inst.Store)
 		if err != nil {
 			return nil, err
 		}

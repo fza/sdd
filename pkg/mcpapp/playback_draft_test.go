@@ -123,7 +123,7 @@ func TestAPlaybackServesItsDraftWholeAndFirst(t *testing.T) {
 		var serve mcpserver.ServeResult
 		call(t, cs, "next", map[string]any{"session": session, "instance": capture}, &serve)
 		requireDraftWholeAndFirst(t, serve)
-		if model.ServedChars(serve.Instructions) <= model.MaxServeChars {
+		if model.ServedChars(serve.Instructions) <= model.DefaultResultBound.Serve() {
 			t.Fatalf("the draft should run past the bound alone, the fixture too small to test: %d chars", model.ServedChars(serve.Instructions))
 		}
 		call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "write it"}}, &serve)

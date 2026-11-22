@@ -2528,7 +2528,7 @@ func jsonSize(t *testing.T, v any) int {
 }
 
 // serveSize is what a serve takes of its result: the unproved list rides in
-// the room model.MaxServeChars leaves under the result bound, as notices do.
+// the room model.DefaultResultBound.Serve() leaves under the result bound, as notices do.
 func serveSize(t *testing.T, v any) int {
 	t.Helper()
 	raw, err := json.Marshal(v)

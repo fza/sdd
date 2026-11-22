@@ -45,6 +45,11 @@ type Options struct {
 	// SDK derives it from the tool's result type. Results carry structured
 	// content either way; off, the listing stays a fraction of the size.
 	OutputSchema bool
+	// MCPOutputTokens is Claude Code's MCP output limit,
+	// MAX_MCP_OUTPUT_TOKENS, as the host's environment holds it; 0 when
+	// unset. It lowers the result bound of a Claude Code caller
+	// (model.ResultBoundFor).
+	MCPOutputTokens int
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -58,6 +63,8 @@ type toolSet struct {
 	cacheNotice    func(context.Context) string
 	before         func(context.Context) (context.Context, string, error)
 	outputSchema   bool
+	// mcpOutputTokens is Options.MCPOutputTokens.
+	mcpOutputTokens int
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -72,15 +79,16 @@ func newToolSet(opts Options) (*toolSet, error) {
 		return nil, errors.New("mcpapp: Application is required")
 	}
 	return &toolSet{
-		app:            opts.Application,
-		searchSyncMode: opts.SearchSyncMode,
-		localIdentity:  opts.LocalIdentity,
-		local:          opts.LocalClient,
-		version:        opts.Version,
-		cacheNotice:    opts.CacheNotice,
-		before:         opts.BeforeCall,
-		outputSchema:   opts.OutputSchema,
-		sessions:       newSessionCache(),
+		app:             opts.Application,
+		searchSyncMode:  opts.SearchSyncMode,
+		localIdentity:   opts.LocalIdentity,
+		local:           opts.LocalClient,
+		version:         opts.Version,
+		cacheNotice:     opts.CacheNotice,
+		before:          opts.BeforeCall,
+		outputSchema:    opts.OutputSchema,
+		mcpOutputTokens: opts.MCPOutputTokens,
+		sessions:        newSessionCache(),
 	}, nil
 }
 

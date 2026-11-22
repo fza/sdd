@@ -64,6 +64,17 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				Name:  "output-schema",
 				Usage: "For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it.",
 			},
+			&cli.IntFlag{
+				Name:    "mcp-output-tokens",
+				Usage:   "Claude Code's MCP output limit in tokens: lowers the size of a result served to Claude Code to 2 characters per token",
+				Sources: cli.EnvVars("MAX_MCP_OUTPUT_TOKENS"),
+				Validator: func(tokens int) error {
+					if tokens < 0 {
+						return fmt.Errorf("MCP output limit %d is negative", tokens)
+					}
+					return nil
+				},
+			},
 		),
 		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
@@ -118,9 +129,10 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				cacheNotice = serveCacheNotice
 			}
 			return runMCPServerWith(ctx, cmd, mcpserver.Options{
-				Application:   application,
-				LocalIdentity: identity,
-				CacheNotice:   cacheNotice,
+				Application:     application,
+				LocalIdentity:   identity,
+				CacheNotice:     cacheNotice,
+				MCPOutputTokens: cmd.Int("mcp-output-tokens"),
 				BeforeCall: func(ctx context.Context) (context.Context, string, error) {
 					activity.touch()
 					return watch.admit(ctx)
