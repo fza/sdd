@@ -251,22 +251,36 @@ func (f *SearchFinder) hybridSearch(ctx context.Context, q query.SearchQuery) (*
 	return out, nil
 }
 
-// runVector is the shared core for vector and hybrid: produces ranked
-// SearchEntry values from the index. Oversamples by a factor of 4×limit
-// at the chunk level so post-hoc filtering still leaves enough seeds.
-func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]query.SearchEntry, error) {
+// EmbedPhrase returns q carrying its phrase's embedding, unchanged when it
+// carries one. It reads no graph, so a caller can embed outside a lock it
+// then searches under.
+func (f *SearchFinder) EmbedPhrase(ctx context.Context, q query.SearchQuery) (query.SearchQuery, error) {
+	if q.PhraseVector != nil {
+		return q, nil
+	}
 	if q.Phrase == "" {
-		return nil, errors.New("vector search requires a non-empty --query phrase")
+		return q, errors.New("vector search requires a non-empty --query phrase")
 	}
 	stopEmbed := timing.Start(ctx, "query-embed")
 	embedded, err := f.embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{q.Phrase}})
 	stopEmbed()
 	if err != nil {
-		return nil, fmt.Errorf("embedding query phrase: %w", err)
+		return q, fmt.Errorf("embedding query phrase: %w", err)
 	}
-	embeddings := embedded.Vectors
-	if len(embeddings) != 1 {
-		return nil, fmt.Errorf("embedder returned %d vectors for 1 input", len(embeddings))
+	if len(embedded.Vectors) != 1 {
+		return q, fmt.Errorf("embedder returned %d vectors for 1 input", len(embedded.Vectors))
+	}
+	q.PhraseVector = embedded.Vectors[0]
+	return q, nil
+}
+
+// runVector is the shared core for vector and hybrid: produces ranked
+// SearchEntry values from the index. Oversamples by a factor of 4×limit
+// at the chunk level so post-hoc filtering still leaves enough seeds.
+func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]query.SearchEntry, error) {
+	q, err := f.EmbedPhrase(ctx, q)
+	if err != nil {
+		return nil, err
 	}
 
 	limit := q.EffectiveLimit()
@@ -283,7 +297,7 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 	if chunkLimit < 50 {
 		chunkLimit = 50
 	}
-	indexHits, err := f.indexStore.Query(ctx, embeddings[0], chunkLimit)
+	indexHits, err := f.indexStore.Query(ctx, q.PhraseVector, chunkLimit)
 	if err != nil {
 		return nil, fmt.Errorf("vector query: %w", err)
 	}
@@ -358,17 +372,18 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 	return out, nil
 }
 
-// candidates applies the graph filter and the IncludeSuperseded gate.
+// candidates applies the graph filter, the Titled and Exclude gates and the
+// IncludeSuperseded gate.
 // Superseded entries are excluded by default — they pollute clusters with
 // historical near-duplicates per the design.md rationale.
 func (f *SearchFinder) candidates(q query.SearchQuery) []*model.Entry {
 	filtered := f.graph.Filter(q.Filter)
-	if q.IncludeSuperseded {
-		return filtered
-	}
 	out := make([]*model.Entry, 0, len(filtered))
 	for _, e := range filtered {
-		if f.graph.DerivedStatus(e).Kind == model.StatusSupersededBy {
+		if !q.Admits(e) {
+			continue
+		}
+		if !q.IncludeSuperseded && f.graph.DerivedStatus(e).Kind == model.StatusSupersededBy {
 			continue
 		}
 		out = append(out, e)
