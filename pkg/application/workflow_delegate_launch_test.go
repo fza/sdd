@@ -174,7 +174,7 @@ func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
 	round.Finish("cli-1", nil)
 	f.recorded(t, round.Launch.Session, 1)
 	proof := proofOf(t, workflow.ServeText("lane step", servedLane, nil))
-	err = workflow.RecordServed(t.Context(), f.identity)
+	err = workflow.RecordAnchors(t.Context(), f.identity)
 	if err != nil {
 		t.Fatalf("the anchors of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
 	}

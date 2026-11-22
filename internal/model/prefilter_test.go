@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -176,5 +177,88 @@ func TestRelevanceText_KeepsTheWholeEntry(t *testing.T) {
 	want := "kind: directive\ntopics: a/b, c\n\n" + body
 	if text != want {
 		t.Fatalf("text %q should hold kind, topics and the whole body", text)
+	}
+}
+
+func labelRun(prefix string, n int, score uint8, kind string, source model.ReaderSource) []model.RelevanceLabel {
+	labels := make([]model.RelevanceLabel, 0, n)
+	for i := range n {
+		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("%s%04d", prefix, i)), Score: score, Kind: kind, Source: source, Weight: 1})
+	}
+	return labels
+}
+
+// Replayed references are positives only and easier than what a live draft
+// needs, so the serve-in-full threshold reads the live labels alone, never
+// below the set-aside threshold, and the set-aside threshold takes the lower
+// cut of the live labels once they hold the recall bound of their own.
+func TestCalibrate_RestsEachThresholdOnTheLabelsThatProveIt(t *testing.T) {
+	replayed := func(n int, score uint8) []model.RelevanceLabel {
+		return labelRun("r", n, score, model.LabelPositive, model.SourceReplay)
+	}
+	live := func(prefix string, n int, score uint8, kind string) []model.RelevanceLabel {
+		return labelRun(prefix, n, score, kind, model.SourceLive)
+	}
+	cases := []struct {
+		name     string
+		labels   []model.RelevanceLabel
+		setAside uint8
+		// relevant is the serve-in-full threshold, 0 for none.
+		relevant uint8
+		// live reports a set-aside threshold cut by the live labels alone.
+		live bool
+	}{
+		{"replayed references alone serve nothing in full", replayed(200, 3), 3, 0, false},
+		{"the serve-in-full threshold reads the live labels",
+			slices.Concat(replayed(200, 3), live("p", 40, 230, model.LabelPositive), live("n", 40, 100, model.LabelNegative)), 3, 230, false},
+		{"live labels short of the precision bound serve nothing in full",
+			slices.Concat(replayed(200, 3), live("p", 3, 230, model.LabelPositive)), 3, 0, false},
+		{"the serve-in-full threshold stays at or above the set-aside threshold",
+			slices.Concat(live("p", 398, 200, model.LabelPositive), live("q", 2, 50, model.LabelPositive)), 200, 200, false},
+		{"the lower cut of live labels holding the bound sets aside",
+			slices.Concat(replayed(400, 51), live("p", 198, 60, model.LabelPositive), live("q", 2, 20, model.LabelPositive), live("n", 250, 40, model.LabelNegative)), 20, 60, true},
+		{"live labels short of the bound leave the cut over all labels",
+			slices.Concat(replayed(400, 51), live("p", 2, 20, model.LabelPositive)), 51, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := model.Calibrate(tc.labels, nil, "j")
+			if !got.Valid || got.SetAside != model.ScoreValue(tc.setAside) || got.SetAsideLive != tc.live {
+				t.Errorf("thresholds %+v: the set-aside threshold should rest on the labels that prove it", got)
+			}
+			if tc.relevant == 0 && (got.Relevant <= 1 || got.ServesInFull()) {
+				t.Errorf("thresholds %+v: no score should be served in full", got)
+			}
+			if tc.relevant != 0 && (got.Relevant != model.ScoreValue(tc.relevant) || !got.ServesInFull()) {
+				t.Errorf("thresholds %+v: the serve-in-full threshold should rest on the live labels", got)
+			}
+		})
+	}
+}
+
+// A candidate below the set-aside threshold is set aside whatever the
+// serve-in-full threshold says.
+func TestPlacePrefiltered_SetsAsideBeforeItServesInFull(t *testing.T) {
+	thresholds := model.RelevanceThresholds{Valid: true, SetAside: 0.2, Relevant: 0.012}
+	cases := []struct {
+		name     string
+		score    uint8
+		setAside bool
+	}{
+		{"below both thresholds", 3, true},
+		{"between the thresholds", 25, true},
+		{"at the set-aside threshold", 51, false},
+		{"above both thresholds", 250, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			placed := model.PlacePrefiltered([]model.GatherCandidate{{Entry: &model.Entry{ID: "c"}}}, map[string]uint8{"c": tc.score}, thresholds)
+			if got := len(placed.SetAside) == 1; got != tc.setAside {
+				t.Fatalf("placed %+v: a score below the set-aside threshold, and only that, should be set aside", placed)
+			}
+			if got := len(placed.Relevant) == 1; got == tc.setAside {
+				t.Fatalf("placed %+v: a score not set aside should be served in full", placed)
+			}
+		})
 	}
 }

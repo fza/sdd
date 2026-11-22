@@ -255,6 +255,18 @@ func TestDelegatePromptEndsTheTurnOnlyOnAWaitingServe(t *testing.T) {
 	}
 }
 
+// Results reach the dispatching move through sdd, so both prompts hold the
+// delegate's final reply to one line.
+func TestDelegatePromptsAskForAOneLineFinalReply(t *testing.T) {
+	f := newDelegateApplication(t, nil)
+	_, dispatch := f.fork(t)
+	for _, prompt := range []string{dispatch.Prompt, dispatch.ContinuePrompt} {
+		if !strings.HasSuffix(prompt, " Final reply: one line, delivered, waiting for the dispatching move, or failed with the reason. Results travel only through sdd, never in your reply.") {
+			t.Fatalf("the prompt should end asking for a one-line final reply, got %q", prompt)
+		}
+	}
+}
+
 func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 	f := newDelegateApplication(t, nil)
 	serve, dispatch := f.fork(t)
@@ -415,7 +427,7 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 		t.Fatalf("a delivery made while forking should land in the dispatching session the answering call holds and be picked up there, got %s at %s", forked.Status, forked.Step)
 	}
 	workflow.ServeText("lane step", servedLane, nil)
-	if err := workflow.RecordServed(t.Context(), f.identity); err != nil {
+	if err := workflow.RecordAnchors(t.Context(), f.identity); err != nil {
 		t.Fatalf("the held dispatching session should stay writable after the fork: %v", err)
 	}
 	if f.ended(t, forked.Dispatches[0].Session) == nil {

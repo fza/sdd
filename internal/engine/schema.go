@@ -7,9 +7,16 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
+const entryIDSchemaCore = `\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+`
+
 // entryIDSchemaPattern is the JSON-Schema pattern for a full entry ID, shared
-// by every string property that carries one (entry-id, ref.id, involvement.target).
-const entryIDSchemaPattern = `^\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$`
+// by every string property that carries one (entry-id, involvement.target).
+const entryIDSchemaPattern = `^` + entryIDSchemaCore + `$`
+
+// refIDSchemaPattern also admits the <repo-id>:<entry-id> form: a ref may
+// cross into a declared dependency, closes and supersedes may not
+// (20260606-003344-d-cpt-s6q).
+const refIDSchemaPattern = `^([^\s:/]+(/[^\s:/]+)+:)?` + entryIDSchemaCore + `$`
 
 // ReportSchemaForStep generates the JSON Schema for a step's report from the
 // spec's variable declarations: the step's collect fields are the named,
@@ -307,7 +314,7 @@ func schemaForType(t VarType, desc string) map[string]any {
 			"properties": map[string]any{
 				"id": map[string]any{
 					"type":    "string",
-					"pattern": entryIDSchemaPattern,
+					"pattern": refIDSchemaPattern,
 				},
 				"kind": map[string]any{"type": "string", "enum": enum},
 				"desc": map[string]any{"type": "string"},

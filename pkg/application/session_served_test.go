@@ -32,7 +32,7 @@ func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := proofOf(t, w.ServeText("lane step", servedLane, nil))
-	err = w.RecordServed(t.Context(), identity)
+	err = w.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
 		return servedLane + "\n\n  20260101-000000-s-tac-aaa — An entry. (held as ⟦ab12⟧; " + model.NextProof("ab12", prompt) + ")"
 	}
 	proof := proofOf(t, w.ServeText("lane step", lane("first"), nil))
-	err = w.RecordServed(t.Context(), identity)
+	err = w.RecordAnchors(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}

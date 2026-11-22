@@ -1687,8 +1687,23 @@ func (g *workflowGraphs) CurrentFor(store *engine.Store) (*model.Graph, error) {
 	return view.snapshot.graph, nil
 }
 
+// currentForInstance resolves the graph of instance's target from store; a
+// command passes its instance, because its candidate store is a clone
+// projectFor cannot place.
+func (g *workflowGraphs) currentForInstance(instance string, store *engine.Store) (*model.Graph, error) {
+	view, err := g.projectView(g.workflow.instanceProject(instance), store)
+	if err != nil {
+		return nil, err
+	}
+	return view.snapshot.graph, nil
+}
+
 func (g *workflowGraphs) viewFor(store *engine.Store) (*materializedGraphView, error) {
-	target, source := g.workflow.effectiveTargetSource(g.workflow.projectFor(store), store)
+	return g.projectView(g.workflow.projectFor(store), store)
+}
+
+func (g *workflowGraphs) projectView(project ProjectID, store *engine.Store) (*materializedGraphView, error) {
+	target, source := g.workflow.effectiveTargetSource(project, store)
 	view, err := g.targetView(target, source == targetSourceBinding)
 	if err != nil && source != "" && source != targetSourceBinding {
 		// The acquisition boundary speaks of a mutation target; a graph read
@@ -1778,23 +1793,13 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 		project = w.startProject
 		w.startProject = ""
 	}
-	events, err := sinkEvents(event, project)
-	if err != nil {
-		return 0, err
-	}
-	err = w.appendStoredEventsOnce(events)
-	if isSessionConflict(err) {
-		err = w.catchUp(&event)
-		if err == nil {
-			events, err = sinkEvents(event, project)
-		}
-		if err == nil {
-			err = w.appendStoredEventsOnce(events)
-		}
-	}
-	if isSessionConflict(err) {
-		return 0, fmt.Errorf("%w; %s", err, reorientSuffix)
-	}
+	var events []StoredEvent
+	// A catch-up moves the event's sequence, so each try encodes it anew.
+	err := w.appendCaughtUp(&event, func() ([]StoredEvent, error) {
+		var err error
+		events, err = sinkEvents(event, project)
+		return events, err
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -1832,14 +1837,43 @@ func (w *WorkflowSession) appendStoredEvent(code string, payload json.RawMessage
 }
 
 // appendStoredEvents appends events no engine state depends on, catching up
-// first when another attach of the session wrote meanwhile.
+// when another attach of the session wrote meanwhile (appendCaughtUp).
 func (w *WorkflowSession) appendStoredEvents(events []StoredEvent) error {
-	err := w.appendStoredEventsOnce(events)
-	if isSessionConflict(err) {
-		err = w.catchUp(nil)
-		if err == nil {
-			err = w.appendStoredEventsOnce(events)
+	return w.appendCaughtUp(nil, func() ([]StoredEvent, error) { return events, nil })
+}
+
+// sessionCatchUps bounds how often one append catches up with the other
+// writers of its session before it surfaces the conflict. A catch-up folds
+// all that landed before it, so the next one is owed only to yet another
+// append landing between that fold and the retry: eight in a row is past
+// what the parallel calls of one client stack up, and the bound keeps a
+// writer that never stops from holding a call forever.
+const sessionCatchUps = 8
+
+// appendCaughtUp appends what encode returns and, each time another writer
+// of the session got ahead, catches up (catchUp) and tries again, at most
+// sessionCatchUps times. pending is the engine event the append carries, nil
+// for none: a catch-up that finds its instance changed ends the tries as the
+// conflict it is.
+func (w *WorkflowSession) appendCaughtUp(pending *engine.Event, encode func() ([]StoredEvent, error)) error {
+	events, err := encode()
+	if err != nil {
+		return err
+	}
+	err = w.appendStoredEventsOnce(events)
+	for range sessionCatchUps {
+		if !isSessionConflict(err) {
+			return err
 		}
+		err = w.catchUp(pending)
+		if err != nil {
+			break
+		}
+		events, err = encode()
+		if err != nil {
+			return err
+		}
+		err = w.appendStoredEventsOnce(events)
 	}
 	if isSessionConflict(err) {
 		return fmt.Errorf("%w; %s", err, reorientSuffix)

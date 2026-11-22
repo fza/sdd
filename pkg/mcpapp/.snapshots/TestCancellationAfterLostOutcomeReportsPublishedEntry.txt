@@ -86,7 +86,7 @@ report_schema:
               desc:
                 type: string
               id:
-                pattern: ^\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$
+                pattern: ^([^\s:/]+(/[^\s:/]+)+:)?\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$
                 type: string
               kind:
                 enum:

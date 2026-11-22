@@ -48,6 +48,9 @@ type Delivery struct {
 	Fields map[string]any
 	// Final marks the delegate's last delivery: the one that completes it.
 	Final bool
+	// Reads lists the entries a delegate's session read in full by the time
+	// it delivered.
+	Reads []string
 }
 
 // Courier carries a delivery to the receiving session and returns its
@@ -78,6 +81,9 @@ type Fork struct {
 	Send    map[string]string
 	Status  ForkStatus
 	Reason  string
+	// Reads lists the entries the child read in full, as its deliveries
+	// reported them: recorded on this side, it outlasts the child.
+	Reads []string
 }
 
 // LiveFork is a fork still live, with the dispatching instance it belongs to.
@@ -258,6 +264,9 @@ func (s *Session) Poll(instanceID string) (*Serve, error) {
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
+	}
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
@@ -314,14 +323,23 @@ func (s *Session) Receive(d Delivery) (string, error) {
 		return "", fmt.Errorf("delivery %s into %s: %w", d.ID, inst.ID, err)
 	}
 	s.applyReceived(inst, d, fields, fork)
-	s.appendEvent(inst.ID, EventReceived, map[string]any{
-		"id": d.ID, "from": linkData(d.From), "fields": fields, "final": d.Final,
-	})
+	data := map[string]any{"id": d.ID, "from": linkData(d.From), "fields": fields, "final": d.Final}
+	if fork != nil && len(d.Reads) > 0 {
+		data["reads"] = d.Reads
+	}
+	s.appendEvent(inst.ID, EventReceived, data)
 	return "", s.checkSink()
 }
 
 func (s *Session) applyReceived(inst *Instance, d Delivery, fields map[string]any, fork *Fork) {
 	s.received[d.ID] = true
+	if fork != nil {
+		for _, id := range d.Reads {
+			if !slices.Contains(fork.Reads, id) {
+				fork.Reads = append(fork.Reads, id)
+			}
+		}
+	}
 	if inst.unconsumed == nil {
 		inst.unconsumed = map[string]bool{}
 	}
@@ -389,7 +407,7 @@ func (s *Session) deliver(inst *Instance, step *Step, to string) (bool, error) {
 		}
 		fields[f] = v
 	}
-	d := Delivery{ID: s.deliveryID(inst), From: Link{Session: s.ID, Instance: inst.ID}, To: *s.Lineage, Fields: fields, Final: to == EndCompleted}
+	d := Delivery{ID: s.deliveryID(inst), From: Link{Session: s.ID, Instance: inst.ID}, To: *s.Lineage, Fields: fields, Final: to == EndCompleted, Reads: s.fullReads()}
 	refusal, err := s.send(d)
 	if err != nil {
 		return false, err
@@ -671,7 +689,14 @@ func (s *Session) applyDeliveryEvent(ev Event) error {
 		if s.Lineage == nil || *s.Lineage != from {
 			fork = inst.fork(from)
 		}
-		s.applyReceived(inst, Delivery{ID: id, From: from, Final: final}, kept, fork)
+		var reads []string
+		switch logged := ev.Data["reads"].(type) {
+		case []string:
+			reads = logged
+		case []any:
+			reads = asStrings(logged)
+		}
+		s.applyReceived(inst, Delivery{ID: id, From: from, Final: final, Reads: reads}, kept, fork)
 	}
 	return nil
 }
@@ -703,7 +728,9 @@ func (s *Session) Forks(instanceID string) []Fork {
 	}
 	out := make([]Fork, 0, len(inst.forks))
 	for _, fork := range inst.forks {
-		out = append(out, *fork)
+		copied := *fork
+		copied.Reads = slices.Clone(fork.Reads)
+		out = append(out, copied)
 	}
 	return out
 }

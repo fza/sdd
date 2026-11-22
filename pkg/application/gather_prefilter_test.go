@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -209,6 +210,45 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 				if line == "" || strings.Contains(line, "score") || !strings.HasPrefix(line, "- ") {
 					t.Fatalf("failed candidate %s should be listed to judge, unscored:\n%s", id, result.Text)
 				}
+			}
+		})
+	}
+}
+
+func prefilterNote(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		if strings.HasPrefix(line, "prefilter: ") {
+			return line
+		}
+	}
+	return ""
+}
+
+// The note says how many pairs the judge scored, and names the order by
+// score only where a line to judge holds one.
+func TestGather_PrefilterNoteNamesTheScoreOrderOnlyOverScores(t *testing.T) {
+	const judge, order = "judge " + gatherJudge + " scored ", `; lines to judge run by falling score`
+	for _, tc := range []struct {
+		name    string
+		failAll bool
+		fail    map[string]bool
+		note    string
+	}{
+		{name: "no pair scored", failAll: true, note: judge + `0 of \d+ pairs, \d+ unanswered and left to judge \(`},
+		{name: "some pairs scored", fail: map[string]bool{gatherBeta: true}, note: judge + `[1-9]\d* of \d+ pairs` + order + `, 1 unanswered and left to judge \(`},
+		{name: "every pair scored", note: judge + `[1-9]\d* of \d+ pairs` + order + `$`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scorer := &scriptedScorer{fail: tc.fail, failAll: tc.failAll, maxBatch: 1}
+			f := prefilterFixture(t, scorer)
+			application := f.app(t, prefilterPolicy(1), nil)
+			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+			if err != nil {
+				t.Fatal(err)
+			}
+			note := prefilterNote(result.Text)
+			if !regexp.MustCompile(tc.note).MatchString(note) {
+				t.Errorf("the note should count the scored pairs and name the order by score only where a line holds a score: %s", note)
 			}
 		})
 	}

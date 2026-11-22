@@ -102,9 +102,9 @@ func (w *WorkflowSession) ServeEntry(id, hash, body, field string) string {
 	return served.Anchor.Render(body)
 }
 
-// RecordServed logs the anchors the call issued. A finished session records
+// RecordAnchors logs the anchors the call issued. A finished session records
 // nothing: its last serve is the one that ended it.
-func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity) error {
+func (w *WorkflowSession) RecordAnchors(ctx context.Context, identity RequestIdentity) error {
 	if w.Finished() {
 		return nil
 	}

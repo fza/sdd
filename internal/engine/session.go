@@ -38,10 +38,13 @@ const (
 	EventOpResult        EventType = "op_result"
 	EventMutationIntent  EventType = "mutation_intent"
 	EventMutationOutcome EventType = "mutation_outcome"
-	EventServed          EventType = "served"
-	EventTransition      EventType = "transition"
-	EventCompleted       EventType = "completed"
-	EventAbandoned       EventType = "abandoned"
+	// EventMutationCommitted records engine writes a running operation
+	// committed ahead of its outcome (Context.Commit).
+	EventMutationCommitted EventType = "mutation_committed"
+	EventServed            EventType = "served"
+	EventTransition        EventType = "transition"
+	EventCompleted         EventType = "completed"
+	EventAbandoned         EventType = "abandoned"
 	// EventRead records what a read surface served to the session: the tool,
 	// the entry IDs, and the depth — metadata only, never payloads. Reads stay
 	// free and ungated; tracking is logging, not gating (d-tac-dbk). The read
@@ -69,6 +72,37 @@ const (
 	// every piece in full.
 	EventReoriented EventType = "reoriented"
 )
+
+// procedureRevision rides the started event of every move. This build ships
+// the base procedures revised under their earlier IDs, the capture among
+// them, so a non-shell move whose started event carries a lower revision was
+// begun under a procedure this build cannot continue: it offers only abandon
+// (ForeignMoveGoal). Raise it with the next such revision.
+const procedureRevision = 2
+
+// The serve of a move an earlier build started, and the refusal of every
+// other call on it.
+const (
+	ForeignMoveGoal         = "abandon this move: an earlier sdd build started it"
+	foreignMoveInstructions = "An earlier sdd build started this move under a procedure of the same name, " +
+		"which this build cannot continue: abandon is its only choice. Start the move anew if it is still wanted."
+)
+
+func foreignMoveRefusal(inst *Instance) error {
+	return fmt.Errorf("%s %s was started by an earlier sdd build, which this build cannot continue: abandon it, then start it anew", inst.Spec.Canonical, inst.ID)
+}
+
+// startedRevision reads the procedure revision a started event carries, 0
+// for none.
+func startedRevision(data map[string]any) int {
+	switch rev := data["rev"].(type) {
+	case int:
+		return rev
+	case float64:
+		return int(rev)
+	}
+	return 0
+}
 
 // ReadDepth classifies how deeply an entry was served: full means the body
 // was served (a show primary, an injected chain's primary, or a same-session
@@ -257,7 +291,9 @@ type Session struct {
 	intent      *MutationIntent
 	intentStore *Store
 	intentDone  bool
-	cancelled   *MutationCancellation
+	// intentCommitted folds what the pending intent's attempts committed.
+	intentCommitted map[string]any
+	cancelled       *MutationCancellation
 	// progressing counts the transitions in flight that passed
 	// checkProgression, which Readmit checks again after a fold.
 	progressing int
@@ -503,6 +539,18 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
+// fullReads lists the entries served in full, sorted.
+func (s *Session) fullReads() []string {
+	var ids []string
+	for id, depth := range s.reads {
+		if depth == ReadFull {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // Reorient records the consumer's request for the session's position and
 // makes the call in flight serve every piece in full.
 func (s *Session) Reorient() {
@@ -525,6 +573,9 @@ func (s *Session) Park(instanceID, note string) error {
 	}
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has ended (%s) — only running moves park", instanceID, inst.Outcome)
+	}
+	if inst.foreign {
+		return foreignMoveRefusal(inst)
 	}
 	data := map[string]any{"step": inst.Step}
 	if note != "" {
@@ -614,6 +665,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		"procedure": spec.Canonical,
 		"entry":     spec.EntryID,
 		"step":      inst.Step,
+		"rev":       procedureRevision,
 	}
 	// Shell-ness rides the log so descriptors stay self-derived (no spec
 	// resolution when listing); absent means move, which covers old logs.
@@ -748,6 +800,9 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
+	}
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty report — send state fields or a chooser answer")
 	}
@@ -818,6 +873,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	}
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
+	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
 	}
 	step := inst.currentStep()
 	if step == nil {
@@ -1101,12 +1159,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			return fmt.Errorf("procedure %s has no step %q", canonical, step)
 		}
 		inst := &Instance{
-			ID:     ev.Instance,
-			Spec:   spec,
-			Store:  NewStore(spec),
-			Step:   step,
-			Status: StatusRunning,
-			Parent: parent,
+			ID:      ev.Instance,
+			Spec:    spec,
+			Store:   NewStore(spec),
+			Step:    step,
+			Status:  StatusRunning,
+			Parent:  parent,
+			foreign: startedRevision(ev.Data) < procedureRevision && spec.Class != model.ProcedureClassShell,
 		}
 		if params, ok := ev.Data["params"].(map[string]any); ok {
 			if err := inst.Store.SetStart(declaredInputs(spec, params)); err != nil {
@@ -1180,6 +1239,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 
 	case EventMutationIntent:
 		return s.restoreIntent(ev)
+
+	case EventMutationCommitted:
+		if err := s.validateOutcome(ev); err != nil {
+			return err
+		}
+		writes, _ := ev.Data["writes"].(map[string]any)
+		s.foldCommitted(writes)
 
 	case EventOpResult, EventMutationOutcome:
 		inst, err := s.replayInstance(ev)

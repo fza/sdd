@@ -107,7 +107,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))
 	for _, finding := range result.Findings {
-		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
+		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.BasisIDs()})
 	}
 	if err := ctx.Store.WriteEngine("findings", findings); err != nil {
 		return err
@@ -241,7 +241,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	if err != nil {
 		return false, false, err
 	}
-	current, accepted, mechanicalOnly := false, false, false
+	current, accepted, mechanicalOnly, unjudged := false, false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -255,7 +255,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				return false, false, err
 			}
 			if slices.Contains(selected, item.Handle) && staged[item.Handle] != item.BlobID {
-				current, accepted = false, false
+				current, accepted, unjudged = false, false, false
 			}
 			staged[item.Handle] = item.BlobID
 			continue
@@ -275,15 +275,16 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 			if fields, ok := record.Data["fields"].(map[string]any); ok {
 				for name := range fields {
 					if slices.Contains(captureDraftFields, name) {
-						current, accepted = false, false
+						current, accepted, unjudged = false, false, false
 					}
 				}
 			}
 		case engine.EventOpResult:
 			name, _ := record.Data["fn"].(string)
 			if name == "preflightEntry" {
-				current, accepted = true, true
 				writes, _ := record.Data["writes"].(map[string]any)
+				unjudged = writes[fieldPreflightCut] != nil || writes[fieldPreflightTimeout] != nil
+				current, accepted = !unjudged, true
 				checkedBranch, _ = writes["resolvedCaptureBranch"].(string)
 				rubric, _ := writes[fieldPreflightRubric].(string)
 				mechanicalOnly = rubric != ""
@@ -300,6 +301,11 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 						accepted = false
 					}
 				}
+			}
+			// A pre-flight the model did not judge covers the draft only
+			// once the user skipped it.
+			if name == "recordPreflightSkip" && unjudged {
+				current = true
 			}
 			if name == "recordOverride" && current {
 				accepted = true

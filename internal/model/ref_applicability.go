@@ -133,6 +133,37 @@ func RefKindApplicability(kind RefKind, class RefTargetClass) (RefKindCell, bool
 	return cell, ok
 }
 
+// RefFit is the matrix's reading of one ref: whether its target resolves,
+// the target's class, the chosen kind's cell (Capturable false for a kind
+// outside the matrix) and the kinds the class admits.
+type RefFit struct {
+	Ref        Ref
+	Resolved   bool
+	Class      RefTargetClass
+	Cell       RefKindCell
+	Capturable bool
+	Admissible []RefKind
+}
+
+// FitRef reads ref against the matrix from graph, its target resolved in
+// graph or a dependency and classified by the owning graph's derived status.
+// A nil graph or an unresolvable target yields a fit with Resolved false.
+func FitRef(graph *Graph, ref Ref) RefFit {
+	fit := RefFit{Ref: ref}
+	if graph == nil {
+		return fit
+	}
+	target, owner, ok := graph.ResolveAcross(ref.ID)
+	if !ok {
+		return fit
+	}
+	fit.Resolved = true
+	fit.Class = ClassifyRefTarget(target, owner.DerivedStatus(target))
+	fit.Cell, fit.Capturable = RefKindApplicability(ref.Kind, fit.Class)
+	fit.Admissible = AdmissibleRefKinds(fit.Class)
+	return fit
+}
+
 // AdmissibleRefKinds returns the capturable kinds whose precondition holds for
 // the target class, in display order. This is the set rendered into the
 // pre-flight prompt per ref and the set a mechanical inapplicability finding

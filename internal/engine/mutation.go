@@ -300,6 +300,7 @@ func (s *Session) restoreIntent(event Event) error {
 	s.intent = &MutationIntent{Ref: event.Position, Instance: inst.ID, Step: data.Step, Command: data.Command, Values: data.Values, To: data.To}
 	s.intentStore = inst.Store.Clone()
 	s.intentDone = false
+	s.intentCommitted = nil
 	s.cancelled = nil
 	return nil
 }
@@ -318,7 +319,44 @@ func (s *Session) validateOutcome(event Event) error {
 		return err
 	}
 	if s.intent == nil || s.intentDone || data.Ref != s.intent.Ref || event.Instance != s.intent.Instance || data.Step != s.intent.Step || data.Command != s.intent.Command {
-		return fmt.Errorf("mutation outcome does not match its pending intent")
+		return fmt.Errorf("%s does not match its pending intent", event.Event)
 	}
 	return nil
+}
+
+// openCommits writes what earlier attempts of the pending intent committed
+// into the attempt's candidate store, so its outcome carries them too, and
+// lets the command commit more.
+func (s *Session) openCommits(inst *Instance, ctx *Context, candidate *Store) error {
+	for _, name := range slices.Sorted(maps.Keys(s.intentCommitted)) {
+		if err := candidate.WriteEngine(name, s.intentCommitted[name]); err != nil {
+			return err
+		}
+	}
+	ctx.Committed = maps.Clone(s.intentCommitted)
+	ctx.Commit = func(fields map[string]any) error {
+		writes := make(map[string]any, len(fields))
+		for _, name := range slices.Sorted(maps.Keys(fields)) {
+			if err := candidate.WriteEngine(name, fields[name]); err != nil {
+				return err
+			}
+			writes[name], _ = candidate.Get(name)
+		}
+		s.appendEvent(inst.ID, EventMutationCommitted, map[string]any{
+			"intent_ref": s.intent.Ref, "step": s.intent.Step, "fn": s.intent.Command, "writes": writes,
+		})
+		if err := s.checkSink(); err != nil {
+			return err
+		}
+		s.foldCommitted(writes)
+		return nil
+	}
+	return nil
+}
+
+func (s *Session) foldCommitted(writes map[string]any) {
+	if s.intentCommitted == nil {
+		s.intentCommitted = map[string]any{}
+	}
+	maps.Copy(s.intentCommitted, writes)
 }
