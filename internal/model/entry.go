@@ -300,7 +300,7 @@ type Entry struct {
 	Warnings    []Warning // validation issues found during graph construction
 	// UnknownFields holds the frontmatter keys this binary does not read, in
 	// file order, so every rewrite of the entry writes them back.
-	UnknownFields []FrontmatterField
+	UnknownFields []UnknownFrontmatterField
 	// Embedded marks a base entry compiled into the sdd binary (base
 	// procedures) rather than loaded from the graph directory. Set by the
 	// loader, never serialized. Write-side surfaces (summary regeneration,
@@ -453,11 +453,12 @@ type frontmatter struct {
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 
-	unknown []FrontmatterField
+	unknown []UnknownFrontmatterField
 }
 
-// FrontmatterField is one frontmatter key with its value as parsed.
-type FrontmatterField struct {
+// UnknownFrontmatterField is one frontmatter key sdd does not know, with its
+// value as parsed.
+type UnknownFrontmatterField struct {
 	Key   string
 	Value *yaml.Node
 }
@@ -479,7 +480,7 @@ var knownFrontmatterKeys = func() map[string]bool {
 // UnmarshalYAML distinguishes an absent index from an explicit null and keeps
 // the keys no field reads.
 func (f *frontmatter) UnmarshalYAML(node *yaml.Node) error {
-	var unknown []FrontmatterField
+	var unknown []UnknownFrontmatterField
 	if node.Kind == yaml.MappingNode {
 		for offset := 0; offset+1 < len(node.Content); offset += 2 {
 			key, value := node.Content[offset], node.Content[offset+1]
@@ -491,7 +492,7 @@ func (f *frontmatter) UnmarshalYAML(node *yaml.Node) error {
 				if err != nil {
 					return fmt.Errorf("frontmatter key %q: %w", key.Value, err)
 				}
-				unknown = append(unknown, FrontmatterField{Key: key.Value, Value: value})
+				unknown = append(unknown, UnknownFrontmatterField{Key: key.Value, Value: value})
 			}
 		}
 	}
