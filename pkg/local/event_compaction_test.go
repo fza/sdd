@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
-	"github.com/networkteam/sdd/internal/segment"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/local"
 )
@@ -41,7 +41,7 @@ func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testi
 		}
 	}
 	channelDir := filepath.Join(dir, "recheck")
-	if files := segmentFiles(t, channelDir); len(files) >= 8 {
+	if files := eventFiles(t, channelDir); len(files) >= 8 {
 		t.Fatalf("%d segments: a tier of eight small segments should have merged", len(files))
 	}
 	if settledCalls == 0 {
@@ -50,7 +50,7 @@ func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testi
 	if err := store.Compact(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	files := segmentFiles(t, channelDir)
+	files := eventFiles(t, channelDir)
 	if len(files) != 1 {
 		t.Fatalf("%d segments after a full compaction, want one", len(files))
 	}
@@ -58,12 +58,9 @@ func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := segment.Decode(data, "sdd.events")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 6 {
-		t.Fatalf("the merged segment holds %d records: each kept event should be stored once", len(records))
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("the merged segment holds %d lines: each kept event should be stored once", len(lines))
 	}
 	events, err := store.Query(t.Context(), sdd.EventQuery{})
 	if err != nil {

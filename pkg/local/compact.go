@@ -31,8 +31,8 @@ func segmentTier(size int) int {
 
 // tierToMerge returns the segments of the lowest tier holding compactFanIn
 // or more, none when no tier does.
-func tierToMerge(files []segmentFile) []segmentFile {
-	byTier := map[int][]segmentFile{}
+func tierToMerge(files []logFile) []logFile {
+	byTier := map[int][]logFile{}
 	for _, file := range files {
 		tier := segmentTier(len(file.data))
 		byTier[tier] = append(byTier[tier], file)
@@ -53,11 +53,28 @@ func tierToMerge(files []segmentFile) []segmentFile {
 // segmentMerge merges segments into one; nil when no record is left.
 type segmentMerge func(segments [][]byte) ([]byte, error)
 
+// logMerge merges files into the bytes of one new file; nil when no record
+// is left.
+type logMerge func(files []logFile) ([]byte, error)
+
 // compactDir merges segments of dir: every segment when full, else tier by
 // tier while a tier overflows.
 func compactDir(ctx context.Context, dir string, full bool, merge segmentMerge) error {
+	return compactLog(ctx, dir, segmentLog, full, func(files []logFile) ([]byte, error) {
+		data := make([][]byte, len(files))
+		for i, file := range files {
+			data[i] = file.data
+		}
+		return merge(data)
+	})
+}
+
+// compactLog merges the files of dir that layout reads into one file of
+// layout's write extension: every file when full, else tier by tier while a
+// tier overflows.
+func compactLog(ctx context.Context, dir string, layout logFiles, full bool, merge logMerge) error {
 	for range maxCompactions {
-		files, err := readSegmentFiles(ctx, dir)
+		files, err := readLogFiles(ctx, dir, layout.read)
 		if err != nil {
 			return err
 		}
@@ -68,11 +85,7 @@ func compactDir(ctx context.Context, dir string, full bool, merge segmentMerge) 
 		if len(group) == 0 {
 			return nil
 		}
-		data := make([][]byte, len(group))
-		for i, file := range group {
-			data[i] = file.data
-		}
-		merged, err := merge(data)
+		merged, err := merge(group)
 		if err != nil {
 			return err
 		}
@@ -80,7 +93,7 @@ func compactDir(ctx context.Context, dir string, full bool, merge segmentMerge) 
 			return nil
 		}
 		if merged != nil {
-			err = writeSegmentFile(dir, merged)
+			err = writeLogFile(dir, layout.write, merged)
 			if err != nil {
 				return err
 			}

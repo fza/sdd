@@ -33,6 +33,7 @@ sdd --local-config ~/ci-local.yaml config get participant
 | `titles.backfill` | Any file | The project file switches it on for everyone on the project. The local file overrides that for one checkout. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
+| `events.channels.*` | Project | How each [event channel](#event-store) is shared is the team's choice. sdd ignores the key in the other files. |
 | `hooks` | Any file | The lists of all files run together. A hook from a project file runs only once you [allow it](#allowing-a-repositorys-hooks). |
 
 :::caution[Keep API keys out of the project file]
@@ -322,6 +323,24 @@ repos:
 ```
 
 sdd keeps a clone of each connected repository under `~/.local/share/sdd/repos/<repo_id>`. A read that needs it starts or renews the clone's [lease](#leases), which runs the clone's sync round once its effective fetch cooldown has passed. The [connected repositories guide](/sdd/guides/connected-repositories/#a-connected-graph-is-what-was-pushed) describes the round.
+
+### Event store
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `events.channels.<channel>.share` | `local` | `local`: the channel's files stay on the machine that wrote them. `git`: its new files ride the next sdd commit, and sdd never commits them on its own. Read from `.sdd/config.yaml` only. |
+
+```yaml
+# .sdd/config.yaml
+events:
+  channels:
+    recheck:
+      share: git
+```
+
+The project event store keeps one folder per channel under `.sdd/events/<channel>/`, such as `recheck` for the items a strain left to heal. Every write adds a file `<time>-<random>.jsonl` and never changes one, so files from two clones merge in git without conflicts. Each line holds one event as a JSON object: `id`, `type`, `time`, `writer`, `subject` (`uri`, `entries` or both) and the payload, as `payload` when it is JSON, else base64 in `payload_base64`. The folder names the channel. A local channel's folder holds a `.gitignore` that sdd writes and removes when the channel turns `git`.
+
+sdd merges a channel's small files into a larger one as they pile up, and `sdd events compact` merges each channel into one file, dropping healed recheck items. Binary `.seg` files an earlier sdd wrote are read beside the JSON Lines files, and the next merge rewrites them as JSON Lines; in a `git` channel the next sdd commit records that rewrite. A file whose last line has no newline, or with a line that is no complete event, fails every read with an error naming the file, and no merge drops it. `sdd events export` prints the events as JSON Lines with their channel, and `sdd events import` appends such a file.
 
 ## Language model providers
 

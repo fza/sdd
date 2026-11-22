@@ -1,7 +1,7 @@
 // Package segment is the binary codec of sdd's append logs: immutable segment
 // files named <time>-<random>.seg, each holding the records of one write. The
-// project event store writes its events through it; the relevance ledger
-// shares it.
+// relevance ledger writes through it; the project event store only reads the
+// segments an earlier sdd wrote, until compaction rewrites them as JSON Lines.
 //
 //	magic    "SDDREC"
 //	version  one byte
