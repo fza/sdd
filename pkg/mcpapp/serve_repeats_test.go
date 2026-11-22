@@ -56,4 +56,3 @@ func TestFramingServesEachCallerOncePerChange(t *testing.T) {
 		t.Fatalf("resume_session should carry every framing block, got %q", framing)
 	}
 }
-

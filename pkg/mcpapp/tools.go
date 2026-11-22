@@ -35,6 +35,7 @@ type StartSessionArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"project to open the session in, by ID. Optional: a composition serving one project infers it; when several are accessible and none is passed, the response lists them under projects instead of starting a session — pick one and call again"`
 	Shell   string `json:"shell,omitempty" jsonschema:"shell procedure to open the session with, by canonical; defaults to user-dialogue"`
 	Label   string `json:"label,omitempty" jsonschema:"short single-line subject label for the session; set it early, update when the subject sharpens"`
+	Link    string `json:"link,omitempty" jsonschema:"handle of an earlier session of this conversation whose served texts you still see. After a right answer a text identical to one served there comes short. Omit it in a fresh context"`
 }
 
 // ProjectResult is one accessible project, served by start_session when the
@@ -653,7 +654,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	project := sdd.ProjectID(strings.TrimSpace(args.Project))
 	workflow, serve, err := s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
 		ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
-		Shell: args.Shell, Label: args.Label,
+		Shell: args.Shell, Label: args.Label, Link: sdd.SessionID(strings.TrimSpace(args.Link)),
 	})
 	if err != nil {
 		var appErr *sdd.ApplicationError
@@ -669,7 +670,11 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	askQuestion(ctx)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	guide, err := resultChars(questionGuide + "\n\n")
+	lead := questionGuide + "\n\n"
+	if notice := workflow.LinkNotice(); notice != "" {
+		lead += notice + "\n\n"
+	}
+	guide, err := resultChars(lead)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -677,7 +682,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
-	result.Instructions = questionGuide + "\n\n" + result.Instructions
+	result.Instructions = lead + result.Instructions
 	return nil, result, nil
 }
 

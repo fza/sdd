@@ -45,6 +45,9 @@ type WorkflowOpenRequest struct {
 	ClientVersion string
 	Shell         string
 	Label         string
+	// Link names an earlier session whose served texts the agent still
+	// holds; the new session carries them (20261122-105026-d-tac-wl5).
+	Link SessionID
 }
 
 // WorkflowResumeRequest names the session to load by its ID and the client
@@ -258,6 +261,8 @@ type WorkflowSession struct {
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string
+	// linkNotice says the link the session opened with went unused (LinkNotice).
+	linkNotice string
 	// laneFull collects the entries the framing lane in render serves in full;
 	// framingFull keeps them per block of the last Framing call. framing is
 	// set while the lanes render.
@@ -293,6 +298,10 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	link, err := a.resolveLink(ctx, identity, request.Link)
+	if err != nil {
+		return nil, nil, err
+	}
 	id := newWorkflowSessionID(time.Now())
 	now := a.now().UTC().Round(0)
 	metadata := SessionMetadata{
@@ -313,6 +322,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 		return nil, nil, err
 	}
 	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}))
+	link.apply(w)
 	if !w.Autonomous() {
 		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id); err != nil {
 			return nil, nil, err

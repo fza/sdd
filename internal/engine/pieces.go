@@ -43,11 +43,14 @@ type pieceCall struct {
 	// none; held then are the texts whose latest copy is at least provedFrom.
 	answered   int
 	provedFrom int
-	reread     map[string]bool
-	full       bool
-	issued     map[Piece]bool
-	covered    map[string]bool
-	pending    []pendingServe
+	// reset is set by lost or a wrong answer: the held set empties when the
+	// call records what it served.
+	reset   bool
+	reread  map[string]bool
+	full    bool
+	issued  map[Piece]bool
+	covered map[string]bool
+	pending []pendingServe
 	// followed is what the deferral this call follows sent, by the step that
 	// sent it, still pointed at should the call leave lanes waiting again.
 	followed map[Piece]string
@@ -78,14 +81,20 @@ func (s *Session) nextSeq() int {
 // BeginCall starts a call carrying answer, the agent's answer to a question
 // a response asked, and the piece names it lists in reread, which serve in
 // full. An answer that names the words of a question still unanswered makes
-// the texts whose latest copy is at least that question's hold for the call;
-// lost, a wrong answer or none holds nothing.
+// the texts whose latest copy is at least that question's hold for the call.
+// None holds nothing; lost or a wrong answer holds nothing and empties the
+// held set, so only texts served from this call on count as held
+// (20261122-105026-d-tac-wl5).
 func (s *Session) BeginCall(answer string, reread []string) {
 	s.call = pieceCall{reread: map[string]bool{}}
 	for _, r := range reread {
 		s.call.reread[strings.ToLower(strings.TrimSpace(r))] = true
 	}
-	if strings.TrimSpace(answer) == "" || model.IsLost(answer) {
+	if strings.TrimSpace(answer) == "" {
+		return
+	}
+	if model.IsLost(answer) {
+		s.call.reset = true
 		return
 	}
 	for i, asked := range s.questions {
@@ -96,6 +105,7 @@ func (s *Session) BeginCall(answer string, reread []string) {
 			s.call.answered, s.call.provedFrom = i+1, asked.latest
 		}
 	}
+	s.call.reset = s.call.answered == 0
 }
 
 // Answered reports whether the call's answer answers a question still
@@ -115,7 +125,7 @@ func (s *Session) holds(p Piece, byAnswer bool) bool {
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
 		return false
 	}
-	if held, ok := s.texts[p]; byAnswer && ok && s.call.answered > 0 && held.latest >= s.call.provedFrom {
+	if held, ok := s.texts[p]; byAnswer && ok && s.call.answered > 0 && held.latest >= s.call.provedFrom && held.latest >= s.heldFrom {
 		return true
 	}
 	_, sent := s.call.followed[p]
@@ -276,8 +286,14 @@ func (s *Session) unissue(p pendingServe) {
 // RecordServed logs what the call served in full since the last record, each
 // text with its content the first time the session serves it, so a
 // restarted server still makes and checks questions about it, and the
-// question the call's answer answered.
+// question the call's answer answered, or that it emptied the held set.
 func (s *Session) RecordServed() {
+	data := map[string]any{}
+	if s.call.reset {
+		s.call.reset = false
+		s.heldFrom = s.copies + 1
+		data["reset"] = true
+	}
 	var records []any
 	for _, p := range s.call.pending {
 		if p.text == "" && !p.changed {
@@ -299,7 +315,6 @@ func (s *Session) RecordServed() {
 		records = append(records, record)
 	}
 	s.call.pending = nil
-	data := map[string]any{}
 	if len(records) > 0 {
 		data["texts"] = records
 	}
@@ -314,12 +329,13 @@ func (s *Session) RecordServed() {
 }
 
 // DropAnswer keeps the call's answer from counting a question answered, for
-// a call that failed: its question stays open for a later call.
-func (s *Session) DropAnswer() { s.call.answered = 0 }
+// a call that failed: its question stays open for a later call, and the held
+// set stays as it was.
+func (s *Session) DropAnswer() { s.call.answered, s.call.reset = 0, false }
 
 // Ask ends a response with a question: about the text held longest by its
 // latest copy, the next oldest where that text yields no question not asked
-// before, its phrase occurring in no other held text and its answer no
+// before, its phrase occurring in no other text served and its answer no
 // earlier question's, so an answer replayed from the call history answers
 // nothing. It logs the question and returns its line, empty when no held
 // text yields one.
@@ -349,6 +365,9 @@ func (s *Session) Ask() string {
 	}
 	for _, p := range pieces {
 		held := s.texts[p]
+		if held.latest < s.heldFrom {
+			continue
+		}
 		q, ok := model.DrawQuestion(held.text, s.random(), func(q model.TextQuestion) bool {
 			return !s.asked[p.key()+"|"+q.Key()] && !elsewhere(p, q.Phrase) && !elsewhere(p, q.Second) && !answeredBefore(q.Answer)
 		})
@@ -369,9 +388,12 @@ func (s *Session) Ask() string {
 	return ""
 }
 
-// foldTexts folds a texts event: the texts it served, then the question it
-// answered.
+// foldTexts folds a texts event: the held set it emptied, the texts it
+// served, then the question it answered.
 func (s *Session) foldTexts(data map[string]any) {
+	if data["reset"] == true {
+		s.heldFrom = s.copies + 1
+	}
 	records, _ := data["texts"].([]any)
 	for _, record := range records {
 		fields, _ := record.(map[string]any)

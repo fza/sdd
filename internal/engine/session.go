@@ -67,6 +67,9 @@ const (
 	EventTexts EventType = "texts"
 	// EventQuestion records the question a response ended with (Session.Ask).
 	EventQuestion EventType = "question"
+	// EventLinked records the earlier session a session links and the texts
+	// it carries from it (Session.Link).
+	EventLinked EventType = "linked"
 	// EventDeferred records that a serve of an instance left parts waiting
 	// past the result bound, with the pieces it sent, or, with ended set, that
 	// the deferral is settled (Session.EndDeferral).
@@ -285,10 +288,12 @@ type Session struct {
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
 	// texts folds the texts events: each text served in full with its latest
-	// copy, numbered by copies. questions and asked fold the question
-	// events. call is the tool call in flight; rnd draws questions.
+	// copy, numbered by copies; a text counts as held while its latest copy
+	// is at least heldFrom. questions and asked fold the question events.
+	// call is the tool call in flight; rnd draws questions.
 	texts     map[Piece]*heldText
 	copies    int
+	heldFrom  int
 	questions []askedQuestion
 	asked     map[string]bool
 	// changed folds the content hash each piece that serves once per change
@@ -1385,6 +1390,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 
 	case EventQuestion:
 		s.foldQuestion(ev.Data)
+
+	case EventLinked:
+		s.foldLinked(ev.Data)
 
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)
