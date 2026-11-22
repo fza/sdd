@@ -232,6 +232,10 @@ type LLMConfig struct {
 	Provider string `yaml:"provider,omitempty"`
 	// Model is the provider-specific model identifier.
 	Model string `yaml:"model,omitempty"`
+	// Effort is the reasoning effort every provider passes as written, to the
+	// models whose API takes one; empty means DefaultLLMEffortFor the
+	// provider.
+	Effort string `yaml:"effort,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
 	// Params carries behaviour-affecting, provider-specific model settings —
@@ -264,6 +268,28 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+}
+
+// ResolvedEffort is the reasoning effort a call runs at: Effort, else
+// DefaultLLMEffortFor the provider.
+func (c LLMConfig) ResolvedEffort() string {
+	if c.Effort == "" {
+		return DefaultLLMEffortFor(c.Provider)
+	}
+	return c.Effort
+}
+
+// DefaultLLMEffortFor is the reasoning effort provider runs at when
+// llm.effort is unset; an empty provider means DefaultLLMProvider, and an
+// unknown one has none.
+func DefaultLLMEffortFor(provider string) string {
+	switch provider {
+	case "", DefaultLLMProvider, "anthropic":
+		return "medium"
+	case "openai", "ollama":
+		return "low"
+	}
+	return ""
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -447,6 +473,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.Model != "" {
 		out.Model = overlay.Model
+	}
+	if overlay.Effort != "" {
+		out.Effort = overlay.Effort
 	}
 	if overlay.Timeout != "" {
 		out.Timeout = overlay.Timeout

@@ -17,12 +17,14 @@ import (
 // Runner invokes the claude CLI with --output-format json and maps the
 // response into the common llm.Result.
 type Runner struct {
-	model string
+	model  string
+	effort string
 }
 
-// NewRunner returns an llm.Runner backed by the claude CLI.
-func NewRunner(model string) *Runner {
-	return &Runner{model: model}
+// NewRunner returns an llm.Runner backed by the claude CLI, passing effort to
+// --effort as written; an empty effort leaves the CLI's own.
+func NewRunner(model, effort string) *Runner {
+	return &Runner{model: model, effort: effort}
 }
 
 func (r *Runner) identity() llm.Identity {
@@ -36,6 +38,9 @@ func (r *Runner) identity() llm.Identity {
 // the CLI validated against it becomes the text.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	args := []string{"-p", "--model", r.model, "--output-format", "json"}
+	if r.effort != "" {
+		args = append(args, "--effort", r.effort)
+	}
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}
