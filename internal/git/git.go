@@ -57,24 +57,6 @@ func (c CLI) dirEnv(env []string) []string {
 	return pathEnv(env)
 }
 
-// repositoryVariables are the variables git exports to hooks that pin a
-// command to the hook's repository whatever -C names.
-var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
-
-// pathEnv is env, nil meaning the process environment, without the inherited
-// repositoryVariables, for a git command that locates its repository by path.
-// A variable the caller set itself stays, such as graph move's temporary index.
-func pathEnv(env []string) []string {
-	inherited := os.Environ()
-	if env == nil {
-		env = inherited
-	}
-	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
-		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(repositoryVariables, name) && slices.Contains(inherited, kv)
-	})
-}
-
 // detachedTimeout caps a detached auto-commit or push. A signing or
 // credential helper blocking on input would otherwise hang indefinitely when
 // sdd runs as a long-lived server; the timeout is a backstop on top of the
@@ -610,14 +592,6 @@ func pathCommand(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// CommandAt is git run with args in the repository at dir, whatever
-// repository an inherited GIT_DIR names (pathEnv).
-func CommandAt(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = pathEnv(nil)
-	return cmd
-}
-
 // ErrGraphRepoMissing reports a graph directory that does not exist or lies
 // in no git repository.
 var ErrGraphRepoMissing = errors.New("graph directory is not in a git repository")
@@ -663,19 +637,11 @@ func (Repositories) RootOf(dir string) (string, error) {
 	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(stderr.String()), err)
 }
 
-func (Repositories) CurrentBranch(dir string) (string, error) {
-	return currentBranch(pathCommand("-C", dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
-}
+func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
 
-func (Repositories) RemoteURL(dir string) string {
-	return remoteURL(pathCommand("-C", dir, "remote", "get-url", "origin"))
-}
+func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
 
-func (Repositories) StableRoot(dir string) (string, error) {
-	return stableRepoRootWith(dir, func(args ...string) ([]byte, error) {
-		return pathCommand(args[1:]...).CombinedOutput()
-	})
-}
+func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
 
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {
@@ -709,11 +675,7 @@ func UserName() string {
 // RemoteURL returns the repo's origin remote URL, or "" when no remote is
 // configured — the local-only case for repo_id derivation.
 func RemoteURL(repoRoot string) string {
-	return remoteURL(exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin"))
-}
-
-func remoteURL(cmd *exec.Cmd) string {
-	out, err := cmd.Output()
+	out, err := pathCommand("-C", repoRoot, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
 	}
@@ -723,11 +685,7 @@ func remoteURL(cmd *exec.Cmd) string {
 // CurrentBranch resolves the symbolic branch at repoRoot. Detached HEAD is
 // returned as an error because it cannot seed durable mutation authority.
 func CurrentBranch(repoRoot string) (string, error) {
-	return currentBranch(exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"))
-}
-
-func currentBranch(cmd *exec.Cmd) (string, error) {
-	out, err := cmd.CombinedOutput()
+	out, err := pathCommand("-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git current branch: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
