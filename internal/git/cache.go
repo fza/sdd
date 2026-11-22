@@ -31,7 +31,7 @@ func run(ctx context.Context, dir string, args ...string) error {
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
-		cmd.Env = pathEnv(nil)
+		cmd.Env = pathEnv()
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
