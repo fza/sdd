@@ -74,6 +74,7 @@ type BaseConfig struct {
 	Embedding EmbeddingConfig `yaml:"embedding,omitempty"`
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
+	Titles    TitlesConfig    `yaml:"titles,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -224,6 +225,17 @@ type SessionsConfig struct {
 	// removes it. Days ("14d") or a Go duration ("336h"). Empty means
 	// DefaultSessionRetention.
 	Retention string `yaml:"retention,omitempty"`
+}
+
+type TitlesConfig struct {
+	// Backfill lets session starts, engine calls, the serve timer and
+	// `sdd sync` title untitled entries, each with model calls and a commit;
+	// off unless a layer switches it on.
+	Backfill *bool `yaml:"backfill,omitempty"`
+}
+
+func (c TitlesConfig) Backfills() bool {
+	return c.Backfill != nil && *c.Backfill
 }
 
 // EmbeddingConfig holds settings for the search index's embedding provider.
@@ -434,6 +446,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	if overlay.Titles.Backfill != nil {
+		out.Titles.Backfill = overlay.Titles.Backfill
+	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	return out
 }
