@@ -37,10 +37,13 @@ func (s snapshotAttachments) ReadAttachmentPage(ctx context.Context, entry, name
 }
 
 // AcquireSnapshot retains immutable graph and attachment bytes while a lease
-// exists. Exact revisions survive concurrent Apply calls, not process restarts;
-// durable consumers supply their own revision-backed SnapshotReader. Memory
-// scales with all graph and attachment bytes in live revisions. A nonempty
-// requested branch must match FilesystemGraphStoreOptions.Branch.
+// exists, and those of the latest revision read after its leases end: while
+// the file stamps prove no graph file changed since, a read leases it without
+// rebuilding it or waiting for the graph lock. Exact revisions survive
+// concurrent Apply calls, not process restarts; durable consumers supply their
+// own revision-backed SnapshotReader. Memory scales with all graph and
+// attachment bytes in live revisions and the latest one. A nonempty requested
+// branch must match FilesystemGraphStoreOptions.Branch.
 func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.SnapshotReadQuery) (*app.AcquiredSnapshot, error) {
 	if (q.Branch != "" && q.Branch != s.branch) || (q.ExactRevision != "" && q.IncludesRevision != "") {
 		return nil, fmt.Errorf("sdd: invalid filesystem snapshot selection")
@@ -53,6 +56,15 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 	if q.ExactRevision != "" {
 		if retained := s.snapshots[q.ExactRevision]; retained != nil {
 			return s.leaseSnapshot(retained), nil
+		}
+	}
+	if q.ExactRevision == "" && q.IncludesRevision == "" && s.latest != nil {
+		revision, ok, err := s.revisions.unchanged(s.dir)
+		if err != nil {
+			return nil, err
+		}
+		if ok && revision == s.latest.snapshot.Revision() {
+			return s.leaseSnapshot(s.latest), nil
 		}
 	}
 	lock, err := s.lock()
@@ -77,6 +89,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 		}
 	}
 	if retained := s.snapshots[revision]; retained != nil {
+		s.keepLatest(retained)
 		return s.leaseSnapshot(retained), nil
 	}
 	files, err := freezeGraphFS(ctx, s.dir)
@@ -99,7 +112,17 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 		s.snapshots = map[string]*retainedSnapshot{}
 	}
 	s.snapshots[revision] = retained
+	s.keepLatest(retained)
 	return s.leaseSnapshot(retained), nil
+}
+
+// keepLatest makes retained the latest snapshot, dropping the one it replaces
+// unless a lease still holds that one.
+func (s *FilesystemGraphStore) keepLatest(retained *retainedSnapshot) {
+	if previous := s.latest; previous != nil && previous != retained && previous.leases == 0 {
+		delete(s.snapshots, previous.snapshot.Revision())
+	}
+	s.latest = retained
 }
 
 func (s *FilesystemGraphStore) leaseSnapshot(retained *retainedSnapshot) *app.AcquiredSnapshot {
@@ -110,7 +133,7 @@ func (s *FilesystemGraphStore) leaseSnapshot(retained *retainedSnapshot) *app.Ac
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			retained.leases--
-			if retained.leases == 0 {
+			if retained.leases == 0 && retained != s.latest {
 				delete(s.snapshots, retained.snapshot.Revision())
 			}
 		})
