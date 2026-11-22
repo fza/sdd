@@ -1801,6 +1801,10 @@
             "null",
             "array"
           ]
+        },
+        "handle": {
+          "description": "the one file's handle, on a call naming name beside session instead of files",
+          "type": "string"
         }
       },
       "required": [

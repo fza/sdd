@@ -1201,8 +1201,8 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 		"session": session,
 		"files":   []map[string]any{{"name": "record.md", "patches": []map[string]any{{"old": "beta", "new": "BETA"}}}},
 	}, &staged)
-	if len(staged.Files) != 1 || staged.Files[0].Handle != "record.md" {
-		t.Fatalf("edit should keep the handle, got %+v", staged.Files)
+	if len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].Handle != "record.md" {
+		t.Fatalf("edit should keep the handle, got %+v", staged.StagedFiles())
 	}
 
 	// Read back in bounded pages.
@@ -1261,8 +1261,8 @@ func TestStagedAttachmentHashesRawBytes(t *testing.T) {
 
 	var staged mcpserver.StageAttachmentResult
 	call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "draft.md", "path": path}}}, &staged)
-	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(raw))); len(staged.Files) != 1 || staged.Files[0].SHA256 != want {
-		t.Errorf("staging by path should answer the sha256 of the file's raw bytes, got %+v", staged.Files)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(raw))); len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].SHA256 != want {
+		t.Errorf("staging by path should answer the sha256 of the file's raw bytes, got %+v", staged.StagedFiles())
 	}
 
 	call(t, cs, "stage_attachment", map[string]any{
@@ -1270,8 +1270,8 @@ func TestStagedAttachmentHashesRawBytes(t *testing.T) {
 		"files":   []map[string]any{{"name": "draft.md", "patches": []map[string]any{{"old": "Body line.", "new": "Patched line."}}}},
 	}, &staged)
 	patched := strings.Replace(raw, "Body line.", "Patched line.", 1)
-	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(patched))); len(staged.Files) != 1 || staged.Files[0].SHA256 != want {
-		t.Errorf("a staging patch should answer the sha256 of the patched bytes, got %+v", staged.Files)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(patched))); len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].SHA256 != want {
+		t.Errorf("a staging patch should answer the sha256 of the patched bytes, got %+v", staged.StagedFiles())
 	}
 
 	after, err := os.Stat(path)
@@ -1298,8 +1298,8 @@ func TestCaptureProcedureLoop(t *testing.T) {
 		"session": session,
 		"files":   []map[string]any{{"name": "evidence.md", "content": "# Evidence\n\nStaged before the capture ran."}},
 	}, &staged)
-	if len(staged.Files) != 1 || staged.Files[0].Handle != "evidence.md" {
-		t.Fatalf("unexpected staged files %+v", staged.Files)
+	if len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].Handle != "evidence.md" {
+		t.Fatalf("unexpected staged files %+v", staged.StagedFiles())
 	}
 
 	var serve mcpserver.ServeResult
@@ -1315,7 +1315,7 @@ func TestCaptureProcedureLoop(t *testing.T) {
 	}
 
 	report := assembleReport()
-	report["attachments"] = []string{staged.Files[0].Handle}
+	report["attachments"] = []string{staged.StagedFiles()[0].Handle}
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": report}, &serve)
 	if serve.Step != "playback" || serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
 		t.Fatalf("expected pending user chooser at playback, got step %q chooser %+v", serve.Step, serve.PendingChooser)

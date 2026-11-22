@@ -13,7 +13,7 @@ import (
 )
 
 // StageItem is one file of a staging call. It takes exactly one source:
-// Content stages the given bytes; Path stages the file read from that local
+// Content stages the given bytes, a non-nil empty Content an empty file; Path stages the file read from that local
 // path through ApplicationOptions.ReadLocalFile and keeps the path, so a
 // playback confirm reads it again; Patches edits
 // the file staged under Name before the call with ordered exact search-replace
@@ -54,6 +54,26 @@ func (w *WorkflowSession) StageAttachments(ctx context.Context, identity Request
 	return results, nil
 }
 
+// StageAttachment stages content under filename, an empty file for empty
+// content, and returns its handle, as a StageAttachments call of one item.
+func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (string, error) {
+	if content == nil {
+		content = []byte{}
+	}
+	staged, err := w.StageAttachments(ctx, identity, []StageItem{{Name: filename, Content: content}})
+	if err != nil {
+		return "", err
+	}
+	return staged[0].Handle, nil
+}
+
+// EditStagedAttachment applies ordered exact search-replace pairs to the file
+// staged under handle, as a StageAttachments item with Patches does.
+func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity RequestIdentity, handle string, pairs []types.PatchPair) error {
+	_, err := w.StageAttachments(ctx, identity, []StageItem{{Name: handle, Patches: pairs}})
+	return err
+}
+
 func (w *WorkflowSession) checkStageItems(ctx context.Context, identity RequestIdentity, items []StageItem) ([]stageWrite, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("files is empty: pass at least one file to stage")
@@ -81,7 +101,7 @@ func (w *WorkflowSession) checkStageItem(ctx context.Context, identity RequestId
 		return stageWrite{}, err
 	}
 	sources := 0
-	for _, present := range []bool{len(item.Content) > 0, item.Path != "", len(item.Patches) > 0} {
+	for _, present := range []bool{item.Content != nil, item.Path != "", len(item.Patches) > 0} {
 		if present {
 			sources++
 		}

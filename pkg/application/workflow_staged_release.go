@@ -94,7 +94,7 @@ func (w *WorkflowSession) releasePublished(instance string, attachments []Staged
 		if releaseStaged(w.staged, release) {
 			w.recordSource(release.Handle, "")
 		}
-		if err := w.app.blobs.DeleteBlob(w.ctx, ref, release.BlobID); err != nil {
+		if err := deleteBlob(w.ctx, w.app.blobs, ref, release.BlobID); err != nil {
 			return err
 		}
 	}

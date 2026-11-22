@@ -3,11 +3,14 @@ package mcpapp_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,8 +83,8 @@ func TestStageAttachmentStagesEveryFileInCallOrder(t *testing.T) {
 		{Handle: "from-path.md", SHA256: sha256Hex("read from a path\n")},
 		{Handle: "patched.md", SHA256: sha256Hex("alpha BETA\n")},
 	}
-	if fmt.Sprint(staged.Files) != fmt.Sprint(want) {
-		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.Files)
+	if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+		t.Fatalf("one call should stage content, path and patches files with one result each in call order, got %+v", staged.StagedFiles())
 	}
 	snapshotResponse(t, res)
 }
@@ -154,18 +157,148 @@ func TestStageAttachmentRefusesACallWithoutFiles(t *testing.T) {
 	}
 }
 
-func TestStageAttachmentRefusesTopLevelFileFieldsNamingFiles(t *testing.T) {
+// A client written for the one-file call shape, name with content, path or
+// patches beside session, stages that file and finds its handle at the top
+// level of the answer.
+func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "from-path.md")
+	err := os.WriteFile(path, []byte("read from a path\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{name: "content", args: map[string]any{"name": "inline.md", "content": "given inline\n"}, want: "given inline\n"},
+		{name: "path", args: map[string]any{"name": "from-path.md", "path": path}, want: "read from a path\n"},
+		{name: "patches", args: map[string]any{"name": "base.md", "patches": []map[string]any{{"old": "beta", "new": "BETA"}}}, want: "alpha BETA\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			cs := connect(t, env.srv)
+			session := openSession(t, cs).Session
+			call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "base.md", "content": "alpha beta\n"}}}, new(mcpserver.StageAttachmentResult))
+			args := map[string]any{"session": session}
+			for key, value := range tt.args {
+				args[key] = value
+			}
+
+			var staged mcpserver.StageAttachmentResult
+			call(t, cs, "stage_attachment", args, &staged)
+			name := tt.args["name"].(string)
+			if staged.Handle != name {
+				t.Errorf("a one-file call should answer its handle at the top level, got %q", staged.Handle)
+			}
+			want := []mcpserver.StagedFileResult{{Handle: name, SHA256: sha256Hex(tt.want)}}
+			if fmt.Sprint(staged.StagedFiles()) != fmt.Sprint(want) {
+				t.Errorf("a one-file call should stage that one file, got %+v", staged.StagedFiles())
+			}
+			var read mcpserver.ReadAttachmentResult
+			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": name}, &read)
+			if read.Content != tt.want {
+				t.Errorf("the staged file should hold %q, got %q", tt.want, read.Content)
+			}
+		})
+	}
+}
+
+func TestStageAttachmentOneFileShapeStagesAnEmptyFile(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(session string) any
+	}{
+		{name: "empty content", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md", "content": ""}
+		}},
+		{name: "name alone", args: func(session string) any {
+			return map[string]any{"session": session, "name": "empty.md"}
+		}},
+		{name: "typed args", args: func(session string) any {
+			return mcpserver.StageAttachmentArgs{Session: session, Name: "empty.md"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			cs := connect(t, env.srv)
+			session := openSession(t, cs).Session
+
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: tt.args(session)})
+			checkToolCall(t, "stage_attachment", res, err)
+			var staged mcpserver.StageAttachmentResult
+			decodeStructured(t, res, &staged)
+			if staged.Handle != "empty.md" {
+				t.Fatalf("a one-file call without a source should stage an empty file, got %+v", staged)
+			}
+			var read mcpserver.ReadAttachmentResult
+			call(t, cs, "read_attachment", map[string]any{"session": session, "handle": "empty.md"}, &read)
+			if read.Content != "" {
+				t.Errorf("the staged file should be empty, got %q", read.Content)
+			}
+		})
+	}
+}
+
+func TestStageAttachmentAnswersAFilesCallWithoutATopLevelHandle(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 
-	msg := callExpectError(t, cs, "stage_attachment", map[string]any{"session": session, "name": "a.md", "content": "x"})
-	if !strings.Contains(msg, "files") {
-		t.Fatalf("a call with the single-file fields should be refused naming files, got %q", msg)
+	res := callRaw(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "a.md", "content": "x"}}})
+	if _, present := res["handle"]; present {
+		t.Fatalf("a files call should answer per file only, got %v", res)
 	}
-	if handles := stagedOf(t, cs, session, "a.md"); len(handles) != 0 {
+}
+
+func TestStageAttachmentRefusesBothCallShapesInOneCall(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	msg := callExpectError(t, cs, "stage_attachment", map[string]any{
+		"session": session, "name": "a.md", "content": "x",
+		"files": []map[string]any{{"name": "b.md", "content": "y"}},
+	})
+	if !strings.Contains(msg, "files") || !strings.Contains(msg, "not both") {
+		t.Fatalf("a call mixing both shapes should be refused naming them, got %q", msg)
+	}
+	if handles := stagedOf(t, cs, session, "a.md", "b.md"); len(handles) != 0 {
 		t.Errorf("a refused call should stage nothing, got %v", handles)
 	}
+}
+
+func TestStageAttachmentListingShowsOnlyTheFilesShape(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+
+	tools, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name != "stage_attachment" {
+			continue
+		}
+		schema, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal(schema, &input); err != nil {
+			t.Fatal(err)
+		}
+		keys := slices.Sorted(maps.Keys(input.Properties))
+		if fmt.Sprint(keys) != "[files session]" {
+			t.Fatalf("the listing should show only session and files, got %v", keys)
+		}
+		return
+	}
+	t.Fatal("stage_attachment is not listed")
 }
 
 func TestStageAttachmentWriteFailureReportsWhatStayedStaged(t *testing.T) {
