@@ -298,6 +298,13 @@ func TestRepoRootFor(t *testing.T) {
 	if root != resolved && root != sidecar {
 		t.Errorf("RepoRootFor(%s) = %q, want %q", nested, root, resolved)
 	}
+	file := filepath.Join(nested, "notes.md")
+	if err := os.WriteFile(file, []byte("a file a graph_dir may name\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if root := RepoRootFor(file); root != resolved && root != sidecar {
+		t.Errorf("a file should lie in the repository of its folder: RepoRootFor(%s) = %q, want %q", file, root, resolved)
+	}
 	if outside := RepoRootFor(t.TempDir()); outside != "" {
 		t.Errorf("a path outside a repository must report no root, got %q", outside)
 	}
