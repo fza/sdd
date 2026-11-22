@@ -27,18 +27,6 @@ const DeepRounds = 3
 // before a fresh one starts; each opens DeepRounds deliveries of its own.
 const DeepRevisions = 3
 
-// DeepPageChars bounds what one page of the deep verifier's reading costs in
-// the result that serves it (ServedChars), leaving the rest of
-// MaxResultChars to the serve around the page: the verifier's rules lane,
-// the report schema and the notices.
-const DeepPageChars = MaxResultChars - 6000
-
-// DeepFirstPageChars bounds the reading's first page tighter: the
-// resume_session that serves it first carries, within MaxServeChars, the
-// session head, the rules lane and the report schema in full, about 7000
-// characters.
-const DeepFirstPageChars = MaxServeChars - 7500
-
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
 
 // DeepAxes lists the closed set of axes a deep finding names.
@@ -762,8 +750,8 @@ func WeighDeep(draft DeepDraft, found func(path string) bool) DeepWeighing {
 
 // DeepReadingBlock is one entry's block of the deep verifier's reading.
 type DeepReadingBlock struct {
-	ID   string
-	Text string
+	ID   string `json:"id"`
+	Text string `json:"text"`
 }
 
 // DeepReadingPage is one page of the deep verifier's reading with the entries
@@ -773,40 +761,62 @@ type DeepReadingPage struct {
 	FullIDs []string
 }
 
-// DeepReadingPages pages the deep verifier's reading: the first page opens
-// with lead (the draft, its refs' fit and what pre-flight raised), the pages
-// of rules follow it, and the blocks of first (the declared targets and the
-// entries read in full), then those of rest (the briefs), fill the room the
-// pages before them leave, in order: the lead's last page takes blocks until
-// one does not fit, the rules' last page takes the blocks after it. A page
-// holds whole blocks of at most DeepPageChars, the first page of at most
-// DeepFirstPageChars; a lead or block larger than a page runs on across pages
-// of its own, never cut, and a block's last page names it. The blocks of
-// first are served in full, those of rest as briefs.
-func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepReadingBlock) []DeepReadingPage {
-	pages := []DeepReadingPage{{Text: lead}}
-	if ServedChars(lead) > DeepFirstPageChars {
-		pages = continuedPages("", "(continued from the page before)\n\n", lead, DeepFirstPageChars)
+// DeepContinued is text that may run past one page of the reading: its first
+// page opens with Intro, each later page with Continued.
+type DeepContinued struct {
+	Intro     string `json:"intro,omitempty"`
+	Continued string `json:"continued,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
+// DeepReading is the deep verifier's whole reading, kept whole so that each
+// page is cut for the host it is served to: Lead (the draft, its refs' fit
+// and what pre-flight raised), Rules, and the blocks of First (the declared
+// targets and the entries read in full), then those of Rest (the briefs).
+type DeepReading struct {
+	Lead  string             `json:"lead"`
+	Rules DeepContinued      `json:"rules"`
+	First []DeepReadingBlock `json:"first,omitempty"`
+	Rest  []DeepReadingBlock `json:"rest,omitempty"`
+}
+
+// Pages pages the reading for a result within bound: the first page opens
+// with the lead, the pages of rules follow it, and the blocks of first, then
+// those of rest, fill the room the pages before them leave, in order: the
+// lead's last page takes blocks until one does not fit, the rules' last page
+// takes the blocks after it. A page holds whole blocks of at most
+// bound.DeepPage, the first page of at most bound.DeepFirstPage; a lead or
+// block larger than a page runs on across pages of its own, never cut, and a
+// block's last page names it. The blocks of first are served in full, those
+// of rest as briefs.
+func (r DeepReading) Pages(bound ResultBound) []DeepReadingPage {
+	pages := []DeepReadingPage{{Text: r.Lead}}
+	if ServedChars(r.Lead) > bound.DeepFirstPage() {
+		pages = continuedPages("", "(continued from the page before)\n\n", r.Lead, bound.DeepFirstPage(), bound)
+	}
+	var rules []DeepReadingPage
+	if r.Rules.Text != "" {
+		rules = DeepContinuedPages(r.Rules.Intro, r.Rules.Continued, r.Rules.Text, bound)
 	}
 	placeRules := func() {
 		pages = append(pages, rules...)
 		rules = nil
 	}
 	fits := func(block DeepReadingBlock) bool {
-		bound := DeepPageChars
+		room := bound.DeepPage()
 		if len(pages) == 1 {
-			bound = DeepFirstPageChars
+			room = bound.DeepFirstPage()
 		}
 		text := block.Text
 		if current := pages[len(pages)-1].Text; current != "" {
 			text = current + "\n\n" + text
 		}
-		return ServedChars(text) <= bound
+		return ServedChars(text) <= room
 	}
 	add := func(block DeepReadingBlock, full bool) {
-		if ServedChars(block.Text) > DeepPageChars {
+		if ServedChars(block.Text) > bound.DeepPage() {
 			placeRules()
-			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text)...)
+			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text, bound)...)
 		} else {
 			if !fits(block) {
 				placeRules()
@@ -825,10 +835,10 @@ func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepRe
 			current.FullIDs = append(current.FullIDs, block.ID)
 		}
 	}
-	for _, block := range first {
+	for _, block := range r.First {
 		add(block, true)
 	}
-	for _, block := range rest {
+	for _, block := range r.Rest {
 		add(block, false)
 	}
 	placeRules()
@@ -876,24 +886,24 @@ func ParseDeepDraftDocument(doc string) (DeepDraftDocument, error) {
 
 // DeepContinuedPages pages text that may run past one page of the reading:
 // the first page opens with intro, each later page with continued, and no
-// page exceeds DeepPageChars. The text breaks at a paragraph where it can,
+// page exceeds bound.DeepPage. The text breaks at a paragraph where it can,
 // else at a line, else between runes. A break inside a ``` fence closes the
 // fence on its page and reopens it after the next page's opening, so the
 // pages joined without their openings and those added fence lines are the
 // text again.
-func DeepContinuedPages(intro, continued, text string) []DeepReadingPage {
-	return continuedPages(intro, continued, text, DeepPageChars)
+func DeepContinuedPages(intro, continued, text string, bound ResultBound) []DeepReadingPage {
+	return continuedPages(intro, continued, text, bound.DeepPage(), bound)
 }
 
 // continuedPages is DeepContinuedPages with its first page bounded by first.
-func continuedPages(intro, continued, text string, first int) []DeepReadingPage {
+func continuedPages(intro, continued, text string, first int, bound ResultBound) []DeepReadingPage {
 	spare := max(ServedChars(intro), ServedChars(continued))
 	if strings.Contains(text, deepFence) {
 		spare += ServedChars("\n" + deepFence + "\n" + deepFence + "\n")
 	}
 	chunks := SplitServed(text, first-spare)[:1]
 	if after := text[len(chunks[0]):]; after != "" {
-		chunks = append(chunks, SplitServed(after, DeepPageChars-spare)...)
+		chunks = append(chunks, SplitServed(after, bound.DeepPage()-spare)...)
 	}
 	pages := make([]DeepReadingPage, len(chunks))
 	open, read := false, 0

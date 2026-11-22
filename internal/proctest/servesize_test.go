@@ -251,8 +251,8 @@ func TestEveryShippedLaneFitsOneServe(t *testing.T) {
 		}
 	}
 	for name, chars := range rec.lanes {
-		if chars > model.MaxServeChars {
-			t.Errorf("%s serves %d characters, past the %d one serve holds", name, chars, model.MaxServeChars)
+		if chars > model.DefaultResultBound.Serve() {
+			t.Errorf("%s serves %d characters, past the %d one serve holds", name, chars, model.DefaultResultBound.Serve())
 		}
 	}
 }

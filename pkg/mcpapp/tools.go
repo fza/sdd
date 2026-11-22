@@ -807,7 +807,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
-	result, err := s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget-guide)
+	result, err := s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget(ctx)-guide)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -910,7 +910,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		if err != nil {
 			return nil, AbandonResult{}, err
 		}
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget(ctx)-around)
 		if err != nil {
 			return nil, AbandonResult{}, err
 		}
@@ -948,7 +948,7 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 		if err != nil {
 			return nil, ParkResult{}, err
 		}
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget(ctx)-around)
 		if err != nil {
 			return nil, ParkResult{}, err
 		}
@@ -1192,7 +1192,7 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
-	return nil, SearchResult{Results: pagedText(ss, "search", out), Coverage: result.Coverage, Notice: result.Notice}, nil
+	return nil, SearchResult{Results: pagedText(ctx, ss, "search", out), Coverage: result.Coverage, Notice: result.Notice}, nil
 
 }
 
@@ -1453,7 +1453,7 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, GatherResult{}, err
 	}
-	return nil, GatherResult{Serve: pagedText(ss, "gather", result.Text)}, nil
+	return nil, GatherResult{Serve: pagedText(ctx, ss, "gather", result.Text)}, nil
 }
 
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1477,7 +1477,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		if err != nil {
 			return nil, ReadAttachmentResult{}, err
 		}
-		return nil, boundedPage(ReadAttachmentResult{
+		return nil, boundedPage(ctx, ReadAttachmentResult{
 			Name: page.Filename, Content: string(page.Content), Offset: page.Offset, NextOffset: page.NextOffset,
 			TotalBytes: page.TotalSize, More: page.More, Available: staged,
 		}), nil
@@ -1502,7 +1502,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		output.Path = page.LocalPath
 	}
 
-	return nil, boundedPage(output), nil
+	return nil, boundedPage(ctx, output), nil
 
 }
 
@@ -1559,7 +1559,7 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 	for _, doc := range docs {
 		functions = append(functions, RegistryFuncResult{Name: doc.Name, Class: doc.Class, Doc: doc.Doc, Reads: doc.Reads, Writes: doc.Writes})
 	}
-	pages, err := pagedItems(functions)
+	pages, err := pagedItems(ctx, functions)
 	if err != nil {
 		return nil, RegistryResult{}, err
 	}
@@ -1598,6 +1598,8 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 			var none Out
 			return nil, none, err
 		}
+		bound := model.ResultBoundFor(mcpClientName(req.Session), s.mcpOutputTokens)
+		call = sdd.WithResultBound(call, int(bound))
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(call, syncNoticeKey{}, slot), req, in)
 		if asked, ok := inputRequired(err); ok {
@@ -1642,7 +1644,7 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 			if err != nil {
 				return res, out, err
 			}
-			carrier.setUnproved(unprovedLine(slot.unproved, model.MaxResultChars-cost-len(`,"unproved":""`)))
+			carrier.setUnproved(unprovedLine(slot.unproved, int(bound)-cost-len(`,"unproved":""`)))
 		}
 		return res, out, err
 	}
@@ -1770,7 +1772,7 @@ type servedCount struct {
 // ledger. The shell's open-work block lists this dialogue's own threads only;
 // other dialogues never appear.
 func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	return s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget)
+	return s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget(ctx))
 }
 
 // toRootServeResultWithin is toRootServeResult within budget, for a result
@@ -2100,7 +2102,7 @@ func (s *toolSet) mapResumeMove(ctx context.Context, req *mcp.CallToolRequest, s
 		moves.omitted = append(moves.omitted, name)
 		return "", nil
 	}
-	mapped, held, err := s.boundedServe(ctx, req, ss, &serve, serveBudget-moves.spent, false)
+	mapped, held, err := s.boundedServe(ctx, req, ss, &serve, serveBudget(ctx)-moves.spent, false)
 	if err != nil {
 		return "", err
 	}
@@ -2109,7 +2111,7 @@ func (s *toolSet) mapResumeMove(ctx context.Context, req *mcp.CallToolRequest, s
 	if err != nil {
 		return "", err
 	}
-	if !pending && len(moves.open) > 0 && moves.spent+cost > serveBudget {
+	if !pending && len(moves.open) > 0 && moves.spent+cost > serveBudget(ctx) {
 		moves.omitted = append(moves.omitted, name)
 		return "", nil
 	}
@@ -2136,7 +2138,7 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
 	}
-	shell, err := resumeFraming(ss, moves.shell, framing, &result)
+	shell, err := resumeFraming(ctx, ss, moves.shell, framing, &result)
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
@@ -2155,7 +2157,7 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 // resumeFraming composes the resume's framing into the room its moves leave:
 // the last blocks that do not fit wait, named with the session shell's next
 // call, which serves them. It returns the shell's instance where blocks wait.
-func resumeFraming(ss *shellSession, shell string, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
+func resumeFraming(ctx context.Context, ss *shellSession, shell string, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
 	instructions := result.Instructions
 	mark := ss.root.ServeMark()
 	for keep := len(framing); ; keep-- {
@@ -2168,7 +2170,7 @@ func resumeFraming(ss *shellSession, shell string, framing []types.ServeLane, re
 		if err != nil {
 			return "", err
 		}
-		if cost <= serveBudget || keep == 0 || shell == "" {
+		if cost <= serveBudget(ctx) || keep == 0 || shell == "" {
 			if len(composed.waiting) == 0 {
 				return "", nil
 			}

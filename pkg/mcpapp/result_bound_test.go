@@ -19,9 +19,10 @@ import (
 )
 
 // boundedResults fails the test for every result whose text content, what
-// Claude Code counts, exceeds the result bound.
+// Claude Code counts, exceeds limit.
 type boundedResults struct {
 	t       *testing.T
+	limit   int
 	mu      sync.Mutex
 	largest map[string]int
 }
@@ -43,7 +44,7 @@ func (b *boundedResults) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 		b.mu.Lock()
 		b.largest[tool] = max(b.largest[tool], chars)
 		b.mu.Unlock()
-		if chars > model.MaxResultChars {
+		if chars > b.limit {
 			b.t.Errorf("a %s result of %d characters exceeds the result bound", tool, chars)
 		}
 		return res, nil
@@ -96,6 +97,57 @@ func largeGraph(t *testing.T) (dir string, ids []string, huge string) {
 func TestNoResultExceedsTheResultBound(t *testing.T) {
 	dir, ids, huge := largeGraph(t)
 	cs, bound := boundedClient(t, dir)
+	readEverything(t, cs, ids, huge)
+	t.Logf("largest results: %v", bound.largest)
+}
+
+// Each result is bounded for the host of the connection that calls: only
+// Claude Code, by its exact client name, gets results past the default bound,
+// up to its own, lowered by MAX_MCP_OUTPUT_TOKENS as sdd's environment holds
+// it; Claude Desktop, Codex and any other client keep the default.
+func TestEachResultIsBoundedForTheCallingHost(t *testing.T) {
+	dir, ids, huge := largeGraph(t)
+	for _, tc := range []struct {
+		client string
+		tokens int
+		limit  int
+	}{
+		{model.ClaudeCodeClient, 0, int(model.ClaudeCodeResultBound)},
+		{model.ClaudeCodeClient, 15000, 30000},
+		{"claude-ai", 0, int(model.DefaultResultBound)},
+		{"codex-mcp-client", 0, int(model.DefaultResultBound)},
+		{"another-host", 0, int(model.DefaultResultBound)},
+	} {
+		t.Run(fmt.Sprintf("%s with %d tokens", tc.client, tc.tokens), func(t *testing.T) {
+			srv := newTestServer(t, nil, dir, "", func(opts *testServerOptions) { opts.MCP.MCPOutputTokens = tc.tokens }).srv
+			cs, bound := boundedConnectNamed(t, srv, tc.client, tc.limit, true)
+			readEverything(t, cs, ids, huge)
+			if largest := bound.largest["show"]; largest <= tc.limit-int(model.DefaultResultBound)/2 {
+				t.Errorf("a show of many entries should fill the host's bound, its largest result took %d characters", largest)
+			}
+		})
+	}
+}
+
+// No tool declares a result size of its own: the bound holds within every
+// host's threshold without one (20261122-103723-d-tac-npg).
+func TestNoToolDeclaresAResultSize(t *testing.T) {
+	cs := connectNamed(t, newTestServer(t, nil, "", "").srv, model.ClaudeCodeClient)
+	tools, err := cs.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if _, ok := tool.Meta["anthropic/maxResultSizeChars"]; ok {
+			t.Errorf("tool %s should declare no result size", tool.Name)
+		}
+	}
+}
+
+// readEverything makes every read of a graph whose reads each run far past a
+// result's bound, following each read's pages to its last.
+func readEverything(t *testing.T, cs *mcp.ClientSession, ids []string, huge string) {
+	t.Helper()
 	session := openSession(t, cs).Session
 	pages := func(tool string, args map[string]any, text func(map[string]any) string) {
 		t.Helper()
@@ -133,7 +185,6 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 	call(t, cs, "gather", map[string]any{"session": session, "instance": capture.Instance}, &gathered)
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
-	t.Logf("largest results: %v", bound.largest)
 }
 
 // A paged read called again without page right after its paged answer serves
@@ -189,12 +240,19 @@ func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedR
 // every result past the bound, listing its proofs when proofs is set.
 func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
-	bound := &boundedResults{t: t, largest: map[string]int{}}
+	return boundedConnectNamed(t, srv, "test-client", int(model.DefaultResultBound), proofs)
+}
+
+// boundedConnectNamed is boundedConnect for a client reporting name, whose
+// results must stay within limit.
+func boundedConnectNamed(t *testing.T, srv *mcpserver.Server, name string, limit int, proofs bool) (*mcp.ClientSession, *boundedResults) {
+	t.Helper()
+	bound := &boundedResults{t: t, limit: limit, largest: map[string]int{}}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(t.Context(), serverTransport); err != nil {
 		t.Fatal(err)
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
 	if proofs {
 		client.AddSendingMiddleware(newAgentMemory().middleware)
 	}
@@ -234,7 +292,7 @@ func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
 		minCalls, maxCalls int
 	}{
 		{wideLanes("first", "second", "third"), 2, 2},
-		{sizedLanes(model.MaxResultChars*3/5/43, "first", "second", "third", "fourth"), 4, 4},
+		{sizedLanes(int(model.DefaultResultBound)*3/5/43, "first", "second", "third", "fourth"), 4, 4},
 	} {
 		for _, restart := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d lanes, restart=%v", len(tc.lanes), restart), func(t *testing.T) {
@@ -402,7 +460,7 @@ func followWaitingLanes(t *testing.T, cs *mcp.ClientSession, session string, ser
 // beside it, it serves alone past the bound, so each call serves a lane, as
 // the first lane of a step and as one left waiting behind a lane that fit.
 func TestAnOversizedLaneServesAloneRatherThanWaiting(t *testing.T) {
-	huge := stepLane{"huge", model.MaxResultChars * 6 / 5 / 42}
+	huge := stepLane{"huge", int(model.DefaultResultBound) * 6 / 5 / 42}
 	small := stepLane{"small", 20}
 	for _, tc := range []struct {
 		name  string
@@ -459,7 +517,7 @@ func writeWideStepGraph(t *testing.T, names ...string) string {
 
 // wideLanes names the lanes writeWideStepGraph serves.
 func wideLanes(names ...string) []stepLane {
-	return sizedLanes((model.MaxResultChars-7000)/86, names...)
+	return sizedLanes((int(model.DefaultResultBound)-7000)/86, names...)
 }
 
 // sizedLanes names a lane of lines lines for each name.
@@ -521,7 +579,7 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
-	big := strings.Repeat("z", model.MaxResultChars*2/5)
+	big := strings.Repeat("z", int(model.DefaultResultBound)*2/5)
 	for i := range 6 {
 		report := assembleReport()
 		report["body"] = fmt.Sprintf("body %d: %s", i, big)
@@ -535,7 +593,7 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := contentText(res)
-	if len(text) > model.MaxResultChars {
+	if len(text) > int(model.DefaultResultBound) {
 		t.Fatalf("the resume should stay within the result bound, got %d characters", len(text))
 	}
 	if !strings.Contains(text, "omitted here for size") || !strings.Contains(text, "capture at ") {

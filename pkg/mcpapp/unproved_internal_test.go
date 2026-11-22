@@ -13,7 +13,7 @@ import (
 // bound, so the cut is tested here.
 func TestUnprovedLineLeavesOutTheOldestPiecesPastItsRoom(t *testing.T) {
 	list := []sdd.UnprovedPiece{{Name: "lane new", Tag: "aaaa"}, {Name: "lane mid", Tag: "bbbb"}, {Name: "lane old", Tag: "cccc"}}
-	whole := unprovedLine(list, model.MaxResultChars)
+	whole := unprovedLine(list, int(model.DefaultResultBound))
 	if !strings.HasSuffix(whole, "tag aaaa for lane new; tag bbbb for lane mid; tag cccc for lane old") {
 		t.Fatalf("a list with room should name every piece, newest first, got %q", whole)
 	}

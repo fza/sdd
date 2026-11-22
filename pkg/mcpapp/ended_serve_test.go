@@ -76,10 +76,10 @@ func TestAnEndedMoveServesWithinTheResultBound(t *testing.T) {
 	if serve.Status != "completed" || serve.Produced["entryId"] == "" || serve.Base == nil {
 		t.Fatalf("the completion should name the entry it wrote and the shell it lands in, got %s %v", serve.Status, serve.Produced)
 	}
-	if size := serveSize(t, serve); size > model.MaxServeChars {
-		t.Fatalf("the completion should cost at most %d characters, got %d", model.MaxServeChars, size)
+	if size := serveSize(t, serve); size > model.DefaultResultBound.Serve() {
+		t.Fatalf("the completion should cost at most %d characters, got %d", model.DefaultResultBound.Serve(), size)
 	}
-	if _, ok := serve.Produced["deepPages"]; ok || !strings.Contains(serve.Instructions, "deepPages") {
+	if _, ok := serve.Produced["deepReading"]; ok || !strings.Contains(serve.Instructions, "deepReading") {
 		t.Fatalf("the completion should leave the exchange's reading out and name it, got %q", serve.Instructions)
 	}
 	shell := serve.Base.Instance
@@ -107,8 +107,8 @@ func TestALandingOnTheShellServesWithinTheResultBound(t *testing.T) {
 			var serve mcpserver.ServeResult
 			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
 			landed := callRaw(t, cs, tool, map[string]any{"session": session, "instance": serve.Instance})
-			if size := serveSize(t, landed); size > model.MaxServeChars {
-				t.Fatalf("the %s landing should cost at most %d characters, got %d", tool, model.MaxServeChars, size)
+			if size := serveSize(t, landed); size > model.DefaultResultBound.Serve() {
+				t.Fatalf("the %s landing should cost at most %d characters, got %d", tool, model.DefaultResultBound.Serve(), size)
 			}
 			base, _ := landed["base_junction"].(map[string]any)
 			instructions, _ := base["instructions"].(string)
