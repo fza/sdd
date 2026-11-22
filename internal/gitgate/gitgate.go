@@ -22,7 +22,8 @@ const (
 	// Push covers a push plus the fetch and merge a rejected push needs.
 	Push Kind = "push"
 	// Clone is a clone where none exists. It counts, records and takes credits
-	// as a Fetch, but no cooldown or retry wait holds it: no clone is fresh.
+	// as a Fetch. No fetch's cooldown or retry wait holds it, since no clone
+	// is fresh; after its own failure it waits like a Fetch.
 	Clone Kind = "clone"
 )
 

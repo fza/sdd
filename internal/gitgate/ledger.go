@@ -68,6 +68,8 @@ type kindRecord struct {
 	Next        time.Time `json:"next,omitzero"`
 	// Slice is when the fetch slice in progress came due; unset, Next.
 	Slice time.Time `json:"slice,omitzero"`
+	// CloneFailed is set by a failed clone, which holds the next clone.
+	CloneFailed bool `json:"clone_failed,omitempty"`
 }
 
 func emptyLedger() *ledger {
