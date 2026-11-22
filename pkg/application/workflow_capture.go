@@ -17,9 +17,6 @@ import (
 // token cap: the model did not judge the draft.
 const fieldPreflightCut = "preflightCut"
 
-// fieldBody is the draft's body field.
-const fieldBody = "body"
-
 // fieldPreflightTimeout holds the error of a pre-flight model call that ran
 // past llm.timeout: the model did not judge the draft.
 const fieldPreflightTimeout = "preflightTimeout"

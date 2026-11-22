@@ -209,7 +209,7 @@ func TestIgnoredSettings_ReportsUnknownVerifyValues(t *testing.T) {
 	layer.Verify = model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
 	layer.Verify.Claude.Effort = "ultra"
 	reasons := map[string]string{}
-	for _, s := range model.IgnoredSettings(layer, true) {
+	for _, s := range model.IgnoredSettings(layer, model.ConfigSourceProject) {
 		reasons[s.Key] = s.Reason
 	}
 	for key, value := range map[string]string{"verify.mode": "deeep", "verify.skip": "sometimes", "verify.runner": "robot", "verify.claude.effort": "ultra"} {

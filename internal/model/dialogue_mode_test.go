@@ -49,7 +49,11 @@ func TestIgnoredDialogueMode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := model.IgnoredSettings(model.BaseConfig{Dialogue: model.DialogueConfig{Mode: tc.mode}}, tc.committed)
+			source := model.ConfigSourceLocal
+			if tc.committed {
+				source = model.ConfigSourceProject
+			}
+			got := model.IgnoredSettings(model.BaseConfig{Dialogue: model.DialogueConfig{Mode: tc.mode}}, source)
 			if !tc.ignored {
 				if len(got) != 0 {
 					t.Errorf("a setting the layer may make should be honored, got %v", got)

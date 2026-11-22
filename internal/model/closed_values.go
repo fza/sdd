@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// ClosedValues is a config setting type whose values form a fixed set,
-// listed loosest first where the set is ordered.
+// ClosedValues is a config setting type whose values form a fixed set. Loading
+// refuses or reads past any other value, so `sdd config set` refuses it before
+// it lands.
 type ClosedValues interface {
 	AllowedValues() []string
 }
