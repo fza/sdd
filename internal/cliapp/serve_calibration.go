@@ -63,5 +63,5 @@ func runServedCalibration(ctx context.Context, application *sdd.Application, ide
 		return
 	case <-timer.C:
 	}
-	application.AutoCalibrate(ctx, identity, project, sdd.AutoCalibrationRequest{WaitIdle: activity.waitIdle})
+	application.AutoCalibrate(ctx, identity, project, sdd.AutoCalibrationRequest{WaitIdle: activity.waitIdle, WaitNoLiveCheck: application.WaitNoLiveCheck})
 }

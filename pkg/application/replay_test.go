@@ -175,3 +175,58 @@ func TestAutoCalibrate_ReplaysNothingWithoutAProofStoreOrAnEmbedder(t *testing.T
 		})
 	}
 }
+
+// A replay sends no request while a graph check's judge scores: the server
+// hands AutoCalibrate the application's WaitNoLiveCheck, and the replay
+// resumes once the check is done.
+func TestAutoCalibrate_AReplayWaitsWhileACheckJudges(t *testing.T) {
+	f := replayFixture(t)
+	f.proofs = localadapter.NewMemoryProofStore()
+	scorer := &heldCheckScorer{scriptedScorer: &scriptedScorer{}, checking: make(chan struct{}, 1), release: make(chan struct{})}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge, Revision: "r1", Scan: &flaggingScan{}}
+	policy := prefilterPolicy(1)
+	policy.AutoCalibrate = true
+	application := f.app(t, policy, &countingEmbeddings{})
+	// The gate holds the first replay until the check judges, so a replay is
+	// due while it does.
+	reached, gate := make(chan struct{}, 1), make(chan struct{})
+	startAutoCalibrate(t, application, sdd.AutoCalibrationRequest{WaitNoLiveCheck: func(ctx context.Context) error {
+		select {
+		case reached <- struct{}{}:
+		default:
+		}
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return application.WaitNoLiveCheck(ctx)
+	}})
+	select {
+	case <-reached:
+	case <-time.After(90 * time.Second):
+		t.Fatal("no replay came due in time")
+	}
+
+	checked := make(chan error, 1)
+	go func() {
+		_, err := gather(t, application, sdd.GatherRequest{Draft: "A check draft about referenced gaps.", Terms: []string{"Referenced"}})
+		checked <- err
+	}()
+	select {
+	case <-scorer.checking:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the check's judge should be scoring")
+	}
+	calls := scorer.calibrationCalls()
+	close(gate)
+	time.Sleep(300 * time.Millisecond)
+	if held := scorer.calibrationCalls() - calls; held != 0 {
+		t.Fatalf("%d replay calls while the check's judge scored: a replay should wait", held)
+	}
+	close(scorer.release)
+	if err := <-checked; err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the replay resumes once the check is done", func() bool { return scorer.calibrationCalls() > calls })
+}
