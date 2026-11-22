@@ -6,13 +6,23 @@ import (
 	"time"
 )
 
+// TypeSystemContractID is the type-system contract whose every demand on an
+// entry the construction checks here and the mechanical pre-flight checks
+// enforce.
+const TypeSystemContractID = "20260702-222259-d-cpt-7iy"
+
+// CodeEnforcesContract reports whether code enforces every demand the
+// contract id makes of an entry. A successor of such a contract counts only
+// once code names it.
+func CodeEnforcesContract(id string) bool { return id == TypeSystemContractID }
+
 // EntryConstruction is the single boundary for composing a graph entry: the
 // common frontmatter fields alongside nil-able per-kind field blocks, of which
 // at most one may be set and must agree with the declared type and kind.
 // Construction never fails — validity is a checked property (Validate) — so
 // the type can also hold every historical shape the graph contains. The
 // per-kind structural requirements expressed here are those the active
-// type-system contract enumerates (20260702-222259-d-cpt-7iy); this file is
+// type-system contract enumerates (TypeSystemContractID); this file is
 // their single home. Write surfaces block on any finding; the read path
 // projects parsed entries through ConstructFromEntry and keeps the non-
 // write-only findings as health warnings.
