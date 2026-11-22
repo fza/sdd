@@ -157,8 +157,9 @@ func (s *Session) issue(p Piece, carried []Piece, text string) {
 // change of its content: while its content differs from the last the session
 // served under p.Name, or when the call serves every piece in full. An empty
 // Hash withdraws the content, so the next one serves again; it serves
-// nothing. The change is recorded by RecordServed.
-func (s *Session) ServeChanged(p Piece) bool {
+// nothing. The change is recorded by RecordServed. text is what the agent
+// reads of it, which no question's phrase may occur in.
+func (s *Session) ServeChanged(p Piece, text string) bool {
 	last := s.changed[p.Name]
 	if p.Hash == "" {
 		if last != "" {
@@ -169,7 +170,7 @@ func (s *Session) ServeChanged(p Piece) bool {
 	if last == p.Hash && !s.call.full {
 		return false
 	}
-	s.call.pending = append(s.call.pending, pendingServe{piece: p, changed: true, seq: s.nextSeq()})
+	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, changed: true, seq: s.nextSeq()})
 	return true
 }
 
@@ -219,6 +220,9 @@ func (s *Session) RecordServed() {
 		}
 		if p.changed {
 			record["changed"] = true
+			if _, known := s.onceTexts[p.piece]; !known && p.text != "" {
+				record["text"] = p.text
+			}
 		} else if _, known := s.texts[p.piece]; !known {
 			record["text"] = p.text
 		}
@@ -262,14 +266,21 @@ func (s *Session) Ask() string {
 	for _, p := range pieces {
 		lower[p] = strings.ToLower(s.texts[p].text)
 	}
+	once := make([]string, 0, len(s.onceTexts))
+	for _, text := range s.onceTexts {
+		once = append(once, strings.ToLower(text))
+	}
 	elsewhere := func(own Piece, phrase string) bool {
 		phrase = strings.ToLower(phrase)
+		if phrase == "" {
+			return false
+		}
 		for p, text := range lower {
-			if p != own && phrase != "" && strings.Contains(text, phrase) {
+			if p != own && strings.Contains(text, phrase) {
 				return true
 			}
 		}
-		return false
+		return slices.ContainsFunc(once, func(text string) bool { return strings.Contains(text, phrase) })
 	}
 	answeredBefore := func(answer string) bool {
 		return slices.ContainsFunc(s.questions, func(asked askedQuestion) bool { return asked.question.Answered(answer) })
@@ -317,6 +328,12 @@ func (s *Session) foldText(fields map[string]any) {
 			s.changed = map[string]string{}
 		}
 		s.changed[name] = hash
+		if text, _ := fields["text"].(string); text != "" {
+			if s.onceTexts == nil {
+				s.onceTexts = map[Piece]string{}
+			}
+			s.onceTexts[Piece{Name: name, Hash: hash}] = text
+		}
 		return
 	}
 	p := Piece{Name: name, Hash: hash}

@@ -62,7 +62,7 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 	if text != "" {
 		hash = contentHash(text)
 	}
-	if !w.session.ServeChanged(engine.Piece{Name: name, Hash: hash}) {
+	if !w.session.ServeChanged(engine.Piece{Name: name, Hash: hash}, text) {
 		return ""
 	}
 	return text
