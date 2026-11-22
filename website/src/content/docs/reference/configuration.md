@@ -521,6 +521,12 @@ The index lives in `~/.cache/sdd/index/`, or `$XDG_CACHE_HOME/sdd/index/` when t
 
 The index only grows. It keeps every embedded version of every entry, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
 
+## sdd serve flags
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--output-schema` | Off | For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it. |
+
 ## Environment variables
 
 | Variable | Default | Effect |

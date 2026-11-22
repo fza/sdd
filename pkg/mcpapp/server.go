@@ -33,6 +33,10 @@ type Options struct {
 	// Version is the SDD version the info tool reports, and the server
 	// implementation version under New.
 	Version string
+	// OutputSchema declares each tool's outputSchema in tools/list, as the
+	// SDK derives it from the tool's result type. Results carry structured
+	// content either way; off, the listing stays a fraction of the size.
+	OutputSchema bool
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -43,6 +47,7 @@ type toolSet struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
+	outputSchema   bool
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -62,6 +67,7 @@ func newToolSet(opts Options) (*toolSet, error) {
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
 		version:        opts.Version,
+		outputSchema:   opts.OutputSchema,
 		sessions:       newSessionCache(),
 	}, nil
 }

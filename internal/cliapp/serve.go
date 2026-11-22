@@ -53,6 +53,10 @@ func serveCmd() *cli.Command {
 				Usage:   "bearer token required on every HTTP request (transport=http only)",
 				Sources: cli.EnvVars("SDD_SERVE_TOKEN"),
 			},
+			&cli.BoolFlag{
+				Name:  "output-schema",
+				Usage: "For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it.",
+			},
 		),
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			application, _, identity, err := localApplication(ctx, cmd, "")
@@ -75,6 +79,7 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				OutputSchema:  cmd.Bool("output-schema"),
 			})
 			if err != nil {
 				return err
