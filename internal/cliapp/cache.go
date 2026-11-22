@@ -205,8 +205,8 @@ func recordScheduledPruneFailure(ctx context.Context, root *cli.Command, err err
 	return errors.Join(err, cacheprune.RecordFailure(ctx, loc.StateRoot, time.Now(), err))
 }
 
-// serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,
-// handed out once.
+// serveCacheNotice is serve's notices.cache: a failed run's notice, handed
+// out once.
 func serveCacheNotice(ctx context.Context) string {
 	log := slogutils.FromContext(ctx)
 	loc, err := repos.DefaultLocations()

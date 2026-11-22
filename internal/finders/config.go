@@ -53,8 +53,9 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 }
 
 // UnknownConfigKeys reports the keys sdd read past because it does not know
-// them, and the settings it reads past where they stand: the one computation
-// behind every surface that says so, rather than each deciding for itself.
+// them, and the settings it read past because it may not honor them where
+// they stand — the one computation behind every surface that says so, rather
+// than each deciding for itself what counts as unknown.
 func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
 	type layer struct {
 		path   string
@@ -63,13 +64,13 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 	}
 	var layers []layer
 	if f.repos != nil {
-		layers = append(layers, layer{f.repos.ConfigPath(), reflect.TypeFor[repos.GlobalConfig](), model.ConfigSourceGlobal})
+		layers = append(layers, layer{path: f.repos.ConfigPath(), typ: reflect.TypeFor[repos.GlobalConfig](), source: model.ConfigSourceGlobal})
 	}
 	if q.SDDDir != "" {
 		perRepo := reflect.TypeFor[model.PerRepoConfig]()
 		layers = append(layers,
-			layer{filepath.Join(q.SDDDir, "config.yaml"), perRepo, model.ConfigSourceProject},
-			layer{filepath.Join(q.SDDDir, "config.local.yaml"), perRepo, model.ConfigSourceLocal},
+			layer{path: filepath.Join(q.SDDDir, "config.yaml"), typ: perRepo, source: model.ConfigSourceProject},
+			layer{path: filepath.Join(q.SDDDir, "config.local.yaml"), typ: perRepo, source: model.ConfigSourceLocal},
 		)
 	}
 
@@ -93,8 +94,8 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		if err := model.UnmarshalYAML(data, &settings); err != nil {
 			return nil, err
 		}
-		for _, setting := range model.IgnoredSettings(settings, l.source) {
-			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: setting.Key, Reason: setting.Reason})
+		for _, ignored := range model.IgnoredSettings(settings, l.source) {
+			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: ignored.Key, Reason: ignored.Reason})
 		}
 	}
 	return result, nil
