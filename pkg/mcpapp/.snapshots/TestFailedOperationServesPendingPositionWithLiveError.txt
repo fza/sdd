@@ -1,13 +1,12 @@
-framing: <framing as its proofs serve it>
 goal: retry the unfinished operation, or cancel it to return to the preceding interaction
 instance: i_2
 instructions: Operation did not finish. Tell the user in one sentence. Retry when trying again can help; say so. When it cannot help, or stopped helping, put both choices to the user: retry or cancel. Operation can stay pending until they choose. Retry is safe: it reuses the recorded input; applied effects are recognized, not repeated. Cancel leaves what exists in place.
 pending_operation:
-  cancel_ref: 17
+  cancel_ref: 20
   command: newEntry
   error: command "newEntry" at step write: newEntry: publication store is temporarily unavailable
   instance: i_2
-  retry_ref: 17
+  retry_ref: 20
   values:
     branch: main
     entryId: 20260921-120000-s-tac-op1
@@ -15,6 +14,7 @@ pending_operation:
     source: base
 procedure: capture
 project: test
+question: <question drawn per response>
 session: <session-1>
 status: running
 step: write

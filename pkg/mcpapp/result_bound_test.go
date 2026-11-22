@@ -15,7 +15,6 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
-	"github.com/networkteam/sdd/test"
 )
 
 // boundedResults fails the test for every result whose text content, what
@@ -186,8 +185,9 @@ func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedR
 }
 
 // boundedConnect connects to srv through a client that fails the test on
-// every result past the bound, listing its proofs when proofs is set.
-func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.ClientSession, *boundedResults) {
+// every result past the bound, answering each question from what it holds
+// when answers is set, else always lost.
+func boundedConnect(t *testing.T, srv *mcpserver.Server, answers bool) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
 	bound := &boundedResults{t: t, largest: map[string]int{}}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -195,9 +195,9 @@ func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.Clie
 		t.Fatal(err)
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
-	if proofs {
-		client.AddSendingMiddleware(newAgentMemory().middleware)
-	}
+	agent := newAgentMemory()
+	agent.lost = !answers
+	client.AddSendingMiddleware(agent.middleware)
 	client.AddSendingMiddleware(bound.middleware)
 	cs, err := client.Connect(t.Context(), clientTransport, nil)
 	if err != nil {
@@ -222,13 +222,13 @@ func TestAServePastTheResultBoundLeavesItsLastLanesWaiting(t *testing.T) {
 	}
 }
 
-// An agent that lists no proofs reaches every lane of a step past the result
+// An agent that answers every question lost reaches every lane of a step past the result
 // bound, on one server and across restarts after the first serve and after
 // the last follow-up: each follow-up serves waiting lanes and points at every
 // lane sent before it, so three lanes take two calls. Four lanes too wide to
 // share a result take one call each. The deferral ends with the follow-up
 // that serves the last lane, and the step advances on its report.
-func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
+func TestALostAgentReachesEveryWaitingLane(t *testing.T) {
 	for _, tc := range []struct {
 		lanes              []stepLane
 		minCalls, maxCalls int
@@ -290,95 +290,18 @@ func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
 	}
 }
 
-// A follow-up that lists in reread a lane the result before sent, by its name
-// or its tag, serves that lane in full rather than as its pointer.
+// A follow-up that lists in reread a lane the result before sent, by its
+// name, serves that lane in full rather than as its pointer.
 func TestAFollowUpRereadServesASentLaneInFull(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		reread func(tag string) string
-	}{
-		{"by name", func(string) string { return "lane first" }},
-		{"by tag", func(tag string) string { return tag }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env := newTestServer(t, nil, writeLaneStepGraph(t, wideLanes("first", "second", "third")...), "")
-			cs, _ := boundedConnect(t, env.srv, false)
-			session := openSession(t, cs).Session
-			var serve mcpserver.ServeResult
-			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
-			requireWaitingLane(t, serve)
-			first := firstLaneProof(t, serve.Instructions)
-			call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "reread": []any{tc.reread(first.Tag)}}, &serve)
-			if !strings.Contains(test.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
-				t.Fatalf("the reread lane should serve in full, got %.600q", serve.Instructions)
-			}
-		})
-	}
-}
-
-// A follow-up proving a lane the result before sent with a wrong word serves
-// that lane in full, as its proof notice says.
-func TestAFollowUpWrongProofServesASentLaneInFull(t *testing.T) {
 	env := newTestServer(t, nil, writeLaneStepGraph(t, wideLanes("first", "second", "third")...), "")
 	cs, _ := boundedConnect(t, env.srv, false)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
 	requireWaitingLane(t, serve)
-	wrong := model.Proof{Tag: firstLaneProof(t, serve.Instructions).Tag, Word: "where"}
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{wrong.String()}}, &serve)
-	if !strings.Contains(test.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
-		t.Errorf("the lane whose proof failed should serve in full, got %.600q", serve.Instructions)
-	}
-	if !strings.Contains(serve.ProofNotice, wrong.String()+" (not the word its proof asks for)") {
-		t.Errorf("the proof notice should name the failed proof, got %q", serve.ProofNotice)
-	}
-}
-
-// firstLaneProof reads the proof of lane first from instructions that serve
-// it in full ahead of lane second.
-func firstLaneProof(t *testing.T, instructions string) model.Proof {
-	t.Helper()
-	first, ok := firstLaneText(instructions)
-	if !ok {
-		t.Fatalf("the instructions should serve lane second after lane first, got %.300q", instructions)
-	}
-	return proofOf(t, first, "lane first")
-}
-
-// firstLaneText cuts the instructions where lane second begins; false when
-// they serve no lane second.
-func firstLaneText(instructions string) (string, bool) {
-	end := 0
-	for line := range strings.Lines(instructions) {
-		if strings.HasPrefix(test.Untagged(line), "Lane second holds") {
-			return instructions[:end], true
-		}
-		end += len(line)
-	}
-	return "", false
-}
-
-// Lane second's tag lands on a random word of it, its first line's included:
-// the cut still leaves lane first with its own tag alone.
-func TestFirstLaneTextEndsBeforeLaneSecondWhereverItsTagLands(t *testing.T) {
-	first := "Lane first holds a ⟦aaaa⟧ line of its guidance.\nLane first holds a line of its guidance.\n\n"
-	for _, tc := range []struct{ name, second string }{
-		{"before lane", "⟦bbbb⟧ Lane second holds a line of its guidance.\nLane second holds a line of its guidance."},
-		{"before second", "Lane ⟦bbbb⟧ second holds a line of its guidance.\nLane second holds a line of its guidance."},
-		{"before holds", "Lane second ⟦bbbb⟧ holds a line of its guidance.\nLane second holds a line of its guidance."},
-		{"on a later line", "Lane second holds a line of its guidance.\nLane second holds a ⟦bbbb⟧ line of its guidance."},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			second := tc.second
-			text, ok := firstLaneText(first + second)
-			if !ok {
-				t.Fatal("the instructions should be found to serve lane second")
-			}
-			if proofs := model.ReadAnchors(text); len(proofs) != 1 || proofs[0] != (model.Proof{Tag: "aaaa", Word: "line"}) {
-				t.Errorf("lane first's text should carry its own tag alone, got %v in %q", proofs, text)
-			}
-		})
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "reread": []any{"lane first"}}, &serve)
+	if !strings.Contains(serve.Instructions, "Lane first holds a line of its guidance.") {
+		t.Fatalf("the reread lane should serve in full, got %.600q", serve.Instructions)
 	}
 }
 

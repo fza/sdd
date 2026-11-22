@@ -7,7 +7,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/test"
 )
 
 // In an assisted session the person is present: a check the agent spent its
@@ -57,7 +56,7 @@ func TestAssisted_ASpentCheckIsPutToThePerson(t *testing.T) {
 	if !strings.HasPrefix(serve.Goal, "put the choice to the person") {
 		t.Errorf("the goal should have the agent ask the person, got %q", serve.Goal)
 	}
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	for _, want := range []string{
 		"Held at deepUser for the person: blocked again after 1 unattended revise.",
 		"relay their answer verbatim as `userWords`",

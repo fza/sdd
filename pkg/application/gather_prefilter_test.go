@@ -459,8 +459,8 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	f := prefilterFixture(t, scorer)
 	f.relevance = calibratedLedger(t)
 	application := f.app(t, prefilterPolicy(1), nil)
-	held := func(id string) (string, string, bool) { return "ab12", "", id == gatherAlpha }
-	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (held as tag ab12)"
+	held := func(id string) bool { return id == gatherAlpha }
+	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (served in full above or in the result before)"
 
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Held: held})
 	if err != nil {
@@ -487,8 +487,8 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 		t.Fatalf("the opened entry should count as read in full: %v", opened.FullIDs)
 	}
 
-	unproved := func(string) (string, string, bool) { return "", "", false }
-	reopened, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", IDs: []string{gatherAlpha}, Held: unproved})
+	notHeld := func(string) bool { return false }
+	reopened, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", IDs: []string{gatherAlpha}, Held: notHeld})
 	if err != nil {
 		t.Fatal(err)
 	}

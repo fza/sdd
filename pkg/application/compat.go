@@ -21,16 +21,16 @@ func (s *WorkflowServe) ReminderInstructions() string {
 }
 
 // ServedBefore always reports false: the session tracks served text by
-// anchored pieces, not by content hash, so a host asking by hash serves every
-// block in full. HoldsEntry and Unproved answer per piece.
+// pieces and the text question, not by content hash, so a host asking by
+// hash serves every block in full. ServeText and HoldsEntry answer per piece.
 func (w *WorkflowSession) ServedBefore(_ string) bool {
 	return false
 }
 
 // RecordServed records what the call served. The hashes are not kept, see
-// ServedBefore; it logs the call's anchors as RecordAnchors does.
+// ServedBefore; it logs the call's pieces as RecordPieces does.
 func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity, _ []string) error {
-	return w.RecordAnchors(ctx, identity)
+	return w.RecordPieces(ctx, identity)
 }
 
 // StageAttachment stages content under filename, an empty file for empty

@@ -22,7 +22,7 @@ type shellSession struct {
 	// which later calls naming a page serve without running the read again.
 	pages map[string][]string
 	// playbacks are the serves of the call in flight whose result holds the
-	// change they play back, recorded with the anchors.
+	// change they play back, recorded with the served pieces.
 	playbacks []*sdd.WorkflowServe
 	// pageReads holds, per tool, the full reads of its paged result waiting
 	// on the pages not yet served.
@@ -40,17 +40,17 @@ type pageRead struct {
 	unserved map[int]bool
 }
 
-// repeats is the no-repeat rule over what the call proves it holds.
+// repeats is the no-repeat rule over what the call holds.
 func (ss *shellSession) repeats() *presenters.Repeats {
-	return &presenters.Repeats{Held: ss.root.HoldsEntry, Anchor: ss.root.ServeEntry}
+	return &presenters.Repeats{Held: ss.root.HoldsEntry, Served: ss.root.ServeEntry}
 }
 
-// flushServed records the anchors this call issued and the playbacks its
+// flushServed records the pieces this call served and the playbacks its
 // result holds into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
 	playbacks := ss.playbacks
 	ss.playbacks = nil
-	if err := ss.root.RecordAnchors(ctx, identity); err != nil {
+	if err := ss.root.RecordPieces(ctx, identity); err != nil {
 		return err
 	}
 	return ss.root.RecordPlayback(ctx, identity, playbacks...)

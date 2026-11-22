@@ -267,7 +267,7 @@ func horizonSession(t *testing.T, client *mcp.ClientSession) func(tool string, a
 	return func(tool string, args map[string]any) (string, bool) {
 		t.Helper()
 		args["session"] = handle
-		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
+		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: answered(tool, args)})
 		if err != nil {
 			t.Fatalf("%s: %v", tool, err)
 		}

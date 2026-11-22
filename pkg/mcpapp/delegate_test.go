@@ -153,9 +153,9 @@ func TestDelegateDispatchOverTheTransport(t *testing.T) {
 	if waiting.Step != "wait" || !strings.Contains(waiting.Instructions, "waiting for the delegate to deliver briefing") {
 		t.Fatalf("a report-less next re-serves the waiting move, got %s %q", waiting.Step, waiting.Instructions)
 	}
-	// An agent listing no proofs would get every framing block again.
+	// An agent answering lost would get every framing block again.
 	var unproved mcpserver.ServeResult
-	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "held": []any{}}, &unproved)
+	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "answer": "lost"}, &unproved)
 	if unproved.Framing != "" || unproved.Vocabulary != "" || strings.Contains(unproved.Instructions, "\n") {
 		t.Fatalf("a waiting move serves its one line without framing, got framing %q and %q", unproved.Framing, unproved.Instructions)
 	}

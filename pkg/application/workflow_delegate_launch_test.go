@@ -173,18 +173,14 @@ func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
 	f.deliverPlan(t, round)
 	round.Finish("cli-1", nil)
 	f.recorded(t, round.Launch.Session, 1)
-	proof := proofOf(t, workflow.ServeText("lane step", servedLane, nil))
-	err = workflow.RecordAnchors(t.Context(), f.identity)
+	answer, err := serveAndAsk(t, workflow, f.identity)
 	if err != nil {
-		t.Fatalf("the anchors of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
+		t.Fatalf("the texts and question of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
 	}
 	reloaded := f.session(t, f.parent)
-	err = reloaded.BeginCall([]string{proof}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded.BeginCall(answer, nil)
 	if !reloaded.ServeText("lane step", servedLane, nil).Held {
-		t.Fatal("the anchors should be in the session ledger")
+		t.Fatal("the texts and question should be in the session ledger")
 	}
 	if picked := f.advance(t, f.parent, f.dispatch, nil); picked.Step != "answer" {
 		t.Fatalf("the delegate's delivery should still land in the dispatching move, at %s", picked.Step)

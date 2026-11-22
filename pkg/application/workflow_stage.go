@@ -9,9 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
-	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -120,23 +118,11 @@ func (w *WorkflowSession) checkStageItem(ctx context.Context, identity RequestId
 		if err != nil {
 			return stageWrite{}, err
 		}
-		// The staged file holds no tags, so a pair quoting one would never
-		// match; the patched text is stripped below.
-		pairs := make([]types.PatchPair, len(item.Patches))
-		for i, pair := range item.Patches {
-			pairs[i] = types.PatchPair{Old: model.StripAnchorTags(pair.Old), New: pair.New}
-		}
-		patched, err := textpatch.Apply(string(current), pairs)
+		patched, err := textpatch.Apply(string(current), item.Patches)
 		if err != nil {
 			return stageWrite{}, fmt.Errorf("editing the staged file: %w", err)
 		}
 		write.content = []byte(patched)
-	}
-	// Text the agent sends can hold a tag it copied from served text. A
-	// binary file stages as sent, and so does a file read from a path, which
-	// a playback confirm reads again.
-	if write.source == "" && utf8.Valid(write.content) {
-		write.content = []byte(model.StripAnchorTags(string(write.content)))
 	}
 	err = secrets.CheckFile(write.name, write.content)
 	if err != nil {

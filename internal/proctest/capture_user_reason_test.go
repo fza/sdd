@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/test"
 )
 
 // A decision captured with a user present may carry the user's own words for
@@ -74,7 +73,7 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	session := world.Open(t, "reason-why-not-what")
 	serve := session.Start(t, "capture", nil)
 	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`."
-	if !strings.Contains(test.Untagged(serve.Instructions), want) {
+	if !strings.Contains(serve.Instructions, want) {
 		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
 	}
 }
@@ -86,14 +85,14 @@ func TestCapture_IntentIsShownInTheUsersTerms(t *testing.T) {
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "intent-users-terms")
 	serve := session.Start(t, "capture", nil)
-	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+	if !strings.Contains(serve.Instructions, noPosture) {
 		t.Errorf("assemble should tell the agent to speak of the intent without naming the posture:\n%s", serve.Instructions)
 	}
 	draft := decisionDraft("directive")
 	draft["reasonWords"] = "empty input hid upstream bugs twice"
 	serve = session.Report(t, serve.Instance, draft)
 	proctest.RequireStep(t, serve, "playback")
-	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+	if !strings.Contains(serve.Instructions, noPosture) {
 		t.Errorf("playback should tell the agent to show the intent without naming the posture:\n%s", serve.Instructions)
 	}
 }

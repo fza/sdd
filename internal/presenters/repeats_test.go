@@ -2,7 +2,7 @@ package presenters_test
 
 import (
 	"bytes"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,14 +14,7 @@ import (
 )
 
 func heldOnly(ids ...string) *presenters.Repeats {
-	return &presenters.Repeats{Held: func(id string) (string, string, bool) {
-		for _, held := range ids {
-			if held == id {
-				return "ab12", "", true
-			}
-		}
-		return "", "", false
-	}, Anchor: func(_, body string, _ map[string]int) string { return "⟦zz99⟧ " + body }}
+	return &presenters.Repeats{Held: func(id string) bool { return slices.Contains(ids, id) }}
 }
 
 // Every view renderer prints a held entry as its pointer and keeps the rest.
@@ -54,11 +47,11 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 			presenters.RenderView(&buf, sections, heldOnly(ids...))
 			got := buf.String()
 			for _, e := range tc.held {
-				if !strings.Contains(got, presenters.GatherPointer(e, "ab12")) {
+				if !strings.Contains(got, presenters.GatherPointer(e)) {
 					t.Errorf("a held entry should print as its pointer:\n%s", got)
 				}
 			}
-			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, presenters.GatherPointer(other, "ab12"))) {
+			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, presenters.GatherPointer(other))) {
 				t.Errorf("an entry not held should print its own line:\n%s", got)
 			}
 			if !strings.Contains(got, presenters.GatherWayBack) {
@@ -86,11 +79,11 @@ func TestRenderShow_HeldChainEntryPrintsAsPointer(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, presenters.GatherPointer(basis, "ab12")) {
+	if !strings.Contains(got, presenters.GatherPointer(basis)) {
 		t.Fatalf("a held chain entry should print as its pointer:\n%s", got)
 	}
-	if !strings.Contains(got, "# body") || !strings.Contains(got, "⟦zz99⟧ Decision on the basis.") {
-		t.Fatalf("the primary not held should print in full with its tag:\n%s", got)
+	if !strings.Contains(got, "# body") || !strings.Contains(got, "Decision on the basis.") {
+		t.Fatalf("the primary not held should print in full:\n%s", got)
 	}
 }
 
@@ -104,7 +97,7 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderSearch(&buf, []types.SearchHit{local, remote}, heldOnly(local.ID, remote.ID))
 	got := buf.String()
-	if !strings.Contains(got, local.ID+" — Held entry. (held as tag ab12)") || strings.Contains(got, "local-snippet") {
+	if !strings.Contains(got, local.ID+" — Held entry. (served in full") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — ") {
@@ -112,62 +105,29 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	}
 }
 
-// An entry served in full is anchored over the whole result: its title and
-// the brief a held entry beside it prints count, and the counts are taken
-// once for every entry the result serves.
-func TestShowText_AnchorsEntriesOverTheWholeResult(t *testing.T) {
+// Every entry served in full is recorded with the body it prints; a held one
+// is not, and no body carries a mark.
+func TestShowText_RecordsEntriesServedInFull(t *testing.T) {
 	first := types.ShownEntry{ID: "20260101-100000-d-tac-one", Type: "decision", Layer: "tactical", Kind: "directive",
 		Title: "The reviewer guide", Body: "Later the reviewer and the approver merge drafts.", Brief: "First entry."}
-	second := types.ShownEntry{ID: "20260101-110000-d-tac-two", Type: "decision", Layer: "tactical", Kind: "directive",
-		Title: "Second", Body: "Nothing else.", Brief: "Second entry."}
 	held := types.ShownEntry{ID: "20260101-120000-d-tac-hld", Type: "decision", Layer: "tactical", Kind: "directive",
 		Title: "Queue", Body: "Nothing more.", Brief: "The approver queue stalls."}
-	var fields []model.WordCounts
+	served := map[string]string{}
 	r := &presenters.Repeats{
-		Held: func(id string) (string, string, bool) { return "ab12", "", id == held.ID },
-		Anchor: func(_, body string, field map[string]int) string {
-			fields = append(fields, field)
-			return body
-		},
+		Held:   func(id string) bool { return id == held.ID },
+		Served: func(id, body string) { served[id] = body },
 	}
-	got, err := presenters.ShowText([]types.ShownEntry{first, second, held}, r)
+	got, err := presenters.ShowText([]types.ShownEntry{first, held}, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(got, held.Body) {
-		t.Fatalf("precondition: the held entry should print as its pointer:\n%s", got)
+	if !strings.Contains(got, first.Body) || strings.Contains(got, held.Body) {
+		t.Fatalf("precondition: the first entry should print in full, the held one as its pointer:\n%s", got)
 	}
-	if len(fields) != 2 {
-		t.Fatalf("both entries served in full should be anchored, got %d", len(fields))
+	if served[first.ID] != first.Body {
+		t.Errorf("the entry served in full should be recorded with its body, got %q", served[first.ID])
 	}
-	if fields[0]["reviewer"] < 2 {
-		t.Errorf("the entry's title should count beside its body, got %d", fields[0]["reviewer"])
-	}
-	if fields[0]["approver"] < 2 {
-		t.Errorf("a held entry's brief should count though the first render printed the entry in full, got %d", fields[0]["approver"])
-	}
-	if reflect.ValueOf(fields[0]).Pointer() != reflect.ValueOf(fields[1]).Pointer() {
-		t.Error("the result's counts should be taken once for every entry it anchors")
-	}
-}
-
-// An entry served in full prints no pointer, so its own brief does not count
-// against its body: a short body repeating its brief keeps prompt words.
-func TestShowText_AnchorsABodyRepeatingItsBriefWithItsWordsOnce(t *testing.T) {
-	entry := types.ShownEntry{ID: "20260101-100000-s-tac-one", Type: "signal", Layer: "tactical", Kind: "gap",
-		Body: "Verdicts oscillate on identical input.", Brief: "Verdicts oscillate on identical input."}
-	var counted int
-	r := &presenters.Repeats{
-		Held: func(string) (string, string, bool) { return "", "", false },
-		Anchor: func(_, body string, field map[string]int) string {
-			counted = field["oscillate"]
-			return body
-		},
-	}
-	if _, err := presenters.ShowText([]types.ShownEntry{entry}, r); err != nil {
-		t.Fatal(err)
-	}
-	if counted != 1 {
-		t.Errorf("the body's word should count once beside the entry's own brief, counted %d", counted)
+	if _, ok := served[held.ID]; ok {
+		t.Error("a held entry should not be recorded as served in full")
 	}
 }

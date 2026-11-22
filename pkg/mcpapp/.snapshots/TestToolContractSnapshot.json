@@ -4,15 +4,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
         },
         "instance": {
           "description": "instance handle of the move to abandon; pass session too, naming the session the move belongs to",
@@ -23,7 +17,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -37,6 +31,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "answer"
+      ],
       "type": "object"
     },
     "name": "abandon"
@@ -67,7 +64,7 @@
     "name": "bind_branch"
   },
   {
-    "description": "Ground a draft before its capture, in one call; session required. On a small graph: every live entry's brief. Above it: a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call; session required. On a small graph: every live entry's brief. Above it: a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -75,18 +72,8 @@
           "description": "without instance: the draft text the searches are written from; credits nothing",
           "type": "string"
         },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "ids": {
-          "description": "entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held",
+          "description": "entries to open in full; an entry the call already holds serves its pointer",
           "items": {
             "type": "string"
           },
@@ -104,7 +91,7 @@
           "type": "integer"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -155,20 +142,14 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
         "cancel_ref": {
           "description": "exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref",
           "minimum": 0,
           "type": "integer"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "instance": {
           "description": "instance handle from start_procedure",
@@ -184,7 +165,7 @@
           "type": "object"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -204,6 +185,7 @@
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -215,15 +197,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
         },
         "instance": {
           "description": "running move instance to park",
@@ -234,7 +210,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -249,6 +225,7 @@
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -341,16 +318,6 @@
           "description": "also search every repo in the project's dependency closure",
           "type": "boolean"
         },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "include_superseded": {
           "type": "boolean"
         },
@@ -400,7 +367,7 @@
           ]
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -444,16 +411,6 @@
             "integer"
           ]
         },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "ids": {
           "description": "entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry",
           "items": {
@@ -473,7 +430,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -576,19 +533,13 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "type": "string"
+        },
         "canonical": {
           "description": "procedure to start, by its stable name (e.g. capture)",
           "type": "string"
-        },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "label": {
           "description": "short single-line subject label for the session (the dialogue); set it early, update when the subject sharpens",
@@ -608,7 +559,7 @@
           "type": "string"
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -623,6 +574,7 @@
         }
       },
       "required": [
+        "answer",
         "canonical"
       ],
       "type": "object"
@@ -684,16 +636,6 @@
           "description": "also render the layout over every repo in the project's dependency closure",
           "type": "boolean"
         },
-        "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word",
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "layout": {
           "description": "sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'",
           "type": "string"
@@ -717,7 +659,7 @@
           ]
         },
         "reread": {
-          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },

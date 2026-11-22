@@ -516,7 +516,7 @@ func TestCaptureDeep_AnswerableFindingsAreListedApartFromTheUsers(t *testing.T) 
 	})
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	answerable, toUser, found := strings.Cut(text, "Going to the user after the proposal, not yours to accept or contest:")
 	if !found || !strings.Contains(answerable, "- f1 [low, inconsistent]: the gap names no owner") || strings.Contains(answerable, "- f2 ") {
 		t.Fatalf("the findings to answer should hold f1 alone, before the user's block:\n%s", text)
@@ -532,7 +532,7 @@ func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	x.judge(t, []any{map[string]any{"verdict": "whether this gap is in scope is the owner's call", "axis": "aspiration", "severity": "medium", "owner": true}})
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "Going to the user after the proposal, not yours to accept or contest:\n\n- f1 [medium, aspiration]") || strings.Contains(text, "The deep verifier raised these findings:") {
+	if text := serve.Instructions; !strings.Contains(text, "Going to the user after the proposal, not yours to accept or contest:\n\n- f1 [medium, aspiration]") || strings.Contains(text, "The deep verifier raised these findings:") {
 		t.Fatalf("the answer step should list an owner finding apart, as going to the user:\n%s", text)
 	}
 	_, err := session.AnswerErr(t, x.instance, "deepAnswer", "contest", map[string]any{"deepContest": []any{map[string]any{"target": "f1", "verdict": "contest", "reason": "in scope"}}}, "")
@@ -576,7 +576,7 @@ func TestCaptureDeep_ThreeDeliveriesThenTheUser(t *testing.T) {
 	session.Refresh(t)
 	serve := session.Answer(t, x.instance, "deepProposal", "escalate", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if want := "- f1, contested, and the verifier holds it\n  draft: the draft as it stands; the drafter: the subject is in the ref\n  verifier: the gap names no subject; a reader of the entry alone cannot tell\n  verifier's edit: replace \"observes something.\" with \"observes a subject.\"\n"; !strings.Contains(test.Untagged(serve.Instructions), want) {
+	if want := "- f1, contested, and the verifier holds it\n  draft: the draft as it stands; the drafter: the subject is in the ref\n  verifier: the gap names no subject; a reader of the entry alone cannot tell\n  verifier's edit: replace \"observes something.\" with \"observes a subject.\"\n"; !strings.Contains(serve.Instructions, want) {
 		t.Fatalf("the user should see both positions of the open point:\n%s", serve.Instructions)
 	}
 }
@@ -1232,7 +1232,7 @@ func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
 	_, session := newDeepWorld(t, "deep-dispatch-wording", sdd.VerifierPolicy{})
 	_, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	if !strings.Contains(text, "its model did not judge this draft: the deep verifier judges it now in the model's place") || strings.Contains(text, "Pre-flight left no high finding open") {
 		t.Fatalf("the dispatch should say pre-flight's model did not judge the draft:\n%s", text)
 	}
@@ -1255,7 +1255,7 @@ func TestCaptureDeep_TheDispatchNamesClaudeCodesAgentTool(t *testing.T) {
 	_, session := newDeepWorld(t, "deep-dispatch-agent-tool", sdd.VerifierPolicy{})
 	_, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	if !strings.Contains(text, "your `Agent` tool (agent `sdd_delegate`)") || !strings.Contains(text, "only if `Agent` is missing from your tool list") {
 		t.Fatalf("the dispatch should name the Agent tool as the launch and its absence as the noSubagent case:\n%s", text)
 	}
@@ -1304,12 +1304,12 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 			session.Refresh(t)
 			serve := session.Report(t, x.instance, nil)
 			proctest.RequireStep(t, serve, "playback")
-			if replay := test.Untagged(serve.Instructions); !strings.Contains(replay, "the gap rests on incidents no entry records\n  withdrawn: ") {
+			if replay := serve.Instructions; !strings.Contains(replay, "the gap rests on incidents no entry records\n  withdrawn: ") {
 				t.Errorf("the replayed playback should show the withdrawn finding:\n%s", replay)
 			}
 			serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 			proctest.RequireStep(t, serve, "verifySummary")
-			text := test.Untagged(serve.Instructions)
+			text := serve.Instructions
 			for _, want := range []string{"- f1 [medium, missing-ref]: the gap rests on incidents no entry records\n  withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {
 				if !strings.Contains(text, want) {
 					t.Errorf("the drafter should be told of the withdrawn finding, missing %q:\n%s", want, text)

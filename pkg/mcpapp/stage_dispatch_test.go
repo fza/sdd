@@ -8,7 +8,6 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
-	"github.com/networkteam/sdd/test"
 )
 
 // A staging call that re-advances a capture to its live verifier answers the
@@ -41,7 +40,7 @@ func TestStageAttachmentAnswersTheDispatchItOwes(t *testing.T) {
 	}
 	child, verify := serve.Dispatches[0].Session, serve.Dispatches[0].Instance
 	var page mcpserver.ServeResult
-	for n := 0; !strings.Contains(test.Untagged(page.Instructions), "Every page is served."); n++ {
+	for n := 0; !strings.Contains(page.Instructions, "Every page is served."); n++ {
 		if n > 40 {
 			t.Fatal("the reading should end within 40 pages")
 		}

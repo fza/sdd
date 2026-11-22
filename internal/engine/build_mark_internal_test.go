@@ -23,7 +23,7 @@ var stockEventTypesAtMain = []string{
 // forkOnlyEventTypes are the event types only this build writes. A new event
 // type lands here or in stock's set, never in neither.
 var forkOnlyEventTypes = []string{
-	"anchors", "build_mark", "deferred", "delivered", "fork_ended", "forked", "model", "mutation_committed", "received",
+	"anchors", "build_mark", "deferred", "delivered", "fork_ended", "forked", "model", "mutation_committed", "question", "received", "texts",
 }
 
 // definedEventTypes reads every EventType constant the package declares.

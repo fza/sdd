@@ -49,7 +49,7 @@ func pagedText(ss *shellSession, tool, text string) string {
 }
 
 // callKey is what a repeat of req shares with it: the tool and its arguments
-// but page and the proofs, which change between repeats.
+// but page, the answer and reread, which change between repeats.
 func callKey(req *mcp.CallToolRequest) string {
 	if req == nil || req.Params == nil {
 		return ""
@@ -58,7 +58,7 @@ func callKey(req *mcp.CallToolRequest) string {
 	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
 		return ""
 	}
-	for _, field := range []string{"page", "held", "reread"} {
+	for _, field := range []string{"page", "answer", "reread"} {
 		delete(args, field)
 	}
 	key, err := json.Marshal(args)
