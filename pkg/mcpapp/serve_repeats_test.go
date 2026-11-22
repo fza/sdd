@@ -98,3 +98,25 @@ func TestAMoveEndsWithAShortLanding(t *testing.T) {
 		}
 	}
 }
+
+// A landing counts none of the base step's text as served: an agent that
+// lost what it held before the move ended gets that text in full on the
+// base step's next serve.
+func TestALandingCountsNoBaseStepTextAsServed(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	agent := newAgentMemory()
+	cs := connectAs(t, env.srv, agent)
+	door := openSession(t, cs)
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
+
+	agent.lost = true
+	var ended mcpserver.AbandonResult
+	call(t, cs, "abandon", map[string]any{"session": door.Session, "instance": serve.Instance, "reason": "not needed"}, &ended)
+	agent.lost = false
+	var again mcpserver.ServeResult
+	call(t, cs, "next", map[string]any{"session": door.Session, "instance": door.Instance}, &again)
+	if !strings.Contains(again.Instructions, "Ending is part of the arc") && !strings.Contains(again.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("the base step after a landing should come in full, got %.300q", again.Instructions)
+	}
+}

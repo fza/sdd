@@ -1959,6 +1959,9 @@ func TestReadValueReturnsACollectedValueWhole(t *testing.T) {
 	call(t, cs, "read_value", map[string]any{"session": session, "instance": serve.Instance, "name": "body"}, &page)
 	var joined strings.Builder
 	for n := 1; ; n++ {
+		if len(page.Value) > int(model.DefaultResultBound) {
+			t.Fatalf("each page of a value should stay within the result bound, page %d took %d characters", n, len(page.Value))
+		}
 		text, last, ok := strings.Cut(page.Value, "\n\n(page ")
 		if !ok {
 			joined.WriteString(page.Value)
