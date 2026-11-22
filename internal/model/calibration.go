@@ -201,9 +201,10 @@ type CalibrationReport struct {
 	AuditMisses, AuditCounted int
 	Floor                     FloorHealth
 	Steps                     []DriftStep
-	// PassedInFull counts the labelled pairs scoring at or above the
-	// relevant threshold, Referenced how many of them were referenced, and
-	// SetAside how many were set aside with each code, the dominant first.
+	// PassedInFull counts the live labelled pairs scoring at or above the
+	// relevant threshold, which rests on them alone, Referenced how many of
+	// them were referenced, and SetAside how many were set aside with each
+	// code, the dominant first.
 	PassedInFull int
 	Referenced   int
 	SetAside     []CodePrecision
@@ -327,7 +328,7 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 		default:
 			report.Excluded++
 		}
-		if !report.Thresholds.Valid || ScoreValue(label.Score) < report.Thresholds.Relevant {
+		if label.Source != SourceLive || !report.Thresholds.Valid || ScoreValue(label.Score) < report.Thresholds.Relevant {
 			continue
 		}
 		report.PassedInFull++

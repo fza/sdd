@@ -394,7 +394,7 @@ func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"judge: " + gatherJudge, "labels: 189 referenced", "thresholds: set aside below 0.784", "audit: 3% of set-asides shown blind", "precision: 189 of 189 pairs passed in full were referenced"} {
+	for _, want := range []string{"judge: " + gatherJudge, "labels: 189 referenced", "thresholds: set aside below 0.784", "audit: 3% of set-asides shown blind", "precision: 189 of 189 live labelled pairs passed in full were referenced"} {
 		if !strings.Contains(status.Text, want) {
 			t.Errorf("status lacks %q:\n%s", want, status.Text)
 		}

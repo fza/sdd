@@ -193,6 +193,35 @@ func TestCalibration_ReportsPrecisionPerCode(t *testing.T) {
 	}
 }
 
+// The pairs passed in full are counted over the live labels, the labels the
+// serve-in-full threshold rests on: a replayed label is a reference whatever
+// the judge does in live checks.
+func TestCalibration_CountsLivePairsPassedInFull(t *testing.T) {
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	var batch model.RelevanceBatch
+	add := func(i int, score uint8, verdict model.ReaderVerdict) {
+		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), "20260601-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: score}})
+	}
+	for i := range 189 {
+		add(i, 220, model.ReaderVerdict{Code: model.ReaderReferenced})
+	}
+	for i := range 16 {
+		add(1000+i, 230, model.ReaderVerdict{Code: model.ReaderOpened, Reason: topicOnly})
+	}
+	for i := range 40 {
+		add(2000+i, 240, model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay})
+	}
+	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	if !report.Thresholds.Valid || report.Thresholds.Relevant > model.ScoreValue(220) || report.Replay != 40 {
+		t.Fatalf("report %+v should hold thresholds that pass every label in full", report)
+	}
+	if report.PassedInFull != 205 || report.Referenced != 189 {
+		t.Errorf("passed in full %d, referenced %d: the replayed labels should not count", report.PassedInFull, report.Referenced)
+	}
+}
+
 func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 	var batch model.RelevanceBatch
 	add := func(i int, score uint8, verdict model.ReaderVerdict) {
