@@ -60,6 +60,82 @@ func TestCooldownSkipsWithNext(t *testing.T) {
 	}
 }
 
+func TestCloneIsNotHeldByCooldownOrRetryWait(t *testing.T) {
+	tests := []struct {
+		name string
+		// last is the fetch of another clone of the target before the clone.
+		last   func(context.Context) error
+		reason gitgate.Reason
+	}{
+		{"cooldown", func(context.Context) error { return nil }, gitgate.ReasonCooldown},
+		{"retry wait", func(context.Context) error { return errors.New("fatal: the remote end hung up unexpectedly") }, gitgate.ReasonRetryWait},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := newSetup(t)
+			gate := setup.gate()
+			target := mustTarget(t, "git@gitlab.com:group/project.git")
+			runs := 0
+			err := gate.Run(t.Context(), target, gitgate.Fetch, func(ctx context.Context) error {
+				writeTrace(t, ctx, sshChild)
+				return tt.last(ctx)
+			})
+			if errors.As(err, new(*gitgate.DeferredError)) {
+				t.Fatal(err)
+			}
+
+			cloneAt := t0.Add(time.Minute)
+			setup.clock.Set(cloneAt)
+			skip := deferred(t, gate.Run(t.Context(), target, gitgate.Fetch, sshOp(t, &runs)))
+			if skip.Reason != tt.reason {
+				t.Errorf("a fetch should be deferred by the %s, got %v", tt.name, skip)
+			}
+			err = gate.Run(t.Context(), target, gitgate.Clone, sshOp(t, &runs))
+			if err != nil || runs != 1 {
+				t.Fatalf("a clone should not be held by the %s, got %v after %d runs", tt.name, err, runs)
+			}
+			if count := bucketCount(t, setup.dir, "gitlab.com/ssh"); count != 2 {
+				t.Errorf("the clone should count in the bucket, got %d", count)
+			}
+			due, next, err := gate.Due(target, gitgate.Fetch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if due || !next.Equal(cloneAt.Add(5*time.Minute)) {
+				t.Errorf("the clone should restart the fetch cooldown, got %v %v", due, next.Sub(t0))
+			}
+		})
+	}
+}
+
+func TestCloneIsHeldByBuckets(t *testing.T) {
+	tests := []struct {
+		name   string
+		limit  func(*gitgate.Limits)
+		reason gitgate.Reason
+	}{
+		{"hourly", func(l *gitgate.Limits) { l.SSHPerHour = 1 }, gitgate.ReasonHourly},
+		{"minute", func(l *gitgate.Limits) { l.SSHPerMinute = 1 }, gitgate.ReasonMinute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := newSetup(t)
+			tt.limit(&setup.limits)
+			gate := setup.gate()
+			runs := 0
+			err := gate.Run(t.Context(), mustTarget(t, "git@gitlab.com:group/project.git"), gitgate.Fetch, sshOp(t, &runs))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			skip := deferred(t, gate.Run(t.Context(), mustTarget(t, "git@gitlab.com:group/project.git"), gitgate.Clone, sshOp(t, &runs)))
+			if skip.Reason != tt.reason || skip.Kind != gitgate.Clone || runs != 1 {
+				t.Errorf("a clone should be held by a full %s bucket, got %v after %d runs", tt.name, skip, runs)
+			}
+		})
+	}
+}
+
 func TestPushCooldown(t *testing.T) {
 	setup := newSetup(t)
 	gate := setup.gate()

@@ -309,7 +309,7 @@ func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time,
 	} else {
 		record = repo.Fetch
 	}
-	if record != nil && now.Before(record.Next) {
+	if kind != Clone && record != nil && now.Before(record.Next) {
 		switch {
 		case !record.RetryAt.IsZero() && !now.Before(record.RetryAt):
 			v.viaRetry = true

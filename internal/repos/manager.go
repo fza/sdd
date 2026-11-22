@@ -84,11 +84,19 @@ func (m *Manager) FetchDue(ctx context.Context, repo ConnectedRepo) (bool, time.
 	if m.clones.gate == nil {
 		return false, time.Time{}, ErrNoGate
 	}
+	dir, err := m.clones.Dir(repo.RepoID)
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	kind := gitgate.Fetch
+	if !IsCloned(dir) {
+		kind = gitgate.Clone
+	}
 	target, err := m.clones.Target(ctx, repo.RepoID, repo.CloneURL)
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	return m.clones.gate.Due(target, gitgate.Fetch)
+	return m.clones.gate.Due(target, kind)
 }
 
 // Demand starts or renews the lease of repo's clone for a read.
