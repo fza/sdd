@@ -55,6 +55,15 @@ type Context struct {
 	// Arrived lists the fields the current await gate holds a delivery for
 	// that it has not consumed yet.
 	Arrived []string
+	// Commit writes engine fields holding an effect the running operation
+	// committed outside the session and logs them at once, so a later failure
+	// of the same command keeps them; set only for a command recording a
+	// mutation intent.
+	Commit func(fields map[string]any) error
+	// Committed holds what earlier attempts of the running invocation
+	// committed, so its retry continues past the effect instead of repeating
+	// it. The store already holds these fields.
+	Committed map[string]any
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,

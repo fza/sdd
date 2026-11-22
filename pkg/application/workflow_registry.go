@@ -326,7 +326,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings", "recheckStored", "relevanceStored"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -498,36 +498,74 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
 	}
-	// The write step's late-entries check, once more on a fresh graph right
-	// before the write: an entry landing in between leaves the capture
-	// unwritten, and publish routes to lateEntries.
-	late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
-		w.graphs.Invalidate()
-		return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
-	})
-	if err != nil {
-		return err
+	entryID, written := ctx.Committed["entryId"].(string)
+	if !written {
+		entryID, err = w.publishDraft(ctx, draft)
+		if err != nil || entryID == "" {
+			return err
+		}
 	}
-	if len(late) > 0 {
-		slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+	err = commitStep(ctx, "recheckStored", func() error { return w.storeCaptureRecheck(ctx, target.Project, entryID) })
+	if err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	err = commitStep(ctx, "relevanceStored", func() error { return w.storeCaptureRelevance(ctx, target.Project, entryID) })
+	if err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	w.session.LogRead("newEntry", []string{entryID}, nil)
+	return w.session.SinkErr()
+}
+
+// commitStep runs a step behind the publish and commits marker once it
+// succeeds, so a retry after a later failure skips it.
+func commitStep(ctx *engine.Context, marker string, step func() error) error {
+	if done, _ := ctx.Committed[marker].(bool); done {
 		return nil
 	}
-	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
+	err := step()
 	if err != nil {
-		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
-	}
-	w.binding = result.Binding
-	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
 		return err
 	}
-	if err := w.storeCaptureRecheck(ctx, target.Project, result.EntryID); err != nil {
-		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	return ctx.Commit(map[string]any{marker: true})
+}
+
+// publishDraft publishes the draft and commits its entryId, so a retry after
+// a failure past the publish continues from the entry; it returns no ID when
+// entries landed before the write.
+func (w *WorkflowSession) publishDraft(ctx *engine.Context, draft EntryDraft) (string, error) {
+	// A retry whose earlier attempt published but never committed finds its
+	// entry under the same key, which the late-entries check would take for
+	// a late one.
+	published, err := w.app.entryPublicationExists(w.ctx, w.identity, draft.Target, draft.Publication, draft.EntryID)
+	if err != nil {
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
 	}
-	if err := w.storeCaptureRelevance(ctx, target.Project, result.EntryID); err != nil {
-		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	if !published {
+		// The write step's late-entries check, once more on a fresh graph right
+		// before the write: an entry landing in between leaves the capture
+		// unwritten, and publish routes to lateEntries.
+		late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
+			w.graphs.Invalidate()
+			return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(late) > 0 {
+			slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+			return "", nil
+		}
 	}
-	w.session.LogRead("newEntry", []string{result.EntryID}, nil)
-	return w.session.SinkErr()
+	result, err := w.app.CreateEntry(w.ctx, w.identity, draft.Target.Project, w.binding, draft)
+	if err != nil {
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+	}
+	w.binding = result.Binding
+	if err := ctx.Commit(map[string]any{"entryId": result.EntryID}); err != nil {
+		return "", fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	}
+	return result.EntryID, nil
 }
 
 // wipTarget is the WIP marker's authority: the session's current branch,
