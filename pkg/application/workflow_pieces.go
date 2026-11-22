@@ -143,6 +143,29 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 	return text
 }
 
+// SetCaller names the caller of the call in flight, the mark that tells a
+// second caller on the session from the first; empty is the first.
+func (w *WorkflowSession) SetCaller(caller string) { w.session.SetCaller(caller) }
+
+// ServeOncePerChange reports whether text, served once per change under name,
+// serves to the call's caller, and records that it does: its content differs
+// from the last this caller was served under name, or the call serves
+// everything in full.
+func (w *WorkflowSession) ServeOncePerChange(name, text string) bool {
+	return w.session.ServeChanged(engine.Piece{Name: name, Hash: contentHash(text)})
+}
+
+// ForgetOncePerChange records that the call's caller holds no text under
+// name, so the next call serves it whatever it holds.
+func (w *WorkflowSession) ForgetOncePerChange(name string) {
+	w.session.ServeChanged(engine.Piece{Name: name})
+}
+
+// OncePerChangeDue is ServeOncePerChange recording nothing.
+func (w *WorkflowSession) OncePerChangeDue(name, text string) bool {
+	return w.session.Changed(engine.Piece{Name: name, Hash: contentHash(text)})
+}
+
 // HoldsEntry reports whether the call holds the entry in full, with the tag
 // it holds it under: proved by the entry's own tag or by a piece that
 // carried it whole. A held entry serves as its pointer, so the proof it

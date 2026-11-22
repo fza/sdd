@@ -58,17 +58,15 @@ func TestStepFramingOverTheTransport(t *testing.T) {
 	client := connectAs(t, env.srv, memory)
 	door := openSession(t, client)
 
-	// Each call forgets what earlier ones served, so every block it carries
-	// serves in full.
-	memory.forget = true
+	// Each call comes from a caller the session has not served, so every block
+	// its step carries serves in full.
 	var move mcpserver.ServeResult
-	call(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "info-framed"}, &move)
+	call(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "info-framed", "caller": "first"}, &move)
 	if !strings.Contains(move.Framing, "Local participant:") || strings.Contains(move.Framing, "Recent graph movement") {
 		t.Fatalf("a step declaring info framing should carry the info block alone, got %q", move.Framing)
 	}
-	memory.forget = true
 	var closing mcpserver.ServeResult
-	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "report": map[string]any{"body": "b"}}, &closing)
+	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "report": map[string]any{"body": "b"}, "caller": "second"}, &closing)
 	if closing.Step != "close" || !strings.Contains(closing.Framing, "Recent graph movement") {
 		t.Fatalf("a step declaring no framing should carry the whole framing, at %s with %q", closing.Step, closing.Framing)
 	}

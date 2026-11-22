@@ -14,7 +14,6 @@ cancellation:
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
-framing: <framing as its proofs serve it>
 goal: put the choice to the user through your host's question tool where it has one, else one plain-text question; relay their answer verbatim
 instance: i_2
 instructions: |

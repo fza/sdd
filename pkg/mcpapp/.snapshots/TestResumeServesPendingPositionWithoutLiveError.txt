@@ -10,8 +10,8 @@ instructions: |
   continue. Continue through next with the session's handle. Lose your place
   again later? resume_session with this handle re-serves this list in full.
 
-  Every piece served in full (instruction lane, framing block, report schema,
-  entry) carries a tag, such as ⟦tag⟧, before one of its words. On each later
+  Every piece served in full (instruction lane, report schema, entry) carries
+  a tag, such as ⟦tag⟧, before one of its words. On each later
   call, list in held every tag whose text you still see, with the word right
   after it, as tag:word ("… dialogue first …" → gn9p:first); that piece
   then serves as a short pointer. A proof works once: the pointer names the

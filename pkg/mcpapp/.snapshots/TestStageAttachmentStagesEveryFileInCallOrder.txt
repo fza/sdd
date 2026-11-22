@@ -8,5 +8,5 @@ files:
   -
     handle: patched.md
     sha256: 1ef8fec2ebd54c6b2f0a59e65f76794be0b80a4b28fbbfc965d08467548925d5
-unproved: Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the full text you were served, never a word of this line, as tag:word; never guess a word. The pieces: tag <tag> for framing health; tag <tag> for framing recentMovement; tag <tag> for framing principles; tag <tag> for framing info; tag <tag> for lane open
+unproved: Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the full text you were served, never a word of this line, as tag:word; never guess a word. The pieces: tag <tag> for lane open
 

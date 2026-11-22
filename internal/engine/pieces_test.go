@@ -524,3 +524,51 @@ func TestFailedProofsLeavesOutASpentProof(t *testing.T) {
 		t.Errorf("only the wrong word should fail, never the spent proof, got %+v", got)
 	}
 }
+
+func TestServeChangedServesEachCallerOncePerChange(t *testing.T) {
+	block := engine.Piece{Name: "framing focus", Hash: "h1"}
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	session.BeginCall(nil, nil)
+	if !session.ServeChanged(block) {
+		t.Fatal("the first caller should be served a block it was never sent")
+	}
+	session.RecordAnchors()
+
+	session.BeginCall(nil, nil)
+	if session.ServeChanged(block) {
+		t.Error("the first caller should not be served an unchanged block again")
+	}
+	session.BeginCall(nil, nil)
+	session.SetCaller("verifier")
+	if !session.ServeChanged(block) {
+		t.Error("a second caller the session never served should get the block")
+	}
+	session.RecordAnchors()
+
+	events, err := engine.ReadEvents(&log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).
+		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, caller := range []string{"", "verifier"} {
+		replayed.BeginCall(nil, nil)
+		replayed.SetCaller(caller)
+		if replayed.ServeChanged(block) {
+			t.Errorf("caller %q should hold the block after a restart", caller)
+		}
+	}
+	replayed.BeginCall(nil, nil)
+	if !replayed.ServeChanged(engine.Piece{Name: block.Name, Hash: "h2"}) {
+		t.Error("a changed block should serve again")
+	}
+	replayed.BeginCall(nil, nil)
+	replayed.SetCaller("third")
+	if !replayed.ServeChanged(block) {
+		t.Error("a third caller should get the block")
+	}
+}
