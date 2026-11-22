@@ -19,7 +19,7 @@ type shellSession struct {
 
 // flushServed records the anchors this call issued into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	return ss.root.RecordServed(ctx, identity)
+	return ss.root.RecordAnchors(ctx, identity)
 }
 
 // sessionCache holds the loaded sessions by ID.

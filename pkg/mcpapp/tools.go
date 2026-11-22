@@ -561,7 +561,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
-	err := ss.root.BeginCall(proofs.Held, proofs.Reread)
+	err := ss.root.BeginCall(proofs.lists())
 	if err != nil {
 		ss.mu.Unlock()
 		return nil, err
