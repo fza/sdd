@@ -34,8 +34,8 @@ framing: |
   (cut for size: kept 2493 of 4167 bytes — pull the rest: rank(by(date)):n(10):brief:as-list:name("Recent graph movement"))
 
   Graph health: 2 warning(s), 0 unreadable entry/entries.
-  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical in the graph
-  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical in the graph
+  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical or alias in the graph
+  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical or alias in the graph
 instructions: |
   Session resumed: step position and collected evidence persist; the
   open_instances list carries each running instance's current serve — the
