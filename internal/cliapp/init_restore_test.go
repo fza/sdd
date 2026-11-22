@@ -7,7 +7,7 @@ import (
 )
 
 func TestInitRestoresASkillIdenticalToHeadWithoutACommit(t *testing.T) {
-	repo := initRepo(t)
+	repo := initTempRepo(t)
 	mustInit(t, firstInit...)
 	skill := filepath.Join(repo, ".claude", "skills", "sdd", "SKILL.md")
 	if err := os.Remove(skill); err != nil {

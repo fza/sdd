@@ -2,10 +2,8 @@ package git_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/git"
@@ -23,16 +21,6 @@ func gitRepo(t *testing.T) string {
 	gitIn(t, dir, "config", "commit.gpgsign", "false")
 	t.Chdir(dir)
 	return dir
-}
-
-func gitIn(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
 }
 
 func writeIn(t *testing.T, dir, name, content string) string {

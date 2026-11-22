@@ -3,7 +3,6 @@ package cliapp_test
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,9 +10,9 @@ import (
 	"github.com/networkteam/sdd/internal/cliapp"
 )
 
-// initRepo returns a git repository with one seed commit, entered as the
+// initTempRepo returns a git repository with one seed commit, entered as the
 // working directory, with the XDG homes outside it.
-func initRepo(t *testing.T) string {
+func initTempRepo(t *testing.T) string {
 	t.Helper()
 	repo, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -35,17 +34,6 @@ func initRepo(t *testing.T) string {
 	return repo
 }
 
-func gitIn(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
-	}
-	return string(out)
-}
-
 func writeRepoFile(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -56,7 +44,7 @@ func writeRepoFile(t *testing.T, name, content string) {
 	}
 }
 
-func runInit(t *testing.T, args ...string) error {
+func runInitErr(t *testing.T, args ...string) error {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	command := cliapp.New(cliapp.Options{Version: "test", Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr})
@@ -65,7 +53,7 @@ func runInit(t *testing.T, args ...string) error {
 
 func mustInit(t *testing.T, args ...string) {
 	t.Helper()
-	if err := runInit(t, args...); err != nil {
+	if err := runInitErr(t, args...); err != nil {
 		t.Fatalf("sdd init %s: %v", strings.Join(args, " "), err)
 	}
 }
@@ -96,17 +84,17 @@ func headCommit(t *testing.T, repo string) string {
 }
 
 func TestInitCompletesTheCommitAnEarlierRunLeftUndone(t *testing.T) {
-	repo := initRepo(t)
+	repo := initTempRepo(t)
 	allow := refuseCommits(t, repo)
 
-	err := runInit(t, firstInit...)
+	err := runInitErr(t, firstInit...)
 	if err == nil || !strings.Contains(err.Error(), "the next sdd init retries") {
 		t.Fatalf("init should fail naming the retry when its commit is refused, got %v", err)
 	}
 	if _, statErr := os.Stat(uncommittedRecord(repo)); statErr != nil {
 		t.Fatalf("a refused commit should leave a record of the paths it held: %v", statErr)
 	}
-	if err := runInit(t); err == nil {
+	if err := runInitErr(t); err == nil {
 		t.Fatal("a re-run whose commit is refused again should fail")
 	}
 	if _, statErr := os.Stat(uncommittedRecord(repo)); statErr != nil {
@@ -128,7 +116,7 @@ func TestInitCompletesTheCommitAnEarlierRunLeftUndone(t *testing.T) {
 }
 
 func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
-	repo := initRepo(t)
+	repo := initTempRepo(t)
 	mustInit(t, firstInit...)
 	gitignore := filepath.Join(repo, ".gitignore")
 	content, err := os.ReadFile(gitignore)
@@ -140,7 +128,7 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 	gitIn(t, repo, "rm", "-q", skill)
 	gitIn(t, repo, "commit", "-q", "-m", "chore: drop the skill")
 	allow := refuseCommits(t, repo)
-	if err := runInit(t); err == nil {
+	if err := runInitErr(t); err == nil {
 		t.Fatal("init should fail when its commit is refused")
 	}
 	allow()
@@ -156,9 +144,9 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 }
 
 func TestInitDropsRecordedPathsCommittedMeanwhile(t *testing.T) {
-	repo := initRepo(t)
+	repo := initTempRepo(t)
 	allow := refuseCommits(t, repo)
-	if err := runInit(t, firstInit...); err == nil {
+	if err := runInitErr(t, firstInit...); err == nil {
 		t.Fatal("init should fail when its commit is refused")
 	}
 	allow()
@@ -179,13 +167,13 @@ func TestInitDropsRecordedPathsCommittedMeanwhile(t *testing.T) {
 // A clone shipping a record: init refuses it before writing anything, so the
 // run after the record's removal sets up and commits everything.
 func TestInitRefusesAClonedRecordBeforeWritingAnything(t *testing.T) {
-	repo := initRepo(t)
+	repo := initTempRepo(t)
 	writeRepoFile(t, filepath.Join(repo, ".env"), "TOKEN=x\n")
 	writeRepoFile(t, uncommittedRecord(repo), ".env\n")
 	gitIn(t, repo, "add", "-f", uncommittedRecord(repo))
 	gitIn(t, repo, "commit", "-q", "-m", "chore: ship a record")
 
-	err := runInit(t, firstInit...)
+	err := runInitErr(t, firstInit...)
 
 	if err == nil || !strings.Contains(err.Error(), "does not trust it") {
 		t.Fatalf("init should refuse a record git tracks, got %v", err)
@@ -225,7 +213,7 @@ func TestInitRefusesARecordItCannotTrust(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := initRepo(t)
+			repo := initTempRepo(t)
 			mustInit(t, firstInit...)
 			writeRepoFile(t, filepath.Join(repo, ".env"), "TOKEN=x\n")
 			writeRepoFile(t, uncommittedRecord(repo), tc.record)
@@ -234,7 +222,7 @@ func TestInitRefusesARecordItCannotTrust(t *testing.T) {
 			}
 			head := headCommit(t, repo)
 
-			err := runInit(t)
+			err := runInitErr(t)
 
 			if err == nil || !strings.Contains(err.Error(), uncommittedRecord(repo)) {
 				t.Errorf("init should refuse a record it cannot trust, naming it, got %v", err)
