@@ -129,24 +129,6 @@ func TestCapture_OneShotHappyPath(t *testing.T) {
 	}
 }
 
-// A passage copied from served text carries its anchor tag; the entry is
-// written without it.
-func TestCapture_ReportedTextLosesTheAnchorTags(t *testing.T) {
-	world, session := newCaptureWorld(t, "core-untagged")
-	serve := session.Start(t, "capture", nil)
-	draft := captureDraft()
-	draft["body"] = "A tactical gap: the fixture ⟦q7m2⟧ observes something."
-	serve = session.Report(t, serve.Instance, draft)
-	proctest.RequireStep(t, serve, "playback")
-	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "capture it")
-	serve = session.Answer(t, serve.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches the body"}, "")
-	entryID, _ := serve.Produced["entryId"].(string)
-	entry := proctest.LoadEntry(t, world.GraphDir, entryID)
-	if strings.Contains(entry.Content, "⟦") || !strings.Contains(entry.Content, "the fixture observes something") {
-		t.Fatalf("the written body should hold the passage without its tag, got %q", entry.Content)
-	}
-}
-
 // TestCapture_BodyAssertingMissingAttachmentBlockedAtGate pins the write-gate
 // consistency check (20260707-175502-s-prc-lgu): a body linking an attachment
 // the entry does not carry is blocked with a named finding, never written.

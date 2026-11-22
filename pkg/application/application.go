@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -297,19 +296,16 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		bodiesOnly:        viewResult.BodiesOnly(),
 		local:             local,
 	}
-	result.Sections = result.render(snapshot.graph, request.Held, request.Anchor)
+	result.Sections = result.render(snapshot.graph, request.Held, request.Served)
 	return result, nil
 }
 
-// render renders the view's sections as text, entries served in full anchored
-// over the whole result. The no-repeat rule covers the local graph's sections
-// only.
-func (r ViewResult) render(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body, field string) string) string {
+// render renders the view's sections as text. The no-repeat rule covers the
+// local graph's sections only.
+func (r ViewResult) render(g *model.Graph, held func(id, hash string) bool, served func(id, hash, body string)) string {
 	var rendered strings.Builder
-	presenters.RenderWithin(&rendered, repeatsFor(g, held, anchor), func(w io.Writer, repeats *presenters.Repeats) {
-		presenters.RenderView(w, r.ViewSections[:r.local], repeats)
-		presenters.RenderView(w, r.ViewSections[r.local:], nil)
-	})
+	presenters.RenderView(&rendered, r.ViewSections[:r.local], repeatsFor(g, held, served))
+	presenters.RenderView(&rendered, r.ViewSections[r.local:], nil)
 	return strings.TrimRight(rendered.String(), "\n")
 }
 
@@ -348,7 +344,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	entries, err := presenters.ShowText(items, repeatsFor(snapshot.graph, request.Held, request.Anchor))
+	entries, err := presenters.ShowText(items, repeatsFor(snapshot.graph, request.Held, request.Served))
 	if err != nil {
 		return ShowResult{}, err
 	}
@@ -433,7 +429,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 		}
 	}
 	search.Notice = strings.Join(search.Notices, " ")
-	search.Results = presenters.SearchText(hits, search.Notices, repeatsFor(snapshot.graph, request.Held, request.Anchor))
+	search.Results = presenters.SearchText(hits, search.Notices, repeatsFor(snapshot.graph, request.Held, request.Served))
 	for _, entry := range searchResult.Entries {
 		if entry.Entry != nil {
 			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())
@@ -846,9 +842,9 @@ var errVectorUnavailable = errors.New("vector search requires an Embedder and a 
 
 // repeatsFor applies the no-repeat rule for a consumer holding the entries
 // held reports; nil serves everything in full.
-func repeatsFor(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body, field string) string) *presenters.Repeats {
+func repeatsFor(g *model.Graph, held func(id, hash string) bool, served func(id, hash, body string)) *presenters.Repeats {
 	if held == nil {
 		return nil
 	}
-	return &presenters.Repeats{Held: held, Anchor: anchor, Graph: g}
+	return &presenters.Repeats{Held: held, Served: served, Graph: g}
 }

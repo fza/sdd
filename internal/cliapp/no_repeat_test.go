@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const pointerMark = "(held as tag "
+const pointerMark = "(served in full above"
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
 // every time.
@@ -29,8 +29,8 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 					t.Fatalf("sdd %s: %v\n%s", tc.name, result.err, result.stderr)
 				}
 				assertContainsOutput(t, "stdout", result.stdout, tc.want)
-				if strings.Contains(result.stdout, pointerMark) || strings.Contains(result.stdout, "⟦") {
-					t.Fatalf("the CLI printed a pointer or a tag:\n%s", result.stdout)
+				if strings.Contains(result.stdout, pointerMark) {
+					t.Fatalf("the CLI printed a pointer:\n%s", result.stdout)
 				}
 			}
 		})

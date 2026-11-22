@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -54,9 +53,10 @@ Serves a guide.
 	}
 }
 
-// A resume points at an entry only under a tag its own text carries: an
-// entry served in a move the resume cuts or leaves waiting serves in full
-// where a later move holds it, never as a pointer to text the agent never got.
+// A resume points at an entry only where its own text carries the entry in
+// full: an entry served in a move the resume cuts or leaves waiting serves in
+// full where a later move holds it, never as a pointer to text the agent
+// never got.
 func TestResumePointsOnlyAtEntriesItDelivers(t *testing.T) {
 	graphDir := writeFixtureGraph(t)
 	writeChainProcedure(t, graphDir, "2026/07/04-120011-d-prc-pl1.md", "plain-big", 200, false)
@@ -69,16 +69,10 @@ func TestResumePointsOnlyAtEntriesItDelivers(t *testing.T) {
 		callRaw(t, cs, "start_procedure", map[string]any{"session": session, "canonical": canonical})
 	}
 
-	raw := newAgentMemory()
-	raw.raw = true
-	resumed := callRaw(t, connectAs(t, env.srv, raw), "resume_session", map[string]any{"session": session})
+	resumed := callRaw(t, connect(t, env.srv), "resume_session", map[string]any{"session": session})
 	text := fmt.Sprint(resumed)
-	pointer := regexp.MustCompile(regexp.QuoteMeta(fixtureGapID) + ` — [^\n]*?\(held as tag ([0-9a-z]{4})`)
-	for _, match := range pointer.FindAllStringSubmatch(text, -1) {
-		placed := strings.Count(text, "⟦"+match[1]+"⟧")
-		if placed == 0 {
-			t.Fatalf("the resume should not point at an entry under a tag it never delivered (%s):\n%s", match[1], text)
-		}
+	if strings.Contains(text, fixtureGapID+" — ") && strings.Contains(text, pointerMark) && !strings.Contains(text, "on identical input") {
+		t.Fatalf("the resume should not point at an entry it never delivered in full:\n%s", text)
 	}
 	if !strings.Contains(text, fixtureGapID) {
 		t.Fatalf("the resume should name the entry the moves carry:\n%s", text)

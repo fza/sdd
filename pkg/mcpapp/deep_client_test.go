@@ -11,24 +11,11 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// connectNamed connects an MCP client that reports name in its client info.
+// connectNamed connects an MCP client that reports name in its client info,
+// a fresh agent context that answers each question from what it holds.
 func connectNamed(t *testing.T, srv *mcpserver.Server, name string) *mcp.ClientSession {
 	t.Helper()
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	_, err := srv.Connect(t.Context(), serverTransport)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil).Connect(t.Context(), clientTransport, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("closing MCP client: %v", err)
-		}
-	})
-	return cs
+	return connectNamedAs(t, srv, newAgentMemory(), name)
 }
 
 func verifyServer(t *testing.T, policy sdd.VerifierPolicy) *mcpserver.Server {

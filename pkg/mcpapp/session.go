@@ -34,9 +34,9 @@ type pageRead struct {
 	unserved map[int]bool
 }
 
-// flushServed records the anchors this call issued into the session ledger.
+// flushServed records the pieces this call served into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	return ss.root.RecordAnchors(ctx, identity)
+	return ss.root.RecordPieces(ctx, identity)
 }
 
 // sessionCache holds the loaded sessions by ID.

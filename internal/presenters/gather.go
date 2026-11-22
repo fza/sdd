@@ -1,7 +1,6 @@
 package presenters
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,12 +15,10 @@ import (
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
 	var repeats *Repeats
-	if result.Held != nil || result.Anchor != nil {
-		repeats = &Repeats{Held: result.Held, Anchor: result.Anchor, Graph: result.Graph}
+	if result.Held != nil || result.Served != nil {
+		repeats = &Repeats{Held: result.Held, Served: result.Served, Graph: result.Graph}
 	}
-	var err error
-	RenderWithin(w, repeats, func(w io.Writer, r *Repeats) { err = errors.Join(err, renderGather(w, result, r)) })
-	return err
+	return renderGather(w, result, repeats)
 }
 
 func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) error {

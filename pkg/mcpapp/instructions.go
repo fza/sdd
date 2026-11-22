@@ -67,20 +67,14 @@ continuing, and continue through next, carrying this session's handle. If you
 lose your place again later, resume_session with this handle re-serves this
 list in full.`
 
-// proofGuide tells an agent, at the opening and at every reorientation, how
-// it proves what it still holds.
-const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
-entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
-call, list in held every tag whose text you still see, with the word right
-after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
-then serves as a short pointer. A proof works once: the pointer names the
-next one, the word right after a word it quotes from that piece's text near its tag
-("next proof gn9p:<the word right after "dialogue">" → gn9p:first), so look
-the word up in the text, never in your earlier calls. Proofs never carry
-over: list the tags from every earlier result, not only the last, as a piece
-served many calls ago (the type-system overview, a framing block, an entry)
-serves in full again on any call without its proof; each result's unproved
-field lists those you have not proved since. List in reread the tag
-or name of a piece you no longer see: it serves in full again. Never guess a
-word: a missing or wrong proof costs only the full text, and the result's
-notices.proof names a wrong one.`
+// questionGuide tells an agent, at the opening and at every reorientation,
+// how it answers the text question (20261121-230157-d-tac-ym8).
+const questionGuide = `Every response that starts, resumes or advances the session ends with a
+question about a text sdd served you, such as
+q <text name>: 2 words after "<a phrase>"? | lost
+Your next call that advances the session (start_procedure, next, park,
+abandon) must answer it in answer: the words it asks for, looked up in that
+text, or lost when you no longer see the text or saw no question. Never
+guess. A right answer serves repeated instructions, report schemas and framing
+short; lost or a wrong answer serves them in full. List in reread the name of
+a piece you no longer see: it serves in full again.`

@@ -135,7 +135,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			request.Budget.BodyBytes = ctx.Cap.MaxBytes
 			if !w.framing {
 				if repeats := w.repeats(); repeats != nil {
-					request.Held, request.Anchor = repeats.Held, repeats.Anchor
+					request.Held, request.Served = repeats.Held, repeats.Served
 				}
 			}
 			mark := w.session.PieceMark()
@@ -157,7 +157,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			// naming how many and the layout serving them.
 			for ctx.Cap.MaxBytes > 0 && len(text) > ctx.Cap.MaxBytes && dropLastListed(result.ViewSections) {
 				w.session.DropPiecesSince(mark)
-				text = result.render(view.snapshot.graph, request.Held, request.Anchor)
+				text = result.render(view.snapshot.graph, request.Held, request.Served)
 			}
 			// A line cut can drop a body the view rendered.
 			_, cut := serveview.BoundValue(text, ctx.Cap)
@@ -173,7 +173,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP proved by its anchor, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer.", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP served earlier in the same call, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer.", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string
@@ -210,10 +210,10 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 					}
 				}
 			}
-			var held func(id, hash string) (string, string, bool)
-			var anchor func(id, hash, body, field string) string
+			var held func(id, hash string) bool
+			var served func(id, hash, body string)
 			if repeats := w.repeats(); repeats != nil {
-				held, anchor = repeats.Held, repeats.Anchor
+				held, served = repeats.Held, repeats.Served
 			}
 			view, err := w.graphs.viewFor(ctx.Store)
 			if err != nil {
@@ -222,7 +222,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			mark := w.session.PieceMark()
 			result, err := showFromSnapshot(view.runtime, view.snapshot, ShowRequest{
 				IDs: ids, UpDepth: workflowIntArg(args, "up", query.DefaultUpDepth), DownDepth: workflowIntArg(args, "down", query.DefaultDownDepth),
-				Budget: serveChainBudget, Held: held, Anchor: anchor,
+				Budget: serveChainBudget, Held: held, Served: served,
 			})
 			if err != nil {
 				return nil, err

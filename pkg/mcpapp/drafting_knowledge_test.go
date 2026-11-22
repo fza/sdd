@@ -35,9 +35,15 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 	}
 }
 
+// pointsAtOverview reports whether a capture serve points at the type-system
+// overview: by its ID, or by the held typeSystem lane whose text names it.
+func pointsAtOverview(instructions string) bool {
+	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, "lane typeSystem")
+}
+
 // The overview grounding is durable session state: a second server over the
 // same stores — a real restart, not an in-process resume — still points the
-// agent that proves it holds the overview at it, and serves it in full to an
+// agent that answers right at it, and serves it in full to an
 // agent context that holds nothing.
 func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, t.TempDir(), "")
@@ -67,10 +73,4 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	if served := followWaitingLanes(t, empty, door.Session, fresh); !strings.Contains(served, "a signal records something noticed:") {
 		t.Fatalf("an agent context holding nothing must get the overview in full")
 	}
-}
-
-// pointsAtOverview reports whether a capture serve points at the type-system
-// overview: by its ID, or by the held typeSystem lane whose text names it.
-func pointsAtOverview(instructions string) bool {
-	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, " for lane typeSystem")
 }

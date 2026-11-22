@@ -12,7 +12,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
-	"github.com/networkteam/sdd/internal/model"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -22,7 +21,7 @@ const captureIntroProse = "Draft one entry — one idea, dialogue first."
 
 const withheldLanesPrefix = "(held: "
 
-var heldLaneName = regexp.MustCompile(`^tag [0-9a-z]{4} for lane (\S+)(?: \(next proof [^)]*\))?$`)
+var heldLaneName = regexp.MustCompile(`^lane (\S+)$`)
 
 // withheldLanes extracts the lane names from a serve's held-lanes line; nil
 // when the line is absent.
@@ -32,7 +31,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	if !found {
 		return nil
 	}
-	names, _, found := strings.Cut(rest, " — prove each tag")
+	names, _, found := strings.Cut(rest, " — served to you before")
 	if !found || !strings.Contains(rest, "resume_session") {
 		t.Fatalf("held-lanes line lacks its way back: %q", instructions)
 	}
@@ -40,7 +39,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	for _, name := range strings.Split(names, ", ") {
 		match := heldLaneName.FindStringSubmatch(name)
 		if match == nil {
-			t.Fatalf("a held lane should be named with its tag, got %q", name)
+			t.Fatalf("a held lane should be named, got %q", name)
 		}
 		lanes = append(lanes, match[1])
 	}
@@ -338,31 +337,5 @@ func TestReportSchemaFieldsServeOnceAcrossSteps(t *testing.T) {
 	required, _ := contract.ReportSchema["required"].([]any)
 	if len(required) != 2 || required[0] != "contract" || required[1] != "widenReport" {
 		t.Fatalf("the contract step should serve its own required list inline, got %v", contract.ReportSchema["required"])
-	}
-}
-
-// A held lane's pointer names its tag first and bare, and sends the agent to
-// the full text for the word, so no word of the pointer reads as the word
-// after the tag.
-func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
-	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}, stepLane{"second", 2}), "")
-	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
-	session := openSession(t, cs).Session
-	var serve mcpserver.ServeResult
-	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
-	proofs := model.ReadAnchors(serve.Instructions)
-	if len(proofs) != 2 {
-		t.Fatalf("each lane served in full should carry one tag, got %v in:\n%s", proofs, serve.Instructions)
-	}
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{proofs[0].String()}}, &serve)
-	for _, want := range []string{"(held: tag " + proofs[0].Tag + " for lane first", " — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line;"} {
-		if !strings.Contains(serve.Instructions, want) {
-			t.Errorf("the pointer should name the tag first and send the agent to the full text, want %q in:\n%s", want, serve.Instructions)
-		}
-	}
-	if strings.Contains(serve.Instructions, model.AnchorMark(proofs[0].Tag)) {
-		t.Errorf("the pointer should name its tag without the mark:\n%s", serve.Instructions)
 	}
 }

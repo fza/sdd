@@ -8,7 +8,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/internal/testsupport"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -42,7 +41,7 @@ const sizeBoundWait = "as this result would run past its size bound"
 
 // Both doors serve within a serve's share of the result bound to an agent
 // that lists no proofs, on graphs from a young project's to a mature one's
-// and on a German one: the opening counts the proof guide inside the bound,
+// and on a German one: the opening counts the question guide inside the bound,
 // and what does not fit, framing, lanes and the vocabulary table alike, waits
 // and serves on the shell's next calls, which send nothing again.
 func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
@@ -63,10 +62,10 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 				defer func() { t.Logf("largest results: %v", bound.largest) }()
 				opening := openSession(t, cs)
 				if size := serveSize(t, opening); size > model.MaxServeChars {
-					t.Fatalf("the opening, its proof guide included, should cost at most %d characters, got %d", model.MaxServeChars, size)
+					t.Fatalf("the opening, its question guide included, should cost at most %d characters, got %d", model.MaxServeChars, size)
 				}
-				if !strings.Contains(opening.Instructions, "list in held every tag") {
-					t.Fatalf("the opening should carry the proof guide, got %.300q", opening.Instructions)
+				if !strings.Contains(opening.Instructions, "must answer it in answer") {
+					t.Fatalf("the opening should carry the question guide, got %.300q", opening.Instructions)
 				}
 				instructions, text := opening.Instructions, opening.Instructions+"\n\n"+opening.Framing+"\n\n"+opening.Vocabulary
 				if door == "resume_session" {
@@ -81,7 +80,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 						text += "\n\n" + open.Instructions + "\n\n" + open.Vocabulary
 					}
 				}
-				text = testsupport.Untagged(text)
+
 				for calls := 0; strings.Contains(instructions, sizeBoundWait); calls++ {
 					if calls == 3 {
 						t.Fatalf("everything waiting should reach the agent within 3 more calls, still waiting:\n%s", instructions)
@@ -91,7 +90,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 					if serve.Step != opening.Step {
 						t.Fatalf("the shell should stay at %s, got %q", opening.Step, serve.Step)
 					}
-					followUp := testsupport.Untagged(serve.Instructions + "\n\n" + serve.Framing + "\n\n" + serve.Vocabulary)
+					followUp := serve.Instructions + "\n\n" + serve.Framing + "\n\n" + serve.Vocabulary
 					for _, phrase := range phrases {
 						if strings.Contains(text, phrase) && strings.Contains(followUp, phrase) {
 							t.Fatalf("call %d should point at what the calls before sent, not send %q again", calls+1, phrase)

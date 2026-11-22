@@ -36,7 +36,7 @@ func renderAsBodies(w io.Writer, bodies types.ViewBodies, entryLevel int, r *Rep
 			fmt.Fprintf(w, "%s %s\n", marker, identity)
 		}
 		if body = strings.TrimSpace(mdcompose.DemoteTo(body, entryLevel+1)); body != "" {
-			body = r.anchor(e.ID, body)
+			body = r.serve(e.ID, body)
 			fmt.Fprintf(w, "\n%s\n", body)
 		}
 	}

@@ -5,106 +5,50 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
-// Proofs is what a call lists about the pieces served to it before; the
-// engine decides from them which piece serves as its pointer. Pointers to
-// slices keep the argument types embedding it comparable.
-type Proofs struct {
-	Held   *[]string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see, from every earlier result, not only the last (the unproved field names those you have not proved since): its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word"`
-	Reread *[]string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
+// Answering is what a call that advances a session carries: the answer to
+// the question the response before ended with, required
+// (20261121-230157-d-tac-ym8), and the pieces it wants in full again. A
+// pointer to the reread slice keeps the argument types embedding it
+// comparable.
+type Answering struct {
+	Answer string    `json:"answer" jsonschema:"required: the answer to the question the last response of this session ended with (q <text>: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full"`
+	Reread *[]string `json:"reread,omitempty" jsonschema:"names of served pieces you no longer see; they serve in full again"`
 }
 
-func (p Proofs) lists() (held, reread []string) {
-	if p.Held != nil {
-		held = *p.Held
-	}
-	if p.Reread != nil {
-		reread = *p.Reread
-	}
-	return held, reread
+// Rereads is what a read carries about the pieces served to it before.
+type Rereads struct {
+	Reread *[]string `json:"reread,omitempty" jsonschema:"names of served pieces you no longer see; they serve in full again"`
 }
 
-// ResultProofs names, on a result from an attached session, the pieces
-// earlier results served in full that the agent has not proved since. How
-// the proofs the call listed fared rides in its notices (Notices.Proof).
-type ResultProofs struct {
-	Unproved string `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by tag and name; prove each whose text you still see in held"`
-}
-
-func (r *ResultProofs) setUnproved(line string) { r.Unproved = line }
-
-const unprovedLead = "Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the full text you were served, never a word of this line, as tag:word; never guess a word. The pieces: "
-
-// unprovedLine names the pieces of list, newest first, as many as fit room
-// characters of a result, the instruction to prove them leading.
-func unprovedLine(list []sdd.UnprovedPiece, room int) string {
-	items := make([]string, 0, len(list))
-	for _, piece := range list {
-		items = append(items, heldName(piece.Name, piece.Tag, ""))
+func rereadList(reread *[]string) []string {
+	if reread == nil {
+		return nil
 	}
-	for ; len(items) > 0; items = items[:len(items)-1] {
-		line := unprovedLead + strings.Join(items, "; ")
-		if model.ServedChars(line) <= room {
-			return line
-		}
-	}
-	return ""
-}
-
-// proofNotice names the proofs of a call that failed, so the agent corrects
-// or drops them.
-func proofNotice(failed []sdd.FailedProof) string {
-	names := make([]string, 0, len(failed))
-	for _, f := range failed {
-		reason := "no such tag"
-		if f.Issued {
-			reason = "not the word its proof asks for"
-		}
-		names = append(names, f.Proof+" ("+reason+")")
-	}
-	return fmt.Sprintf("these held proofs failed, so their pieces served in full: %s. A proof works once: send the word the tag's last next proof asked for, else the word right after the tag, in its full text, or leave the tag out", strings.Join(names, ", "))
-}
-
-// heldName names a held piece in a pointer by the tag it is held under, then
-// its name and how the next call proves it: an agent read the word after a
-// tag's mark in the pointer as the proof word.
-func heldName(name, tag, next string) string {
-	if tag == "" {
-		return name
-	}
-	if proof := model.NextProof(tag, next); proof != "" {
-		return model.TagName(tag) + " for " + name + " (" + proof + ")"
-	}
-	return model.TagName(tag) + " for " + name
+	return *reread
 }
 
 // heldLine is the pointer to pieces the call holds and the way to have them
 // again.
 func heldLine(names []string) string {
-	return fmt.Sprintf("(held: %s — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
+	return fmt.Sprintf("(held: %s — served to you before; list a name in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
 // composeInstructions serves the step's first keep lanes: a lane the call
-// holds becomes its pointer, the rest serve in full with their tags. With
-// resent, a lane the result before sent becomes its pointer even where the
-// call rereads it or proves it wrong, so lanes that wait take the room. A lane
-// carrying an entry of pageFull, those the verify reading page served whole,
-// holds that entry too. The lanes past keep wait, named with the call that
-// serves them. It returns how many lanes it served in full.
+// holds becomes its pointer, the rest serve in full. With resent, a lane the
+// result before sent becomes its pointer even where the call rereads it, so
+// lanes that wait take the room. A lane carrying an entry of pageFull, those
+// the verify reading page served whole, holds that entry too. The lanes past
+// keep wait, named with the call that serves them. It returns how many lanes
+// it served in full.
 func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, resent bool, pageFull []string) (string, int) {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
 		return serve.Instructions, 0
 	}
-	texts := make([]string, len(lanes))
-	for i, lane := range lanes {
-		texts[i] = lane.Text
-	}
-	field := strings.Join(texts, "\n\n")
 	var fresh, held, waiting, pointed []string
 	for i, lane := range lanes {
 		name := "lane " + lane.Name
@@ -112,16 +56,14 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 			waiting = append(waiting, lane.Name)
 			continue
 		}
-		if resent {
-			if tag, ok := ss.root.Resent(serve.Instance, name, lane.Text); ok {
-				held = append(held, heldName(name, tag, ""))
-				pointed = append(pointed, name)
-				continue
-			}
+		if resent && ss.root.Resent(serve.Instance, name, lane.Text) {
+			held = append(held, name)
+			pointed = append(pointed, name)
+			continue
 		}
-		served := ss.root.ServeTextIn(name, lane.Text, field, carried(pageFull, lane.Text))
+		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
-			held = append(held, heldName(name, served.Tag, served.Next))
+			held = append(held, name)
 			continue
 		}
 		fresh = append(fresh, served.Text)
@@ -135,7 +77,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, r
 		text += "\n\n" + heldLine(held)
 	}
 	if len(pointed) > 0 {
-		text += fmt.Sprintf("\n\n(%s: sent in the result before, they serve as pointers so the lanes that waited fit, whatever this call proved or reread; once no lane waits, a reread has them in full)", strings.Join(pointed, ", "))
+		text += fmt.Sprintf("\n\n(%s: sent in the result before, they serve as pointers so the lanes that waited fit, whatever this call rereads; once no lane waits, a reread has them in full)", strings.Join(pointed, ", "))
 	}
 	if len(waiting) > 0 {
 		text += fmt.Sprintf("\n\n(%d more lanes of these instructions wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
@@ -156,19 +98,13 @@ func carried(ids []string, text string) []string {
 // composeFraming serves the framing blocks per block: a graph write that
 // changes one block (the recent-moves lane) re-serves that block alone, never
 // the stable aspirations or directives (I6). A block the call holds is left
-// out, as the agent named it itself, except for the next proof it asks for.
-// A block holds the entries it carries in full; a block is never cut for
+// out. A block holds the entries it carries in full; a block is never cut for
 // them. Only the first keep blocks serve; the rest wait, as instruction lanes
 // do past the result bound.
 func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
-	texts := make([]string, len(blocks))
-	for i, block := range blocks {
-		texts[i] = block.Text
-	}
-	field := strings.Join(texts, "\n\n")
 	var (
-		result       framingServed
-		served, held []string
+		result framingServed
+		served []string
 	)
 	for _, block := range blocks {
 		if block.Text == "" {
@@ -179,18 +115,12 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framin
 			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
-		name := "framing " + block.Name
-		piece := ss.root.ServeTextIn(name, block.Text, field, ss.root.FramingFullIDs(block.Text))
+		piece := ss.root.ServeText("framing "+block.Name, block.Text, ss.root.FramingFullIDs(block.Text))
 		if !piece.Held {
 			served = append(served, piece.Text)
-			continue
 		}
-		held = append(held, heldName(name, piece.Tag, piece.Next))
 	}
 	result.fresh = len(served)
-	if len(held) > 0 {
-		served = append(served, heldLine(held))
-	}
 	result.text = strings.Join(served, "\n\n")
 	return result
 }
@@ -216,7 +146,7 @@ func framingWaitLine(waiting []string, lanesWait bool) string {
 // chooser envelope inline, the properties block of the state fields it takes
 // as a piece of its own (20260827-224111-s-tac-vz9), so steps that differ
 // only in what they require share it. The block serves as its pointer when
-// the call holds it, else with its tag in one description.
+// the call holds it.
 func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]any, error) {
 	path, ok := fieldsAt(serve.ReportSchema)
 	if !ok {
@@ -224,17 +154,16 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	}
 	fields := schemaAt(serve.ReportSchema, path)
 	name := serve.Procedure + " report fields"
-	piece, tagged, err := ss.root.ServeSchema(name, fields["properties"].(map[string]any))
+	held, err := ss.root.ServeSchema(name, fields["properties"].(map[string]any))
 	if err != nil {
 		return nil, err
 	}
-	served := maps.Clone(fields)
-	if piece.Held {
-		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold %s — prove the tag with the word its next proof asks for, else the word after the tag, in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
-	} else {
-		served["properties"] = tagged
+	if !held {
+		return serve.ReportSchema, nil
 	}
+	served := maps.Clone(fields)
+	delete(served, "properties")
+	served["held_properties"] = fmt.Sprintf("you hold the %s, served to you before; list %q in reread to have them again, or resume_session re-serves them in full", name, name)
 	return withSchemaAt(serve.ReportSchema, path, served), nil
 }
 
@@ -274,14 +203,14 @@ func withSchemaAt(schema map[string]any, path []string, node map[string]any) map
 }
 
 // serveVocabulary serves the graph's vocabulary table, reporting whether in
-// full; while the call holds it, only its held line with the next proof.
+// full; while the call holds it, nothing.
 func serveVocabulary(ss *shellSession, vocabulary string) (string, bool) {
 	if vocabulary == "" {
 		return "", false
 	}
 	piece := ss.root.ServeText("vocabulary", vocabulary, nil)
-	if !piece.Held {
-		return piece.Text, true
+	if piece.Held {
+		return "", false
 	}
-	return heldLine([]string{heldName("vocabulary", piece.Tag, piece.Next)}), false
+	return piece.Text, true
 }

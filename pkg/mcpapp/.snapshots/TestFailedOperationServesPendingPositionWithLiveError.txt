@@ -1,4 +1,3 @@
-framing: <framing as its proofs serve it>
 goal: retry the unfinished operation, or cancel it to return to the preceding interaction
 instance: i_2
 instructions: This operation did not finish. Tell the user in a sentence. Retry, saying so, when trying again can help. When it cannot, or has stopped helping, put both choices to the user: retry, or cancel. It can stay pending until they choose. Retry is safe: it reuses the recorded input, and effects already applied are recognized, not repeated. Cancel leaves what exists in place.
@@ -15,6 +14,7 @@ pending_operation:
     source: base
 procedure: capture
 project: test
+question: <question drawn per response>
 session: <session-1>
 status: running
 step: write

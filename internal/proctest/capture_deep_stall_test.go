@@ -46,7 +46,7 @@ func TestCaptureDeep_AStalledRoundFailsPastItsTimeLimit(t *testing.T) {
 		return serve.Step != "deepWait"
 	})
 	proctest.RequireStep(t, serve, "deepFailed")
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "ran past verify.round_timeout (50ms) and was stopped") {
+	if text := serve.Instructions; !strings.Contains(text, "ran past verify.round_timeout (50ms) and was stopped") {
 		t.Fatalf("deepFailed should name the time limit the round ran past:\n%s", text)
 	}
 }
@@ -63,7 +63,7 @@ func TestCaptureDeep_ASubagentThatEndedWithoutDeliveringFailsTheWait(t *testing.
 	}
 	serve = session.Report(t, x.instance, map[string]any{"deepGone": "the subagent stopped: it could not reach sdd"})
 	proctest.RequireStep(t, serve, "deepFailed")
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "the delegate ended without delivering; it returned: the subagent stopped: it could not reach sdd") {
+	if text := serve.Instructions; !strings.Contains(text, "the delegate ended without delivering; it returned: the subagent stopped: it could not reach sdd") {
 		t.Fatalf("deepFailed should name the delegate that ended without delivering:\n%s", text)
 	}
 	if _, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}); err == nil {
@@ -87,7 +87,7 @@ func TestCaptureDeep_ASilentDelegateFailsTheWaitPastTheIdleBound(t *testing.T) {
 	serve := session.Report(t, x.instance, nil)
 
 	proctest.RequireStep(t, serve, "deepFailed")
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "the verify delegate made no call for 10m0s (verify.idle_timeout)") {
+	if text := serve.Instructions; !strings.Contains(text, "the verify delegate made no call for 10m0s (verify.idle_timeout)") {
 		t.Fatalf("deepFailed should name the idle bound:\n%s", text)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	test "github.com/networkteam/sdd/internal/testsupport"
 )
 
 // Playback confirms only on the user's own answer to the draft shown in
@@ -17,7 +16,7 @@ func TestCapture_PlaybackConfirmsOnlyOnTheUsersOwnAnswer(t *testing.T) {
 	serve = session.Report(t, serve.Instance, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
 	want := "Confirm only on the user's own answer to the draft you showed them in full, never in the turn you first show it: show it, end your turn and wait. `userWords` is the user's message verbatim, never words of yours."
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, want) {
+	if text := serve.Instructions; !strings.Contains(text, want) {
 		t.Fatalf("playback should carry %q:\n%s", want, text)
 	}
 }

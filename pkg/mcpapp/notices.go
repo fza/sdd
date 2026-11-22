@@ -5,7 +5,6 @@ import "reflect"
 // Notices holds what the host tells the agent beside a result, at most one
 // notice per kind, each kind omitted when empty.
 type Notices struct {
-	Proof string `json:"proof,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
 }
 
 // texts lists the notices set, in field order.

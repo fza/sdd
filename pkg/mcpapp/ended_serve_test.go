@@ -7,7 +7,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
@@ -57,7 +56,7 @@ func TestAnEndedMoveServesWithinTheResultBound(t *testing.T) {
 	}
 	child, verify := serve.Dispatches[0].Session, serve.Dispatches[0].Instance
 	var page mcpserver.ServeResult
-	for n := 0; !strings.Contains(testsupport.Untagged(page.Instructions), "Every page is served."); n++ {
+	for n := 0; !strings.Contains(page.Instructions, "Every page is served."); n++ {
 		if n > 40 {
 			t.Fatal("the reading should end within 40 pages")
 		}
@@ -82,7 +81,7 @@ func TestAnEndedMoveServesWithinTheResultBound(t *testing.T) {
 	if strings.Contains(serve.Base.Instructions, "lanes of these instructions wait") {
 		var junction mcpserver.ServeResult
 		call(t, cs, "next", map[string]any{"session": session, "instance": shell}, &junction)
-		if text := testsupport.Untagged(junction.Instructions); strings.Contains(text, "lanes of these instructions wait") || !strings.Contains(text, "Ending is part of the arc") {
+		if text := junction.Instructions; strings.Contains(text, "lanes of these instructions wait") || !strings.Contains(text, "Ending is part of the arc") {
 			t.Fatalf("the shell's waiting lanes should serve on the next call, got %.300q", text)
 		}
 	}
@@ -114,7 +113,7 @@ func TestALandingOnTheShellServesWithinTheResultBound(t *testing.T) {
 			}
 			var junction mcpserver.ServeResult
 			call(t, cs, "next", map[string]any{"session": session, "instance": shell}, &junction)
-			if text := testsupport.Untagged(junction.Instructions); strings.Contains(text, "lanes of these instructions wait") || !strings.Contains(text, "Ending is part of the arc") {
+			if text := junction.Instructions; strings.Contains(text, "lanes of these instructions wait") || !strings.Contains(text, "Ending is part of the arc") {
 				t.Fatalf("the shell's waiting lanes should serve on the next call, got %.300q", text)
 			}
 		})
