@@ -24,6 +24,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `connected.*` | Any file | Whether you capture into connected graphs. See [connected repositories](#connected-repositories). |
 | `inbound.*` | Project | Whether the graph accepts captures from other graphs. sdd reads it from the committed `.sdd/config.yaml` only, drops it from a local file, and `sdd config set` refuses it. |
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
+| `titles.backfill` | Any file | The project file switches it on for everyone on the project. The local file overrides that for one checkout. |
 | `cache.retention`, `index.replaced_retention` | User-global | The cache is shared by every project on the machine. sdd ignores them in the project files, and `sdd config set --local` refuses them. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
@@ -288,6 +289,12 @@ A round that cannot finish leaves a record for the branch. Every tool result of 
 `sdd init` routes the entry files to the merge driver `sdd git-merge entry` in `<graph_dir>/.gitattributes`, and every command that touches the graph's git writes the driver into `.git/config`. When only one side of a merge changed an entry's `title` or `summary`, that side wins. Changed on both sides, the value whose UTF-8 bytes sort first wins, so every clone gets the same result in either merge direction. The body and the other keys merge as text. Without the driver in `.git/config`, or without `sdd` on `PATH`, git merges the file as text with conflict markers.
 
 In the clones it keeps, sdd passes the drivers with every git call, and `sdd git-merge config` merges `.sdd/config.yaml` key by key: `dependencies` as a set, and a value changed on both sides takes the upstream value, with a warning. An upstream deletion of an entry wins over a local `title` or `summary` change. git calls both drivers; you never run them yourself.
+
+### Titles
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `titles.backfill` | `false` | `true` lets sdd fill the [missing titles](/sdd/guides/browsing-the-graph/) of entries on its own: when a session starts, on a session's calls at most every 15 minutes, with each sync round of `sdd serve`, and after `sdd sync` in a graph clone and `sdd sync --pull`. Each run titles the 10 newest untitled entries with one model call per entry and commits them as `sdd: summarize N entries`. A run that fails is reported to the next session as a notice, also under manual sync, and retried by the next run. `false` makes none of these call a model or commit for titles. A capture still titles its entry, and `sdd summarize` still fills titles on request. |
 
 ### Cache
 
