@@ -314,22 +314,6 @@ func FormatULID(at time.Time, entropy [10]byte) string {
 	return string(out)
 }
 
-// MoveRecordsMinimumVersion is the first sdd release that reads move
-// records; a moved graph raises its minimum_version to it so older builds
-// refuse the graph instead of writing into its former location.
-const MoveRecordsMinimumVersion = "v0.18.0-alpha.3.fza.43"
-
-// MoveMinimumVersion is the minimum_version a move leaves a graph with:
-// MoveRecordsMinimumVersion, whichever build moves it, so every release
-// reading move records still accepts the graph; a higher recorded one is kept.
-func MoveMinimumVersion(recorded string) string {
-	floor := MoveRecordsMinimumVersion
-	if recorded != "" && !ShouldBumpMinimumVersion(recorded, floor) {
-		return recorded
-	}
-	return floor
-}
-
 // LayoutLocation is where a layout keeps its graph. pointer is the config of
 // the repository pointing at the project holding the graph, nil when that
 // repository holds its graph itself; project is the config of the project

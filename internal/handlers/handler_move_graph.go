@@ -336,7 +336,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 		t.plan.Parents = append(t.plan.Parents, split)
 	}
 
-	err = h.planMeta(s, t, same)
+	err = planMeta(s, t, same)
 	if err != nil {
 		return false, err
 	}
@@ -468,30 +468,17 @@ func (h *Handler) prepareTarget(target, source graphHome, cmd *command.MoveGraph
 	return h.projectRepos.Init(target.root)
 }
 
-func (h *Handler) planMeta(s, t *moveRepo, same bool) error {
+func planMeta(s, t *moveRepo, same bool) error {
+	if same {
+		return nil
+	}
 	metaPath := filepath.Join(model.SDDDirName, model.SchemaMetaFileName)
 	data, err := os.ReadFile(filepath.Join(s.root, metaPath))
 	if err != nil {
 		return fmt.Errorf("reading the graph's meta.json: %w", err)
 	}
-	schema, err := model.ParseSchemaMeta(data)
-	if err != nil {
-		return err
-	}
-	recorded := ""
-	if schema.MinimumVersion != nil {
-		recorded = *schema.MinimumVersion
-	}
-	floor := model.MoveMinimumVersion(recorded)
-	schema.MinimumVersion = &floor
-	formatted, err := model.FormatSchemaMeta(*schema)
-	if err != nil {
-		return err
-	}
-	t.write(metaPath, formatted)
-	if !same {
-		s.remove(metaPath)
-	}
+	t.write(metaPath, data)
+	s.remove(metaPath)
 	return nil
 }
 
