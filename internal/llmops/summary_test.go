@@ -186,14 +186,19 @@ func TestPairedDescriptionParsesTheAnswer(t *testing.T) {
 	}{
 		{name: "paired answer", output: `{"title": "daemon project removal", "summary": "The daemon project is removed."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
 		{name: "answer wrapped in prose", output: "Here it is:\n```json\n{\"title\": \"daemon project removal\", \"summary\": \"The daemon project is removed.\"}\n```", wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
-		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
-		{name: "trailing punctuation dropped from the title", output: `{"title": "daemon project removal …", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
-		{name: "a question mark kept", output: `{"title": "should the daemon go?", "summary": "S."}`, wantTitle: "Should the daemon go?", wantSummary: "S."},
-		{name: "only punctuation", output: `{"title": " … ", "summary": "S."}`, wantErr: "empty title"},
+		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "The daemon goes."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon goes."},
+		{name: "trailing punctuation dropped from the title", output: `{"title": "daemon project removal …", "summary": "The daemon goes."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon goes."},
+		{name: "a question mark kept", output: `{"title": "should the daemon go?", "summary": "The daemon goes."}`, wantTitle: "Should the daemon go?", wantSummary: "The daemon goes."},
+		{name: "only punctuation", output: `{"title": " … ", "summary": "The daemon goes."}`, wantErr: "empty title"},
 		{name: "plain prose", output: "The daemon project is removed.", wantErr: "no JSON object"},
-		{name: "empty title", output: `{"title": " ", "summary": "S."}`, wantErr: "empty title"},
-		{name: "multi-line title", output: `{"title": "daemon\nremoval", "summary": "S."}`, wantErr: "more than one line"},
+		{name: "empty title", output: `{"title": " ", "summary": "The daemon goes."}`, wantErr: "empty title"},
+		{name: "multi-line title", output: `{"title": "daemon\nremoval", "summary": "The daemon goes."}`, wantErr: "more than one line"},
 		{name: "empty summary", output: `{"title": "daemon project removal", "summary": ""}`, wantErr: "empty summary"},
+		{name: "summary of three dots", output: `{"title": "daemon project removal", "summary": "..."}`, wantErr: "empty summary"},
+		{name: "summary without a letter or digit", output: `{"title": "daemon project removal", "summary": "— … — !"}`, wantErr: "empty summary"},
+		{name: "summary of two words", output: `{"title": "daemon project removal", "summary": "Daemon goes."}`, wantErr: "empty summary"},
+		{name: "summary of three words", output: `{"title": "daemon project removal", "summary": "Daemon goes away."}`, wantTitle: "Daemon project removal", wantSummary: "Daemon goes away."},
+		{name: "summary of three numbered words", output: `{"title": "daemon project removal", "summary": "Release 0.18 ships."}`, wantTitle: "Daemon project removal", wantSummary: "Release 0.18 ships."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,6 +304,42 @@ func TestDescribeRefusesAFirstSentenceTheRepairLeavesLong(t *testing.T) {
 	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if !errors.Is(err, llmops.ErrLongFirstSentence) {
 		t.Fatalf("a first sentence still too long after the repair should fail the description, got %v", err)
+	}
+	if len(runner.requests) != 2 {
+		t.Errorf("only one repair call should be made, got %d calls", len(runner.requests))
+	}
+}
+
+func TestDescribeRegeneratesAnEmptySummary(t *testing.T) {
+	entry, graph := titledFixture()
+	full := "The daemon project is removed."
+	runner := &scriptedRunner{replies: []string{pairedAnswer("..."), pairedAnswer(full)}}
+
+	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if got.Summary != full {
+		t.Errorf("the regenerated summary should be used, got %q", got.Summary)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("an empty summary should cost exactly one repair call, got %d calls", len(runner.requests))
+	}
+	repair := runner.requests[1].UserPrompt
+	for _, want := range []string{pairedAnswer("..."), fmt.Sprintf("fewer than %d words", llmops.MinSummaryWords)} {
+		if !strings.Contains(repair, want) {
+			t.Errorf("the repair call should carry the answer it repairs and name the defect (%q):\n%s", want, repair)
+		}
+	}
+}
+
+func TestDescribeRefusesASummaryTheRepairLeavesEmpty(t *testing.T) {
+	entry, graph := titledFixture()
+	runner := &scriptedRunner{replies: []string{pairedAnswer("..."), pairedAnswer("Removed.")}}
+
+	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
+	if !errors.Is(err, llmops.ErrEmptySummary) {
+		t.Fatalf("a summary still empty after the repair should fail the description, got %v", err)
 	}
 	if len(runner.requests) != 2 {
 		t.Errorf("only one repair call should be made, got %d calls", len(runner.requests))
@@ -448,13 +489,13 @@ func TestDescribeKeepsATitleNoOtherEntryHolds(t *testing.T) {
 		regenerate bool
 		reply      string
 	}{
-		{name: "free title", entry: unsummarizedCopy, reply: `{"title": "Daemon stop sequence", "summary": "S."}`},
-		{name: "the entry's own title", entry: func(e *model.Entry) *model.Entry { return e }, regenerate: true, reply: `{"title": "index segment cache", "summary": "S."}`},
+		{name: "free title", entry: unsummarizedCopy, reply: `{"title": "Daemon stop sequence", "summary": "The daemon goes."}`},
+		{name: "the entry's own title", entry: func(e *model.Entry) *model.Entry { return e }, regenerate: true, reply: `{"title": "index segment cache", "summary": "The daemon goes."}`},
 		{name: "a title the caller keeps", entry: func(e *model.Entry) *model.Entry {
 			kept := unsummarizedCopy(e)
 			kept.Title = "Caller title"
 			return kept
-		}, reply: `{"title": "Daemon shutdown order", "summary": "S."}`},
+		}, reply: `{"title": "Daemon shutdown order", "summary": "The daemon goes."}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

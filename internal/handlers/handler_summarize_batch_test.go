@@ -110,7 +110,7 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 	writeSummarizePair(t, graphDir)
 	writeTitledEntry(t, graphDir)
 
-	runner := &stubRunner{text: "GENERATED", numbered: true}
+	runner := &stubRunner{text: "GENERATED SUMMARY TEXT", numbered: true}
 	h := handlers.New(handlers.Options{
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},
@@ -151,7 +151,7 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 		t.Errorf("a stored summary should survive while the title is added:\n%s", withSummary)
 	}
 	empty := readEntryFile(t, graphDir, emptyEntry)
-	if !strings.Contains(empty, "summary: GENERATED") || !strings.Contains(empty, "title: "+storedTitle) {
+	if !strings.Contains(empty, "summary: GENERATED SUMMARY TEXT") || !strings.Contains(empty, "title: "+storedTitle) {
 		t.Errorf("an entry without a summary should gain summary and title:\n%s", empty)
 	}
 	if kept := readEntryFile(t, graphDir, titledEntry); !strings.Contains(kept, "title: kept title") || !strings.Contains(kept, "summary: Kept summary.") {
@@ -165,7 +165,7 @@ func TestSummarize_AllForce_RegeneratesAll(t *testing.T) {
 	graphDir := t.TempDir()
 	writeSummarizePair(t, graphDir)
 
-	runner := &stubRunner{text: "GENERATED", numbered: true}
+	runner := &stubRunner{text: "GENERATED SUMMARY TEXT", numbered: true}
 	h := handlers.New(handlers.Options{
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},
@@ -192,7 +192,7 @@ func TestSummarize_AllForce_RegeneratesAll(t *testing.T) {
 		t.Errorf("--force should regenerate both fields in paired calls, got %v", runner.byUse)
 	}
 	for _, id := range []string{summarizedEntry, emptyEntry} {
-		if text := readEntryFile(t, graphDir, id); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+storedTitle) {
+		if text := readEntryFile(t, graphDir, id); !strings.Contains(text, "summary: GENERATED SUMMARY TEXT") || !strings.Contains(text, "title: "+storedTitle) {
 			t.Errorf("%s should regenerate summary and title:\n%s", id, text)
 		}
 	}
@@ -205,7 +205,7 @@ func TestSummarize_NamedEntry_RegeneratesUnconditionally(t *testing.T) {
 	graphDir := t.TempDir()
 	writeSummarizePair(t, graphDir)
 
-	runner := &stubRunner{text: "GENERATED"}
+	runner := &stubRunner{text: "GENERATED SUMMARY TEXT"}
 	h := handlers.New(handlers.Options{
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},
@@ -232,7 +232,7 @@ func TestSummarize_NamedEntry_RegeneratesUnconditionally(t *testing.T) {
 	if len(skipped) != 0 {
 		t.Errorf("skipped = %v, want none for a named entry", skipped)
 	}
-	if text := readEntryFile(t, graphDir, summarizedEntry); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+storedTitle) {
+	if text := readEntryFile(t, graphDir, summarizedEntry); !strings.Contains(text, "summary: GENERATED SUMMARY TEXT") || !strings.Contains(text, "title: "+storedTitle) {
 		t.Errorf("named entry should regenerate summary and title:\n%s", text)
 	}
 }
@@ -257,12 +257,12 @@ func TestSummarize_All_CommitsWhatItWroteBeforeAFailure(t *testing.T) {
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},
 		Committer: committer,
-		LLMRunner: &failingTitleRunner{stubRunner{text: "GENERATED"}},
+		LLMRunner: &failingTitleRunner{stubRunner{text: "GENERATED SUMMARY TEXT"}},
 	})
 	if err := h.Summarize(context.Background(), &command.SummarizeCmd{}); err == nil {
 		t.Fatal("a failed entry should fail the run")
 	}
-	if !strings.Contains(readEntryFile(t, graphDir, emptyEntry), "summary: GENERATED") {
+	if !strings.Contains(readEntryFile(t, graphDir, emptyEntry), "summary: GENERATED SUMMARY TEXT") {
 		t.Fatal("the entry that succeeded should be written")
 	}
 	if committer.calls != 1 {

@@ -84,7 +84,7 @@ func TestRepositoryTargetCommitNamesTheCapture(t *testing.T) {
 	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
 	repo.write("global-config.yaml", "")
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: `{"title": "Capture commit subjects", "summary": "Rendered summary."}`}, nil
+		return pkgllm.Result{Text: `{"title": "Capture commit subjects", "summary": "A rendered summary text."}`}, nil
 	}))
 	draft := sdd.EntryDraft{
 		Kind: "directive", Layer: "process", Confidence: "high", Intent: "pending",
@@ -248,7 +248,7 @@ func TestRepositoryTargetsWriteAndReadAtTheCheckoutSchema(t *testing.T) {
 	repo.write(".sdd/meta.json", "{\"graph_schema_version\": 1}\n")
 	repo.write("global-config.yaml", "")
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: `{"title": "test title", "summary": "Rendered summary."}`}, nil
+		return pkgllm.Result{Text: `{"title": "test title", "summary": "A rendered summary text."}`}, nil
 	}))
 	const entryID = "20260914-020000-s-tac-old"
 	draft := sdd.EntryDraft{
@@ -281,7 +281,7 @@ func TestRepositoryTargetSetsUpTheMergeDriver(t *testing.T) {
 	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
 	repo.write("global-config.yaml", "")
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: `{"title": "test title", "summary": "Rendered summary."}`}, nil
+		return pkgllm.Result{Text: `{"title": "test title", "summary": "A rendered summary text."}`}, nil
 	}))
 	draft := sdd.EntryDraft{
 		Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Local capture sets up the merge driver.",
