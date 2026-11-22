@@ -359,8 +359,8 @@ func TestCaptureDeep_AcceptMatchesStructuredFieldsByValue(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			world, session := newDeepWorld(t, fmt.Sprintf("deep-refs-by-value-%d", i), sdd.VerifierPolicy{})
-			handle := session.Stage(t, "draft.md", []byte(deepBody+"\n"))
-			draft := stagedBodyDraft(handle)
+			draft := captureDraft()
+			draft["body"] = deepBody
 			draft["refs"] = []any{}
 			x := startDeep(t, world, session, draft)
 			x.judge(t, []any{map[string]any{"verdict": "the gap names nothing it widens", "axis": "ref-fit", "severity": "medium", "edits": []any{deepEdit("refs: []", "refs: "+proposed)}}})
