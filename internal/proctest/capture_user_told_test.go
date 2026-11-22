@@ -7,7 +7,6 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
-	"github.com/networkteam/sdd/test"
 )
 
 // A writing-guide finding the agent dismisses on proceed is named to the
@@ -24,7 +23,7 @@ func TestCapture_TheGuideReviewNamesDismissedFindingsBeforeProceed(t *testing.T)
 	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "looks right")
 	proctest.RequireStep(t, serve, "guideReview")
 	want := "Before you choose **proceed**, name to the user in your own words each `substantive` finding you dismiss: no playback follows."
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, want) {
+	if text := serve.Instructions; !strings.Contains(text, want) {
 		t.Fatalf("guideReview should carry %q:\n%s", want, text)
 	}
 }
@@ -39,14 +38,14 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	if !strings.Contains(test.Untagged(serve.Instructions), "- f1 [medium, inconsistent]: "+verdict) {
+	if !strings.Contains(serve.Instructions, "- f1 [medium, inconsistent]: "+verdict) {
 		t.Fatalf("deepAnswer should serve the finding in full:\n%s", serve.Instructions)
 	}
 	preflights := world.LLM.Calls(llm.PurposePreflight)
 	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	settled := "- f1 [medium, inconsistent] accepted without an edit\n"
-	replay := test.Untagged(serve.Instructions)
+	replay := serve.Instructions
 	for _, want := range []string{"The deep verifier left these findings without a change to the draft", settled, "Show the user each one before they confirm or adjust the draft: the finding as you were served it in full, never a paraphrase, and how it was settled."} {
 		if !strings.Contains(replay, want) {
 			t.Fatalf("the replayed playback should carry %q:\n%s", want, replay)
@@ -57,7 +56,7 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 	if calls := world.LLM.Calls(llm.PurposePreflight); calls != preflights {
 		t.Fatalf("the replay should run no second pre-flight, got %d calls after %d", calls, preflights)
 	}
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	for _, want := range []string{"You accepted these findings of the deep verifier, which carried no edit, so the entry was written without a change for them:", settled, "Tell the user each one."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("verifySummary should carry %q:\n%s", want, text)
@@ -80,12 +79,12 @@ func TestCaptureDeep_SettledFindingsRideOnePlaybackRound(t *testing.T) {
 	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	const settled = "- f1 [medium, inconsistent] accepted without an edit"
-	if !strings.Contains(test.Untagged(serve.Instructions), settled) {
+	if !strings.Contains(serve.Instructions, settled) {
 		t.Fatalf("the first playback after the exchange should carry the settled finding:\n%s", serve.Instructions)
 	}
 	serve = session.Answer(t, x.instance, "playback", "adjust", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "say one thing")
 	proctest.RequireStep(t, serve, "playback")
-	if text := test.Untagged(serve.Instructions); strings.Contains(text, settled) || strings.Contains(text, "left these findings without a change") {
+	if text := serve.Instructions; strings.Contains(text, settled) || strings.Contains(text, "left these findings without a change") {
 		t.Fatalf("a playback round after the one that carried the settled findings should leave them out:\n%s", text)
 	}
 }
@@ -99,7 +98,7 @@ func TestCaptureDeep_AFindingOnFactsOnlyTheUserKnowsGoesToTheUser(t *testing.T) 
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
 	want := "A finding without that mark that turns on facts only the user knows, such as whether incidents were ever recorded: never accept or contest it on your own guess. Ask the user; when their answer refutes it, contest it, quoting them in the reason."
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, want) {
+	if text := serve.Instructions; !strings.Contains(text, want) {
 		t.Fatalf("deepAnswer should carry %q:\n%s", want, text)
 	}
 }
@@ -131,7 +130,7 @@ func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 	proctest.RequireStep(t, serve, "verifySummary")
-	if text := test.Untagged(serve.Instructions); strings.Contains(text, "which carried no edit") {
+	if text := serve.Instructions; strings.Contains(text, "which carried no edit") {
 		t.Fatalf("a held or withdrawn finding is not one taken without an edit:\n%s", text)
 	}
 }
@@ -151,7 +150,7 @@ func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
 	serve = session.Answer(t, instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	if strings.Contains(text, "Show the user") {
 		t.Errorf("an autonomous playback should not address a user about the findings:\n%s", text)
 	}

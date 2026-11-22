@@ -5,14 +5,12 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/networkteam/sdd/internal/model"
 )
 
-const pointerMark = "(held as tag "
+const pointerMark = "(served in full above"
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
-// every time, with and without --session, also once the MCP session holds the
+// every time, with and without --session, also once the MCP session read the
 // entry.
 func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 	cases := []struct {
@@ -35,7 +33,7 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 			f := newAppFixture(t)
 			args := tc.args
 			if tc.session {
-				args = append(args, "--session", openHoldingSession(t, f, appEntryID))
+				args = append(args, "--session", openReadingSession(t, f, appEntryID))
 			}
 			for range 2 {
 				result := f.run(t, args...)
@@ -43,18 +41,18 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 					t.Fatalf("sdd %s: %v\n%s", tc.name, result.err, result.stderr)
 				}
 				assertContainsOutput(t, "stdout", result.stdout, tc.want)
-				if strings.Contains(result.stdout, pointerMark) || strings.Contains(result.stdout, "⟦") {
-					t.Fatalf("the CLI printed a pointer or a tag:\n%s", result.stdout)
+				if strings.Contains(result.stdout, pointerMark) {
+					t.Fatalf("the CLI printed a pointer:\n%s", result.stdout)
 				}
 			}
 		})
 	}
 }
 
-// openHoldingSession starts a session over the fixture's MCP server whose
-// consumer holds id in full: a second MCP show of it, proving the tag the
-// first served, serves the pointer.
-func openHoldingSession(t *testing.T, f *appFixture, id string) string {
+// openReadingSession starts a session over the fixture's MCP server whose
+// consumer read id in full twice: an entry read in an earlier call serves in
+// full again (20261121-230157-d-tac-ym8).
+func openReadingSession(t *testing.T, f *appFixture, id string) string {
 	t.Helper()
 	var session string
 	f.serve(t, func(client *mcp.ClientSession) {
@@ -63,18 +61,14 @@ func openHoldingSession(t *testing.T, f *appFixture, id string) string {
 			t.Fatalf("start_session: %s", served)
 		}
 		session = opened.Session
-		held := []string{}
 		for range 2 {
-			_, served, failed = callTool(t, client, "show", map[string]any{"session": session, "ids": []string{id}, "held": held})
+			_, served, failed = callTool(t, client, "show", map[string]any{"session": session, "ids": []string{id}})
 			if failed {
 				t.Fatalf("show: %s", served)
 			}
-			for _, proof := range model.ReadAnchors(served) {
-				held = append(held, proof.String())
-			}
 		}
-		if !strings.Contains(served, pointerMark) {
-			t.Fatalf("the session should hold the entry, so a repeated MCP show serves its pointer:\n%s", served)
+		if strings.Contains(served, pointerMark) || !strings.Contains(served, appBody) {
+			t.Fatalf("a repeated MCP show should serve the entry in full again:\n%s", served)
 		}
 	})
 	return session

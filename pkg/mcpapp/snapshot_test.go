@@ -33,35 +33,19 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
 		}
-		// A held framing block serves in full again once its random
-		// challenges are spent, so whether it comes in full is drawn per
-		// run; the framing's own tests pin it. A resume serves it in full.
+		// The question a response ends with is drawn per response; its own
+		// tests pin it (text_question_test.go).
 		if fields, ok := value.(map[string]any); ok {
-			_, framed := fields["framing"]
-			if _, resumed := fields["open_instances"]; framed && !resumed {
-				fields["framing"] = "<framing as its proofs serve it>"
+			if _, asked := fields["question"]; asked {
+				fields["question"] = "<question drawn per response>"
 			}
 		}
 		writeValue(&sb, value, 0)
 	}
-	text := anyNextProof.ReplaceAllString(aliasSessions(sb.String()), "")
-	text = anyTag.ReplaceAllString(text, "⟦tag⟧")
-	text = anyNamedTag.ReplaceAllString(text, "tag <tag>$1")
-	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, text)
+	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, aliasSessions(sb.String()))
 }
 
-// anyNextProof names a pointer's next proof, drawn per serve like its tag:
-// an entry pointer's after its tag, a piece name's in parentheses.
-var anyNextProof = regexp.MustCompile(`(?:; next proof [0-9a-z]{4}:<the word right after "[^"]*">| \(next proof [0-9a-z]{4}:<the word right after "[^"]*">\))`)
-
 var sessionHandle = regexp.MustCompile(`s_\d{8}-\d{6}-[0-9a-f]{32}`)
-
-// anyTag and anyNamedTag name a tag as placed in text and as a pointer names
-// it; both are drawn per serve.
-var (
-	anyTag      = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
-	anyNamedTag = regexp.MustCompile(`\btag [0-9a-z]{4}( for\b|\))`)
-)
 
 func aliasSessions(text string) string {
 	aliases := map[string]string{}

@@ -22,6 +22,19 @@ framing: |
   **Expect novelty.** Not everything can be grounded in what exists. Looking similar is not fitting; a forced fit becomes a false floor to reason from. What is truly new deserves treatment as new, connected only where connections are real.
 
   **When work stops resolving, step up.** Corrections pile up, something stays unclear, progress grinds. Instinct says push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
+
+  ## Recent graph movement, newest 5
+
+    20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high…
+    20260828-160000-s-prc-rfk process fact signal Reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source…
+    20260818-120000-s-prc-dsc process fact signal Tests that settle an entry's kind when two compete, sorted by the drafter's situation, not by pair.
+    20260818-110500-s-prc-ann process fact signal Annotation kind adds no proposition of its own: it lays topic labels over entries already written, so a…
+    20260818-110400-s-prc-asp process fact signal Aspiration kind records a decision on a perpetual direction the work is pulled toward.
+  (+27 more: call view with layout `skip(5):n(27):rank(by(date)):brief:as-list`)
+
+  Graph health: 2 warning(s), 0 unreadable entry/entries.
+  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical or alias in the graph
+  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical or alias in the graph
 instructions: |
   Session resumed. Step position and collected evidence persist.
   open_instances carries each running instance's current serve. The session
@@ -30,19 +43,15 @@ instructions: |
   continue. Continue through next with the session's handle. Lose your place
   again later? resume_session with this handle re-serves this list in full.
 
-  Every piece served in full (instruction lane, report schema, entry) carries
-  a tag, such as ⟦tag⟧, before one of its words. On each later
-  call, list in held every tag whose text you still see, with the word right
-  after it, as tag:word ("… dialogue first …" → gn9p:first); that piece
-  then serves as a short pointer. A proof works once: the pointer names the
-  next, as next proof gn9p:<the word right after "check">; look that word up in
-  the piece's text. List the tags of every earlier result, not only the last;
-  each result's unproved field lists those you have not proved since.
-  List in reread the tag or name of a piece you no longer see, or of one a split
-  result's follow-up points at without a proof: it serves in full again. Never
-  guess a word: a missing or wrong proof costs only the full text.
-
-  (2 framing blocks wait, as this result would run past its size bound: recentMovement, health. Call next with instance i_1 and no report to have them before you act)
+  Every response that starts, resumes or advances the session ends with a
+  question about a text sdd served you, such as
+  q <text name>: 2 words after "<a phrase>"? | lost
+  Your next call that advances the session (start_procedure, next, park,
+  abandon) must answer it in answer: the words it asks for, looked up in that
+  text, or lost when you no longer see the text or saw no question. Never
+  guess. A right answer serves repeated instructions, report schemas and framing
+  short; lost or a wrong answer serves them in full. List in reread the name of
+  a piece you no longer see: it serves in full again.
 open_instances:
   -
     collected:
@@ -57,10 +66,10 @@ open_instances:
     instance: i_2
     instructions: Operation did not finish. Tell the user in one sentence. Retry when trying again can help; say so. When it cannot help, or stopped helping, put both choices to the user: retry or cancel. Operation can stay pending until they choose. Retry is safe: it reuses the recorded input; applied effects are recognized, not repeated. Cancel leaves what exists in place.
     pending_operation:
-      cancel_ref: 17
+      cancel_ref: 20
       command: newEntry
       instance: i_2
-      retry_ref: 17
+      retry_ref: 20
       values:
         branch: main
         entryId: 20260921-120000-s-tac-op1
@@ -109,9 +118,7 @@ open_instances:
 
       **Routing.** An observation to record is a capture, an entry to dig into is an engage. Recommend, never auto-run. A check-in (catch-up) is the natural opener when the user wants to know where things stand. Free dialogue is fine on its own. Ask names a move? Go straight into it. Something crystallizes mid-dialogue? Propose the move and let the user decide. Reads need no move, only the session handle, which every tool carries.
 
-      **A new topic, a new session.** The ground topic of the conversation changed? Start a new session yourself with `start_session`, without asking the user: session handling is yours. Keep the earlier session's handle and leave that session unconcluded. When its topic returns, resume it with `resume_session`. It still holds its parked moves and what it read, so going back costs less than reading the graph afresh.
-
-      **Other dialogues are the user's to name, except the ones you opened.** The shell serves only its own session's open threads, and no tool lists other dialogues. A session's handle is its capability. It reaches you only by issuance or because the user hands it over. User wants to switch to or pick up another dialogue? They supply its handle, and `resume_session` re-serves it. A session you opened on an earlier topic you resume by the handle you were issued. Never guess a handle. Never offer another dialogue's work unasked.
+      **Other dialogues are the user's to name.** The shell serves only its own session's open threads, and no tool lists other dialogues. A session's handle is its capability. It reaches you only by issuance or because the user hands it over. User wants to switch to or pick up another dialogue? They supply its handle, and `resume_session` re-serves it. Never guess a handle. Never offer another dialogue's work unasked.
 
       **Ending is part of the arc.** A dialogue has a deliberate end, and the user has no reason to know that: every other tool is closed, not finished. So when the conversation reaches a natural stopping point (the ask is answered, the work landed, nothing waits on you), offer to wrap the session up. Offer while the user is still here, not after they have gone quiet.
 
@@ -121,7 +128,7 @@ open_instances:
       - One worth dropping is abandoned with a reason.
       - What is open is worth keeping? Keep the session instead of ending it.
 
-      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: stopping without a word costs nothing. A move parked or left mid-step keeps the session for its handle to resume. A session with no move in progress is removed once it has gone untouched for the session retention.
+      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: a session nobody ended stays resumable by its handle, so stopping without a word costs nothing.
 
       **Standing goal.** This junction stays pending while you talk. Nothing here demands an answer, and leaving the session parks or ends it on its own. Answer conclude only when the user deliberately wants to wrap up the session, and only after the check above.
     open_threads: |
@@ -130,8 +137,7 @@ open_instances:
       listed here resumes through next on its instance id; if you have lost that
       handle, resume_session with this session's handle re-serves these moves with
       their current step and schema. Other open dialogues never appear on this
-      surface — the user names one by handing over its handle, or you resume one
-      you opened on an earlier topic by the handle you were issued.
+      surface — they are the user's to name, by handing over a handle.
       - i_2: capture at write
     pending_chooser:
       chooser: junction
@@ -166,15 +172,16 @@ open_instances:
     step: junction
 participant: Tester
 pending_operation:
-  cancel_ref: 17
+  cancel_ref: 20
   command: newEntry
   instance: i_2
-  retry_ref: 17
+  retry_ref: 20
   values:
     branch: main
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
 project: test
+question: <question drawn per response>
 session: <session-1>
 

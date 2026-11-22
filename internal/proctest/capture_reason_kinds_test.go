@@ -7,7 +7,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/test"
 )
 
 // No kind owes a reason, in any dialogue mode, and a directive owes no words
@@ -218,7 +217,7 @@ func TestReasonKinds_GuidedReasonWithoutAParticipantIsNamedUnstored(t *testing.T
 	world.SetParticipant("")
 	serve := session.Report(t, instance, draft)
 	proctest.RequireStep(t, serve, "playback")
-	if !strings.Contains(test.Untagged(serve.Instructions), unstored) {
+	if !strings.Contains(serve.Instructions, unstored) {
 		t.Errorf("the playback should name the reason unstored, got:\n%s", serve.Instructions)
 	}
 	entry := writeCapture(t, world, session, instance, func() *sdd.WorkflowServe {
@@ -268,7 +267,7 @@ func TestReasonKinds_GuidedMayProposeAReason(t *testing.T) {
 	const propose = "You may propose a reason in `reason` and the intent value, inferred from the dialogue and the graph: the play-back shows them as your inference, the user's confirm adopts them as theirs, and their own words in `reasonWords` take the place of your reason."
 	_, session := reasonKindsWorld(t)
 	serve := session.Start(t, "capture", nil)
-	if !strings.Contains(test.Untagged(serve.Instructions), propose) {
+	if !strings.Contains(serve.Instructions, propose) {
 		t.Errorf("assemble should let the agent propose a reason, got:\n%s", serve.Instructions)
 	}
 }
@@ -279,7 +278,7 @@ func TestReasonKinds_AutoAndAssistedInferTheReasonAlike(t *testing.T) {
 	const infer = "A decision may state your own reason in `reason`, inferred from the dialogue and the graph; no kind owes one, and a signal carries none. A directive states its intent in `intent`, inferred the same way."
 	for name, mode := range agentModes() {
 		_, session := reasonKindsWorld(t, mode)
-		if serve := session.Start(t, "capture", nil); !strings.Contains(test.Untagged(serve.Instructions), infer) {
+		if serve := session.Start(t, "capture", nil); !strings.Contains(serve.Instructions, infer) {
 			t.Errorf("%s assemble should carry the shared inference rule, got:\n%s", name, serve.Instructions)
 		}
 	}

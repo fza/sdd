@@ -81,9 +81,9 @@ type GatherRequest struct {
 	Subject string
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer. Nil serves every line in full,
-	// as the CLI does. Anchor places the tag in a body served in full.
-	Held   func(id string) (tag, next string, held bool)
-	Anchor func(id, body string, field map[string]int) string
+	// as the CLI does. Served records a body served in full.
+	Held   func(id string) bool
+	Served func(id, body string)
 	// since is the corpus mark of the capture's reading; the live entries it
 	// lacks are listed as landed since the reading began.
 	since *model.CorpusMark
@@ -287,7 +287,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		ToJudge: candidates, Listed: placed.Listed, Counted: len(placed.Counted), SetAside: setAside,
 	}
 	if request.Held != nil {
-		served.Held, served.Anchor = request.Held, request.Anchor
+		served.Held, served.Served = request.Held, request.Served
 	}
 	full := slices.Clone(opened)
 	for _, candidate := range append(split.Relevant, placed.Relevant...) {

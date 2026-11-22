@@ -757,9 +757,6 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")
 	}
-	if request.Report != nil {
-		request.Report = stripAnchorTags(request.Report).(map[string]any)
-	}
 	if w.Finished() {
 		return nil, w.finishedError()
 	}

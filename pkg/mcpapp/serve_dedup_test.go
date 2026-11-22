@@ -21,7 +21,7 @@ const captureIntroProse = "Draft one entry. One idea, dialogue first."
 
 const withheldLanesPrefix = "(held: "
 
-var heldLaneName = regexp.MustCompile(`^tag [0-9a-z]{4} for lane (\S+)(?: \(next proof [^)]*\))?$`)
+var heldLaneName = regexp.MustCompile(`^lane (\S+)$`)
 
 // withheldLanes extracts the lane names from a serve's held-lanes line; nil
 // when the line is absent.
@@ -31,7 +31,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	if !found {
 		return nil
 	}
-	names, _, found := strings.Cut(rest, " — prove each tag")
+	names, _, found := strings.Cut(rest, " — served to you before")
 	if !found || !strings.Contains(rest, "resume_session") {
 		t.Fatalf("held-lanes line lacks its way back: %q", instructions)
 	}
@@ -39,7 +39,7 @@ func withheldLanes(t *testing.T, instructions string) []string {
 	for _, name := range strings.Split(names, ", ") {
 		match := heldLaneName.FindStringSubmatch(name)
 		if match == nil {
-			t.Fatalf("a held lane should be named with its tag, got %q", name)
+			t.Fatalf("a held lane should be named, got %q", name)
 		}
 		lanes = append(lanes, match[1])
 	}

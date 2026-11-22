@@ -1,7 +1,6 @@
 package mcpapp_test
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -9,15 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
-	"github.com/networkteam/sdd/test"
 )
 
 var waitingLanes = regexp.MustCompile(`more lanes of these instructions wait[^:]*: ([^.]*)\.`)
 
-var heldIntroLane = regexp.MustCompile(`\(held: tag [0-9a-z]{4} for lane intro`)
+var heldIntroLane = regexp.MustCompile(`\(held: [^)]*lane intro`)
 
 // youngProjectShape is the realistic fixture at the scale of a young
 // project.
@@ -36,10 +33,10 @@ func writeYoungProjectGraph(t *testing.T) string {
 	return graphDir
 }
 
-// An agent that lists no proofs reaches every lane of the shipped capture's
+// An agent that answers lost reaches every lane of the shipped capture's
 // assemble step within three calls, by plain next calls and by reports that
 // leave the step where it is; each follow-up points at the lanes sent before.
-func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
+func TestALostAgentReachesEveryCaptureLane(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		report map[string]any
@@ -55,7 +52,7 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 			if !waitingLanes.MatchString(serve.Instructions) {
 				t.Fatalf("the assemble serve should leave lanes waiting, got %.300q", serve.Instructions)
 			}
-			text := test.Untagged(serve.Instructions)
+			text := serve.Instructions
 			for calls := 1; waitingLanes.MatchString(serve.Instructions); calls++ {
 				if calls == 3 {
 					t.Fatalf("every capture lane should reach the agent within 3 calls, still waiting: %s", waitingLanes.FindStringSubmatch(serve.Instructions)[1])
@@ -71,7 +68,7 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 				if !heldIntroLane.MatchString(serve.Instructions) {
 					t.Fatalf("call %d should point at the intro lane sent before, got %.300q", calls+1, serve.Instructions)
 				}
-				text += "\n\n" + test.Untagged(serve.Instructions)
+				text += "\n\n" + serve.Instructions
 			}
 			for _, phrase := range []string{"A signal records something noticed:", "Words the user gives for a decision's reason go to `reasonWords`", "**Topics** (`topics`)", "**Participants** (`participants`)", "**Intent** (`intent`)"} {
 				if !strings.Contains(text, phrase) {
@@ -82,39 +79,28 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 	}
 }
 
-// Whatever an agent proves of the pieces served before, plain next calls
-// serve each waiting lane of the shipped capture's assemble step, one call
-// per waiting lane at most, and the step then takes a report.
-func TestWaitingCaptureLanesDrainWhateverTheAgentProves(t *testing.T) {
+// Whatever an agent answers or rereads, plain next calls serve each waiting
+// lane of the shipped capture's assemble step, one call per waiting lane at
+// most, and the step then takes a report.
+func TestWaitingCaptureLanesDrainWhateverTheAgentAnswers(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		agent func(args map[string]any, anchors []model.Proof)
+		name    string
+		answers bool
+		agent   func(args map[string]any, pending []string)
 	}{
-		{"no proofs", func(map[string]any, []model.Proof) {}},
-		{"a wrong word for every tag", func(args map[string]any, anchors []model.Proof) {
-			held := make([]any, 0, len(anchors))
-			for _, anchor := range anchors {
-				held = append(held, model.Proof{Tag: anchor.Tag, Word: "misread"}.String())
-			}
-			args["held"] = held
-		}},
-		{"the last result's tags alone", func(args map[string]any, anchors []model.Proof) {
-			held := make([]any, 0, len(anchors))
-			for _, anchor := range anchors {
-				held = append(held, anchor.String())
-			}
-			args["held"] = held
-		}},
-		{"a reread of every tag", func(args map[string]any, anchors []model.Proof) {
-			reread := make([]any, 0, len(anchors))
-			for _, anchor := range anchors {
-				reread = append(reread, anchor.Tag)
+		{"lost", false, func(map[string]any, []string) {}},
+		{"a wrong answer", false, func(args map[string]any, _ []string) { args["answer"] = "misread words" }},
+		{"a right answer", true, func(map[string]any, []string) {}},
+		{"a reread of every lane", false, func(args map[string]any, pending []string) {
+			reread := []any{"lane intro"}
+			for _, name := range pending {
+				reread = append(reread, "lane "+name)
 			}
 			args["reread"] = reread
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cs, _ := boundedConnect(t, newTestServer(t, nil, writeYoungProjectGraph(t), "").srv, false)
+			cs, _ := boundedConnect(t, newTestServer(t, nil, writeYoungProjectGraph(t), "").srv, tc.answers)
 			session := openSession(t, cs).Session
 			var serve mcpserver.ServeResult
 			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture", "params": map[string]any{"kind": "directive"}}, &serve)
@@ -123,19 +109,15 @@ func TestWaitingCaptureLanesDrainWhateverTheAgentProves(t *testing.T) {
 				t.Fatalf("the assemble serve should leave lanes waiting, got %.300q", serve.Instructions)
 			}
 			pending := strings.Split(waiting[1], ", ")
-			text := test.Untagged(serve.Instructions)
+			text := serve.Instructions
 			for calls := 1; waitingLanes.MatchString(serve.Instructions); calls++ {
 				if calls > len(pending) {
 					t.Fatalf("the %d waiting lanes should serve within as many calls, still waiting: %s", len(pending), waitingLanes.FindStringSubmatch(serve.Instructions)[1])
 				}
-				raw, err := json.Marshal(serve)
-				if err != nil {
-					t.Fatal(err)
-				}
 				args := map[string]any{"session": session, "instance": serve.Instance}
-				tc.agent(args, model.ReadAnchors(string(raw)))
+				tc.agent(args, pending)
 				call(t, cs, "next", args, &serve)
-				text += "\n\n" + test.Untagged(serve.Instructions)
+				text += "\n\n" + serve.Instructions
 			}
 			for _, phrase := range []string{"**Topics** (`topics`)", "**Participants** (`participants`)", "**Intent** (`intent`)"} {
 				if !strings.Contains(text, phrase) {

@@ -58,7 +58,7 @@ type CallerMark struct {
 }
 
 type StartProcedureArgs struct {
-	Proofs
+	Answering
 	CallerMark
 	Session   string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Canonical string         `json:"canonical" jsonschema:"procedure to start, by its stable name (e.g. capture)"`
@@ -69,7 +69,7 @@ type StartProcedureArgs struct {
 }
 
 type NextArgs struct {
-	Proofs
+	Answering
 	CallerMark
 	RetryRef  uint64 `json:"retry_ref,omitempty" jsonschema:"exact retry reference from a failed operation; mutually exclusive with report and cancel_ref"`
 	CancelRef uint64 `json:"cancel_ref,omitempty" jsonschema:"exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref"`
@@ -82,7 +82,7 @@ type NextArgs struct {
 }
 
 type AbandonArgs struct {
-	Proofs
+	Answering
 	CallerMark
 	Instance string `json:"instance,omitempty" jsonschema:"instance handle of the move to abandon; pass session too, naming the session the move belongs to"`
 	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly; no resume, no framing"`
@@ -100,11 +100,11 @@ type AbandonResult struct {
 	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing. Resume later or close via groom"`
 	Instructions     string     `json:"instructions,omitempty"`
 	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue now stands"`
-	ResultProofNotice
+	ResultQuestion
 }
 
 type ParkArgs struct {
-	Proofs
+	Answering
 	CallerMark
 	Session  string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Instance string `json:"instance" jsonschema:"running move instance to park"`
@@ -119,7 +119,7 @@ type ParkResult struct {
 	Step         string     `json:"step"`
 	Instructions string     `json:"instructions,omitempty"`
 	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve: where the dialogue lands"`
-	ResultProofNotice
+	ResultQuestion
 }
 
 type ChooserOptionResult struct {
@@ -209,8 +209,8 @@ type ServeResult struct {
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"recorded cancellation: return position and what the operation reports it left"`
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
 	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID); a value past 200 characters is left out and named in instructions"`
-	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants): a block goes to each caller once and again when it changes, no proof asked; resume_session sends every block again"`
-	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it"`
+	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants): a block goes to each caller once and again when it changes, no answer needed; resume_session sends every block again"`
+	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"resume_session only: the state this instance already collected, each value of up to 300 characters whole; values persist across handover. Do not re-derive them"`
@@ -219,7 +219,7 @@ type ServeResult struct {
 	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
 	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
 	Resume           string                  `json:"resume,omitempty" jsonschema:"the call a person resumes the parked move with"`
-	ResultProofNotice
+	ResultQuestion
 }
 
 // DispatchResult is one delegate handoff: the child handles a delegate
@@ -287,7 +287,7 @@ type ResumeSessionResult struct {
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
-	ResultProofNotice
+	ResultQuestion
 }
 
 type BindBranchArgs struct {
@@ -300,7 +300,6 @@ type BindBranchResult struct {
 	ResultNotices
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
-	ResultProofNotice
 }
 
 // StageAttachmentArgs is a stage_attachment call. Name with Content, Path or
@@ -368,13 +367,12 @@ type StagedFileResult struct {
 	Handle string   `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body"`
 	SHA256 string   `json:"sha256" jsonschema:"sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle"`
 	Bound  []string `json:"bound,omitempty" jsonschema:"captures taking their body from this handle, whose body and playback this staging replaced"`
-	ResultProofNotice
 }
 
 // --- free reads -------------------------------------------------------------
 
 type SearchArgs struct {
-	Proofs
+	Rereads
 	IncludesRevision  string       `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
 	Session           string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
 	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
@@ -396,11 +394,10 @@ type SearchResult struct {
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
-	ResultProofNotice
 }
 
 type ViewArgs struct {
-	Proofs
+	Rereads
 	Session  string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
 	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
@@ -412,12 +409,11 @@ type ViewArgs struct {
 type ViewResult struct {
 	ResultNotices
 	Sections string `json:"sections"`
-	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, left out while the call proves it holds it"`
-	ResultProofNotice
+	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, on the first view of a session and after resume_session"`
 }
 
 type ShowArgs struct {
-	Proofs
+	Rereads
 	Session string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
 	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
@@ -429,14 +425,13 @@ type ShowArgs struct {
 type ShowResult struct {
 	ResultNotices
 	Entries string `json:"entries"`
-	ResultProofNotice
 }
 
 type GatherArgs struct {
-	Proofs
+	Rereads
 	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
 	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
-	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call already holds serves its pointer"`
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
 	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
@@ -445,7 +440,6 @@ type GatherArgs struct {
 type GatherResult struct {
 	ResultNotices
 	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
-	ResultProofNotice
 }
 
 type ReadAttachmentArgs struct {
@@ -480,33 +474,30 @@ type ReadAttachmentResult struct {
 	More       bool     `json:"more"`
 	Available  []string `json:"available" jsonschema:"the entry's attachment filenames"`
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
-	ResultProofNotice
 }
 
 // ResultNotices carries the blocked-sync notice while automatic sync of the
 // graph repository cannot proceed, once per change of its text; once the
 // notice of a failed background cache pruning run; once the config keys
-// that changed since the previous call; and, from an attached session, the
-// pieces served in full that the agent has not proved since.
+// that changed since the previous call.
 type ResultNotices struct {
 	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
-	Unproved    string `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by tag and name; prove each whose text you still see in held"`
 }
 
 func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
 func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
-func (f *ResultNotices) setUnproved(line string)      { f.Unproved = line }
 
-// ResultProofNotice names, on a result from an attached session, the proofs
-// the call listed that failed.
-type ResultProofNotice struct {
-	ProofNotice string `json:"proof_notice,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
+// ResultQuestion ends a response that starts, resumes or advances a session
+// with the question the next call that advances it answers
+// (20261121-230157-d-tac-ym8). Embedded last, it is the result's last field.
+type ResultQuestion struct {
+	Question string `json:"question,omitempty" jsonschema:"a question about a text sdd served you, as q <text>: …? | lost. Answer it in answer on your next call that advances this session: the words it asks for, looked up in that text, or lost"`
 }
 
-func (f *ResultProofNotice) setProofNotice(notice string) { f.ProofNotice = notice }
+func (f *ResultQuestion) setQuestion(line string) { f.Question = line }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -536,7 +527,6 @@ type InfoResult struct {
 	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
 	SecretRules  SecretRulesResult  `json:"secretRules" jsonschema:"the gitleaks rule file credential scans use"`
-	ResultProofNotice
 }
 
 type SecretRulesResult struct {
@@ -572,7 +562,6 @@ type RegistryResult struct {
 	ResultNotices
 	Functions []RegistryFuncResult `json:"functions"`
 	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
-	ResultProofNotice
 }
 
 func (s *toolSet) register(srv *mcp.Server) error {
@@ -686,7 +675,7 @@ func (s *toolSet) register(srv *mcp.Server) error {
 			"every live entry's brief. Above it: a semantic search, keyword searches and the live listing " +
 			"of every draft topic, written from the draft. Name the running capture as instance: only " +
 			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
-			"An entry the call proves it holds prints as a pointer with its brief.",
+			"An entry already served in full in the same result prints as a pointer with its brief.",
 	}, s.gather)
 
 	addTool(srv, s, &mcp.Tool{
@@ -723,8 +712,26 @@ func (s *toolSet) register(srv *mcp.Server) error {
 }
 
 // attachedSession returns the named session locked and replayed from its
-// ledger, its call opened with the proofs the call carries.
-func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string, proofs Proofs) (*shellSession, error) {
+// ledger, its call opened with the pieces it rereads and no answer.
+func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string, reread []string) (*shellSession, error) {
+	return s.attach(ctx, req, session, "", reread)
+}
+
+// advancingSession is attachedSession for a call that advances the session:
+// it must carry an answer, and its response ends with a question.
+func (s *toolSet) advancingSession(ctx context.Context, req *mcp.CallToolRequest, session string, args Answering) (*shellSession, error) {
+	if strings.TrimSpace(args.Answer) == "" {
+		return nil, toolError("answer is required: the words the question the last response ended with asks for, or lost when you no longer see that text or saw no question")
+	}
+	ss, err := s.attach(ctx, req, session, args.Answer, rereadList(args.Reread))
+	if err != nil {
+		return nil, err
+	}
+	askQuestion(ctx)
+	return ss, nil
+}
+
+func (s *toolSet) attach(ctx context.Context, req *mcp.CallToolRequest, session, answer string, reread []string) (*shellSession, error) {
 	id := sdd.SessionID(strings.TrimSpace(session))
 	if id == "" {
 		return nil, noHandleError()
@@ -765,11 +772,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
-	err := ss.root.BeginCall(proofs.lists())
-	if err != nil {
-		ss.mu.Unlock()
-		return nil, err
-	}
+	ss.root.BeginCall(answer, reread)
 	return ss, nil
 }
 
@@ -831,9 +834,10 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	workflow.CutRepeats()
 	ss := s.sessions.put(&shellSession{root: workflow})
 	s.noteSyncSession(ctx, req, ss)
+	askQuestion(ctx)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	guide, err := resultChars(proofGuide + "\n\n")
+	guide, err := resultChars(questionGuide + "\n\n")
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -841,7 +845,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
-	result.Instructions = proofGuide + "\n\n" + result.Instructions
+	result.Instructions = questionGuide + "\n\n" + result.Instructions
 	return nil, result, nil
 }
 
@@ -873,7 +877,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 	if strings.TrimSpace(args.Canonical) == "" {
 		return nil, ServeResult{}, toolError("canonical is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -892,7 +896,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -923,7 +927,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		}
 		return s.abandonSession(ctx, req, args)
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, AbandonResult{}, err
 	}
@@ -959,7 +963,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 // (d-tac-dbk). Seeded drafts ride the normal dispatch path; park adds no
 // side channel.
 func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkArgs) (*mcp.CallToolResult, ParkResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ParkResult{}, err
 	}
@@ -1035,12 +1039,13 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 			return nil, ResumeSessionResult{}, err
 		}
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
 	ss.root.SetCaller(args.Caller)
+	askQuestion(ctx)
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
@@ -1062,7 +1067,7 @@ func (s *toolSet) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args
 	if (args.Branch != "") == args.Clear {
 		return nil, BindBranchResult{}, toolError("pass exactly one of a nonblank branch or clear=true")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, BindBranchResult{}, err
 	}
@@ -1083,7 +1088,7 @@ func (s *toolSet) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args
 // resumed pre-shell session gains a base to land on (d-tac-bfc).
 
 func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest, args StageAttachmentArgs) (*mcp.CallToolResult, StageAttachmentResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
@@ -1174,15 +1179,12 @@ func (s *toolSet) readScope(ctx context.Context, req *mcp.CallToolRequest, ss *s
 }
 
 // viewHint is the single producer of the view tool's Hint field: a pointer
-// to the view-grammar fact, left out while the call holds it (s-prc-3kh). It
-// never gates the read (s-cpt-1dz, d-cpt-h99).
+// to the view-grammar fact, served once per session, as a read carries no
+// answer to hold it by (s-prc-3kh). It never gates the read (s-cpt-1dz,
+// d-cpt-h99).
 func viewHint(ss *shellSession) string {
-	piece := ss.root.ServeText("view hint", "view layout grammar: show "+basefacts.ViewGrammarFactID+
-		" for the full filter/rank/macro vocabulary and the quoting rules", nil)
-	if piece.Held {
-		return ""
-	}
-	return piece.Text
+	return ss.root.ServeNotice("view hint", "view layout grammar: show "+basefacts.ViewGrammarFactID+
+		" for the full filter/rank/macro vocabulary and the quoting rules")
 }
 
 func (s *toolSet) logRootRead(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, tool string, full, summary []string) error {
@@ -1193,7 +1195,7 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	if len(args.Terms) == 0 && args.Query == "" && args.Page < 2 {
 		return nil, SearchResult{}, toolError("pass terms (text mode), query (vector mode), or both (hybrid)")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, SearchResult{}, err
 	}
@@ -1261,7 +1263,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	if strings.TrimSpace(args.Layout) == "" && args.Page < 2 {
 		return nil, ViewResult{}, toolError("layout is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, ViewResult{}, err
 	}
@@ -1351,7 +1353,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if len(args.IDs) == 0 && args.Page < 2 {
 		return nil, ShowResult{}, toolError("ids is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
@@ -1391,7 +1393,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 }
 
 func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, GatherResult{}, err
 	}
@@ -1414,7 +1416,7 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 }
 
 func (s *toolSet) readValue(ctx context.Context, req *mcp.CallToolRequest, args ReadValueArgs) (*mcp.CallToolResult, ReadValueResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, ReadValueResult{}, err
 	}
@@ -1441,7 +1443,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 	if args.Handle == "" && args.ID == "" {
 		return nil, ReadAttachmentResult{}, toolError("id is required (or handle, for a staged file)")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, ReadAttachmentResult{}, err
 	}
@@ -1481,7 +1483,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoArgs) (*mcp.CallToolResult, InfoResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, InfoResult{}, err
 	}
@@ -1520,7 +1522,7 @@ func secretRulesResult(rules sdd.SecretRules) SecretRulesResult {
 }
 
 func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, args RegistryArgs) (*mcp.CallToolResult, RegistryResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, RegistryResult{}, err
 	}
@@ -1610,15 +1612,8 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
 			carrier.setHostNotice(hostNotice)
 		}
-		if carrier, ok := any(&out).(interface{ setProofNotice(string) }); ok && len(slot.failed) > 0 {
-			carrier.setProofNotice(proofNotice(slot.failed))
-		}
-		if carrier, ok := any(&out).(interface{ setUnproved(string) }); ok && len(slot.unproved) > 0 {
-			cost, err := resultChars(out)
-			if err != nil {
-				return res, out, err
-			}
-			carrier.setUnproved(unprovedLine(slot.unproved, int(bound)-cost-len(`,"unproved":""`)))
+		if carrier, ok := any(&out).(interface{ setQuestion(string) }); ok && slot.question != "" {
+			carrier.setQuestion(slot.question)
 		}
 		return res, out, err
 	}
@@ -1639,13 +1634,21 @@ type syncNoticeKey struct{}
 
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
-// reflects what the call itself recorded; the claim leaves the call's failed
-// proofs in failed and the session's unproved pieces in unproved. A failed
-// call records no proofs, so a refused report writes nothing.
+// reflects what the call itself recorded. With ask set, the claim of a call
+// that succeeded leaves in question the line its response ends with. A
+// failed call answers no question.
 type syncNoticeSlot struct {
 	claim    func(ctx context.Context, failed bool) (string, error)
-	failed   []sdd.FailedProof
-	unproved []sdd.UnprovedPiece
+	ask      bool
+	question string
+}
+
+// askQuestion marks the call in flight as one whose response ends with a
+// question: it starts, resumes or advances its session.
+func askQuestion(ctx context.Context) {
+	if slot, ok := ctx.Value(syncNoticeKey{}).(*syncNoticeSlot); ok {
+		slot.ask = true
+	}
 }
 
 func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
@@ -1658,12 +1661,14 @@ func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
-		slot.failed = ss.root.FailedProofs()
 		if failed {
-			ss.root.DropProved()
+			ss.root.DropAnswer()
 		}
-		err := ss.root.RecordAnchors(ctx, identity)
-		slot.unproved = ss.root.Unproved()
+		err := ss.root.RecordPieces(ctx, identity)
+		if err != nil || failed || !slot.ask {
+			return notice, err
+		}
+		slot.question, err = ss.root.Question(ctx, identity)
 		return notice, err
 	}
 }
@@ -1751,7 +1756,7 @@ func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolReques
 }
 
 // toRootServeResultWithin is toRootServeResult within budget, for a result
-// that carries more than the serve, as the opening carries the proof guide.
+// that carries more than the serve, as the opening carries the question guide.
 func (s *toolSet) toRootServeResultWithin(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (ServeResult, error) {
 	res, held, err := s.boundedServe(ctx, req, ss, serve, budget, true)
 	if err != nil {
@@ -1771,7 +1776,7 @@ func (s *toolSet) toRootServeResultWithin(ctx context.Context, req *mcp.CallTool
 // heldLanes is how much a bounded result holds: lanes of its serve and of the
 // session shell's serve it lands in, framing blocks of its serve, of the
 // blocks its framing has, whether its vocabulary table waits and whether
-// lanes the result before sent serve as pointers whatever the call proves.
+// lanes the result before sent serve as pointers whatever the call answers.
 type heldLanes struct {
 	keep, base, framing, blocks int
 	vocabularyWaits, resent     bool
@@ -1785,7 +1790,7 @@ const (
 // boundedServe composes serve's result to cost at most budget:
 // while the whole would cost more, the last
 // lanes of the session shell's serve it lands in wait first, then the lanes
-// the result before sent serve as pointers whatever the call proves or
+// the result before sent serve as pointers whatever the call answers or
 // rereads, then the step's own last lanes wait, then its last framing blocks,
 // each named with the call that serves
 // them, and what the larger composition served is withdrawn. With progress,
@@ -1914,7 +1919,7 @@ func leadingLanes(serve *sdd.WorkflowServe) int {
 // that holds only its first lanes or framing blocks, so the next call on that
 // instance serves what waits and points at what res, the result delivered,
 // sent: lanes, framing, schema and entries alike, as any of them re-sent to
-// an agent that proves nothing would leave what waits no room.
+// an agent that answers lost would leave what waits no room.
 func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, res any) error {
 	return recordDeferrals(ss, deferredInstances(serve, held), res)
 }
@@ -2181,7 +2186,7 @@ func openThreadsRoot(ss *shellSession) string {
 	}
 	piece := ss.root.ServeText("open threads", intro, nil)
 	if piece.Held {
-		return openThreadsReminder + " " + heldLine([]string{heldName("open threads", piece.Tag, piece.Next)}) + "\n" + body
+		return openThreadsReminder + " " + heldLine([]string{"open threads"}) + "\n" + body
 	}
 	return piece.Text + "\n" + body
 }
@@ -2190,9 +2195,9 @@ func openThreadsRoot(ss *shellSession) string {
 // autonomous.
 func resumeInstructionsFor(ss *shellSession) string {
 	if ss.root.Autonomous() {
-		return autonomousResumeInstructions + "\n\n" + proofGuide
+		return autonomousResumeInstructions + "\n\n" + questionGuide
 	}
-	return resumeInstructions + "\n\n" + proofGuide
+	return resumeInstructions + "\n\n" + questionGuide
 }
 
 // boundList cuts a whole-item string list at the line-list cap, appending a

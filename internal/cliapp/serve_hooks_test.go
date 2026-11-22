@@ -168,7 +168,7 @@ func TestServeReadsHooksAfreshOnEveryCall(t *testing.T) {
 	fixture.serve(t, func(client *mcp.ClientSession) {
 		handle := startSession(t, client)
 		payloadFile = fixture.payloadHook(t, "config/sdd/config.yaml", "capture.assemble.start")
-		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture"}})
+		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture", "answer": "lost"}})
 		if err != nil || result.IsError {
 			t.Fatalf("start_procedure: %v %+v", err, result)
 		}
@@ -410,7 +410,7 @@ func TestServeMutatingCallAsksBeforeAnySideEffect(t *testing.T) {
 		payloadFile = fixture.repoHook(t, "capture.assemble.start")
 		before = fixture.sessionFiles(t)
 		var err error
-		result, err = client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture"}})
+		result, err = client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture", "answer": "lost"}})
 		if err != nil {
 			t.Fatal(err)
 		}

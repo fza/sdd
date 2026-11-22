@@ -8,15 +8,13 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/networkteam/sdd/test"
 )
 
 // callTool calls a tool and returns its structured result as JSON, or the
 // error text the call ended with.
 func callToolResult(t *testing.T, client *mcp.ClientSession, name string, args map[string]any) (string, string) {
 	t.Helper()
-	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
+	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: answered(name, args)})
 	if err != nil {
 		return "", err.Error()
 	}
@@ -33,7 +31,7 @@ func callToolResult(t *testing.T, client *mcp.ClientSession, name string, args m
 	if err != nil {
 		t.Fatal(err)
 	}
-	return test.Untagged(string(encoded)), ""
+	return string(encoded), ""
 }
 
 // withWaitingLanes follows every serve in result whose lanes wait past the

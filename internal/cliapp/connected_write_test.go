@@ -56,9 +56,28 @@ func boolText(value bool) string {
 	return "false"
 }
 
+// answered returns args of a call that advances a session with the answer
+// lost when they carry none: these tests do not hold the texts asked about.
+func answered(tool string, args map[string]any) map[string]any {
+	switch tool {
+	case "start_procedure", "next", "park", "abandon":
+	default:
+		return args
+	}
+	if _, ok := args["answer"]; ok {
+		return args
+	}
+	out := make(map[string]any, len(args)+1)
+	for k, v := range args {
+		out[k] = v
+	}
+	out["answer"] = "lost"
+	return out
+}
+
 func callTool(t *testing.T, client *mcp.ClientSession, tool string, args map[string]any) (mcpserver.ServeResult, string, bool) {
 	t.Helper()
-	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: answered(tool, args)})
 	if err != nil {
 		t.Fatalf("%s: %v", tool, err)
 	}

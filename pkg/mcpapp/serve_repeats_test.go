@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
-	"github.com/networkteam/sdd/test"
 )
 
 // recentMovement is the framing block every fixture session carries, which
@@ -67,7 +66,7 @@ func TestAMoveEndsWithAShortLanding(t *testing.T) {
 	cs := connect(t, env.srv)
 	door := openSessionWhole(t, cs)
 	const baseText = "Ending is part of the arc"
-	if !strings.Contains(test.Untagged(door.Instructions), baseText) {
+	if !strings.Contains(door.Instructions, baseText) {
 		t.Fatalf("setup: the opening should carry the base step's text, got %.300q", door.Instructions)
 	}
 
@@ -80,7 +79,7 @@ func TestAMoveEndsWithAShortLanding(t *testing.T) {
 		if base == nil || base.Instance != door.Instance || base.Step != "junction" {
 			t.Fatalf("%s should land on the base step, got %+v", name, base)
 		}
-		text := test.Untagged(base.Instructions)
+		text := base.Instructions
 		for _, want := range []string{"back at user-dialogue, step junction", "resume_session sends them in full", "Moves to start next: ", "capture"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s's landing should carry %q, got %q", name, want, text)
@@ -97,7 +96,7 @@ func TestAMoveEndsWithAShortLanding(t *testing.T) {
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
 	for _, open := range resumed.Open {
-		if open.Instance == door.Instance && !strings.Contains(test.Untagged(open.Instructions), baseText) && !strings.Contains(open.Instructions, "lanes of these instructions wait") {
+		if open.Instance == door.Instance && !strings.Contains(open.Instructions, baseText) && !strings.Contains(open.Instructions, "lanes of these instructions wait") {
 			t.Fatalf("resume_session should serve the base step in full, got %.300q", open.Instructions)
 		}
 	}

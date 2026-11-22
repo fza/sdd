@@ -1,5 +1,5 @@
 cancellation:
-  cancel_ref: 17
+  cancel_ref: 20
   closed: false
   command: newEntry
   effects:
@@ -19,7 +19,7 @@ instance: i_2
 instructions: |
   Cancelled operation "newEntry". Returned to interaction "playback" without advancing it. It left: entry 20260921-120000-s-tac-op1, absent. Nothing cleaned up. Confirming again starts a new operation with new identifiers.
 
-  (held: tag <tag> for lane playback — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)
+  (held: lane playback — served to you before; list a name in reread to have its text again, or resume_session re-serves this position in full)
 pending_chooser:
   chooser: playback
   kind: user
@@ -38,6 +38,7 @@ pending_chooser:
       choice: abort
 procedure: capture
 project: test
+question: <question drawn per response>
 report_schema:
   additionalProperties: false
   properties:
@@ -55,7 +56,7 @@ report_schema:
     fields:
       additionalProperties: false
       description: the chosen option's fields, nested here, never at the top level
-      held_properties: you hold tag <tag> for these capture report fields — prove the tag with the word its next proof asks for, else the word after the tag, in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full
+      held_properties: you hold the capture report fields, served to you before; list "capture report fields" in reread to have them again, or resume_session re-serves them in full
       type: object
     userWords:
       description: the user's own message verbatim, never yours

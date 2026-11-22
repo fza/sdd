@@ -158,7 +158,7 @@ func TestCaptureDismissals_AssembleOwesAVerdictOnlyForEntriesServedInFull(t *tes
 	_, session := newGroundingWorld(t, "dismissals-served")
 	serve := session.Start(t, "capture", nil)
 	proctest.RequireStep(t, serve, "assemble")
-	instructions := test.Untagged(serve.Instructions)
+	instructions := serve.Instructions
 	if !strings.Contains(instructions, "an entry served in full needs a ref or a verdict in `verdicts`") || !strings.Contains(instructions, "A candidate line owes neither") {
 		t.Fatalf("the assemble step should owe a verdict only for an entry served in full:\n%s", serve.Instructions)
 	}

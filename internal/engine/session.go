@@ -60,12 +60,16 @@ const (
 	// EventServedBlocks is a log written before the anchor proof: replay
 	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
-	// EventAnchors records the anchors a call issued for the pieces it served
-	// in full, with their challenges, the tags its proofs proved (Unproved)
-	// and the proofs its pointers spent, so a restarted server still checks
-	// their proofs (Piece). No instance: the served memory is session-level
-	// like the read set.
+	// EventAnchors is a log of the anchor proof, written before the text
+	// question: replay keeps only its pieces served once per change.
 	EventAnchors EventType = "anchors"
+	// EventTexts records the pieces a call served in full, each text with its
+	// content the first time, and the question its answer answered, so a
+	// restarted server still asks and checks (Session.RecordServed). No
+	// instance: the served memory is session-level like the read set.
+	EventTexts EventType = "texts"
+	// EventQuestion records the question a response ended with (Session.Ask).
+	EventQuestion EventType = "question"
 	// EventDeferred records that a serve of an instance left lanes waiting
 	// past the result bound, with the pieces it sent, or, with ended set, that
 	// the deferral is settled (Session.EndDeferral).
@@ -291,21 +295,21 @@ type Session struct {
 	// design: a parent's inspections count for children dispatched in the same
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
-	// anchors folds the anchor events: each issued tag with its piece and
-	// word. call is the tool call in flight; rnd draws tags and positions.
-	anchors map[string]issuedAnchor
+	// texts folds the texts events: each text served in full with its latest
+	// copy, numbered by copies. questions and asked fold the question
+	// events. call is the tool call in flight; rnd draws questions.
+	texts     map[Piece]*heldText
+	copies    int
+	questions []askedQuestion
+	asked     map[string]bool
 	// changed folds the content hash each piece that serves once per change
 	// last served under its name, per caller (changedKey).
 	changed map[string]string
 	// deferred folds the deferral events: per instance whose lanes wait, the
-	// pieces its serve sent, each under its tag and step (FollowDeferral).
-	deferred map[string]map[Piece]sentPiece
-	// unproved folds, per piece name, its newest serve in full that no proof
-	// followed, numbered by servedSeq (Unproved).
-	unproved  map[string]unprovedServe
-	servedSeq int
-	call      pieceCall
-	rnd       model.RandomSource
+	// pieces its serve sent, each by the step that sent it (FollowDeferral).
+	deferred map[string]map[Piece]string
+	call     pieceCall
+	rnd      model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -368,7 +372,6 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		now:         time.Now,
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
-		anchors:     map[string]issuedAnchor{},
 		received:    map[string]bool{},
 	}
 	for _, o := range opts {
@@ -1519,7 +1522,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		}
 
 	case EventAnchors:
-		s.foldAnchors(ev.Data)
+		s.foldLegacyAnchors(ev.Data)
+
+	case EventTexts:
+		s.foldTexts(ev.Data)
+
+	case EventQuestion:
+		s.foldQuestion(ev.Data)
 
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)

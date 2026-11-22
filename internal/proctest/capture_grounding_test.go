@@ -542,23 +542,12 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 			late := &model.Entry{ID: "20260603-090000-s-tac-lat", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 				Summary: "A gap that landed after the confirm.", Content: "A gap that landed after the confirm."}
 			proctest.WriteEntry(t, world.GraphDir, late)
-			err := session.WF.BeginCall(nil, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			proofs := model.ReadAnchors(session.WF.ServeEntry(late.ID, late.Content, nil))
-			err = session.WF.RecordAnchors(t.Context(), world.Identity)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = session.WF.BeginCall([]string{proofs[0].String()}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			session.WF.BeginCall("", nil)
+			session.WF.ServeEntry(late.ID, late.Content)
 
 			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
 			proctest.RequireStep(t, serve, "lateEntries")
-			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (held as tag "+proofs[0].Tag)
+			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (served in full")
 			if pointed != tc.cut {
 				t.Fatalf("the held late entry should list as its pointer only while cuts are on:\n%s", serve.Instructions)
 			}

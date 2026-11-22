@@ -8,7 +8,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/test"
 )
 
 // In an assisted session the agent drafts and checks a capture alone, as in
@@ -94,7 +93,7 @@ func TestAssisted_ThePlaybackShowsTheDraftedReason(t *testing.T) {
 		"For a draft that supersedes a directive, propose that directive's intent as your inference.",
 		"through the AskUserQuestion tool", "reason: " + assistedReason, "the drafted reason and a directive's intent with it",
 	} {
-		if !strings.Contains(test.Untagged(serve.Instructions), want) {
+		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the playback should say %q, got:\n%s", want, serve.Instructions)
 		}
 	}

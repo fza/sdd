@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/test"
 )
 
 // After an adjust the playback shows the person the change: guided with a
@@ -35,7 +34,7 @@ func TestCapture_PlaybackAfterAnAdjustShowsTheChange(t *testing.T) {
 			serve := session.Start(t, "capture", nil)
 			serve = session.Report(t, serve.Instance, captureDraft())
 			proctest.RequireStep(t, serve, "playback")
-			text := test.Untagged(serve.Instructions)
+			text := serve.Instructions
 			for _, want := range tt.want {
 				if !strings.Contains(text, want) {
 					t.Errorf("the playback should carry %q:\n%s", want, text)

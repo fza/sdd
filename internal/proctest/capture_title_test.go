@@ -6,7 +6,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/test"
 )
 
 // A capture writes the title from the summary call, the summary check shows
@@ -85,7 +84,7 @@ func TestCapture_SummaryCheckPairsEachSentenceWithTheBody(t *testing.T) {
 		"Answer faithful, with each summary sentence and the body sentence it rests on as the fidelity note.",
 		"Does the title claim anything the entry's text denies? Then it drifted.",
 	} {
-		if !strings.Contains(test.Untagged(serve.Instructions), want) {
+		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the summary check should carry %q:\n%s", want, serve.Instructions)
 		}
 	}

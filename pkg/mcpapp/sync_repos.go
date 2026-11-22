@@ -25,11 +25,10 @@ type RepoSyncResult struct {
 type SyncReposResult struct {
 	ResultNotices
 	Repos []RepoSyncResult `json:"repos"`
-	ResultProofNotice
 }
 
 func (s *toolSet) syncRepos(ctx context.Context, req *mcp.CallToolRequest, args SyncReposArgs) (*mcp.CallToolResult, SyncReposResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, SyncReposResult{}, err
 	}

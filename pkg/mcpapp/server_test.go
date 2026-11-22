@@ -2508,6 +2508,8 @@ func TestResumeServesPositionInFull(t *testing.T) {
 			t.Fatalf("resume %d: the in-flight move should re-serve at its step, got %+v", i, resumed.Open)
 		}
 		requireFullReportSchema(t, "resumed capture", capServe.ReportSchema)
+		// The question is drawn per response, its length with it.
+		resumed.Question = ""
 		size := jsonSize(t, resumed)
 		if i > 0 && size != prevSize {
 			t.Fatalf("resume %d: a reorientation is the same complete position every time, got %d bytes after %d", i, size, prevSize)
@@ -2543,13 +2545,13 @@ func serveSize(t *testing.T, v any) int {
 	return jsonSize(t, fields)
 }
 
-// TestServedMemoryIsPerAgentContext pins the served memory under the anchor
-// proof (d-cpt-aen): the session ledger keeps the
-// issued tags, but only a call proving a piece gets its pointer. The agent
-// context that received a serve gets pointers on any connection; a fresh
-// subagent presenting the same handle holds no tags and gets every piece in
-// full; a reorientation serves its position in full without voiding the
-// tags.
+// TestServedMemoryIsPerAgentContext pins the served memory under the text
+// question (d-cpt-aen, 20261121-230157-d-tac-ym8): the session ledger keeps
+// the served texts and the questions asked, but only a call answering one
+// right gets pointers. The agent context that received a serve gets pointers
+// on any connection; a fresh subagent presenting the same handle answers lost
+// and gets every piece in full; a reorientation serves its position in full,
+// and the first agent's next right answer still gets the short forms.
 func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
@@ -2577,13 +2579,15 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 		t.Fatalf("the identical unit should point at what the agent holds, got %q", same.Instructions)
 	}
 
-	// A fresh subagent sharing the handle holds no tags; caller marks it as a
-	// caller the session has not served.
+	// A fresh subagent sharing the handle saw no question and answers lost;
+	// caller marks it as a caller the session has not served the framing.
 	subagent := newAgentMemory()
-	subagent.raw = true
 	csSub := connectAs(t, env.srv, subagent)
 	var fresh mcpserver.ServeResult
 	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "caller": "subagent"}, &fresh)
+	if subagent.answers[0] != "lost" {
+		t.Fatalf("precondition: a fresh subagent answers lost, got %q", subagent.answers[0])
+	}
 	if !strings.Contains(fresh.Framing, "## Working principles") || !strings.Contains(fresh.Instructions, "Existing topics:") {
 		t.Fatalf("a fresh subagent marked by caller should get the framing and the unit in full, got framing %q", fresh.Framing)
 	}
@@ -2606,20 +2610,18 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	resumedCapture := openServe(t, resumed, "capture")
 	requireFullReportSchema(t, "resumed capture", resumedCapture.ReportSchema)
 
-	// The first agent's tags still prove what it holds.
+	// The first agent's answer to its own open question still holds.
 	var third mcpserver.ServeResult
 	call(t, csA, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &third)
-	// A short block's or the schema's few challenges may be spent by now and
-	// serve it in full; the long principles block still has proofs left.
-	if strings.Contains(third.Framing, "## Working principles") {
-		t.Fatalf("the agent's proofs should outlast another context's reorientation, got %q", third.Framing)
+	if !onlyHeldLine(third.Framing) {
+		t.Fatalf("the first agent's right answer should outlast another context's reorientation, got %q", third.Framing)
 	}
+	requireStubReportSchema(t, "capture of the first agent after the subagent", third.ReportSchema)
 }
 
-// onlyHeldLine reports whether a serve repeats no held section: nothing but
-// the held line naming each piece's next proof, and at most a short block
-// such as the graph health line, whose few challenges a session spends, so it
-// serves in full again. A section opens with a "## " heading or a table row.
+// onlyHeldLine reports whether a serve repeats no held section, at most a
+// short block such as the graph health line. A section opens with a "## "
+// heading or a table row.
 func onlyHeldLine(served string) bool {
 	for line := range strings.SplitSeq(served, "\n") {
 		if strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "| ") {
@@ -2629,9 +2631,9 @@ func onlyHeldLine(served string) bool {
 	return true
 }
 
-// TestServedMemorySurvivesServerRestart: the ledger carries the issued tags,
-// so a second server over the same store points at what the agent proves it
-// holds, without any reorientation in between.
+// TestServedMemorySurvivesServerRestart: the ledger carries the served texts
+// and the questions asked, so a second server over the same store points at
+// what a right answer proves the agent holds, without any reorientation.
 func TestServedMemorySurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
@@ -2654,11 +2656,11 @@ func TestServedMemorySurvivesServerRestart(t *testing.T) {
 	}
 }
 
-// TestCompactionLosesEveryProof: an agent whose proofs are gone, as after a
-// lossy compaction, gets every proved piece in full on its next call; the
-// framing, which asks no proof, comes again only when it changes or on
-// resume_session (20261121-233256-d-tac-mm2).
-func TestCompactionLosesEveryProof(t *testing.T) {
+// TestCompactionAnswersLost: an agent whose texts are gone, as after a lossy
+// compaction, answers lost and gets every piece the answer gates in full on
+// its next call; the framing, which no answer gates, comes again only when it
+// changes or on resume_session (20261121-233256-d-tac-mm2).
+func TestCompactionAnswersLost(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
 	cs := connectAs(t, env.srv, agent)
@@ -2670,9 +2672,9 @@ func TestCompactionLosesEveryProof(t *testing.T) {
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
 	if second.Framing != "" || !strings.Contains(second.Instructions, "Existing topics:") {
-		t.Fatalf("an agent without its proofs should get the unit in full and no unchanged framing block, got framing %q and %q", second.Framing, second.Instructions)
+		t.Fatalf("an agent answering lost should get the unit in full and no unchanged framing block, got framing %q and %q", second.Framing, second.Instructions)
 	}
-	requireFullReportSchema(t, "capture after the proofs were lost", second.ReportSchema)
+	requireFullReportSchema(t, "capture after a lost answer", second.ReportSchema)
 }
 
 // TestShellComposedFraming pins the framing composition (I6, A1): the engine
@@ -3239,9 +3241,10 @@ func TestEmbeddedEngageExploreProcedures(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "overview: what surrounds the oscillation gap") {
 		t.Fatalf("inspect unit should carry the goal verbatim, got %q", serve.Instructions)
 	}
-	// The engage brief served the target in full, so the chain points at it.
-	if !strings.Contains(serve.Instructions, fixtureGapID+" — ") || !strings.Contains(serve.Instructions, pointerMark) {
-		t.Fatalf("inspect unit should serve the target chains, pointing at the target engage served, got %q", serve.Instructions)
+	// The engage brief served the target in an earlier call, so the chain
+	// serves it in full again.
+	if !strings.Contains(serve.Instructions, "on identical input") {
+		t.Fatalf("inspect unit should serve the target chains in full, got %q", serve.Instructions)
 	}
 	exploreInstance := serve.Instance
 

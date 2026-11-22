@@ -6,7 +6,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/test"
 )
 
 // The verifier marks a finding on facts only the user knows as the user's,
@@ -18,7 +17,7 @@ func TestCaptureDeep_TheVerifierGivesFactsOnlyTheUserKnowsToTheUser(t *testing.T
 	for range 20 {
 		serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
 		proctest.RequireStep(t, serve, "read")
-		text := test.Untagged(serve.Instructions)
+		text := serve.Instructions
 		if strings.Contains(text, "Every page is served.") {
 			if !strings.Contains(text, want) {
 				t.Fatalf("the verifier's judge guidance should carry %q:\n%s", want, text)
@@ -48,7 +47,7 @@ func TestCaptureDeep_AHeldContestReachesTheUserAfterAnAccept(t *testing.T) {
 	proctest.RequireStep(t, x.pickUpFindings(t), "deepProposal")
 	serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "]: contested, and the verifier holds it\n  the drafter: the title names the subject\n  the verifier: the body still names none\n") {
+	if text := serve.Instructions; !strings.Contains(text, "]: contested, and the verifier holds it\n  the drafter: the title names the subject\n  the verifier: the body still names none\n") {
 		t.Fatalf("deepUser should carry the held point:\n%s", text)
 	}
 }
@@ -67,7 +66,7 @@ func TestCaptureDeep_AnOpenPointGoesToTheUserByItsLabel(t *testing.T) {
 	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	text := test.Untagged(serve.Instructions)
+	text := serve.Instructions
 	for _, want := range []string{
 		"- f1 [medium, aspiration]: only the user can settle it\n",
 		"ask in plain words whether the draft stands as it is, what to change, or whether to drop the capture.",

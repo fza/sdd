@@ -13,7 +13,6 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
-	"github.com/networkteam/sdd/test"
 )
 
 // A verifier's reading is kept whole and cut into pages as each page is
@@ -69,11 +68,11 @@ func TestAVerifierReadingIsPagedForTheCallingHost(t *testing.T) {
 	var page mcpserver.ServeResult
 	for turned := 1; turned < large; turned++ {
 		page = verifyTurn(t, claudeCode, child, verify, "more")
-		if want := fmt.Sprintf("Page %d of %d.", turned+1, large); !strings.Contains(test.Untagged(page.Instructions), want) {
+		if want := fmt.Sprintf("Page %d of %d.", turned+1, large); !strings.Contains(page.Instructions, want) {
 			t.Fatalf("each turn should serve the next of Claude Code's pages, want %q in %.300q", want, page.Instructions)
 		}
 	}
-	if !strings.Contains(test.Untagged(page.Instructions), "Every page is served.") {
+	if !strings.Contains(page.Instructions, "Every page is served.") {
 		t.Fatalf("the last page should say every page is served, got %.300q", page.Instructions)
 	}
 
@@ -82,7 +81,7 @@ func TestAVerifierReadingIsPagedForTheCallingHost(t *testing.T) {
 		t.Fatalf("a verdict from a host of another page size should be refused until its pages are served, got %.300q", text)
 	}
 	page = verifyTurn(t, other, child, verify, "more")
-	if text := test.Untagged(page.Instructions); !strings.Contains(text, "starts again") || !strings.Contains(text, fmt.Sprintf("Page 1 of %d.", small)) {
+	if text := page.Instructions; !strings.Contains(text, "starts again") || !strings.Contains(text, fmt.Sprintf("Page 1 of %d.", small)) {
 		t.Fatalf("a turn from a host of another page size should start the reading again at its page 1, got %.300q", page.Instructions)
 	}
 }
@@ -96,7 +95,7 @@ func firstPageCount(t *testing.T, cs *mcp.ClientSession, child string) int {
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": child}, &resumed)
 	for _, open := range resumed.Open {
-		if match := pageNote.FindStringSubmatch(test.Untagged(open.Instructions)); match != nil {
+		if match := pageNote.FindStringSubmatch(open.Instructions); match != nil {
 			count, err := strconv.Atoi(match[1])
 			if err != nil {
 				t.Fatal(err)

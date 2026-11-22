@@ -56,9 +56,7 @@ func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error
 // with default options under r's no-repeat rule, without the trailing newline.
 func ShowText(entries []types.ShownEntry, r *Repeats) (string, error) {
 	var rendered strings.Builder
-	err := RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) error {
-		return RenderShow(w, entries, ShowOptions{Repeats: r})
-	})
+	err := RenderShow(&rendered, entries, ShowOptions{Repeats: r})
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +78,7 @@ func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) erro
 	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, opts.Repeats.anchor(entry.ID, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel)))
+	fmt.Fprintln(w, opts.Repeats.serve(entry.ID, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel)))
 	renderShowChains(w, entry, opts)
 	return nil
 }

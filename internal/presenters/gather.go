@@ -11,16 +11,14 @@ import (
 
 // GatherWayBack is the call a pointer names to have an entry served in full
 // again.
-const GatherWayBack = "show or gather with its id and its tag left out of held"
+const GatherWayBack = "show with its id"
 
 // RenderGather writes a gather serve: header, the entries served in full,
 // the candidate lines and the entries set aside. Nothing is cut:
 // every list prints whole, and what the full block leaves out is named with
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
-	return RenderWithin(w, &Repeats{Held: result.Held, Anchor: result.Anchor}, func(w io.Writer, repeats *Repeats) error {
-		return renderGather(w, result, repeats)
-	})
+	return renderGather(w, result, &Repeats{Held: result.Held, Served: result.Served})
 }
 
 func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) error {
@@ -128,9 +126,9 @@ func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, repeats
 	repeats.WriteWayBack(w)
 }
 
-// GatherPointer is the pointer an entry held under tag prints as.
-func GatherPointer(e *model.Entry, tag string) string {
-	return pointerText(e.ID, model.EntryBrief(e), tag, "")
+// GatherPointer is the pointer a held entry prints as.
+func GatherPointer(e *model.Entry) string {
+	return pointerText(e.ID, model.EntryBrief(e))
 }
 
 func gatherLine(g *model.Graph, candidate model.GatherCandidate, r *Repeats) string {
