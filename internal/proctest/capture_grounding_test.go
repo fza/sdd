@@ -613,3 +613,20 @@ func answerMarked(text string, fields map[string]any) map[string]any {
 	}
 	return fields
 }
+
+// Inside a begun reading, a check naming only IDs opens those entries in
+// full and runs no search, listing or judge call.
+func TestCaptureGrounding_OpeningByIDRunsNothingElse(t *testing.T) {
+	scorer := &countingScorer{score: 0.25}
+	_, session := newCaptureWorld(t, "grounding-open",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "topics": []any{"cli/ux"}})
+	session.Gather(t, instance)
+	paid := scorer.scored
+	opened := session.Gather(t, instance, captureRef2ID, captureRefID)
+	if scorer.scored != paid || len(opened.FullIDs) != 2 || len(opened.SummaryIDs) != 0 || strings.Contains(opened.Text, "reads: ") {
+		t.Fatalf("full %v, lines %v, %d judge calls: opening by ID should serve both entries and run nothing else:\n%s", opened.FullIDs, opened.SummaryIDs, scorer.scored-paid, opened.Text)
+	}
+}
