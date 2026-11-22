@@ -290,8 +290,10 @@ type Session struct {
 	// changed folds the content hash each piece that serves once per change
 	// last served under its name.
 	changed map[string]string
-	call    pieceCall
-	rnd     model.RandomSource
+	// onceTexts folds the text of each content those pieces served.
+	onceTexts map[Piece]string
+	call      pieceCall
+	rnd       model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error

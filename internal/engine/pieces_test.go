@@ -256,6 +256,32 @@ func TestTextsAndQuestionsSurviveARestart(t *testing.T) {
 	}
 }
 
+func TestNoQuestionPhraseOccursInATextServedOncePerChange(t *testing.T) {
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	session.BeginCall("", nil)
+	session.ServeChanged(engine.Piece{Name: "framing principles", Hash: "f1"}, stepText)
+	serve(session, stepLane, stepText)
+	session.RecordServed()
+	if q := session.Ask(); q != "" {
+		t.Errorf("a question's phrase should occur in no other text served, got %q", q)
+	}
+
+	events, err := engine.ReadEvents(&log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).
+		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed.BeginCall("", nil)
+	if q := replayed.Ask(); q != "" {
+		t.Errorf("after a restart, a question's phrase should still occur in no other text served, got %q", q)
+	}
+}
+
 func TestDropPiecesSinceWithdrawsWhatACutKeptFromTheAgent(t *testing.T) {
 	session := newPieceSession(nil)
 	session.BeginCall("", nil)
