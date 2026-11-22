@@ -23,15 +23,16 @@ import (
 type Purpose string
 
 const (
-	PurposePreflight    Purpose = "preflight"
-	PurposeSummarize    Purpose = "summarize"
-	PurposeWritingGuide Purpose = "writing-guide"
 	// PurposeGatherQuery writes the semantic query and the keyword terms a
 	// grounding reading runs for a draft.
 	PurposeGatherQuery Purpose = "gather-query"
 	// PurposeRelevance rates one candidate entry against a draft for the
 	// grounding prefilter's generate bridge.
 	PurposeRelevance Purpose = "relevance"
+
+	PurposePreflight    Purpose = "preflight"
+	PurposeSummarize    Purpose = "summarize"
+	PurposeWritingGuide Purpose = "writing-guide"
 	// The extract purposes name the second call a JSON-shaped check makes
 	// when its first response does not parse. They are their own purposes so
 	// a host can route and bound them apart, and so the stats sink separates
@@ -145,5 +146,25 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error {
+	return e.Err
+}
+
+// MalformedAnswerError reports an answer the provider delivered but the
+// implementation rejected, because it does not match the response shape the
+// call asked for. Text carries the rejected answer so a caller may ask for a
+// reformat of it; it is never a result.
+type MalformedAnswerError struct {
+	Text string
+	Err  error
+}
+
+func (e *MalformedAnswerError) Error() string {
+	if e.Err == nil {
+		return "malformed answer"
+	}
+	return e.Err.Error()
+}
+
+func (e *MalformedAnswerError) Unwrap() error {
 	return e.Err
 }
