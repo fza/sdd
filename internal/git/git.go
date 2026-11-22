@@ -50,7 +50,7 @@ func (c CLI) env() []string {
 	if c.Dir == "" {
 		return nil
 	}
-	return pathEnv(nil)
+	return pathEnv()
 }
 
 // command builds a git command for this adapter's repository.
@@ -267,7 +267,7 @@ func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
 
 func (Repositories) Init(dir string) error {
 	cmd := exec.Command("git", "init", "--quiet", dir)
-	cmd.Env = pathEnv(nil)
+	cmd.Env = pathEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
@@ -276,10 +276,10 @@ func (Repositories) Init(dir string) error {
 }
 
 func (Repositories) CurrentBranch(dir string) (string, error) {
-	return currentBranch(dir, pathEnv(nil))
+	return currentBranch(dir, pathEnv())
 }
 
-func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv(nil)) }
+func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
 
 // existingAncestor returns path, or the closest ancestor that exists on disk;
 // for a file, the folder holding it, so a graph_dir naming a file lies in the
