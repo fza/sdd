@@ -31,7 +31,6 @@ const (
 )
 
 const (
-	globalOnlyReason    = "only the user-global config may set it"
 	gitLimitsHostsKey   = "sync.hosts"
 	gitLimitsDefaultKey = "sync.default"
 )
@@ -273,14 +272,33 @@ func hostLimits(hosts map[string]GitLimitsConfig, host string) (string, GitLimit
 	return "", GitLimitsConfig{}, false
 }
 
+// Git limits are set only in the user-global config.
+func init() {
+	ignoredSettingRules = append(ignoredSettingRules, func(layer BaseConfig, source ConfigValueSource) []IgnoredSetting {
+		if source == ConfigSourceGlobal {
+			return nil
+		}
+		return misplacedGitLimits(layer.Sync)
+	})
+	strip := func(cfg *PerRepoConfig) bool {
+		if len(misplacedGitLimits(cfg.Sync)) == 0 {
+			return false
+		}
+		*cfg = withoutGitLimits(*cfg)
+		return true
+	}
+	committedStrips = append(committedStrips, strip)
+	localStrips = append(localStrips, strip)
+}
+
 // misplacedGitLimits reports the git limits a project config layer carries.
 func misplacedGitLimits(sync SyncConfig) []IgnoredSetting {
 	var ignored []IgnoredSetting
 	if !sync.Default.isZero() {
-		ignored = append(ignored, IgnoredSetting{Key: gitLimitsDefaultKey, Reason: globalOnlyReason})
+		ignored = append(ignored, IgnoredSetting{Key: gitLimitsDefaultKey, Reason: globalOnly.reason()})
 	}
 	if len(sync.Hosts) > 0 {
-		ignored = append(ignored, IgnoredSetting{Key: gitLimitsHostsKey, Reason: globalOnlyReason})
+		ignored = append(ignored, IgnoredSetting{Key: gitLimitsHostsKey, Reason: globalOnly.reason()})
 	}
 	return ignored
 }

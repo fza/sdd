@@ -204,37 +204,10 @@ const (
 	SyncModeAuto   SyncMode = "auto"
 )
 
-// IgnoredSetting is a setting a config layer carries that sdd reads past: a
-// key that layer may not set.
-type IgnoredSetting struct {
-	Key    string
-	Reason string
-}
-
 // RetiredConfigKeys are keys sdd no longer uses, each with what replaced it.
 // Reading them stays tolerant; `sdd config set` refuses them.
 var RetiredConfigKeys = map[string]string{
 	"sync.cooldown": "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config",
-}
-
-// IgnoredSettings returns the settings in one config layer that sdd reads
-// past. source names the layer: global, project (the shared
-// .sdd/config.yaml) or local.
-func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSetting {
-	if source == ConfigSourceGlobal {
-		return nil
-	}
-	return misplacedGitLimits(layer.Sync)
-}
-
-// HonoredCommitted returns the committed layer without the settings only the
-// user-global config may make.
-func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || len(misplacedGitLimits(committed.Sync)) == 0 {
-		return committed
-	}
-	honored := withoutGitLimits(*committed)
-	return &honored
 }
 
 // withoutGitLimits drops the git limits, which only the user-global config
