@@ -50,7 +50,7 @@ In practice it often works better to avoid compaction in long work. Capture the 
 
 ## Resume a session in a fresh agent session
 
-A session you did not wrap up stays open. In a new agent session, give the agent the session ID and ask it to resume that session. It receives the open moves at their current steps and can continue an unfinished capture or implementation where the old conversation stopped. Ask your agent for the session ID before you close a conversation you may want to continue.
+A session you did not wrap up stays open. In a new agent session, give the agent the session ID and ask it to resume that session. It receives the open moves at their current steps and can continue an unfinished capture or implementation where the old conversation stopped. Where a move has ended, the resume also names the last one and how it ended, for example `Last ended move: capture i_3 (abandoned)`; the other outcomes are `completed` and `cancelled`. Ask your agent for the session ID before you close a conversation you may want to continue.
 
 A session stays with the sdd build that opened it. Upstream sdd skips a session this build opened as unreadable. A session upstream sdd opened resumes here, but a move it started, such as a capture, offers only `abandon`: start the move anew afterwards. Moves you start in that session continue as usual.
 
