@@ -641,9 +641,9 @@ func preflightRaised(store *engine.Store) string {
 }
 
 // deepReading pages lead and rules with the entries placed serves in full,
-// then the briefs, each set-aside with its code, a closed brief beside its
-// closer short, then one closing block listing the rest; it leaves out what
-// skip holds already, and names what it serves.
+// then one closing block listing the rest, an entry the drafter dismissed
+// with its verdict's code; it leaves out what skip holds already, and names
+// what it serves.
 func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld, placed verifierPlaced) ([]model.DeepReadingPage, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
@@ -657,7 +657,6 @@ func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage
 	for _, id := range skip.Listed {
 		heldAny[id] = true
 	}
-	inReading := maps.Clone(heldAny)
 	var served deepHeld
 	codes := map[string]string{}
 	for _, verdict := range storeVerdicts(ctx.Store) {
@@ -672,33 +671,22 @@ func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage
 	}
 	seen := map[string]bool{}
 	var first, rest []model.DeepReadingBlock
-	block := func(id string, role model.LightRole, full bool) (model.DeepReadingBlock, bool) {
+	block := func(id string, role model.LightRole) (model.DeepReadingBlock, bool) {
 		e, ok := graph.ByID[id]
 		if !ok || seen[id] {
 			return model.DeepReadingBlock{}, false
 		}
 		seen[id] = true
-		if (full && heldFull[id]) || (!full && heldAny[id]) {
+		if heldFull[id] {
 			return model.DeepReadingBlock{}, false
 		}
-		if full {
-			served.Full = append(served.Full, id)
-		} else {
-			served.Listed = append(served.Listed, id)
-		}
+		served.Full = append(served.Full, id)
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
 		} else if shown[id] && role != "declared target" && role != model.LightRoleFull {
 			role = model.LightRoleImplicit
 		}
-		return llmops.DeepReadingBlock(graph, e, role, codes[id], full, func(id string) bool { return inReading[id] }), true
-	}
-	for _, ids := range [][]string{deepTargets(ctx.Store), reading.full, reading.listed} {
-		for _, id := range ids {
-			if graph.ByID[id] != nil {
-				inReading[id] = true
-			}
-		}
+		return llmops.DeepReadingBlock(graph, e, role, codes[id]), true
 	}
 	slots := placed.slots
 	lead += llmops.DeepRankingNote(model.VerifierRankingSources(slots, placed.input), placed.judge, placed.input.Widened)
@@ -710,24 +698,16 @@ func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage
 			if !seen[slot.ID] && !heldAny[slot.ID] {
 				counted++
 			}
-		case model.VerifierPlaceFull, model.VerifierPlaceBrief:
+		case model.VerifierPlaceFull:
 			role := model.LightRole(slot.Role)
-			switch slot.Role {
-			case model.VerifierRoleRead:
+			if slot.Role == model.VerifierRoleRead {
 				role = model.LightRoleFull
-			case model.VerifierRoleVerdict:
-				role = model.LightRoleBrief
 			}
-			full := slot.Place == model.VerifierPlaceFull
-			served, ok := block(slot.ID, role, full)
+			served, ok := block(slot.ID, role)
 			if !ok {
 				continue
 			}
-			if full {
-				first = append(first, served)
-			} else {
-				rest = append(rest, served)
-			}
+			first = append(first, served)
 		default:
 			if seen[slot.ID] || heldAny[slot.ID] {
 				continue
@@ -737,8 +717,18 @@ func deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage
 			if slot.Hidden {
 				served.Hidden = append(served.Hidden, slot.ID)
 			}
-			_, aside := codes[slot.ID]
-			lines = append(lines, llmops.DeepListedLine{Entry: graph.ByID[slot.ID], Summary: slot.Place == model.VerifierPlaceSummary, Hidden: slot.Hidden, Implicit: shown[slot.ID] && !aside})
+			e := graph.ByID[slot.ID]
+			line := llmops.DeepListedLine{Entry: e, Summary: slot.Place == model.VerifierPlaceSummary, Hidden: slot.Hidden}
+			if code, aside := codes[slot.ID]; aside {
+				line.Dismissed, line.Status = code, graph.DerivedStatus(e)
+				if score, scored := placed.input.Scores[slot.ID]; scored {
+					value := model.ScoreValue(score)
+					line.Score = &value
+				}
+			} else {
+				line.Implicit = shown[slot.ID]
+			}
+			lines = append(lines, line)
 		}
 	}
 	if len(lines) > 0 || counted > 0 {

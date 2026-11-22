@@ -127,8 +127,8 @@ func TestDeepReadingHeader(t *testing.T) {
 	}
 }
 
-// A closed brief beside its closer comes short, its brief kept; served in
-// full, or with its closer outside the reading, it keeps its whole block.
+// A block of the deep reading serves its entry in full, a closed one beside
+// its closer too: the header with the role and code, then the body.
 func TestDeepReadingBlock(t *testing.T) {
 	closed := readingEntry("20261101-090000-s-tac-cls", "The writer drops attachments.", "The closed gap's body.", "capture/attachments")
 	closed.Title = "Attachments dropped"
@@ -136,39 +136,29 @@ func TestDeepReadingBlock(t *testing.T) {
 	closer.Kind = model.KindDone
 	closer.Closes = []string{closed.ID}
 	graph := lightGraph(t, closed, closer)
-	whole := llmops.DeepReadingHeader(graph, closed, model.LightRoleBrief, "")
-	inReading := func(id string) bool { return id == closed.ID || id == closer.ID }
-	elsewhere := func(id string) bool { return id == closed.ID }
 	for _, tc := range []struct {
 		name string
 		role model.LightRole
 		code string
-		full bool
-		held func(string) bool
-		want string
 	}{
-		{name: "brief beside its closer", role: model.LightRoleBrief, held: inReading,
-			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\n\nAttachments dropped"},
-		{name: "set aside beside its closer", role: model.LightRoleSetAside, code: model.VerdictCovered, held: inReading,
-			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\nRole in the reading: set aside (code: " + model.VerdictCovered + ")\n\nAttachments dropped"},
-		{name: "read in full", role: model.LightRoleFull, full: true, held: inReading,
-			want: "---\n\n" + llmops.DeepReadingHeader(graph, closed, model.LightRoleFull, "") + "\nThe closed gap's body."},
-		{name: "closer outside the reading", role: model.LightRoleBrief, held: elsewhere,
-			want: "---\n\n" + whole + "\nAttachments dropped"},
+		{name: "read in full", role: model.LightRoleFull},
+		{name: "read in full and set aside", role: model.LightRoleSetAside, code: model.VerdictCovered},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			block := llmops.DeepReadingBlock(graph, closed, tc.role, tc.code, tc.full, tc.held)
-			if block.ID != closed.ID || block.Text != tc.want {
-				t.Errorf("the block should come short only for a brief whose closer the reading holds, got:\n%s", block.Text)
+			block := llmops.DeepReadingBlock(graph, closed, tc.role, tc.code)
+			want := "---\n\n" + llmops.DeepReadingHeader(graph, closed, tc.role, tc.code) + "\nThe closed gap's body."
+			if block.ID != closed.ID || block.Text != want {
+				t.Errorf("the block should hold the entry's header and body, got:\n%s", block.Text)
 			}
 		})
 	}
 }
 
 // The closing block lists the next-ranked by title and first summary
-// sentence, the rest by title, grouped under one heading each: the implicit
-// dismissals, then the entries below the prefilter's threshold, then the
-// others, in rank order within a group.
+// sentence, the rest by title, grouped under one heading each: the drafter's
+// dismissals with score, code and status, the implicit dismissals, then the
+// entries below the prefilter's threshold, then the others, in rank order
+// within a group.
 func TestDeepListedBlock_GroupsTheLinesUnderHeadings(t *testing.T) {
 	summary := readingEntry("20261101-090000-s-tac-sum", "Shown and left unanswered. More words after.", "Body.", "capture/attachments")
 	summary.Title = "Unanswered entry"
@@ -177,15 +167,25 @@ func TestDeepListedBlock_GroupsTheLinesUnderHeadings(t *testing.T) {
 	hidden := readingEntry("20261101-110000-s-tac-hid", "Below the threshold.", "Body.", "capture/attachments")
 	both := readingEntry("20261101-120000-s-tac-bth", "Unanswered and below.", "Body.", "capture/attachments")
 	other := readingEntry("20261101-130000-s-tac-oth", "Another listed one.", "Body.", "capture/attachments")
+	dismissed := readingEntry("20261101-140000-s-tac-dis", "Dismissed by the drafter. More words after.", "Body.", "capture/attachments")
+	dismissed.Title = "Dismissed entry"
+	unjudged := readingEntry("20261101-150000-s-tac-unj", "Dismissed and never scored.", "Body.", "capture/attachments")
+	score := 0.86
 	block := llmops.DeepListedBlock([]llmops.DeepListedLine{
 		{Entry: summary, Summary: true, Implicit: true},
 		{Entry: titled},
+		{Entry: dismissed, Dismissed: model.VerdictTopicOnly, Score: &score, Status: model.Status{Kind: model.StatusOpen}},
 		{Entry: hidden, Hidden: true},
 		{Entry: both, Hidden: true, Implicit: true},
+		{Entry: unjudged, Dismissed: model.VerdictCovered, Status: model.Status{Kind: model.StatusClosedBy, By: other.ID}},
 		{Entry: other},
 	}, 7)
 	_, lines, _ := strings.Cut(block.Text, "a finding may rest on it.\n\n")
-	want := "Shown to the capture and left unanswered (implicitly dismissed):\n" +
+	want := "Dismissed by the drafter:\n" +
+		"  .86 drafter: dismissed, topic-only  " + dismissed.ID + " {open}  Dismissed entry\n" +
+		"      Dismissed by the drafter.\n" +
+		"  ?   drafter: dismissed, covered  " + unjudged.ID + " {closed-by " + other.ID + "}  Dismissed and never scored.\n" +
+		"\nShown to the capture and left unanswered (implicitly dismissed):\n" +
 		summary.ID + "  Unanswered entry: Shown and left unanswered.\n" +
 		both.ID + "  Unanswered and below.\n" +
 		"\nBelow the prefilter's threshold:\n" +
@@ -194,7 +194,7 @@ func TestDeepListedBlock_GroupsTheLinesUnderHeadings(t *testing.T) {
 		titled.ID + "  Title only\n" +
 		other.ID + "  Another listed one.\n" +
 		"\n7 more listed, open with search or show"
-	if block.ID != llmops.DeepListedID || lines != want || !strings.Contains(block.Text, "## Listed, not served (5)") {
+	if block.ID != llmops.DeepListedID || lines != want || !strings.Contains(block.Text, "## Listed, not served (7)") {
 		t.Errorf("each entry should keep one line of its tier in its group, got:\n%s", block.Text)
 	}
 }
