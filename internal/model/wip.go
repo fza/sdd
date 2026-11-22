@@ -50,7 +50,7 @@ func ParseWIPMarker(filename, content string) (*WIPMarker, error) {
 	if len(id) < 16 { // at least timestamp + dash + one char participant
 		return nil, fmt.Errorf("marker ID too short: %q", id)
 	}
-	t, err := time.Parse("20060102-150405", id[:15])
+	t, err := time.ParseInLocation("20060102-150405", id[:15], time.Local)
 	if err != nil {
 		return nil, fmt.Errorf("parsing time from marker %q: %w", id, err)
 	}
