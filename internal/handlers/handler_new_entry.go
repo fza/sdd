@@ -280,8 +280,8 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// the error propagates (durable but loud). See d-tac-zhp.
 	if h.committer != nil {
 		msg := entry.CaptureCommitMessage()
-		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
-			return errors.Join(fmt.Errorf("git commit: %w", err), summaryFailure(id, describeErr))
+		if err := h.commitGraphOrFail(ctx, msg, commitPaths...); err != nil {
+			return errors.Join(err, summaryFailure(id, describeErr))
 		}
 	}
 	return summaryFailure(id, describeErr)

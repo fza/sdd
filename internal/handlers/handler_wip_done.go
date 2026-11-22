@@ -45,8 +45,8 @@ func (h *Handler) FinishWIP(ctx context.Context, cmd *command.FinishWIPCmd) erro
 	// a commit failure surfaces as an error rather than being swallowed — see d-tac-zhp.
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: wip done %s", cmd.MarkerID)
-		if err := h.commitGraph(ctx, msg, markerPath); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+		if err := h.commitGraphOrFail(ctx, msg, markerPath); err != nil {
+			return err
 		}
 	}
 

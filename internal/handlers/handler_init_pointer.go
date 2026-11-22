@@ -198,9 +198,9 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		return record.clear()
 	}
 	*changed = true
-	err = h.commitGraph(ctx, commitMessage, commitPaths...)
+	err = h.commitUnderGraphLock(ctx, commitMessage, commitPaths...)
 	if err != nil {
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}
-	return record.clear()
+	return errors.Join(h.afterGraphCommit(ctx, commitMessage), record.clear())
 }

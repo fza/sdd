@@ -58,8 +58,8 @@ func (h *Handler) CommitStrandedTitles(ctx context.Context, cmd *command.CommitS
 	if len(stranded) == 0 {
 		return nil
 	}
-	if err := h.commitGraph(ctx, fmt.Sprintf("sdd: commit %d stranded titles", len(stranded)), stranded...); err != nil {
-		return fmt.Errorf("git commit: %w", err)
+	if err := h.commitGraphOrFail(ctx, fmt.Sprintf("sdd: commit %d stranded titles", len(stranded)), stranded...); err != nil {
+		return err
 	}
 	if cmd.OnCommitted != nil {
 		cmd.OnCommitted(len(stranded))
