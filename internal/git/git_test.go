@@ -312,6 +312,8 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 			commitErr := (CLI{Dir: sidecar}).Commit("sdd: capture", entry)
 			branch, branchErr := (Repositories{}).CurrentBranch(sidecar)
 			remote := (Repositories{}).RemoteURL(sidecar)
+			exportedBranch, exportedBranchErr := CurrentBranch(sidecar)
+			exportedRemote := RemoteURL(sidecar)
 			if err := os.Unsetenv("GIT_DIR"); err != nil {
 				t.Fatal(err)
 			}
@@ -337,6 +339,12 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 			}
 			if remote != "https://example.test/sidecar.git" {
 				t.Errorf("RemoteURL should read the repository at the path, got %q", remote)
+			}
+			if exportedBranchErr != nil || exportedBranch != "graph-line" {
+				t.Errorf("git.CurrentBranch should read the repository at the path, got %q (%v)", exportedBranch, exportedBranchErr)
+			}
+			if exportedRemote != "https://example.test/sidecar.git" {
+				t.Errorf("git.RemoteURL should read the repository at the path, got %q", exportedRemote)
 			}
 		})
 	}
