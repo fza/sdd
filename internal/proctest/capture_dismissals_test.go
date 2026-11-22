@@ -152,15 +152,15 @@ func TestCaptureDismissals_LightReadingMarksImplicitDismissals(t *testing.T) {
 	}
 }
 
-// The assemble instructions ask a ref or a verdict only of an entry served in
-// full; a candidate line owes neither.
-func TestCaptureDismissals_AssembleOwesAVerdictOnlyForEntriesServedInFull(t *testing.T) {
+// The assemble instructions ask a verdict or a ref only of a line marked
+// likely bearing (20261121-223938-d-tac-rqi); any other line owes neither.
+func TestCaptureDismissals_AssembleOwesAVerdictOnlyForMarkedLines(t *testing.T) {
 	_, session := newGroundingWorld(t, "dismissals-served")
 	serve := session.Start(t, "capture", nil)
 	proctest.RequireStep(t, serve, "assemble")
 	instructions := serve.Instructions
-	if !strings.Contains(instructions, "an entry served in full needs a ref or a verdict in `verdicts`") || !strings.Contains(instructions, "A candidate line owes neither") {
-		t.Fatalf("the assemble step should owe a verdict only for an entry served in full:\n%s", serve.Instructions)
+	if !strings.Contains(instructions, "a line marked `!` needs a verdict in `verdicts`") || !strings.Contains(instructions, "Any other line owes neither") {
+		t.Fatalf("the assemble step should owe a verdict only for a marked line:\n%s", serve.Instructions)
 	}
 	if strings.Contains(instructions, "every entry shown ends") {
 		t.Fatalf("the assemble step should not ask a state of every entry shown:\n%s", serve.Instructions)
