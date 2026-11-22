@@ -46,17 +46,18 @@ func linkTo(t *testing.T, id string, earlier loggedSession) loggedSession {
 		t.Fatal("a session that served texts should hold a record of them")
 	}
 	linked := newLoggedSession(t, id)
-	linked.Link(earlier.ID, carried)
+	linked.Link(earlier.ID, carried, engine.AuthoredTexts(earlier.events(t)))
 	return linked
 }
 
+// questionName is the text a response's first question asks about.
 func questionName(t *testing.T, line string) string {
 	t.Helper()
-	name, _, ok := test.LastQuestion(line)
-	if !ok {
+	questions := test.Questions(line)
+	if len(questions) == 0 {
 		t.Fatalf("a response should end with a question, got %q", line)
 	}
-	return name
+	return questions[0].Name
 }
 
 func TestLostEmptiesTheHeldSet(t *testing.T) {
@@ -147,7 +148,7 @@ func TestALinkedSessionCarriesTheTextsItsEarlierSessionHolds(t *testing.T) {
 		t.Fatalf("the opening should ask about the oldest carried text by its latest copy, got %q", q)
 	}
 
-	right := answer(t, q, stepText)
+	right := answer(t, q, stepText, introText, reportText)
 	for _, tc := range []struct {
 		name  string
 		given string
@@ -179,7 +180,7 @@ func TestLinksChain(t *testing.T) {
 	if name := questionName(t, q); name != stepLane.Name {
 		t.Fatalf("a chained link should carry the first session's texts as the oldest, got %q", q)
 	}
-	third.BeginCall(answer(t, q, stepText), nil)
+	third.BeginCall(answer(t, q, stepText, introText, reportText), nil)
 	if !serve(third.Session, stepLane, stepText) || !serve(third.Session, introLane, introText) {
 		t.Error("a session linking a session that links a third should carry the texts of both")
 	}
@@ -196,9 +197,34 @@ func TestALinkSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed.BeginCall(answer(t, q, stepText), nil)
+	replayed.BeginCall(answer(t, q, stepText, introText), nil)
 	if !serve(replayed, stepLane, stepText) {
 		t.Error("a restarted linked session should still hold the carried texts on a right answer")
+	}
+}
+
+func TestALinkCarriesWhatTheAgentWrote(t *testing.T) {
+	spec, err := engine.ParseSpec(echoEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newLoggedSession(t, "s_first")
+	sv, err := first.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Report(sv.Instance, map[string]any{"note": reportText}); err != nil {
+		t.Fatal(err)
+	}
+	draft := engine.Piece{Name: "lane draft", Hash: "d1"}
+	first.BeginCall("", nil)
+	first.ServeAuthored(draft, introText, introText)
+	first.RecordServed()
+
+	second := linkTo(t, "s_second", first)
+	_, q := respond(t, second.Session, "", map[engine.Piece]string{reportLane: reportText})
+	if q != "" {
+		t.Errorf("a linked session should ask about no carried text the agent wrote, nor a phrase it reported, got %q", q)
 	}
 }
 

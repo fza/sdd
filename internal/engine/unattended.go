@@ -163,7 +163,7 @@ func (s *Session) hold(inst *Instance, step *Step) error {
 // heldForPersonLane tells the agent how the person answers a step an
 // assisted session holds for them.
 func (s *Session) heldForPersonLane(inst *Instance, step *Step) ServeLane {
-	return ServeLane{Name: "parked", Text: fmt.Sprintf("Held at %s for the person: %s. Put this choice to them through %s and relay their answer verbatim as `userWords`; your own reason no longer passes here. No answer yet? End your turn: the move stays parked, and resume_session %s serves it again.", step.ID, inst.parking.Reason, s.HowToAsk(), s.ID)}
+	return ServeLane{Name: "parked", Authored: true, Text: fmt.Sprintf("Held at %s for the person: %s. Put this choice to them through %s and relay their answer verbatim as `userWords`; your own reason no longer passes here. No answer yet? End your turn: the move stays parked, and resume_session %s serves it again.", step.ID, inst.parking.Reason, s.HowToAsk(), s.ID)}
 }
 
 // park parks inst at step for a person, serving the agent nothing to answer.

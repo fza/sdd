@@ -84,12 +84,14 @@ again later? resume_session with this handle re-serves this list in full.`
 
 // questionGuide tells an agent, at the opening and at every reorientation,
 // how it answers the text question (20261121-230157-d-tac-ym8).
-const questionGuide = `Every response that starts, resumes or advances the session ends with a
-question about a text sdd served you, such as
+const questionGuide = `Every response that starts, resumes or advances the session ends with two
+questions about texts sdd served you, one per line, such as
 q <text name>: 2 words after "<a phrase>"? | lost
 Your next call that advances the session (start_procedure, next, park,
-abandon) must answer it in answer: the words it asks for, looked up in that
-text, or lost when you no longer see the text or saw no question. Never
-guess. A right answer serves repeated instructions and report schemas short;
-lost or a wrong answer serves them in full. List in reread the name of a
-piece you no longer see: it serves in full again.`
+abandon) must answer both in answer, in their order and parted by ;, as in
+reach the ; 280: the words each asks for, looked up in its text, or lost
+for one whose text you no longer see. A response with one question takes
+one answer; saw no question, answer lost. Never guess. Both right serve
+repeated instructions and report schemas short; lost or a wrong answer to
+either serves them in full. List in reread the name of a piece you no
+longer see: it serves in full again.`

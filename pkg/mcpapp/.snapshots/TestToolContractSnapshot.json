@@ -5,7 +5,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "caller": {
@@ -169,7 +169,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "caller": {
@@ -228,7 +228,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "caller": {
@@ -602,7 +602,7 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "description": "required: the answer to the question the last response of this session ended with (q \u003ctext\u003e: …? | lost): the words it asks for, looked up in that text, or lost when you no longer see that text or saw no question. Never guess. A right answer serves repeated text short; lost or a wrong answer serves it in full",
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
           "type": "string"
         },
         "caller": {

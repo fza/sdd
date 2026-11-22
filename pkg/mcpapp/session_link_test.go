@@ -25,14 +25,14 @@ func TestStartSessionLinkCarriesTheEarlierSessionsTexts(t *testing.T) {
 	if strings.Contains(linked.Instructions, "not used") {
 		t.Fatalf("a link to a session with served texts should be used, got %.300q", linked.Instructions)
 	}
-	_, ask, ok := test.LastQuestion(agent.questions[linked.Session])
-	if !ok {
+	question := agent.questions[linked.Session]
+	if len(test.Questions(question)) == 0 {
 		t.Fatal("the linked session's opening should end with a question")
 	}
 	held := append(append([]string(nil), agent.texts[first.Session]...), agent.texts[linked.Session]...)
-	right, ok := test.AnswerQuestion(ask, held)
+	right, ok := test.AnswerAll(question, held)
 	if !ok {
-		t.Fatalf("the question should be answerable from the texts both sessions served, got %q", ask)
+		t.Fatalf("the questions should be answerable from the texts both sessions served, got %q", question)
 	}
 	var carried mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": linked.Session, "canonical": "capture", "answer": right}, &carried)

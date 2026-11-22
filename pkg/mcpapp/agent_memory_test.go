@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,6 +26,8 @@ type agentMemory struct {
 	texts map[string][]string
 	// questions holds, per session, the last question a response ended with.
 	questions map[string]string
+	// asked holds every question line served, in order.
+	asked []string
 	// forget drops every text before the next call, as a lossy compaction
 	// would.
 	forget bool
@@ -46,14 +49,10 @@ func (m *agentMemory) answer(session string) string {
 	if m.forget {
 		m.texts, m.forget = map[string][]string{}, false
 	}
-	_, ask, ok := test.LastQuestion(m.questions[session])
-	if !ok || m.lost {
+	if m.lost || len(test.Questions(m.questions[session])) == 0 {
 		return "lost"
 	}
-	words, ok := test.AnswerQuestion(ask, m.texts[session])
-	if !ok {
-		return "lost"
-	}
+	words, _ := test.AnswerAll(m.questions[session], m.texts[session])
 	return words
 }
 
@@ -77,6 +76,7 @@ func (m *agentMemory) keep(session string, res *mcp.CallToolResult) {
 		}
 		if fields.Question != "" {
 			m.questions[session] = fields.Question
+			m.asked = append(m.asked, strings.Split(fields.Question, "\n")...)
 		}
 		for _, s := range resultStrings(text.Text) {
 			if s != fields.Question {
