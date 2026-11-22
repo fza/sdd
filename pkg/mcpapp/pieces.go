@@ -15,7 +15,7 @@ import (
 // pointer to the reread slice keeps the argument types embedding it
 // comparable.
 type Answering struct {
-	Answer string    `json:"answer" jsonschema:"required: the answers to the questions the last response of this session ended with (q <text>: …? | lost, one per line), in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full"`
+	Answer string    `json:"answer" jsonschema:"required: the answers to the questions the last response of this session ended with (q <text>: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full"`
 	Reread *[]string `json:"reread,omitempty" jsonschema:"names of served pieces you no longer see; they serve in full again"`
 }
 

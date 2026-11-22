@@ -499,7 +499,7 @@ func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 // with the questions the next call that advances it answers
 // (20261121-230157-d-tac-ym8). Embedded last, it is the result's last field.
 type ResultQuestion struct {
-	Question string `json:"question,omitempty" jsonschema:"two questions about texts sdd served you, one per line, each as q <text>: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach the ; 280): the words each asks for, looked up in its text, or lost"`
+	Question string `json:"question,omitempty" jsonschema:"two questions about texts sdd served you, one per line, each as q <text>: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost"`
 }
 
 func (f *ResultQuestion) setQuestion(line string) { f.Question = line }
@@ -726,7 +726,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 // it must carry an answer, and its response ends with a question.
 func (s *toolSet) advancingSession(ctx context.Context, req *mcp.CallToolRequest, session string, args Answering) (*shellSession, error) {
 	if strings.TrimSpace(args.Answer) == "" {
-		return nil, toolError("answer is required: the words each question the last response ended with asks for, in their order and parted by ; (reach the ; 280), or lost when you no longer see a text or saw no question")
+		return nil, toolError("answer is required: the words each question the last response ended with asks for, in their order and parted by ; (reach sdd ; 280), or lost when you no longer see a text or saw no question")
 	}
 	ss, err := s.attach(ctx, req, session, args.Answer, rereadList(args.Reread))
 	if err != nil {
