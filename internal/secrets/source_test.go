@@ -1,7 +1,6 @@
 package secrets_test
 
 import (
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -108,46 +107,5 @@ func TestSourceReportsAnUnreadableFetchState(t *testing.T) {
 	}
 	if got.Source != model.SecretRulesBuiltIn || !strings.Contains(got.Unused, filepath.Join(dir, "state.json")) {
 		t.Errorf("the built-in file should be in use and the broken state named, got %+v", got)
-	}
-}
-
-// A failed or rejected fetch is told once per reason, so a machine left on
-// aging rules hears of it without a notice on every command.
-func TestSourceTakesAFetchFailureNoticeOncePerReason(t *testing.T) {
-	dir := t.TempDir()
-	releases := testsupport.NewGitleaksReleases(t)
-	releases.Publish("v99.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
-	source := secrets.NewSource(t.Context(), dir)
-	take := func() string {
-		t.Helper()
-		notice, err := source.TakeFailureNotice()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return notice
-	}
-	if take() != "" {
-		t.Fatal("no fetch has failed yet")
-	}
-	for range 2 {
-		if newUpdater(releases, dir).Update(t.Context()) == nil {
-			t.Fatal("the rejected copy should fail the fetch")
-		}
-	}
-
-	first, second := take(), take()
-
-	if !strings.Contains(first, "lacks rules") {
-		t.Errorf("the first notice should carry the reason, got %q", first)
-	}
-	if second != "" {
-		t.Errorf("the same reason should be told once, got %q", second)
-	}
-	releases.FailWith(http.StatusInternalServerError)
-	if newUpdater(releases, dir).Update(t.Context()) == nil {
-		t.Fatal("the failing API should fail the fetch")
-	}
-	if third := take(); !strings.Contains(third, "500") {
-		t.Errorf("a new reason should be told, got %q", third)
 	}
 }

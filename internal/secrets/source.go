@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -199,34 +197,6 @@ func loadFetched(dir string, state fetchState, builtinTag string) (*RuleSet, err
 		return nil, fmt.Errorf("fetched rule file %s: %w", state.File, err)
 	}
 	return set, nil
-}
-
-// TakeFailureNotice returns the notice of a failed or rejected fetch whose
-// reason no earlier call returned, and records it as told. A source without
-// a folder has none.
-func (s *Source) TakeFailureNotice() (string, error) {
-	if s.dir == "" {
-		return "", nil
-	}
-	state, err := readState(s.dir)
-	if err != nil {
-		return "", err
-	}
-	if state.Failure == "" {
-		return "", nil
-	}
-	told, err := os.ReadFile(filepath.Join(s.dir, reportedFileName))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("reading the told fetch failure: %w", err)
-	}
-	if string(told) == state.Failure {
-		return "", nil
-	}
-	err = writeFileAtomic(s.dir, reportedFileName, []byte(state.Failure))
-	if err != nil {
-		return "", err
-	}
-	return "secret rules: fetching gitleaks' newest rule file failed, scans keep the rules in use (sdd info names them): " + state.Failure, nil
 }
 
 // Status reports the rules the source serves and, when it reads fetched

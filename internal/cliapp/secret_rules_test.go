@@ -72,19 +72,21 @@ func TestInfoNamesTheSecretRulesInUse(t *testing.T) {
 	}
 }
 
-// A rejected fetch is told once: by the next command, or on the next tool
-// result of a running sdd serve.
+// A rejected fetch fails the scheduled pass and is told once, as any failed
+// pass: by the next command, or on the next tool result of a running sdd
+// serve.
 func TestARejectedRuleFetchIsToldOnce(t *testing.T) {
 	f := newAppFixture(t)
 	f.releases.Publish("v99.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
-	if r := f.run(t, "cache", "prune", "--scheduled"); r.err != nil {
-		t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	if r := f.run(t, "cache", "prune", "--scheduled"); r.err == nil || !strings.Contains(r.err.Error(), "lacks rules") {
+		t.Fatalf("the rejection should fail the scheduled pass with its reason: %v\n%s", r.err, r.stderr)
 	}
 
-	first, second := f.run(t, "show", appEntryID), f.run(t, "show", appEntryID)
+	var launched []string
+	first, second := f.runWithPrune(t, &launched, "show", appEntryID), f.runWithPrune(t, &launched, "show", appEntryID)
 
-	if !strings.Contains(first.stderr, "lacks rules") {
-		t.Errorf("the next command should tell the rejection with its reason, stderr:\n%s", first.stderr)
+	if n := strings.Count(first.stderr, "lacks rules"); n != 1 {
+		t.Errorf("the next command should tell the rejection with its reason once, told %d times, stderr:\n%s", n, first.stderr)
 	}
 	if strings.Contains(second.stderr, "lacks rules") {
 		t.Errorf("the rejection should be told once, stderr:\n%s", second.stderr)
@@ -94,17 +96,18 @@ func TestARejectedRuleFetchIsToldOnce(t *testing.T) {
 func TestARejectedRuleFetchIsToldOnTheNextToolResult(t *testing.T) {
 	f := newAppFixture(t)
 	f.releases.Publish("v99.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
-	f.serve(t, func(client *mcp.ClientSession) {
-		if r := f.run(t, "cache", "prune", "--scheduled"); r.err != nil {
-			t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	launch := func(string, string) error { return nil }
+	f.serveWith(t, launch, func(client *mcp.ClientSession) {
+		if r := f.run(t, "cache", "prune", "--scheduled"); r.err == nil {
+			t.Fatalf("the rejection should fail the scheduled pass\n%s", r.stderr)
 		}
 		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
 		if err != nil || door.IsError {
 			t.Fatalf("start_session: %v %+v", err, door)
 		}
 		notices, _ := door.StructuredContent.(map[string]any)["notices"].(map[string]any)
-		if notice, _ := notices["cache"].(string); !strings.Contains(notice, "lacks rules") {
-			t.Errorf("the next tool result should tell the rejection, got notices %v", notices)
+		if notice, _ := notices["cache"].(string); strings.Count(notice, "lacks rules") != 1 {
+			t.Errorf("the next tool result should tell the rejection once, got notices %v", notices)
 		}
 	})
 }

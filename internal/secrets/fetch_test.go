@@ -197,7 +197,7 @@ func TestGitHubRefusesARedirectToPlainHTTP(t *testing.T) {
 }
 
 // A fetch that works again clears the failure, so sdd info shows no trouble
-// that has passed, and the same failure later is told again.
+// that has passed.
 func TestUpdaterClearsTheFailureOnSuccess(t *testing.T) {
 	releases := testsupport.NewGitleaksReleases(t)
 	releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
@@ -206,9 +206,8 @@ func TestUpdaterClearsTheFailureOnSuccess(t *testing.T) {
 	if newUpdater(releases, dir).Update(t.Context()) == nil {
 		t.Fatal("the failing API should fail the fetch")
 	}
-	source := secrets.NewSource(t.Context(), dir)
-	if notice, _ := source.TakeFailureNotice(); notice == "" {
-		t.Fatal("the failure should be told")
+	if got := status(t, dir); got.LastFailure == "" {
+		t.Fatal("the failure should be recorded")
 	}
 	releases.FailWith(0)
 
@@ -219,13 +218,6 @@ func TestUpdaterClearsTheFailureOnSuccess(t *testing.T) {
 	}
 	if got := status(t, dir); got.LastFailure != "" || !got.LastFailureAt.IsZero() {
 		t.Errorf("the success should clear the failure, got %+v", got)
-	}
-	releases.FailWith(http.StatusInternalServerError)
-	if newUpdater(releases, dir).Update(t.Context()) == nil {
-		t.Fatal("the failing API should fail the fetch")
-	}
-	if notice, _ := source.TakeFailureNotice(); notice == "" {
-		t.Error("the same failure after a success should be told again")
 	}
 }
 

@@ -35,6 +35,13 @@ type appFixture struct {
 func newAppFixture(t *testing.T) *appFixture {
 	t.Helper()
 	f := &appFixture{root: t.TempDir(), releases: testsupport.NewGitleaksReleases(t)}
+	// GitHub always names a latest release; with none newer than the
+	// built-in file a scheduled pass only records its check.
+	builtin, err := secrets.BuiltinRuleFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.releases.Publish(builtin.Tag, builtin.Data)
 	t.Chdir(f.root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
@@ -75,9 +82,15 @@ func (f *appFixture) run(t *testing.T, args ...string) appResult {
 }
 
 func (f *appFixture) command(reader io.Reader, writer, errWriter io.Writer) *cli.Command {
+	return f.commandWith(reader, writer, errWriter, nil)
+}
+
+// commandWith builds the CLI with launch standing in for the detached cache
+// pruning process; nil launches none.
+func (f *appFixture) commandWith(reader io.Reader, writer, errWriter io.Writer, launch func(dir, logPath string) error) *cli.Command {
 	return cliapp.New(cliapp.Options{
 		Version: appVersion, Reader: reader, Writer: writer, ErrWriter: errWriter,
-		Gitleaks: f.gitleaks(),
+		Gitleaks: f.gitleaks(), LaunchCachePrune: launch,
 	})
 }
 
@@ -107,11 +120,18 @@ func assertContainsOutput(t *testing.T, stream, output string, expected ...strin
 
 func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
+	f.serveWith(t, nil, check)
+}
+
+// serveWith runs sdd serve with launch as its cache pruning launcher (see
+// commandWith).
+func (f *appFixture) serveWith(t *testing.T, launch func(dir, logPath string) error, check func(*mcp.ClientSession)) {
+	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	var stderr bytes.Buffer
-	command := f.command(serverInput, serverOutput, &stderr)
+	command := f.commandWith(serverInput, serverOutput, &stderr, launch)
 	done := make(chan struct{})
 	var runErr error
 	go func() {

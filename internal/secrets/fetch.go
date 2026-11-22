@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -237,19 +236,10 @@ func (u *Updater) Update(ctx context.Context) error {
 	return u.removeStale(name, replaced)
 }
 
-// succeed records a fetch that worked: the failure it clears is past, and a
-// later one is told again.
+// succeed records a fetch that worked: the failure it clears is past.
 func (u *Updater) succeed(state fetchState) error {
 	state.Failure, state.FailedAt = "", time.Time{}
-	err := writeState(u.dir, state)
-	if err != nil {
-		return err
-	}
-	err = os.Remove(filepath.Join(u.dir, reportedFileName))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
+	return writeState(u.dir, state)
 }
 
 func (u *Updater) fail(state fetchState, err error) error {

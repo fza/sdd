@@ -25,11 +25,7 @@ import (
 func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...string) appResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	command := cliapp.New(cliapp.Options{
-		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
-		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
-		Gitleaks:         f.gitleaks(),
-	})
+	command := f.commandWith(strings.NewReader(""), &stdout, &stderr, func(dir, _ string) error { *launched = append(*launched, dir); return nil })
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
 }

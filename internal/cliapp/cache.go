@@ -43,12 +43,13 @@ graph snapshots of vanished folders and clones sdd repo remove
 dropped that the repos list no longer names at once; and crash leftovers a
 day old. All three keys live in the user-global config. While
 secrets.rules_update is daily (the default), the background pass also fetches
-the rule file of gitleaks' newest release for credential scans; a run by hand
-fetches nothing. Open sessions, unreadable session logs and the versions any
-checkout read within cache.retention always stay. One run at a time per
-machine: a run started by hand while another runs fails. A failed background
-run is reported once, by the next command or MCP tool result, and sdd info
-shows the last run. sdd index gc removes more on request.`,
+the rule file of gitleaks' newest release for credential scans; a failed fetch
+fails the run after its other work, and a run by hand fetches nothing. Open
+sessions, unreadable session logs and the versions any checkout read within
+cache.retention always stay. One run at a time per machine: a run started by
+hand while another runs fails. A failed background run is reported once, by
+the next command or MCP tool result, and sdd info shows the last run. sdd
+index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,
@@ -202,17 +203,6 @@ func recordScheduledPruneFailure(ctx context.Context, root *cli.Command, err err
 		return errors.Join(err, locErr)
 	}
 	return errors.Join(err, cacheprune.RecordFailure(ctx, loc.StateRoot, time.Now(), err))
-}
-
-// serveSecretRulesNotice is the part of the MCP server's CacheNotice that
-// tells a failed or rejected rule fetch once.
-func serveSecretRulesNotice(ctx context.Context) string {
-	notice, err := secrets.Active().TakeFailureNotice()
-	if err != nil {
-		slogutils.FromContext(ctx).Warn("secret rules: reading the fetch state", "err", err)
-		return ""
-	}
-	return notice
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,
