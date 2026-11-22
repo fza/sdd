@@ -134,6 +134,9 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []RepoID `yaml:"dependencies,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -384,6 +387,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if len(overlay.Dependencies) > 0 {
 		out.Dependencies = overlay.Dependencies
 	}
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	return &out
 }
 

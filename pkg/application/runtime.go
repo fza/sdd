@@ -37,6 +37,8 @@ type ProjectRuntimeOptions struct {
 	SearchIndex SearchIndexStore
 	LLM         llm.Runner
 	Finalizers  []MutationFinalizer
+	// Events is the project event store; nil leaves the project without one.
+	Events EventStore
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per
