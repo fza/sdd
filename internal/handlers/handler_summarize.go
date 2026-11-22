@@ -164,8 +164,8 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		if len(cmd.EntryIDs) == 1 {
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
-		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+		if err := h.commitGraphOrFail(ctx, msg, commitPaths...); err != nil {
+			return err
 		}
 	}
 
@@ -208,8 +208,8 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: summarize %s (manual)", entry.ID)
-		if err := h.commitGraph(ctx, msg, filePath); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+		if err := h.commitGraphOrFail(ctx, msg, filePath); err != nil {
+			return err
 		}
 	}
 

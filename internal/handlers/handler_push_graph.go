@@ -82,9 +82,16 @@ func (h *Handler) commitGraph(ctx context.Context, message string, paths ...stri
 	if err != nil {
 		return err
 	}
-	err = h.publishGraph(ctx)
+	return h.afterGraphCommit(ctx, message)
+}
+
+// afterGraphCommit is what commitGraph does once its commit landed; its
+// error names the commit as landed, the step that failed and the command
+// that finishes it.
+func (h *Handler) afterGraphCommit(ctx context.Context, message string) error {
+	err := h.publishGraph(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("commit %q landed, publishing it failed (sdd sync publishes it): %w", message, err)
 	}
 	installer, ok := h.committer.(MergeDriverInstaller)
 	if !ok {
@@ -92,7 +99,7 @@ func (h *Handler) commitGraph(ctx context.Context, message string, paths ...stri
 	}
 	err = installer.EnsureMergeDriver(ctx)
 	if err != nil {
-		return fmt.Errorf("commit %q landed, setting up the entry merge driver failed: %w", message, err)
+		return fmt.Errorf("commit %q landed, setting up the entry merge driver failed (sdd init sets it up): %w", message, err)
 	}
 	return nil
 }

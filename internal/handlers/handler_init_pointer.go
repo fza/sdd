@@ -324,11 +324,7 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 	if len(commitPaths) == 0 {
 		return nil
 	}
-	err := h.commitGraph(ctx, commitMessage, commitPaths...)
-	if err != nil {
-		return fmt.Errorf("git commit: %w", err)
-	}
-	return nil
+	return h.commitGraphOrFail(ctx, commitMessage, commitPaths...)
 }
 
 // committedProjectDir is the project_dir the committed pointer records: every

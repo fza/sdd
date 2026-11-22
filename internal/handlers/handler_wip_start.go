@@ -70,8 +70,8 @@ func (h *Handler) StartWIP(ctx context.Context, cmd *command.StartWIPCmd) error 
 	// marker is visible on main for coordination).
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: wip start %s (%s)", cmd.EntryID, cmd.Participant)
-		if err := h.commitGraph(ctx, msg, markerPath); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+		if err := h.commitGraphOrFail(ctx, msg, markerPath); err != nil {
+			return err
 		}
 	}
 
