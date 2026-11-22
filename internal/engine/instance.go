@@ -674,7 +674,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		draftCap := serveview.Default().Cap(serveview.PartDraft).MaxBytes
 		if block, draftCuts := renderDraft(inst.Spec, step.ServeDelta, prev, cur, fullDraft, draftCap); block != "" {
-			lanes = append(lanes, ServeLane{Name: "draft", Text: block})
+			lanes = append(lanes, ServeLane{Name: "draft", Text: block, Authored: true})
 			cuts = append(cuts, draftCuts...)
 		}
 		if inst.draftServed == nil {

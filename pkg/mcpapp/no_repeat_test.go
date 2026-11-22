@@ -91,7 +91,7 @@ func TestDoorsExplainTheQuestion(t *testing.T) {
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
 	for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
-		if !strings.Contains(text, "must answer it in answer") || !strings.Contains(text, "List in reread") {
+		if !strings.Contains(text, "must answer both in answer, in their order and parted by ;") || !strings.Contains(text, "List in reread") {
 			t.Fatalf("%s should explain how to answer the question and how to have a piece again:\n%s", name, text)
 		}
 	}

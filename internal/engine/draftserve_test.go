@@ -40,6 +40,32 @@ func longBody() string {
 	}, "\n")
 }
 
+// The draft lane is what the agent wrote, so no text question asks about it
+// (20261121-230157-d-tac-ym8); the step's own lanes stay askable.
+func TestDraftServe_TheDraftLaneIsAuthored(t *testing.T) {
+	spec, err := engine.ParseSpec(draftServeEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_authored", "tester", &recordingSink{})
+	sv, err := sess.Start(spec, map[string]any{"body": longBody()}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := len(sv.Lanes) - 1
+	if last < 1 || !strings.HasPrefix(sv.Lanes[last].Text, "Draft as it stands") {
+		t.Fatalf("the serve should end with the draft as it stands, got %+v", sv.Lanes)
+	}
+	if !sv.Lanes[last].Authored {
+		t.Error("the draft lane should be marked authored")
+	}
+	for _, lane := range sv.Lanes[:last] {
+		if lane.Authored {
+			t.Errorf("the step's own lanes should stay askable, got %s marked authored", lane.Name)
+		}
+	}
+}
+
 // TestDraftServe_Rounds drives the full arc: bounded first round, item-level
 // list delta, scalar whole-when-changed, prose content diff, an explicit
 // nothing-changed round, and the rehydrate serve whole.

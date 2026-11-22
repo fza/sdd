@@ -1,5 +1,5 @@
 cancellation:
-  cancel_ref: 17
+  cancel_ref: 20
   closed: false
   command: newEntry
   effects:

@@ -10,16 +10,12 @@ import (
 
 const servedLane = "Draft one entry with the user, dialogue first. Then check its grounding against the graph before you write it."
 
-// answerTo answers the question line from the texts an agent holds.
+// answerTo answers the question lines from the texts an agent holds.
 func answerTo(t *testing.T, line string, texts ...string) string {
 	t.Helper()
-	_, ask, ok := test.LastQuestion(line)
+	answer, ok := test.AnswerAll(line, texts)
 	if !ok {
-		t.Fatalf("the response should end with a question, got %q", line)
-	}
-	answer, ok := test.AnswerQuestion(ask, texts)
-	if !ok {
-		t.Fatalf("the question should be answerable from the served text, got %q", line)
+		t.Fatalf("the questions should be answerable from the served text, got %q", line)
 	}
 	return answer
 }
