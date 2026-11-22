@@ -175,7 +175,7 @@ func TestCaptureDeep_TheReadingStatesEachRefsFit(t *testing.T) {
 	}
 	for _, want := range []string{
 		"refs[0] " + captureRefID + " (addresses)\nAdmissible ref kinds for this target (live-decision): " + strings.Join(admissible, ", ") + "\n",
-		"Chosen ref kind: addresses, applicable: ",
+		"Chosen ref kind: addresses — applicable: ",
 	} {
 		if !strings.Contains(first, want) {
 			t.Errorf("page 1 should state the ref's fit, %q:\n%s", want, first)

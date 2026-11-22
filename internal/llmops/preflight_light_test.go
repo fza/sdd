@@ -472,7 +472,7 @@ func TestDeepRefFit(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\n## Ref fit\n",
-		"refs[0] " + done.ID + " (refines)\nAdmissible ref kinds for this target (terminal-done): " + strings.Join(admissible, ", ") + "\nChosen ref kind: refines, inapplicable: " + refined.Cell.Note + ".",
+		"refs[0] " + done.ID + " (refines)\nAdmissible ref kinds for this target (terminal-done): " + strings.Join(admissible, ", ") + "\nChosen ref kind: refines — inapplicable: " + refined.Cell.Note + ".",
 		"refs[1] 20261101-130000-s-tac-gon (related)\nIts target resolves in neither this graph nor a dependency.\n",
 		"refs[2] " + done.ID + " (unknown)\nIts kind is outside the capturable set.\n",
 	} {
