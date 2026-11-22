@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -60,19 +59,6 @@ func (c CLI) env() []string {
 		return nil
 	}
 	return pathEnv()
-}
-
-// repositoryVariables are the variables git exports to hooks that pin a
-// command to the hook's repository whatever -C names.
-var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
-
-// pathEnv is the process environment without repositoryVariables, for a git
-// command that locates its repository by path.
-func pathEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(repositoryVariables, name)
-	})
 }
 
 // Commit stages exactly the given paths and commits them, detached from any
