@@ -89,7 +89,7 @@ func TestServeFollowsAnLLMChange(t *testing.T) {
 		session := openServedSession(t, client)
 		draft := func(body string) {
 			t.Helper()
-			started, served, failed := callTool(t, client, "start_procedure", map[string]any{"session": session, "canonical": "capture"})
+			started, served, failed := callStepTool(t, client, "start_procedure", map[string]any{"session": session, "canonical": "capture"})
 			if failed {
 				t.Fatalf("start_procedure: %s", served)
 			}
@@ -97,7 +97,7 @@ func TestServeFollowsAnLLMChange(t *testing.T) {
 				"body": body, "entryKind": "gap", "layer": "tactical", "topics": []string{"testing/llm"},
 				"confidence": "low", "widenReport": "searched the graph for onboarding and release records; it holds none.",
 			}
-			playback, served, failed := callTool(t, client, "next", map[string]any{"session": session, "instance": started.Instance, "report": report})
+			playback, served, failed := callStepTool(t, client, "next", map[string]any{"session": session, "instance": started.Instance, "report": report})
 			if failed || playback.Step != "playback" {
 				t.Fatalf("the draft should reach playback, got step %q:\n%s", playback.Step, served)
 			}
@@ -130,9 +130,9 @@ type servedStep struct {
 	Step     string `json:"step"`
 }
 
-// callTool calls a tool and returns its serve, the text it answered with,
+// callStepTool calls a tool and returns its serve, the text it answered with,
 // and whether the call failed.
-func callTool(t *testing.T, client *mcp.ClientSession, tool string, args map[string]any) (servedStep, string, bool) {
+func callStepTool(t *testing.T, client *mcp.ClientSession, tool string, args map[string]any) (servedStep, string, bool) {
 	t.Helper()
 	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
