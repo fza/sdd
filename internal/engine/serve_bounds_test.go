@@ -122,7 +122,15 @@ func TestStoreValueCutServesOnlyWhereTheLanesReadIt(t *testing.T) {
 		cut        bool
 	}{
 		{"field", "{{.note}}", true},
-		{"condition", "{{if .note}}A note is held.{{end}}", true},
+		{"condition", "{{if .note}}A note is held.{{end}}", false},
+		{"comparison", `{{if eq .note "x"}}A note is held.{{end}}`, false},
+		{"else condition", "{{if .other}}x{{else if .note}}A note is held.{{end}}", false},
+		{"with condition", "{{with .note}}A note is held.{{end}}", false},
+		{"condition and field", "{{if .note}}{{.note}}{{end}}", true},
+		{"condition variable", "{{if $n := .note}}{{$n}}{{end}}", true},
+		{"with dot", "{{with .note}}{{.}}{{end}}", true},
+		{"with dot argument", `{{with .note}}{{printf "%s" .}}{{end}}`, true},
+		{"variable", "{{$n := .note}}{{$n}}", true},
 		{"index", `{{index . "note"}}`, true},
 		{"root variable", "{{with .other}}{{$.note}}{{end}}", true},
 		{"range", "{{range $i, $c := .other}}{{$.note}}{{end}}", true},

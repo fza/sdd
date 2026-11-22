@@ -1261,15 +1261,18 @@ func TestCaptureDeep_TheDispatchNamesClaudeCodesAgentTool(t *testing.T) {
 	}
 }
 
-// A step whose unit never renders pre-flight's rubric serves no notice that
-// the rubric was cut for size; the dispatch, which reads it, does.
+// Pre-flight's rubric reaches the verifier through the dispatch, never through
+// a unit's text: the dispatch only tests it, so no step names a cut of it.
 func TestCaptureDeep_ACutNoticeServesOnlyWhereTheValueRenders(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-cut-notice", sdd.VerifierPolicy{})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	const notice = "store:preflightRubric"
-	if !strings.Contains(serve.Instructions, notice) {
-		t.Fatalf("the dispatch reads the rubric and should name its cut:\n%s", serve.Instructions)
+	if !strings.Contains(serve.Instructions, "mechanical checks left no high finding open") {
+		t.Fatalf("the dispatch should test the rubric and take its held branch:\n%s", serve.Instructions)
+	}
+	if strings.Contains(serve.Instructions, notice) {
+		t.Fatalf("the dispatch only tests the rubric and should name no cut of it:\n%s", serve.Instructions)
 	}
 	x := dispatchDeep(t, world, session, instance)
 	x.judge(t, []any{map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low"}})
