@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"math/rand/v2"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -48,19 +49,6 @@ func TestDrawQuestionAnswersEachKindFromTheText(t *testing.T) {
 		{model.AskNumberAfter, func(q model.TextQuestion) bool {
 			return q.Answer == "280" && strings.Contains(questionSample, q.Phrase+" 280")
 		}},
-		{model.AskSentenceFirst, func(q model.TextQuestion) bool {
-			sentence := sentenceHolding(q.Phrase)
-			return strings.HasPrefix(strings.TrimPrefix(sentence, "- "), q.Answer)
-		}},
-		{model.AskSentenceLast, func(q model.TextQuestion) bool {
-			sentence := strings.TrimSuffix(sentenceHolding(q.Phrase), ".")
-			return strings.HasSuffix(sentence, q.Answer)
-		}},
-		{model.AskNextSentence, func(q model.TextQuestion) bool {
-			sentence := sentenceHolding(q.Phrase)
-			rest := strings.TrimPrefix(strings.TrimSpace(questionSample[strings.Index(questionSample, sentence)+len(sentence):]), "- ")
-			return strings.HasPrefix(rest, q.Answer)
-		}},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.kind), func(t *testing.T) {
@@ -82,16 +70,119 @@ func TestDrawQuestionAnswersEachKindFromTheText(t *testing.T) {
 // answer leaves out.
 func unpunctuated(text string) string { return strings.NewReplacer(",", "", ".", "").Replace(text) }
 
-// sentenceHolding returns the sentence of questionSample holding phrase.
-func sentenceHolding(phrase string) string {
-	for line := range strings.SplitSeq(questionSample, "\n") {
-		for sentence := range strings.SplitAfterSeq(line, ". ") {
-			if strings.Contains(sentence, phrase) {
-				return strings.TrimSpace(sentence)
-			}
+// splitSample holds what an agent and a parser cut differently: arrows,
+// entry IDs, list items, code spans, abbreviations and signs before a
+// number.
+const splitSample = `Each entry's → upstream refs to the graph stay listed in the chain.
+- 20260413-160358-d-stg-574 strategic directive → refs 20260410-210220-s-stg-gtu
+- d-cpt-ah1 holds the planning contract for every layer split.
+Keep the lead and trail sentences ≤ ~15 words, e.g. the summary line of each one.
+Run ` + "`go test every model package here`" + ` before the commit lands, etc. Then merge the branch.
+The guide quotes -> the draft body report instead of body text, and the drafter: reads it twice.
+The bound stays at 18,000. characters for every host the server answers.`
+
+// allCandidates lists every question DrawQuestion would draw from text.
+func allCandidates(text string) []model.TextQuestion {
+	var all []model.TextQuestion
+	model.DrawQuestion(text, rand.New(rand.NewPCG(9, 9)), func(q model.TextQuestion) bool {
+		all = append(all, q)
+		return false
+	})
+	return all
+}
+
+func TestQuestionKindsNeedNoSentenceBoundary(t *testing.T) {
+	for _, kind := range model.QuestionKinds {
+		ask := model.TextQuestion{Kind: kind, Phrase: "a b c", Second: "d e f"}.Ask()
+		if strings.Contains(ask, "sentence") || strings.Contains(ask, "line") {
+			t.Errorf("no question kind should rest on where a sentence or line ends, got %q", ask)
 		}
 	}
-	return ""
+}
+
+func TestEveryQuestionReadsAsALiteralRunOfWords(t *testing.T) {
+	sep := `[,.;:!?]? `
+	end := `(?:[,.;:!?]|\s|$)`
+	start := `(?:^|\s)`
+	entryID := regexp.MustCompile(`(\d{8}-\d{6}-)?[a-z]-[a-z]{3}-[a-z0-9]+`)
+	candidates := allCandidates(splitSample)
+	if len(candidates) == 0 {
+		t.Fatal("the sample should yield questions")
+	}
+	for _, q := range candidates {
+		words := strings.Fields(q.Answer)
+		quoted := make([]string, len(words))
+		for i, w := range words {
+			quoted[i] = regexp.QuoteMeta(w)
+		}
+		answer := strings.Join(quoted, sep)
+		phrase, second := regexp.QuoteMeta(q.Phrase), regexp.QuoteMeta(q.Second)
+		var window string
+		switch q.Kind {
+		case model.AskWordsAfter, model.AskNumberAfter:
+			window = phrase + " " + answer + end
+		case model.AskWordsBefore:
+			window = start + answer + sep + phrase
+		case model.AskBetween:
+			window = phrase + " " + answer + sep + second
+		default:
+			t.Fatalf("unexpected kind %s", q.Kind)
+		}
+		if !regexp.MustCompile(window).MatchString(splitSample) {
+			t.Errorf("the words asked for should stand next to the phrase as written, with nothing an agent counts between them, got %+v", q)
+		}
+		for _, part := range []string{q.Phrase, q.Second, q.Answer} {
+			if entryID.MatchString(part) {
+				t.Errorf("no question should ask about an entry ID, got %+v", q)
+			}
+			if strings.Contains(part, "model package") || strings.Contains(part, "every model") {
+				t.Errorf("no question should ask about the words of a code span, got %+v", q)
+			}
+		}
+		if len(q.Ask()) > 90 {
+			t.Errorf("a question should stay short, got %d characters: %q", len(q.Ask()), q.Ask())
+		}
+	}
+}
+
+func TestQuestionsStayShortForLongWords(t *testing.T) {
+	text := "Call configuration-resolution-precedence-override-mechanism before every-single-repository-synchronisation-handshake and the-whole-cross-project-dependency-closure-walk starts."
+	for _, q := range allCandidates(text) {
+		if len(q.Ask()) > 90 {
+			t.Errorf("a question should stay short, got %q", q.Ask())
+		}
+	}
+}
+
+func TestRoundAnswered(t *testing.T) {
+	first := model.TextQuestion{Kind: model.AskWordsAfter, Phrase: "the draft must", Answer: "reach the"}
+	second := model.TextQuestion{Kind: model.AskBetween, Phrase: "ask the user", Second: "confirm it now", Answer: "to"}
+	pair := []model.TextQuestion{first, second}
+	tests := []struct {
+		name      string
+		questions []model.TextQuestion
+		given     string
+		right     bool
+	}{
+		{"both in order", pair, "reach the ; to", true},
+		{"no spaces", pair, "reach the;to", true},
+		{"swapped", pair, "to ; reach the", true},
+		{"one of two", pair, "reach the", false},
+		{"one lost", pair, "reach the ; lost", false},
+		{"both lost", pair, "lost ; lost", false},
+		{"lost alone", pair, "lost", false},
+		{"one wrong", pair, "reach the ; from", false},
+		{"three parts", pair, "reach the ; to ; to", false},
+		{"one question", pair[:1], "reach the", true},
+		{"one question, two answers", pair[:1], "reach the ; to", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.RoundAnswered(tc.questions, tc.given); got != tc.right {
+				t.Errorf("RoundAnswered should report %v for this answer", tc.right)
+			}
+		})
+	}
 }
 
 func TestDrawQuestionHonoursUsable(t *testing.T) {
