@@ -4,19 +4,51 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // BatchSizes remembers, by key, the batch size a Halving scorer starts at.
-// Lower keeps the smaller of the held size and size. Raise sets size while
-// from is still held, so of the calls that answered at one size one raise
-// lands, and none over a size lowered meanwhile. A store that outlasts its
-// process hands the next one no size below MinCarriedBatch.
+// Lower keeps the smaller of the held size and size. Broke remembers that a
+// call of size broke (BatchFailure.Noted). Raise sets size while from is
+// still held and no remembered failure bars it (BatchFailure.Bars), so of
+// the calls that answered at one size one raise lands, none over a size
+// lowered meanwhile, and none back to a size that broke within
+// FailedBatchRest. A store that outlasts its process hands the next one no
+// size below MinCarriedBatch.
 type BatchSizes interface {
 	Size(key string) (int, bool)
 	Lower(key string, size int) error
+	Broke(key string, size int) error
 	Raise(key string, from, size int) error
+}
+
+// FailedBatchRest is how long a raise stays below the size of a call that
+// broke: long enough that a judge failing above some size pays for it once
+// an hour instead of every second pass, short enough that a failure that
+// passed keeps its calls small for an hour at most.
+const FailedBatchRest = time.Hour
+
+// BatchFailure is the size of a call that broke and when it last broke.
+type BatchFailure struct {
+	Size int       `json:"size"`
+	At   time.Time `json:"at"`
+}
+
+// Bars reports whether f keeps a raise to size from landing at now: size
+// reaches the size that broke, and that size has not rested FailedBatchRest.
+func (f BatchFailure) Bars(size int, now time.Time) bool {
+	return f.Size > 0 && size >= f.Size && now.Sub(f.At) < FailedBatchRest
+}
+
+// Noted is the failure to remember once a call of size broke at now: f
+// while it bars a smaller size than size, else size at now.
+func (f BatchFailure) Noted(size int, now time.Time) BatchFailure {
+	if f.Size < size && f.Bars(size, now) {
+		return f
+	}
+	return BatchFailure{Size: size, At: now}
 }
 
 // MinCarriedBatch is the smallest size a store hands a new process. A
@@ -28,8 +60,9 @@ const MinCarriedBatch = 10
 // MemoryBatchSizes is a BatchSizes held in memory, so a size lasts as long
 // as the process.
 type MemoryBatchSizes struct {
-	mu    sync.Mutex
-	sizes map[string]int
+	mu       sync.Mutex
+	sizes    map[string]int
+	failures map[string]BatchFailure
 }
 
 func (m *MemoryBatchSizes) Size(key string) (int, bool) {
@@ -51,9 +84,22 @@ func (m *MemoryBatchSizes) Lower(key string, size int) error {
 	return nil
 }
 
+func (m *MemoryBatchSizes) Broke(key string, size int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failures == nil {
+		m.failures = map[string]BatchFailure{}
+	}
+	m.failures[key] = m.failures[key].Noted(size, time.Now())
+	return nil
+}
+
 func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.failures[key].Bars(size, time.Now()) {
+		return nil
+	}
 	if held, ok := m.sizes[key]; ok && held == from {
 		m.sizes[key] = size
 	}
@@ -71,8 +117,9 @@ func (m *MemoryBatchSizes) Raise(key string, from, size int) error {
 // once, up to the inner MaxBatch, whatever the request's other calls do, so
 // a failure that passed does not pin it. A request raises nothing once one
 // of its batches broke: its halves would raise the size straight back to
-// the one that broke. A size that breaks again halves again. MaxBatch
-// reports the size the next request starts at.
+// the one that broke. No raise reaches the size of a call that broke until
+// that size rested FailedBatchRest; a size that breaks again then halves
+// again. MaxBatch reports the size the next request starts at.
 func Halving(s Scorer, sizes BatchSizes, key string) Scorer {
 	return halving{Scorer: s, sizes: sizes, key: key}
 }
@@ -175,6 +222,10 @@ func (h halving) batch(ctx context.Context, request Request, far []Candidate, br
 		return Result{}, err
 	}
 	*broke = true
+	err = h.sizes.Broke(h.key, len(call.Candidates))
+	if err != nil {
+		return Result{}, err
+	}
 	half := n/2 + len(far)
 	if err := h.sizes.Lower(h.key, half); err != nil {
 		return Result{}, err

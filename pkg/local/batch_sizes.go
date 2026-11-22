@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
@@ -15,22 +16,26 @@ import (
 // FilesystemBatchSizes is a relevance.BatchSizes kept as one JSON object of
 // size by key in a file, so every process on the machine starts a judge at
 // the size an earlier one left it at, unless that size lies below
-// relevance.MinCarriedBatch.
+// relevance.MinCarriedBatch. The failures live as one JSON object of
+// relevance.BatchFailure by key in a file of their own, so a binary that
+// knows no failures still reads the sizes.
 type FilesystemBatchSizes struct {
-	path  string
-	mu    sync.Mutex
-	sizes map[string]int
+	path         string
+	failuresPath string
+	mu           sync.Mutex
+	sizes        map[string]int
 	// stale holds, by key, a size below relevance.MinCarriedBatch the file
 	// held when it was opened. While the file still holds it, the key
 	// counts as holding none.
 	stale map[string]int
 }
 
-// NewFilesystemBatchSizes reads the sizes the file at path holds; a missing
-// file holds none and is written on the first change. A size below
-// relevance.MinCarriedBatch stays in the file and is not held: a judge
-// starts at its full batch, and the first Lower replaces the size.
-func NewFilesystemBatchSizes(path string) (*FilesystemBatchSizes, error) {
+// NewFilesystemBatchSizes reads the sizes the file at path holds and keeps
+// the failures in the file at failuresPath; a missing file holds none and is
+// written on the first change. A size below relevance.MinCarriedBatch stays
+// in the file and is not held: a judge starts at its full batch, and the
+// first Lower replaces the size.
+func NewFilesystemBatchSizes(path, failuresPath string) (*FilesystemBatchSizes, error) {
 	stored, err := readBatchSizes(path)
 	if err != nil {
 		return nil, err
@@ -41,7 +46,7 @@ func NewFilesystemBatchSizes(path string) (*FilesystemBatchSizes, error) {
 			stale[key] = size
 		}
 	}
-	s := &FilesystemBatchSizes{path: path, stale: stale}
+	s := &FilesystemBatchSizes{path: path, failuresPath: failuresPath, stale: stale}
 	s.sizes = s.carried(stored)
 	return s, nil
 }
@@ -58,9 +63,28 @@ func (s *FilesystemBatchSizes) Lower(key string, size int) error {
 	return s.change(key, size, func(held int, ok bool) bool { return !ok || size < held })
 }
 
-// Raise sets size while the file still holds from for key.
+// Broke notes a call of size that broke for key beside the failures the
+// file holds, read anew so what another process wrote since stands.
+func (s *FilesystemBatchSizes) Broke(key string, size int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failures, err := readBatchFailures(s.failuresPath)
+	if err != nil {
+		return err
+	}
+	failures[key] = failures[key].Noted(size, time.Now())
+	return writeJSON(s.failuresPath, failures)
+}
+
+// Raise sets size while the file still holds from for key and no failure
+// the failures file holds bars it.
 func (s *FilesystemBatchSizes) Raise(key string, from, size int) error {
-	return s.change(key, size, func(held int, ok bool) bool { return ok && held == from })
+	failures, err := readBatchFailures(s.failuresPath)
+	if err != nil {
+		return err
+	}
+	barred := failures[key].Bars(size, time.Now())
+	return s.change(key, size, func(held int, ok bool) bool { return !barred && ok && held == from })
 }
 
 // change reads the file anew, so what another process wrote since stands,
@@ -85,11 +109,7 @@ func (s *FilesystemBatchSizes) change(key string, size int, due func(held int, o
 	}
 	if due(held, ok) {
 		stored[key] = size
-		data, err := json.MarshalIndent(stored, "", "  ")
-		if err != nil {
-			return err
-		}
-		err = writeBatchSizes(s.path, append(data, '\n'))
+		err = writeJSON(s.path, stored)
 		if err != nil {
 			return err
 		}
@@ -108,22 +128,36 @@ func (s *FilesystemBatchSizes) carried(stored map[string]int) map[string]int {
 }
 
 func readBatchSizes(path string) (map[string]int, error) {
-	sizes := map[string]int{}
+	return readByKey[int](path)
+}
+
+func readBatchFailures(path string) (map[string]relevance.BatchFailure, error) {
+	return readByKey[relevance.BatchFailure](path)
+}
+
+func readByKey[V any](path string) (map[string]V, error) {
+	values := map[string]V{}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return sizes, nil
+		return values, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading batch sizes: %w", err)
 	}
-	if err := json.Unmarshal(data, &sizes); err != nil {
+	err = json.Unmarshal(data, &values)
+	if err != nil {
 		return nil, fmt.Errorf("reading batch sizes %s: %w", path, err)
 	}
-	return sizes, nil
+	return values, nil
 }
 
-// writeBatchSizes replaces the file in one rename.
-func writeBatchSizes(path string, data []byte) (err error) {
+// writeJSON replaces the file with v, indented, in one rename.
+func writeJSON(path string, v any) (err error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("writing batch sizes: %w", err)
+	}
+	data = append(data, '\n')
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("writing batch sizes: %w", err)

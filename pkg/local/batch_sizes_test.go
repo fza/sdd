@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
@@ -21,14 +23,19 @@ var _ relevance.BatchSizes = (*localadapter.FilesystemBatchSizes)(nil)
 
 const sizesKey = "chat:haiku"
 
-// openSizes opens the file as a process starting does.
+// openSizes opens the file as a process starting does, with the failures in
+// failuresFile beside it.
 func openSizes(t *testing.T, path string) *localadapter.FilesystemBatchSizes {
 	t.Helper()
-	sizes, err := localadapter.NewFilesystemBatchSizes(path)
+	sizes, err := localadapter.NewFilesystemBatchSizes(path, failuresFile(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return sizes
+}
+
+func failuresFile(path string) string {
+	return filepath.Join(filepath.Dir(path), "chat-batch-failures.json")
 }
 
 // storeSize writes the file an earlier process left: size for sizesKey, no
@@ -105,10 +112,76 @@ func TestFilesystemBatchSizes_RefusesAnUnreadableFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := localadapter.NewFilesystemBatchSizes(path)
+	_, err := localadapter.NewFilesystemBatchSizes(path, failuresFile(path))
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("an unreadable file should be refused naming it, got %v", err)
 	}
+}
+
+// An unreadable failures file fails the change that reads it instead of
+// raising past a size that broke.
+func TestFilesystemBatchSizes_RefusesAnUnreadableFailuresFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat-batch-sizes.json")
+	storeSize(t, path, 20)
+	sizes := openSizes(t, path)
+	if err := os.WriteFile(failuresFile(path), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func() error{
+		"Raise": func() error { return sizes.Raise(sizesKey, 20, 40) },
+		"Broke": func() error { return sizes.Broke(sizesKey, 40) },
+	} {
+		if err := change(); err == nil || !strings.Contains(err.Error(), failuresFile(path)) {
+			t.Errorf("%s should refuse the unreadable failures file naming it, got %v", name, err)
+		}
+	}
+	if stored := storedSize(t, path); stored != 20 {
+		t.Errorf("the file holds %d: a refused raise should write nothing", stored)
+	}
+}
+
+// A size that broke in one process bars a raise to it in every process on
+// the file, open then or later, until it rested relevance.FailedBatchRest;
+// the sizes file keeps its shape, so a binary that knows no failures reads
+// it.
+func TestFilesystemBatchSizes_RaisesNoSizeThatBrokeUntilItRested(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat-batch-sizes.json")
+	synctest.Test(t, func(t *testing.T) {
+		storeSize(t, path, 20)
+		broke, open := openSizes(t, path), openSizes(t, path)
+		if err := broke.Broke(sizesKey, 40); err != nil {
+			t.Fatal(err)
+		}
+		later := openSizes(t, path)
+		for name, process := range map[string]*localadapter.FilesystemBatchSizes{"broke": broke, "open": open, "later": later} {
+			if err := process.Raise(sizesKey, 20, 40); err != nil {
+				t.Fatal(err)
+			}
+			if stored := storedSize(t, path); stored != 20 {
+				t.Fatalf("process %s raised the file to %d over the size that broke", name, stored)
+			}
+		}
+		data, err := os.ReadFile(failuresFile(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var failures map[string]relevance.BatchFailure
+		err = json.Unmarshal(data, &failures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if failure := failures[sizesKey]; failure.Size != 40 || !failure.At.Equal(time.Now()) {
+			t.Errorf("the failures file holds %+v: it should hold the size that broke and when", failure)
+		}
+
+		time.Sleep(relevance.FailedBatchRest)
+		if err := later.Raise(sizesKey, 20, 40); err != nil {
+			t.Fatal(err)
+		}
+		if stored := storedSize(t, path); stored != 40 {
+			t.Errorf("the file holds %d: a raise should land once the size that broke rested", stored)
+		}
+	})
 }
 
 // The file stays one indented JSON object of size by key, sorted by key.
