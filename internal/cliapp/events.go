@@ -15,8 +15,9 @@ import (
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
-// eventsCmd converts the binary event log to and from JSON, so its segments
-// stay inspectable and repairable.
+// eventsCmd exports, compacts and imports the project event store; export
+// and import carry each event's channel, which the store's files leave to
+// their directory.
 func eventsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "events",

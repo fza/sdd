@@ -14,9 +14,10 @@ import (
 	"github.com/networkteam/sdd/internal/segment"
 )
 
-// writeSegmentFile writes data as a fresh segment in dir: a temporary file
-// renamed into place, so a reader never sees a partial segment.
-func writeSegmentFile(dir string, data []byte) (err error) {
+// writeSegmentFile writes data as a fresh segment <time>-<random><ext> in
+// dir: a temporary file renamed into place, so a reader never sees a partial
+// segment.
+func writeSegmentFile(dir, ext string, data []byte) (err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -26,6 +27,7 @@ func writeSegmentFile(dir string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
+	name = strings.TrimSuffix(name, segment.Ext) + ext
 	temp := "." + name + ".tmp"
 	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
@@ -51,13 +53,13 @@ type segmentFile struct {
 	data []byte
 }
 
-// readSegmentFiles returns the segments of dir in name order, none when dir
-// does not exist. A segment a compaction removes between the listing and
-// the read restarts the listing, which then holds the merged segment the
-// compaction wrote first.
-func readSegmentFiles(ctx context.Context, dir string) ([]segmentFile, error) {
+// readSegmentFiles returns the segments of dir carrying ext in name order,
+// none when dir does not exist. A segment a compaction removes between the
+// listing and the read restarts the listing, which then holds the merged
+// segment the compaction wrote first.
+func readSegmentFiles(ctx context.Context, dir, ext string) ([]segmentFile, error) {
 	for range maxSegmentListings {
-		files, vanished, err := listSegmentFiles(ctx, dir)
+		files, vanished, err := listSegmentFiles(ctx, dir, ext)
 		if err != nil || !vanished {
 			return files, err
 		}
@@ -67,7 +69,7 @@ func readSegmentFiles(ctx context.Context, dir string) ([]segmentFile, error) {
 
 const maxSegmentListings = 8
 
-func listSegmentFiles(ctx context.Context, dir string) ([]segmentFile, bool, error) {
+func listSegmentFiles(ctx context.Context, dir, ext string) ([]segmentFile, bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
@@ -77,7 +79,7 @@ func listSegmentFiles(ctx context.Context, dir string) ([]segmentFile, bool, err
 	}
 	var files []segmentFile
 	for _, entry := range entries {
-		if entry.IsDir() || !segment.IsName(entry.Name()) {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || filepath.Ext(entry.Name()) != ext {
 			continue
 		}
 		err := ctx.Err()

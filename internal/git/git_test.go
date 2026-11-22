@@ -131,16 +131,18 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 	}
 }
 
-// The attributes file marking shared segments binary rides the commit with
-// the segments it marks.
-func TestPendingSegments_CarryTheEventAttributes(t *testing.T) {
+// The pending segments are a channel's JSON Lines files; other files beside
+// them stay out of the commit.
+func TestPendingSegments_ListTheChannelsJSONLines(t *testing.T) {
 	dir := newTestRepo(t)
 	events := filepath.Join(dir, ".sdd", "events")
-	if err := os.MkdirAll(filepath.Join(events, "recheck"), 0o755); err != nil {
+	err := os.MkdirAll(filepath.Join(events, "recheck"), 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{"recheck/a.seg": "SDDREC", ".gitattributes": "*.seg binary\n"} {
-		if err := os.WriteFile(filepath.Join(events, name), []byte(content), 0o644); err != nil {
+	for _, name := range []string{"recheck/a.jsonl", "recheck/notes.txt", "a.jsonl"} {
+		err := os.WriteFile(filepath.Join(events, name), []byte("{}\n"), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -148,8 +150,7 @@ func TestPendingSegments_CarryTheEventAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slices.Sort(pending)
-	if want := []string{".sdd/events/.gitattributes", ".sdd/events/recheck/a.seg"}; !slices.Equal(pending, want) {
-		t.Fatalf("pending = %v, want %v", pending, want)
+	if !slices.Equal(pending, []string{".sdd/events/recheck/a.jsonl"}) {
+		t.Fatalf("pending should hold the channel's JSON Lines segment alone, holds %v", pending)
 	}
 }
