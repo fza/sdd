@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -65,7 +66,8 @@ type AutoCalibrationRequest struct {
 // stored as soon as it returns, so a server that quits loses no paid call
 // and the next one resumes with the pairs still unscored. Scoring toward the
 // next stage starts at once; once a stage is reached, every further request
-// waits for request.WaitIdle. One process runs at a time
+// waits for request.WaitIdle. No request starts while a graph check's judge
+// scores (WaitNoLiveCheck). One process runs at a time
 // (ProjectRuntimeOptions.CalibrationRuns). Starts, stages and failures go to
 // the log.
 func (a *Application) AutoCalibrate(ctx context.Context, identity RequestIdentity, project ProjectID, request AutoCalibrationRequest) {
@@ -258,6 +260,10 @@ dispatch:
 		case <-ctx.Done():
 			break dispatch
 		}
+		if err := c.app.WaitNoLiveCheck(ctx); err != nil {
+			<-inFlight
+			break
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -300,4 +306,75 @@ dispatch:
 // judgeStage is the recall stage judge's labels hold in ledger.
 func judgeStage(ledger *model.RelevanceLedger, judge string) float64 {
 	return model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge).Stage
+}
+
+// judgeState is what tells the causes of a check's judge shortfall apart
+// (model.NewJudgeShortfall): the failures of its calls, the background run
+// scoring with the same judge, and the judge's stage against the one its
+// unscored labelled pairs would give.
+func (r *ProjectRuntime) judgeState(ctx context.Context, ledger *model.RelevanceLedger, judge string, failures []string) (model.JudgeState, error) {
+	state := model.JudgeState{Failures: failures}
+	state.Stage, state.Reachable, state.Unscored = ledger.ReachableStage(judge)
+	if runs := r.options.CalibrationRuns; runs != nil {
+		run, running, err := runs.Running(ctx)
+		if err != nil {
+			return model.JudgeState{}, fmt.Errorf("sdd: gather: reading the background calibration: %w", err)
+		}
+		if running && run.Judge == judge {
+			state.Calibrating = true
+			state.CalibrationScored, state.CalibrationOf = run.Scored, run.Scored+state.Unscored
+		}
+	}
+	return state, nil
+}
+
+// liveChecks counts the graph checks whose ranking judge scores right now;
+// background calibration sends no request while one does.
+type liveChecks struct {
+	mu      sync.Mutex
+	running int
+	idle    chan struct{}
+}
+
+// begin counts a check in until the returned func counts it out.
+func (c *liveChecks) begin() func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running == 0 {
+		c.idle = make(chan struct{})
+	}
+	c.running++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.running--
+			if c.running == 0 {
+				close(c.idle)
+			}
+		})
+	}
+}
+
+// wait blocks while a check's judge scores, until ctx ends.
+func (c *liveChecks) wait(ctx context.Context) error {
+	c.mu.Lock()
+	idle, running := c.idle, c.running > 0
+	c.mu.Unlock()
+	if !running {
+		return nil
+	}
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// WaitNoLiveCheck blocks while a graph check's ranking judge scores, until
+// ctx ends: the wait a background run holds its next request on.
+func (a *Application) WaitNoLiveCheck(ctx context.Context) error {
+	return a.liveChecks.wait(ctx)
 }

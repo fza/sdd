@@ -100,8 +100,9 @@ func (l Lines) MarkedIDs() []string {
 // thresholds the best FallbackMarks scores at or above FallbackMarkScore are
 // likely bearing; in a check the agent judges itself, the first FallbackMarks
 // unscored candidates are. Every other candidate is in doubt, scored ones
-// first by falling score, then the unscored in candidate order, and falls
-// under the limits of DoubtLines and TitleLines.
+// first by falling score, then the unscored in candidate order, a done entry
+// last among equal scores and among the unscored, and falls under the limits
+// of DoubtLines and TitleLines.
 func PlaceLines(in LineInput) Lines {
 	var placed Lines
 	var scored, unscored []Line
@@ -136,6 +137,9 @@ func PlaceLines(in LineInput) Lines {
 		}
 	}
 	slices.SortStableFunc(scored, byFallingScore)
+	slices.SortStableFunc(unscored, func(a, b Line) int {
+		return cmp.Compare(rankLast(a.Entry.Kind == KindDone), rankLast(b.Entry.Kind == KindDone))
+	})
 	if !in.Thresholds.Valid {
 		n := 0
 		for n < len(scored) && n < FallbackMarks && *scored[n].Score >= FallbackMarkScore {
@@ -202,8 +206,10 @@ func byFallingScore(a, b Line) int {
 		return -1
 	case a.Score == nil && b.Score != nil:
 		return 1
-	case a.Score != nil && b.Score != nil:
+	case a.Score != nil && b.Score != nil && *a.Score != *b.Score:
 		return cmp.Compare(*b.Score, *a.Score)
+	case a.Score != nil && b.Score != nil:
+		return cmp.Compare(rankLast(a.Entry.Kind == KindDone), rankLast(b.Entry.Kind == KindDone))
 	}
 	return 0
 }

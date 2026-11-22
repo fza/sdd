@@ -166,6 +166,38 @@ func TestPlaceVerifierReading_ListsEveryDismissedEntryAsALine(t *testing.T) {
 	}
 }
 
+// A done entry with a score ranks by it, last only among equal scores and
+// among the unscored, and is never served in full.
+func TestPlaceVerifierReading_RanksDoneEntriesByScoreAndListsThem(t *testing.T) {
+	const (
+		done     = "20260101-000000-s-tac-don"
+		gap      = "20260101-000001-s-tac-gap"
+		tiedDone = "20260101-000002-s-tac-tdn"
+		tiedGap  = "20260101-000003-s-tac-tgp"
+		openDone = "20260101-000004-s-tac-odn"
+		unscored = "20260101-000005-s-tac-uns"
+	)
+	g := model.NewGraph([]*model.Entry{
+		{ID: done, Type: model.TypeSignal, Kind: model.KindDone},
+		{ID: gap, Type: model.TypeSignal, Kind: model.KindGap},
+		{ID: tiedDone, Type: model.TypeSignal, Kind: model.KindDone},
+		{ID: tiedGap, Type: model.TypeSignal, Kind: model.KindGap},
+		{ID: openDone, Type: model.TypeSignal, Kind: model.KindDone},
+		{ID: unscored, Type: model.TypeSignal, Kind: model.KindGap},
+	})
+	reading := model.VerifierReading{
+		Listed: []string{openDone, unscored, tiedDone, tiedGap, gap, done},
+		Scores: map[string]uint8{done: 250, gap: 1, tiedDone: 100, tiedGap: 100},
+	}
+	placement := model.PlaceVerifierReading(g, model.VerifierDraft{}, reading)
+	if got, want := lineIDs(slices.Concat(placement.Lines.Bearing, placement.Lines.Doubt)), []string{done, tiedGap, tiedDone, gap, unscored, openDone}; !slices.Equal(got, want) {
+		t.Fatalf("order %v, want %v", got, want)
+	}
+	if len(placement.Targets) != 0 {
+		t.Fatalf("targets %v: a done entry is never served in full", placement.Targets)
+	}
+}
+
 // A calibrated judge's set-aside threshold sets a candidate aside, but for
 // the blind audit share shown among the lines in doubt.
 func TestPlaceVerifierReading_SetsAsideBelowTheThreshold(t *testing.T) {

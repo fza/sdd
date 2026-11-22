@@ -76,7 +76,7 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 			return
 		}
 		// A verify duration that is not one merges as unset too.
-		if f.Type() == reflect.TypeFor[model.VerifyDuration]() {
+		if f.Type() == reflect.TypeFor[model.VerifyDuration]() || f.Type() == reflect.TypeFor[model.JudgeDuration]() {
 			f.SetString("10m")
 			return
 		}

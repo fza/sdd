@@ -287,3 +287,25 @@ func TestPlaceLines_SetsAsideBeforeItMarks(t *testing.T) {
 		})
 	}
 }
+
+// A done candidate with a score ranks by it; among equal scores and among
+// the unscored it ranks last, the rest keep the order given.
+func TestPlaceLines_RanksDoneByScoreAndLastOnATie(t *testing.T) {
+	entry := func(id string, kind model.Kind) model.GatherCandidate {
+		return model.GatherCandidate{Entry: &model.Entry{ID: id, Type: model.TypeSignal, Kind: kind}}
+	}
+	done, gap := entry("20260101-000000-s-tac-don", model.KindDone), entry("20260101-000001-s-tac-gap", model.KindGap)
+	tiedDone, tiedGap := entry("20260101-000002-s-tac-tdn", model.KindDone), entry("20260101-000003-s-tac-tgp", model.KindGap)
+	openDone, unscored := entry("20260101-000004-s-tac-odn", model.KindDone), entry("20260101-000005-s-tac-uns", model.KindGap)
+	scores := map[string]uint8{done.Entry.ID: 230, gap.Entry.ID: 100, tiedDone.Entry.ID: 180, tiedGap.Entry.ID: 180}
+
+	placed := model.PlaceLines(model.LineInput{Candidates: []model.GatherCandidate{openDone, unscored, tiedDone, tiedGap, gap, done}, Scores: scores})
+	var got []string
+	for _, line := range slices.Concat(placed.Bearing, placed.Doubt) {
+		got = append(got, line.Entry.ID)
+	}
+	want := []string{done.Entry.ID, tiedGap.Entry.ID, tiedDone.Entry.ID, gap.Entry.ID, unscored.Entry.ID, openDone.Entry.ID}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order %v, want %v", got, want)
+	}
+}

@@ -160,12 +160,34 @@ func TestHalving_HalvesABatchThatTimesOut(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		ended := &memorySizes{}
-		_, err := relevance.Halving(inner, ended, halvingKey).Score(ctx, relevance.Request{Candidates: manyCandidates(40)})
+		_, err := relevance.Halving(&slowScorer{limit: 0}, ended, halvingKey).Score(ctx, relevance.Request{Candidates: manyCandidates(1)})
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("the caller's deadline should end the request, got %v", err)
 		}
 		if _, ok := ended.Size(halvingKey); ok {
 			t.Error("the caller's deadline should remember no size")
+		}
+	})
+}
+
+// A call limit as long as the caller's deadline still halves a batch: a
+// call of several candidates gets half the time the caller has left.
+func TestHalving_LeavesRoomForHalvesWithinTheCallersDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inner := &slowScorer{limit: 10}
+		sizes := &memorySizes{}
+		scorer := relevance.Halving(relevance.Bounded(inner, 45*time.Second), sizes, halvingKey)
+		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+		defer cancel()
+		result, err := scorer.Score(ctx, relevance.Request{Candidates: manyCandidates(40)})
+		if err != nil {
+			t.Fatalf("the halves should answer within the caller's deadline: %v", err)
+		}
+		if len(result.Scores) != 40 {
+			t.Errorf("%d scores: every candidate should be scored by the halves", len(result.Scores))
+		}
+		if size, _ := sizes.Size(halvingKey); size != 10 {
+			t.Errorf("remembered %d, want the size that answered", size)
 		}
 	})
 }

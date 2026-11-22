@@ -29,9 +29,6 @@ const (
 	// summary.
 	PurposeTitle        Purpose = "title"
 	PurposeWritingGuide Purpose = "writing-guide"
-	// PurposeGatherQuery writes the semantic query and the keyword terms a
-	// grounding reading runs for a draft.
-	PurposeGatherQuery Purpose = "gather-query"
 	// PurposeRelevance rates one candidate entry against a draft for the
 	// grounding prefilter's generate bridge.
 	PurposeRelevance Purpose = "relevance"

@@ -4,19 +4,26 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
 )
 
 // WorkflowGatherRequest asks for a grounding serve inside the session.
 // Instance names the running capture the reading credits; its draft (body,
-// kind, topics) writes the queries. Without an instance Draft and Topics
-// describe the draft and nothing is credited.
+// kind, topics) is searched with its own text and its topics listed.
+// Without an instance Draft and Topics describe the draft and nothing is
+// credited; with one, Topics are listed beside the draft's own. Query and
+// Terms are the agent's searches.
 type WorkflowGatherRequest struct {
 	Instance string
 	IDs      []string
 	Draft    string
 	Topics   []string
+	Query    string
+	Terms    []string
+	// Wait has the judge score until the minimum holds (GatherRequest.Wait).
+	Wait     bool
 	SyncMode SearchSyncMode
 }
 
@@ -27,7 +34,7 @@ type WorkflowGatherRequest struct {
 // credited read listed, and runs nothing else.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
-	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs}
+	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs, Query: strings.TrimSpace(request.Query), Terms: nonEmpty(request.Terms), Wait: request.Wait, unattended: w.session.DialogueMode.AgentAnswers()}
 	if repeats := w.repeats(); repeats != nil {
 		gather.Held, gather.Served = repeats.Held, repeats.Served
 	}
@@ -53,15 +60,13 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 		if gather.Draft == "" {
 			gather.Draft = draft.Body
 		}
-		if len(gather.Topics) == 0 {
-			gather.Topics = draft.Topics
-		}
+		gather.Topics, gather.alsoListed = draft.Topics, request.Topics
 		gather.Kind = draft.Kind
 		gather.References = captureAnswered(inst.Store)
 		gather.Answered = append(slices.Clone(gather.References), storeVerdictIDs(inst.Store)...)
 		gather.since = inst.Reading().Corpus
 		gather.reading = inst.Reading()
-		gather.openOnly = len(request.IDs) > 0 && request.Draft == "" && len(request.Topics) == 0 && gather.since != nil
+		gather.openOnly = len(request.IDs) > 0 && request.Draft == "" && len(request.Topics) == 0 && gather.Query == "" && len(gather.Terms) == 0 && gather.since != nil
 	}
 	w.demandProject(project)
 	result, err := w.app.Gather(ctx, identity, project, gather)
@@ -94,4 +99,15 @@ func captureAnswered(store *engine.Store) []string {
 	answered = append(answered, workflowStoreStrings(store, "supersedes")...)
 	answered = append(answered, workflowStoreStrings(store, "approves")...)
 	return append(answered, workflowStoreStrings(store, "closes")...)
+}
+
+// nonEmpty returns the trimmed values that hold text.
+func nonEmpty(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }

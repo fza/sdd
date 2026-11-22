@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -54,6 +55,12 @@ func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) err
 		prefilter += ": " + result.PrefilterNote
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
+	if result.Shortfall != nil {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "# judged too few")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, JudgeShortfallText(*result.Shortfall))
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, GatherInstruction+" Open entries with gather ids, several in one call.")
 
@@ -234,6 +241,9 @@ func gatherLine(g *model.Graph, e *model.Entry, r *Repeats) string {
 func gatherReadLabel(read model.GroundingRead) string {
 	switch read.Mode {
 	case model.GroundingSemantic:
+		if read.Text == "" {
+			return "semantic, the draft's own text"
+		}
 		return fmt.Sprintf("semantic %q", read.Text)
 	case model.GroundingKeyword:
 		return fmt.Sprintf("keyword %q", read.Text)
@@ -261,4 +271,40 @@ func shortHash(hash string) string {
 		return hash[:12]
 	}
 	return hash
+}
+
+// JudgeShortfallText says how many candidates a check's judge scored of how
+// many, why it scored too few, and how the check goes on: the choice the
+// agent puts to the person, or, without a person, the agent judging from
+// the lines. It suggests `sdd grounding update` only where the judge lacks
+// a recall stage its labelled pairs would give.
+func JudgeShortfallText(s model.JudgeShortfall) string {
+	target := model.JudgeTarget(s.Listed, s.Minimum)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Only %d of %d judged, below the %d the check waits for: ", s.Judged, s.Listed, target)
+	switch s.Cause {
+	case model.ShortfallFailed:
+		fmt.Fprintf(&b, "the judge failed (%s).", strings.Join(s.Failures, "; "))
+	case model.ShortfallCalibrating:
+		fmt.Fprintf(&b, "background calibration is scoring with the judge, %d of %d pairs scored.", s.CalibrationScored, s.CalibrationOf)
+	case model.ShortfallUncalibrated:
+		stage := "no recall stage"
+		if s.Stage > 0 {
+			stage = fmt.Sprintf("recall stage %.2f", s.Stage)
+		}
+		fmt.Fprintf(&b, "the judge holds %s", stage)
+		if s.Reachable > s.Stage {
+			fmt.Fprintf(&b, ", and its %d unscored labelled pairs would give %.2f", s.Unscored, s.Reachable)
+		}
+		b.WriteString("; `sdd grounding update` calibrates it.")
+	default:
+		fmt.Fprintf(&b, "the judge answers, but too slowly for the list within %s.", s.Waited.Round(time.Second))
+	}
+	b.WriteString("\n")
+	if s.Unattended {
+		b.WriteString("No person is at this check to choose: judge the lines yourself.")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Put the choice to the person: wait until %d are judged (call gather again with the same searches and wait), or go on and judge the lines yourself.", target)
+	return b.String()
 }

@@ -51,6 +51,8 @@ var configDefaults = map[string]string{
 	"verify.prefilter":       strconv.FormatBool(DefaultGroundingPrefilter),
 	"verify.auto_calibrate":  strconv.FormatBool(DefaultGroundingAutoCalibrate),
 	"verify.ranking_timeout": DefaultRankingTimeout.String(),
+	"verify.judge_timeout":   DefaultJudgeTimeout.String(),
+	"verify.judge_minimum":   strconv.Itoa(DefaultJudgeMinimum),
 	"verify.claude.model":    DefaultVerifierClaude.Model,
 	"verify.claude.effort":   DefaultVerifierClaude.Effort,
 

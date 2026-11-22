@@ -157,7 +157,7 @@ func TestCallsRenewTheLeaseOfTheProjectTheyWorkIn(t *testing.T) {
 				return err
 			}
 			f.dep.clearDemands()
-			_, err = workflow.Gather(t.Context(), f.alice, sdd.WorkflowGatherRequest{Instance: serve.Instance, Draft: "A fact about the dependency.", SyncMode: sdd.SearchSyncNone})
+			_, err = workflow.Gather(t.Context(), f.alice, sdd.WorkflowGatherRequest{Instance: serve.Instance, Terms: []string{"dependency"}, SyncMode: sdd.SearchSyncNone})
 			return err
 		}},
 		{name: "read naming no project", home: 1, call: func(t *testing.T, f leaseFixture, workflow *sdd.WorkflowSession) error {

@@ -21,6 +21,8 @@ type GatherResult struct {
 	Opened   *ShowResult
 	Lines    model.Lines
 	SetAside []model.GatherSetAside
+	// Shortfall is a judge that scored fewer candidates than the minimum.
+	Shortfall *model.JudgeShortfall
 	// Held reports whether the consumer already holds an entry in full that
 	// the serve did not open by ID: it prints as a pointer with the brief and
 	// the way back. Nil holds

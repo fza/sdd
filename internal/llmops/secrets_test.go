@@ -54,10 +54,6 @@ func TestOperationsMarkTheDraftAsNew(t *testing.T) {
 			})
 			return err
 		}},
-		{name: "gather query", where: "the draft", run: func(r llm.Runner) error {
-			_, err := llmops.GatherQuery(t.Context(), r, llmops.GatherQueryDraft{Kind: "gap", Text: entry.Content})
-			return err
-		}},
 		{name: "relevance", where: "the draft", run: func(r llm.Runner) error {
 			judge, err := llmops.NewChatJudge(r)
 			if err != nil {

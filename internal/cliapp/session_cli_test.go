@@ -2,6 +2,7 @@ package cliapp_test
 
 import (
 	"io/fs"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,10 @@ func sessionFixture(t *testing.T, enforce bool) *appFixture {
 		config += "verify:\n  mode: off\n"
 	}
 	f.write(t, ".sdd/config.yaml", config)
-	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
+	embeddings := httptest.NewServer(&fakeOllama{})
+	t.Cleanup(embeddings.Close)
+	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n"+
+		"embedding:\n  provider: ollama\n  model: fake-model\n  ollama_endpoint: "+embeddings.URL+"\n")
 	f.write(t, "decisions/2026/09/14-030000-s-tac-two.md", "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nparticipants: [Local Author]\nsummary: Release notes omit migration steps.\n---\n\n"+sessionOtherBody+"\n")
 	f.write(t, "decisions/2026/09/14-040000-s-tac-thr.md", "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nparticipants: [Local Author]\nsummary: Onboarding lacks a glossary.\n---\n\nOnboarding material uses terms it never defines.\n")
 	f.write(t, ".gitignore", "config/\ncache/\nstate/\n.sdd/config.local.yaml\n.sdd/tmp/\n")
@@ -118,7 +122,7 @@ func TestCLISessionReadsLogIntoTheSession(t *testing.T) {
 		{"show", []string{"show", appEntryID}, `"tool":"show"`},
 		{"search", []string{"search", "--term", "configured graph directory"}, `"tool":"search"`},
 		{"view", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, `"tool":"view"`},
-		{"gather", []string{"gather"}, `"tool":"gather"`},
+		{"gather", []string{"gather", "--term", "configured graph directory"}, `"tool":"gather"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,7 +177,7 @@ func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
 	}
 	assertContainsOutput(t, "stderr", result.stderr, "no credited reading")
 
-	result = f.run(t, "gather", "--session", session, appEntryID, sessionOtherID, sessionThirdID)
+	result = f.run(t, "gather", "--session", session, "--query", "reads of a session", "--term", "graph", "--topic", "testing/cli", appEntryID, sessionOtherID, sessionThirdID)
 	if result.err != nil {
 		t.Fatalf("sdd gather --session: %v\n%s", result.err, result.stderr)
 	}
@@ -216,7 +220,7 @@ func TestCLISessionRefusals(t *testing.T) {
 	}{
 		{"new with a flag the capture has no field for", newArgs(withCapture, "--dry-run"), "--dry-run"},
 		{"new with a kind of the other type", newArgs(withCapture, "--kind", "directive"), "not a signal kind"},
-		{"gather with its own queries", []string{"gather", "--session", withCapture, "--query", "graph"}, "--query"},
+		{"gather with a kind of its own", []string{"gather", "--session", withCapture, "--kind", "gap"}, "--kind"},
 		{"dismiss without a capture", []string{"dismiss", "--session", withoutCapture, sessionOtherID, "--because", "other-scope"}, "runs no capture"},
 		{"new naming a capture the session lacks", newArgs(withCapture, "--instance", "i_99"), "runs no capture i_99"},
 	}
