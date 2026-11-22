@@ -1179,6 +1179,8 @@ func summarizeCmd() *cli.Command {
 	}
 }
 
+var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
+
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
@@ -1246,8 +1248,6 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 func graphGit(graphDir string) git.CLI {
 	return git.CLI{Dir: git.RepoRootFor(graphDir)}
 }
-
-var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
 
 // optionalSDDDir is resolveSDDDir for commands that also run outside any
 // project: only the absence of a .sdd/ yields "", a broken pointer still fails.

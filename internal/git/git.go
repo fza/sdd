@@ -307,7 +307,7 @@ func (Repositories) Init(dir string) error {
 }
 
 func (Repositories) CurrentBranch(dir string) (string, error) {
-	return currentBranch(dir, pathEnv())
+	return currentBranch(CommandAt(context.Background(), dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
 }
 
 func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
@@ -363,13 +363,11 @@ func remoteURL(repoRoot string, env []string) string {
 
 // CurrentBranch resolves the symbolic branch at repoRoot. Detached HEAD is
 // returned as an error because it cannot seed durable mutation authority.
-func CurrentBranch(repoRoot string) (string, error) { return currentBranch(repoRoot, nil) }
+func CurrentBranch(repoRoot string) (string, error) {
+	return currentBranch(exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
 
-// currentBranch is CurrentBranch run with env; nil inherits the process
-// environment.
-func currentBranch(repoRoot string, env []string) (string, error) {
-	cmd := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
-	cmd.Env = env
+func currentBranch(cmd *exec.Cmd) (string, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git current branch: %s (%w)", strings.TrimSpace(string(out)), err)
