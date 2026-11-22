@@ -449,10 +449,10 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 	}
 }
 
-// An audit sample answered in the capture carries the audit bit into the
-// ledger, and a publish whose audit labels show drift steps the judge's
-// threshold down.
-func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T) {
+// A publish tallies its check in the proof records: the threshold's step
+// and the entries it set aside. No drift step follows, whatever the
+// ledger's old audit labels show.
+func TestCaptureGrounding_PublishTalliesTheCheckAndStepsNoThreshold(t *testing.T) {
 	const judge = "test:counting"
 	var seed model.RelevanceBatch
 	for i := range 189 {
@@ -460,52 +460,43 @@ func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T
 		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
 		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 200}})
 	}
-	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
 	for i := range 100 {
 		pair := model.NewRelevancePair(fmt.Sprintf("20250201-%02d%02d00-s-tac-aud", i/60, i%60), fmt.Sprintf("20250701-%02d%02d00-d-tac-sub", i/60, i%60))
-		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true}
-		if i < 3 {
-			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true}
-		}
-		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true}})
 		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 220}})
 	}
-	store := local.NewMemoryRelevanceStore()
+	store, proofs := local.NewMemoryRelevanceStore(), provenThreshold(t, judge)
 	if err := store.Append(t.Context(), relevance.Encode(seed)); err != nil {
 		t.Fatal(err)
 	}
-	scorer := &countingScorer{score: 0}
-	world, session := newCaptureWorld(t, "grounding-audit",
+	world, session := newCaptureWorld(t, "grounding-tally",
 		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
-		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}))
+		proctest.WithRelevance(store), proctest.WithProofs(proofs), proctest.WithPrefilter(sdd.Prefilter{Scorer: &countingScorer{score: 0}, Judge: judge}))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
-	gathered := session.Gather(t, instance)
-	if len(gathered.SummaryIDs) == 0 {
-		t.Fatalf("every candidate scored low, so the lines to judge should be audit samples:\n%s", gathered.Text)
-	}
-	sample := gathered.SummaryIDs[0]
-	draft := captureDraft()
-	draft["verdicts"] = []any{map[string]any{"ids": []any{sample}, "code": model.VerdictTopicOnly}}
-	serve = session.Report(t, instance, draft)
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
 	entry := confirmCapture(t, world, session, instance)
 
-	segments, err := store.Segments(t.Context())
+	if steps := foldLedger(t, store).Steps(); len(steps) != 0 {
+		t.Fatalf("steps %+v: no drift rule steps a threshold down", steps)
+	}
+	segments, err := proofs.Segments(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := relevance.Fold(segments)
+	records, err := relevance.FoldProofs(segments)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verdict, ok := ledger.Reader(model.NewRelevancePair(entry.ID, sample)); !ok || !verdict.Audit {
-		t.Fatalf("the answered sample should carry the audit bit, got %+v, %v", verdict, ok)
+	if len(records.Tallies) != 1 || records.Tallies[0].Capture != entry.ID || len(records.Tallies[0].Rules) == 0 {
+		t.Fatalf("tallies %+v: the publish should tally its check", records.Tallies)
 	}
-	steps := ledger.Steps()
-	if len(steps) != 1 || steps[0].Judge != judge {
-		t.Fatalf("steps %+v: three referenced samples in a hundred should step the threshold down once", steps)
+	threshold := records.Tallies[0].Rules[0]
+	if threshold.Rule != model.RuleThreshold || threshold.Step != model.StepFull || len(threshold.Hidden) == 0 || !slices.Contains(threshold.Hidden, captureRef2ID) {
+		t.Fatalf("tally %+v: the threshold should hold its full step and name what it set aside", threshold)
 	}
 }
 

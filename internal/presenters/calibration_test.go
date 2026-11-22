@@ -32,25 +32,6 @@ func TestRenderCalibration_NamesTheLabelsPrecisionCounts(t *testing.T) {
 	}
 }
 
-func TestRenderCalibration_NamesTheFarFloor(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		floor model.FloorHealth
-		want  string
-	}{
-		{"on", model.FloorHealth{Counted: 12}, "far floor: on; 0 referenced of the latest 12 audit labels of its set-asides (window 200, minimum 50, off above 2%)\n"},
-		{"off", model.FloorHealth{Misses: 2, Counted: 60, Off: true}, "far floor: off, its audit showed too many misses; 2 referenced of the latest 60 audit labels of its set-asides (window 200, minimum 50, off above 2%)\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var verbose bytes.Buffer
-			presenters.RenderCalibration(&verbose, model.CalibrationReport{Judge: "j", Floor: tc.floor}, presenters.GroundingAuto{})
-			if !strings.Contains(verbose.String(), tc.want) {
-				t.Errorf("the verbose status lacks %q:\n%s", tc.want, verbose.String())
-			}
-		})
-	}
-}
-
 // Both statuses name the labels each threshold rests on once replayed
 // labels take part in the calibration, and say so when no score is served
 // in full.

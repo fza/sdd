@@ -187,7 +187,7 @@ func (h halving) split(ctx context.Context, request Request, far []Candidate, si
 			return Result{}, err
 		}
 		out.Scores = append(out.Scores, result.Scores...)
-		out.Floor = append(out.Floor, result.Floor...)
+		out.Far = append(out.Far, result.Far...)
 		out.Identity = result.Identity
 		addUsage(&out.Usage, result.Usage)
 	}

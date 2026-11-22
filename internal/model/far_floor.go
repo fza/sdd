@@ -9,7 +9,7 @@ import (
 
 // The far floor: every judge call of a reading also scores FarFloorSize
 // entries far from the draft, and a candidate the judge rates no higher than
-// their median in its own call is set aside. An entry is far when it shares
+// the line their scores set in its own call (FarForm) is set aside. An entry is far when it shares
 // no topic area, the first component of a topic path, with the draft and
 // lies more than FarFloorHops reference hops from every entry the draft
 // references. It needs no label, so it holds for a judge without thresholds.
@@ -26,12 +26,32 @@ type FarDraft struct {
 	References []string
 }
 
+// FarForm is the form of the far floor's line: careful, the lowest of a
+// call's far scores, or median, their median. The floor starts careful and
+// takes the median form only at the full step (FloorStep).
+type FarForm uint8
+
+const (
+	FarCareful FarForm = iota
+	FarMedian
+)
+
 // FarFloor is the far floor of one reading: the far entries its judge calls
-// carry, and the neighbourhood of the draft's references that no score puts
-// below it.
+// carry, the form of its line, and the neighbourhood of the draft's
+// references that no score puts below it.
 type FarFloor struct {
 	Far  []*Entry
+	Form FarForm
 	near map[string]bool
+}
+
+// Line is the line of a call whose far scores have lowest as their lowest
+// and median as their median, in the floor's form.
+func (f *FarFloor) Line(lowest, median float64) float64 {
+	if f != nil && f.Form == FarMedian {
+		return median
+	}
+	return lowest
 }
 
 // NewFarFloor picks a draft's far entries among population, leaving out
@@ -78,11 +98,11 @@ func NewFarFloor(g *Graph, population []*Entry, draft FarDraft, listed []string)
 }
 
 // Below reports whether a judged candidate lies below the floor: its score
-// is at or below floor, the median its own call gave the far entries. A
+// is at or below line, the line of its own call (FarFloor.Line). A
 // candidate within FarFloorHops of an entry the draft references, or found
 // by two or more reads, never does.
-func (f *FarFloor) Below(candidate GatherCandidate, score, floor float64) bool {
-	return f != nil && score <= floor && !floorSpares(f.near, candidate)
+func (f *FarFloor) Below(candidate GatherCandidate, score, line float64) bool {
+	return f != nil && score <= line && !floorSpares(f.near, candidate)
 }
 
 // StandingBelowFloor returns the verdicts of held, the candidates a reading

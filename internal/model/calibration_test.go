@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -33,116 +32,6 @@ func TestAuditSample_ShowsAStableShareBlind(t *testing.T) {
 	}
 	if none, _ := model.AuditSample(nil, "seed"); none != nil {
 		t.Fatal("nothing set aside should audit nothing")
-	}
-}
-
-// driftLabels returns a calibrated label set plus count audit labels by
-// subject entries after base, misses of them referenced.
-func driftLabels(count, misses int) []model.RelevanceLabel {
-	labels := labelsWith(189, 0, 0)
-	for i := range count {
-		kind := model.LabelNegative
-		if i < misses {
-			kind = model.LabelPositive
-		}
-		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-aud", i), fmt.Sprintf("20260601-%06d-d-tac-sub", i)), Score: 5, Kind: kind, Audit: true, Weight: 1})
-	}
-	return labels
-}
-
-// implicitAudit turns every negative audit label into an implicit
-// dismissal: a sample shown blind and left unanswered.
-func implicitAudit(labels []model.RelevanceLabel) []model.RelevanceLabel {
-	for i := range labels {
-		if labels[i].Audit && labels[i].Kind == model.LabelNegative {
-			labels[i].Weight = model.WeightImplicit
-		}
-	}
-	return labels
-}
-
-func TestDriftStepDue(t *testing.T) {
-	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name   string
-		labels []model.RelevanceLabel
-		steps  []model.DriftStep
-		due    bool
-	}{
-		{"too few audit labels", driftLabels(49, 10), nil, false},
-		{"misses at the limit", driftLabels(100, 2), nil, false},
-		{"misses among unanswered samples weigh more", implicitAudit(driftLabels(100, 2)), nil, true},
-		{"misses above the limit", driftLabels(100, 3), nil, true},
-		{"a step today already", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-23 * time.Hour), SetAside: 150}}, false},
-		{"a step yesterday over the same captures", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-25 * time.Hour), SetAside: 150}}, false},
-		{"a step before these captures", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC), SetAside: 150}}, true},
-		{"another judge's step", driftLabels(100, 3), []model.DriftStep{{Judge: "k", At: now, SetAside: 1}}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			step, due := model.DriftStepDue(tc.labels, tc.steps, "j", now)
-			if due != tc.due {
-				t.Fatalf("due = %v", due)
-			}
-			if !due {
-				return
-			}
-			current := model.Calibrate(tc.labels, tc.steps, "j")
-			if step.Judge != "j" || !step.At.Equal(now) || model.ScoreValue(step.SetAside) >= current.SetAside {
-				t.Fatalf("step %+v should lower the judge's set-aside threshold below %.3f", step, current.SetAside)
-			}
-			after := model.Calibrate(tc.labels, append(tc.steps, step), "j")
-			if after.SetAside > current.SetAside {
-				t.Fatal("a step should never raise the threshold")
-			}
-		})
-	}
-	window := driftLabels(300, 0)
-	for i := range 10 {
-		window[189+i].Kind = model.LabelPositive
-	}
-	if _, due := model.DriftStepDue(window, nil, "j", now); due {
-		t.Fatal("misses older than the latest 200 audit labels should not count")
-	}
-}
-
-// The drift rule acts at every stage: a judge at the first stage steps
-// down as one at the top does.
-func TestDriftStepDue_ActsAtTheFirstStage(t *testing.T) {
-	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
-	labels := driftLabels(100, 3)[189-40:]
-	if got := model.Calibrate(labels, nil, "j"); got.Stage != 0.90 {
-		t.Fatalf("thresholds %+v: forty positives and three audit misses should hold the first stage alone", got)
-	}
-	step, due := model.DriftStepDue(labels, nil, "j", now)
-	if !due || model.ScoreValue(step.SetAside) >= model.Calibrate(labels, nil, "j").SetAside {
-		t.Fatalf("step %+v, due %v: the drift rule should step down at the first stage", step, due)
-	}
-}
-
-// Entry IDs carry the writer's wall clock, so the step mark is read in the
-// clock's zone: east of UTC captures before a step stay answered, west of it
-// captures after a step count.
-func TestDriftStepDue_ReadsCaptureIDsInTheClocksZone(t *testing.T) {
-	stamped := func(at time.Time) []model.RelevanceLabel {
-		labels := driftLabels(100, 3)
-		for i := range 100 {
-			label := &labels[len(labels)-100+i]
-			label.Pair = model.NewRelevancePair(label.Pair.A, at.Add(time.Duration(i)*time.Second).Format("20060102-150405")+"-d-tac-sub")
-		}
-		return labels
-	}
-	east := time.FixedZone("UTC+9", 9*60*60)
-	eastStep := model.DriftStep{Judge: "j", At: time.Date(2026, 6, 1, 0, 30, 0, 0, time.UTC), SetAside: 150}
-	before := stamped(time.Date(2026, 6, 1, 9, 0, 0, 0, east))
-	if _, due := model.DriftStepDue(before, []model.DriftStep{eastStep}, "j", eastStep.At.Add(25*time.Hour).In(east)); due {
-		t.Error("captures written before the last step, east of UTC, should not count again")
-	}
-	west := time.FixedZone("UTC-8", -8*60*60)
-	westStep := model.DriftStep{Judge: "j", At: time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC), SetAside: 150}
-	after := stamped(time.Date(2026, 6, 1, 10, 0, 0, 0, west))
-	if _, due := model.DriftStepDue(after, []model.DriftStep{westStep}, "j", westStep.At.Add(25*time.Hour).In(west)); !due {
-		t.Error("captures written after the last step, west of UTC, should count")
 	}
 }
 
@@ -238,7 +127,7 @@ func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 	}
 }
 
-func TestCalibration_CountsOpenedHiddenEntriesWithoutDrift(t *testing.T) {
+func TestCalibration_CountsOpenedHiddenEntries(t *testing.T) {
 	var batch model.RelevanceBatch
 	add := func(i int, verdict model.ReaderVerdict) {
 		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), "20260601-000000-d-tac-sub")
@@ -256,9 +145,6 @@ func TestCalibration_CountsOpenedHiddenEntriesWithoutDrift(t *testing.T) {
 	report := model.NewRelevanceLedger(batch).Calibration("j", false)
 	if report.OpenedHidden != 5 {
 		t.Fatalf("opened hidden = %d: each opening without a finding should count", report.OpenedHidden)
-	}
-	if report.AuditMisses != 1 || report.AuditCounted != 61 {
-		t.Fatalf("audit %d of %d: only the referenced audit sample is a miss, an opening adds nothing to the window", report.AuditMisses, report.AuditCounted)
 	}
 }
 
@@ -314,77 +200,5 @@ func TestRankingHealth(t *testing.T) {
 	sound := model.JudgeRankingHealth(labels(19, 1))
 	if !sound.Measured || sound.Recall != 0.95 || sound.Weak() {
 		t.Fatalf("health %+v: 19 of 20 positives at the line clears the bar", sound)
-	}
-}
-
-// floorLabels returns count audit labels of far floor set-asides, misses of
-// them referenced.
-func floorLabels(count, misses int) []model.RelevanceLabel {
-	labels := driftLabels(count, misses)[189:]
-	for i := range labels {
-		labels[i].Floor = true
-	}
-	return labels
-}
-
-func TestJudgeFloorHealth(t *testing.T) {
-	for _, tc := range []struct {
-		name            string
-		labels          []model.RelevanceLabel
-		misses, counted int
-		off             bool
-	}{
-		{name: "no audit label", labels: labelsWith(189, 0, 0)},
-		{name: "misses in too few labels", labels: floorLabels(49, 10), misses: 10, counted: 49},
-		{name: "misses at the limit", labels: floorLabels(100, 2), misses: 2, counted: 100},
-		{name: "misses above the limit", labels: floorLabels(100, 3), misses: 3, counted: 100, off: true},
-		{name: "misses among unanswered samples weigh more", labels: implicitAudit(floorLabels(100, 2)), misses: 2, counted: 100, off: true},
-		{name: "misses of the threshold's set-asides", labels: driftLabels(100, 10)},
-		{name: "misses older than the window", labels: floorLabels(model.DriftWindow+50, 3), counted: model.DriftWindow},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			health := model.JudgeFloorHealth(tc.labels)
-			if health.Misses != tc.misses || health.Counted != tc.counted || health.Off != tc.off {
-				t.Fatalf("health %+v: the floor reads the latest audit labels of its own set-asides alone", health)
-			}
-		})
-	}
-}
-
-// A referenced audit sample of a far floor set-aside counts against the
-// floor, never against the calibrated threshold.
-func TestDriftRule_LeavesTheFloorsSetAsidesOut(t *testing.T) {
-	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
-	labels := append(labelsWith(189, 0, 0), floorLabels(100, 10)...)
-	if _, due := model.DriftStepDue(labels, nil, "j", now); due {
-		t.Fatal("misses of the floor should step no threshold down")
-	}
-	if misses, counted := model.DriftWindowMisses(labels); misses != 0 || counted != 0 {
-		t.Fatalf("drift window %d of %d: the floor's audit labels should stay out of it", misses, counted)
-	}
-	report := model.NewRelevanceLedger().Calibration("j", false)
-	if report.Floor.Off || report.Floor.Counted != 0 {
-		t.Fatalf("floor %+v of an empty ledger: the floor should be on", report.Floor)
-	}
-}
-
-func TestCalibration_ReportsTheFloor(t *testing.T) {
-	var batch model.RelevanceBatch
-	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
-	for i := range 60 {
-		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), fmt.Sprintf("20260601-%06d-d-tac-sub", i))
-		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true, Floor: true}
-		if i < 2 {
-			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}
-		}
-		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
-		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 10}})
-	}
-	report := model.NewRelevanceLedger(batch).Calibration("j", false)
-	if report.Floor.Misses != 2 || report.Floor.Counted != 60 || !report.Floor.Off {
-		t.Fatalf("floor %+v: two referenced of sixty audited floor set-asides should turn the floor off", report.Floor)
-	}
-	if report.AuditMisses != 0 || report.AuditCounted != 0 {
-		t.Fatalf("audit %d of %d: the threshold's window should hold none of them", report.AuditMisses, report.AuditCounted)
 	}
 }

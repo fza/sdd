@@ -156,6 +156,9 @@ type ReaderSource uint8
 const (
 	SourceLive ReaderSource = iota
 	SourceReplay
+	// SourceCheck marks a label from a past entry replayed as a whole check
+	// (ReplayLabels); it never reaches the ledger.
+	SourceCheck
 )
 
 // String names the source as JSON exports carry it.

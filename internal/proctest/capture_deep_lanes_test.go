@@ -214,7 +214,7 @@ func TestCaptureDeep_TheReadingsScoresAreNotPaidAgain(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	world, session := newDeepWorld(t, "deep-lanes-reuse", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
 		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
-		proctest.WithRelevance(laneLedger(t, true)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
+		proctest.WithRelevance(laneLedger(t, true)), proctest.WithProofs(provenThreshold(t, laneJudge)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Report(t, instance, map[string]any{"body": deepBody, "entryKind": "gap", "topics": []any{"cli/ux"}})

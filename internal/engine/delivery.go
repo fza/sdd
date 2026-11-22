@@ -731,3 +731,13 @@ func (s *Session) Forks(instanceID string) []Fork {
 	}
 	return out
 }
+
+// UserWords returns the person's words relayed with the instance's answers,
+// in order: what the person said during the move.
+func (s *Session) UserWords(instanceID string) []string {
+	inst, ok := s.instances[instanceID]
+	if !ok {
+		return nil
+	}
+	return slices.Clone(inst.userWords)
+}

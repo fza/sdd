@@ -10,25 +10,13 @@ import (
 	"time"
 )
 
-// Audit and drift constants.
-const (
-	// AuditShare is the share of the prefilter's set-asides shown blind as
-	// ordinary lines to judge.
-	AuditShare = 0.03
-	// DriftWindow is how many of the latest audit labels the drift rule
-	// reads; DriftMinimum how many it needs before it acts.
-	DriftWindow  = 200
-	DriftMinimum = 50
-	// DriftMissShare is the referenced share of audit samples above which
-	// the set-aside threshold steps down.
-	DriftMissShare = 0.02
-	// DriftInterval is the least time between two steps of one judge.
-	DriftInterval = 24 * time.Hour
-)
+// AuditShare is the share of the entries the deep verifier's reading hides
+// that it ranks blind among the ones it shows.
+const AuditShare = 0.03
 
 // AuditSample picks the set-aside entries shown blind: ceil(AuditShare of
 // them), chosen by a hash of seed and ID so every gather of one reading
-// picks the same ones. The rest stay set aside; both come back sorted.
+// picks the same ones. The rest stay hidden; both come back sorted.
 func AuditSample(setAside []string, seed string) (audit, kept []string) {
 	if len(setAside) == 0 {
 		return nil, nil
@@ -45,114 +33,6 @@ func AuditSample(setAside []string, seed string) (audit, kept []string) {
 	slices.Sort(audit)
 	slices.Sort(kept)
 	return audit, kept
-}
-
-// AuditLabels returns judge's labels of audit samples of the threshold's
-// set-asides, latest first: by the later entry of each pair, which is the
-// capture that judged it. A sample of a far floor set-aside is none of
-// them (JudgeFloorHealth).
-func AuditLabels(labels []RelevanceLabel) []RelevanceLabel {
-	return auditLabels(labels, false)
-}
-
-// auditLabels returns the labels of audit samples the far floor set aside,
-// or those it did not, latest first.
-func auditLabels(labels []RelevanceLabel, floor bool) []RelevanceLabel {
-	var audit []RelevanceLabel
-	for _, label := range labels {
-		if label.Audit && label.Floor == floor && (label.Kind == LabelPositive || label.Kind == LabelNegative || label.Kind == LabelCounted) {
-			audit = append(audit, label)
-		}
-	}
-	slices.SortStableFunc(audit, func(a, b RelevanceLabel) int {
-		if c := strings.Compare(b.Pair.B, a.Pair.B); c != 0 {
-			return c
-		}
-		return strings.Compare(b.Pair.A, a.Pair.A)
-	})
-	return audit
-}
-
-// DriftWindowMisses counts the referenced audit samples among the latest
-// DriftWindow audit labels, and the labels counted.
-func DriftWindowMisses(labels []RelevanceLabel) (misses, counted int) {
-	misses, counted, _ = driftWindow(AuditLabels(labels))
-	return misses, counted
-}
-
-// FloorHealth is how the far floor fared in a judge's audit: Misses of the
-// latest Counted audit samples of its set-asides were referenced. Off turns
-// the floor off for the judge.
-type FloorHealth struct {
-	Misses, Counted int
-	Off             bool
-}
-
-// JudgeFloorHealth holds the far floor to the drift rule's bar: once the
-// latest DriftWindow audit labels of its set-asides, at least DriftMinimum,
-// hold a weighted share of referenced samples above DriftMissShare, the
-// floor is off. An off floor sets nothing aside, so no later label turns it
-// on again.
-func JudgeFloorHealth(labels []RelevanceLabel) FloorHealth {
-	misses, counted, share := driftWindow(auditLabels(labels, true))
-	return FloorHealth{Misses: misses, Counted: counted, Off: counted >= DriftMinimum && share > DriftMissShare}
-}
-
-// driftWindow counts the referenced samples among the latest DriftWindow of
-// audit, which runs latest first, the labels counted and the weighted miss
-// share.
-func driftWindow(audit []RelevanceLabel) (misses, counted int, share float64) {
-	if len(audit) > DriftWindow {
-		audit = audit[:DriftWindow]
-	}
-	missed, weight := 0.0, 0.0
-	for _, label := range audit {
-		weight += label.Weight
-		if label.Kind == LabelPositive {
-			misses++
-			missed += label.Weight
-		}
-	}
-	if weight > 0 {
-		share = missed / weight
-	}
-	return misses, len(audit), share
-}
-
-// DriftStepDue returns the step the drift rule takes now: when the latest
-// audit labels, at least DriftMinimum, hold a weighted share of referenced
-// samples above DriftMissShare and no step of the judge came within
-// DriftInterval, the set-aside threshold halves. It never rises. Only labels
-// of captures after the judge's last step count, so a window the last step
-// already answered never halves the threshold again.
-func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now time.Time) (DriftStep, bool) {
-	var last time.Time
-	for _, step := range steps {
-		if step.Judge != judge {
-			continue
-		}
-		if now.Sub(step.At) < DriftInterval {
-			return DriftStep{}, false
-		}
-		if step.At.After(last) {
-			last = step.At
-		}
-	}
-	since := labels
-	if !last.IsZero() {
-		// Entry IDs are stamped in the zone of the clock now comes from.
-		mark := last.In(now.Location()).Format("20060102-150405")
-		since = slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool { return label.Pair.B <= mark })
-	}
-	_, counted, share := driftWindow(AuditLabels(since))
-	if counted < DriftMinimum || share <= DriftMissShare {
-		return DriftStep{}, false
-	}
-	thresholds := Calibrate(labels, steps, judge)
-	if !thresholds.Valid {
-		return DriftStep{}, false
-	}
-	return DriftStep{Judge: judge, At: now.UTC(), SetAside: ScoreByte(thresholds.SetAside) / 2}, true
 }
 
 // CalibrationRun is a background calibration run a status names
@@ -196,11 +76,7 @@ type CalibrationReport struct {
 	Misses         int
 	RecallBound    float64
 	PositiveWeight float64
-	// AuditMisses of AuditCounted are the referenced audit samples in the
-	// drift window.
-	AuditMisses, AuditCounted int
-	Floor                     FloorHealth
-	Steps                     []DriftStep
+	Steps          []DriftStep
 	// PassedInFull counts the live labelled pairs scoring at or above the
 	// relevant threshold, which rests on them alone, Referenced how many of
 	// them were referenced, and SetAside how many were set aside with each
@@ -348,8 +224,6 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 	}
 	report.RecallBound = WilsonLowerWeighted(total-missed, total)
 	report.PositiveWeight = total
-	report.AuditMisses, report.AuditCounted = DriftWindowMisses(labels)
-	report.Floor = JudgeFloorHealth(labels)
 	for code, count := range byCode {
 		report.SetAside = append(report.SetAside, CodePrecision{Code: code, Count: count})
 	}

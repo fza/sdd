@@ -38,8 +38,23 @@ type PrefilterPayload struct {
 	// Below names the candidates of Scores the far floor put below it
 	// (FarFloor.Below), the verdict of the call that scored each.
 	Below []string `json:"below,omitempty"`
+	// SetAside names the candidates the calibrated threshold set aside, and
+	// Cut is its calibrated cut, 0 without one.
+	SetAside []string `json:"set_aside,omitempty"`
+	Cut      uint8    `json:"cut,omitempty"`
+	// Hiding is each hiding rule's step in this gather and how many
+	// candidates it would have hidden at the full step.
+	Hiding []RuleMark `json:"hiding,omitempty"`
 	// Audit names the set-aside candidates shown blind as lines to judge.
 	Audit []string `json:"audit,omitempty"`
+}
+
+// RuleMark is a hiding rule's step in one gather and the candidates it
+// would have hidden at the full step.
+type RuleMark struct {
+	Rule  HidingRule `json:"rule"`
+	Step  HidingStep `json:"step"`
+	Would int        `json:"would,omitempty"`
 }
 
 // RelevanceSubjectHash keys the scores a judge gave against one draft text
@@ -53,10 +68,13 @@ func RelevanceSubjectHash(subject string) string {
 // against the latest draft it scored, and the candidates among them below
 // the far floor.
 type readingScores struct {
-	forward bool
-	subject string
-	scores  map[string]uint8
-	below   map[string]bool
+	forward  bool
+	subject  string
+	scores   map[string]uint8
+	below    map[string]bool
+	setAside map[string]bool
+	cut      uint8
+	hiding   map[HidingRule]RuleMark
 }
 
 // Scores returns the scores judge gave inside the reading against the draft
@@ -109,8 +127,17 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	judge := CanonicalJudge(p.Judge)
 	held := r.scores[judge]
 	if held == nil || held.subject != p.Subject {
-		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}, below: map[string]bool{}}
+		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}, below: map[string]bool{}, setAside: map[string]bool{}, hiding: map[HidingRule]RuleMark{}}
 		r.scores[judge] = held
+	}
+	for _, id := range p.SetAside {
+		held.setAside[id] = true
+	}
+	if p.Cut > 0 {
+		held.cut = p.Cut
+	}
+	for _, mark := range p.Hiding {
+		held.hiding[mark.Rule] = mark
 	}
 	if r.audit == nil {
 		r.audit = map[string]bool{}
@@ -310,11 +337,12 @@ func NextStage(stage float64) float64 {
 // once they hold a stage alone: a replayed reference is an easier positive
 // than an entry a live reading had to find. The relevant threshold is the
 // lowest score, never below the set-aside threshold, at and above which
-// the lower bound of the weighted positive share of the live labels
-// reaches RelevantPrecision: replayed labels are positives only, so
-// counting them would hold that share at every score. Below the first
-// stage the thresholds are invalid and decide nothing. Drift steps cap the
-// set-aside threshold; it never rises above a step.
+// the lower bound of the weighted positive share of the live labels and
+// the replayed checks' reaches RelevantPrecision: labels seeded from the
+// graph's references are positives only, so counting them would hold that
+// share at every score. Below the first stage the thresholds are invalid
+// and decide nothing. Drift steps cap the set-aside threshold; it never
+// rises above a step.
 func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
 	stage, setAside := setAsideCut(labels)
 	if stage == 0 {
@@ -330,7 +358,7 @@ func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) Relevan
 			setAside = step.SetAside
 		}
 	}
-	return RelevanceThresholds{Valid: true, Stage: stage, SetAside: ScoreValue(setAside), SetAsideLive: fromLive, Relevant: relevantThreshold(live, setAside)}
+	return RelevanceThresholds{Valid: true, Stage: stage, SetAside: ScoreValue(setAside), SetAsideLive: fromLive, Relevant: relevantThreshold(slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool { return label.Source == SourceReplay }), setAside)}
 }
 
 // setAsideCut is the highest recall stage the positive labels hold and the

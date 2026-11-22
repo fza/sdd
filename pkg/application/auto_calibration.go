@@ -51,9 +51,11 @@ type CalibrationLease interface {
 }
 
 // AutoCalibrationRequest shapes AutoCalibrate: WaitIdle blocks until the
-// server is idle or ctx ends; nil never waits.
+// server is idle or ctx ends; WaitNoLiveCheck blocks while a live check
+// judges, until none does or ctx ends. Nil never waits.
 type AutoCalibrationRequest struct {
-	WaitIdle func(ctx context.Context) error
+	WaitIdle        func(ctx context.Context) error
+	WaitNoLiveCheck func(ctx context.Context) error
 }
 
 // AutoCalibrate keeps the ranking judge of a reading without a client
@@ -69,7 +71,9 @@ type AutoCalibrationRequest struct {
 // waits for request.WaitIdle. No request starts while a graph check's judge
 // scores (WaitNoLiveCheck). One process runs at a time
 // (ProjectRuntimeOptions.CalibrationRuns). Starts, stages and failures go to
-// the log.
+// the log. With nothing left to score, it replays past entries as whole
+// checks and runs the scan after writing (replayRound), the proof records
+// the hiding rules step on.
 func (a *Application) AutoCalibrate(ctx context.Context, identity RequestIdentity, project ProjectID, request AutoCalibrationRequest) {
 	calibrator := &autoCalibrator{app: a, identity: identity, project: project, request: request, free: true, skipped: map[string]bool{}}
 	for {
@@ -121,7 +125,7 @@ func (c *autoCalibrator) round(ctx context.Context) time.Duration {
 	}
 	stage := judgeStage(ledger, judge.Judge)
 	if stage == model.RecallFloor || len(ledger.Scorable()) > 0 && len(c.pending(ledger, judge.Judge)) == 0 {
-		return autoCalibrateRecheck
+		return c.replayPhase(ctx, runtime, runs, judge)
 	}
 	lease, held, err := runs.Acquire(ctx)
 	if err != nil {
@@ -146,7 +150,55 @@ func (c *autoCalibrator) round(ctx context.Context) time.Duration {
 	if len(subjects) == 0 {
 		return autoCalibrateRecheck
 	}
-	return c.score(ctx, runtime, judge, lease, subjects, stage)
+	wait := c.score(ctx, runtime, judge, lease, subjects, stage)
+	if wait == autoCalibrateRecheck {
+		// A clean round goes on at once: to the replays once nothing is left to score.
+		return 0
+	}
+	return wait
+}
+
+// replayPhase holds the run while it replays past entries and scans
+// written ones (replayRound), each judge call waiting until no live check
+// judges and the server is idle. It returns at once to the next round
+// while there is more to send.
+func (c *autoCalibrator) replayPhase(ctx context.Context, runtime *ProjectRuntime, runs CalibrationRuns, judge Prefilter) time.Duration {
+	log := slogutils.FromContext(ctx)
+	lease, held, err := runs.Acquire(ctx)
+	if err != nil {
+		log.Warn("replay: acquiring the run failed", "err", err)
+		return autoCalibrateRetry
+	}
+	if !held {
+		return autoCalibrateRecheck
+	}
+	defer func() {
+		if err := lease.Release(); err != nil {
+			log.Warn("replay: releasing the run failed", "err", err)
+		}
+	}()
+	wait := func(ctx context.Context) error {
+		if c.request.WaitNoLiveCheck != nil {
+			if err := c.request.WaitNoLiveCheck(ctx); err != nil {
+				return err
+			}
+		}
+		if c.request.WaitIdle != nil {
+			return c.request.WaitIdle(ctx)
+		}
+		return ctx.Err()
+	}
+	sent, err := c.replayRound(ctx, runtime, judge, wait)
+	switch {
+	case ctx.Err() != nil:
+		return 0
+	case err != nil:
+		log.Warn("replay failed", "judge", judge.Judge, "err", err)
+		return autoCalibrateRetry
+	case sent:
+		return 0
+	}
+	return autoCalibrateRecheck
 }
 
 // pending are the batches ledger plans for judge, past the skipped

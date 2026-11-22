@@ -18,31 +18,14 @@ type GroundingAuto struct {
 	Run *model.CalibrationRun
 }
 
-// RenderGroundingSummary writes `sdd grounding status`: the labels people's
-// choices gave, the audit and drift rules over the ranking judge's labels,
-// that judge's calibration and its background calibration. origin says
+// choices gave, the ranking judge's calibration and its background
+// calibration. origin says where the judge comes from.
 // where the judge comes from.
 func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.CalibrationReport, origin string, auto GroundingAuto) {
 	const indent = "         "
 	fmt.Fprintf(w, "labels:  %s pairs scored by people's choices\n", thousands(tally.Labelled))
 	fmt.Fprintf(w, "%s%s referenced · %s dismissed implicitly (%s later flipped to bearing) · %s set aside with a code\n",
 		indent, thousands(tally.Referenced), thousands(tally.Implicit), thousands(tally.Flipped), thousands(tally.Coded))
-	fmt.Fprintf(w, "audit:   %.0f%% of the entries the threshold hides are shown to the verifier anyway, to catch a threshold that hides too much\n", model.AuditShare*100)
-	fmt.Fprintf(w, "%s%s of the last %s audited entries turned out referenced (window %d, needs %d before it judges)\n",
-		indent, thousands(report.AuditMisses), thousands(report.AuditCounted), model.DriftWindow, model.DriftMinimum)
-	drift := "none"
-	if n := len(report.Steps); n > 0 {
-		last := report.Steps[n-1]
-		times := "once"
-		if n > 1 {
-			times = strconv.Itoa(n) + " times"
-		}
-		drift = fmt.Sprintf("stepped %s, last on %s to %.3f", times, last.At.UTC().Format("2006-01-02"), model.ScoreValue(last.SetAside))
-	}
-	fmt.Fprintf(w, "drift:   %s · lowers the threshold when audited entries keep turning out relevant (more than %.0f%% of the window)\n", drift, model.DriftMissShare*100)
-	fmt.Fprintf(w, "floor:   %s · sets aside what the judge rates no higher than entries far from the draft in the same call\n", floorState(report.Floor))
-	fmt.Fprintf(w, "%s%s of the last %s audited entries it set aside turned out referenced (window %d, off above %.0f%% of at least %d)\n",
-		indent, thousands(report.Floor.Misses), thousands(report.Floor.Counted), model.DriftWindow, model.DriftMissShare*100, model.DriftMinimum)
 	fmt.Fprintf(w, "judge:   %s (%s)\n", report.Judge, origin)
 	var state []string
 	if report.Unscored > 0 {
@@ -74,14 +57,6 @@ func RenderGroundingSummary(w io.Writer, tally model.LabelTally, report model.Ca
 	case report.Unscored > 0:
 		fmt.Fprintf(w, "%sunscored pairs: run `sdd grounding update`\n", indent)
 	}
-}
-
-// floorState names whether the far floor sets aside for the judge.
-func floorState(floor model.FloorHealth) string {
-	if floor.Off {
-		return "off, its audit showed too many misses"
-	}
-	return "on"
 }
 
 // thresholdsText names a calibrated report's thresholds, its verbs ending in
@@ -129,7 +104,7 @@ func autoCalibrationLine(auto GroundingAuto) string {
 	if !auto.On {
 		return "off (verify.auto_calibrate)"
 	}
-	return "on (verify.auto_calibrate): `sdd serve` scores unscored labelled pairs in the background until the top stage holds"
+	return "on (verify.auto_calibrate): `sdd serve` scores unscored labelled pairs until the top stage holds, then replays past entries and scans written ones in the background"
 }
 
 // thousands writes n with a comma between each group of three digits.

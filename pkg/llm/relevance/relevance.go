@@ -43,14 +43,20 @@ type Request struct {
 }
 
 // Result carries one score in [0, 1] per candidate, in request order, and
-// what served the call. Floor, set by ScoreWithFar alone, holds per
-// candidate the median score its own call gave the far candidates, the lower
-// middle of an even count.
+// what served the call. Far, set by ScoreWithFar alone, holds per candidate
+// the line its own call drew from the far candidates' scores.
 type Result struct {
 	Scores   []float64
-	Floor    []float64
+	Far      []FarLine
 	Identity llm.Identity
 	Usage    llm.Usage
+}
+
+// FarLine is the line one call's far candidates set, in its two forms: the
+// careful form, the lowest of their scores, and the median form, the lower
+// middle of an even count.
+type FarLine struct {
+	Lowest, Median float64
 }
 
 // Scorer is the port. MaxBatch bounds the candidates one call takes, 0 for

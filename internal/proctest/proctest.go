@@ -201,6 +201,7 @@ type config struct {
 	checkout    fs.FS
 	hooks       sdd.HookCommands
 	relevance   sdd.RelevanceStore
+	proofs      sdd.ProofStore
 	prefilter   sdd.Prefilter
 	ranking     sdd.Ranking
 	events      sdd.EventStore
@@ -278,6 +279,11 @@ func WithGrounding(policy sdd.GroundingPolicy) Option {
 // WithRelevance gives the world's project a relevance verdict ledger.
 func WithRelevance(store sdd.RelevanceStore) Option {
 	return func(c *config) { c.relevance = store }
+}
+
+// WithProofs gives the world's project a store of proof records.
+func WithProofs(store sdd.ProofStore) Option {
+	return func(c *config) { c.proofs = store }
 }
 
 // WithEvents gives the world's project an event store.
@@ -515,7 +521,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
-		Hooks: cfg.hooks, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Ranking: cfg.ranking, Events: cfg.events,
+		Hooks: cfg.hooks, Relevance: cfg.relevance, Proofs: cfg.proofs, Prefilter: cfg.prefilter, Ranking: cfg.ranking, Events: cfg.events,
 	}
 	if cfg.window != nil {
 		window := *cfg.window

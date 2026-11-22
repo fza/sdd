@@ -243,10 +243,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	candidates = model.OrderGatherCandidates(graph, candidates, reads, similarity, request.References)
 	prefilter := runtime.rankingJudge(request.client)
 	judge := prefilter.Judge
-	ledger, thresholds, err := runtime.judgeCalibration(ctx, judge)
+	ledger, _, hiding, err := runtime.judgeHiding(ctx, prefilter, len(live))
 	if err != nil {
 		return GatherResult{}, err
 	}
+	// A rule hides only as far as its step allows (model.HidingState).
+	thresholds := model.SteppedThresholds(hiding.thresholds, hiding.threshold.Step)
 	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
@@ -260,14 +262,19 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
 		key := model.RelevanceSubjectHash(subject)
 		held, _ = request.reading.Scores(judge, key)
-		// A floor that went off sets nothing aside, verdicts held from before included.
-		if prefilter.Scorer != nil && !model.JudgeFloorHealth(labels).Off {
-			below = model.StandingBelowFloor(graph, request.References, split.Undecided, request.reading.BelowFloor(judge, key))
+		// A floor at compute-only sets nothing aside, verdicts held from before included.
+		if prefilter.Scorer != nil {
+			if hiding.floor.Step != model.StepComputeOnly {
+				below = model.StandingBelowFloor(graph, request.References, split.Undecided, request.reading.BelowFloor(judge, key))
+			}
 			listed := slices.Concat(request.Answered, request.References, opened, []string{request.Subject})
 			for _, read := range reads {
 				listed = append(listed, read.IDs...)
 			}
 			floor = model.NewFarFloor(graph, live, model.FarDraft{Subject: key, Topics: request.Topics, References: request.References}, listed)
+			if floor != nil {
+				floor.Form = model.FloorForm(hiding.floor.Step)
+			}
 		}
 	}
 
@@ -298,29 +305,38 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 				"judge", judge, "judged", short.Judged, "listed", short.Listed, "minimum", short.Minimum, "cause", short.Cause, "waited", short.Waited, "unattended", short.Unattended)
 		}
 	}
+	floorWould := pass.wouldBelow
+	if hiding.floor.Step == model.StepComputeOnly {
+		pass.below = nil
+	}
 	for _, id := range pass.below {
 		below[id] = true
-	}
-	seed := model.NewCorpusMark(liveIDs).Hash
-	if request.since != nil {
-		seed = request.since.Hash
 	}
 	marked := map[string]string{}
 	for _, candidate := range split.Relevant {
 		marked[candidate.Entry.ID] = ""
 	}
+	// A graph check shows no set-aside entry blind (20261121-210755-d-tac-d5e): no seed.
 	lines := model.PlaceLines(model.LineInput{
 		Candidates: slices.Concat(split.Relevant, split.Undecided),
 		Scores:     pass.scores, BelowFloor: below, Thresholds: thresholds,
 		Widened:    model.JudgeRankingHealth(labels).Weak(),
 		SelfJudged: !openOnly && subject != "" && (pass.status == model.PrefilterOff || pass.status == model.PrefilterFailed || shortfall != nil),
-		Hops:       model.RefHops(graph, request.References), Marked: marked, Seed: seed,
+		Hops:       model.RefHops(graph, request.References), Marked: marked,
 	})
+	marks := []model.RuleMark{
+		{Rule: model.RuleThreshold, Step: hiding.threshold.Step, Would: model.WouldSetAside(split.Undecided, pass.scores, below, hiding.thresholds)},
+		{Rule: model.RuleFarFloor, Step: hiding.floor.Step, Would: floorWould},
+	}
 	setAside = append(setAside, lines.SetAside...)
+	var filtered []string
 	floored := 0
 	for _, group := range lines.SetAside {
-		if group.Reason == model.SetAsideFloor {
+		switch group.Reason {
+		case model.SetAsideFloor:
 			floored = len(group.IDs)
+		case model.SetAsideFiltered:
+			filtered = group.IDs
 		}
 	}
 	if pass.floored || floored > 0 {
@@ -329,6 +345,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 			clause = "; " + clause
 		}
 		pass.note += clause
+	}
+	for _, mark := range marks {
+		if mark.Step == model.StepComputeOnly && mark.Would > 0 {
+			pass.note += fmt.Sprintf("; the %s holds no step to hide at and would set aside %d", mark.Rule, mark.Would)
+		}
 	}
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note, Shortfall: shortfall,
@@ -357,8 +378,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(opened), Shown: slices.Clone(result.SummaryIDs), Marked: lines.MarkedIDs(), Corpus: served.Corpus, Shortfall: shortfall}
-	if len(pass.fresh) > 0 || len(lines.Audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, Audit: lines.Audit}
+	if len(pass.fresh) > 0 || len(filtered) > 0 {
+		var cut uint8
+		if hiding.thresholds.Valid {
+			cut = model.ScoreByte(hiding.thresholds.SetAside)
+		}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: prefilter.Scorer != nil && prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Below: pass.below, SetAside: filtered, Cut: cut, Hiding: marks}
 	}
 	return result, nil
 }

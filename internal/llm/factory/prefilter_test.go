@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
@@ -30,6 +31,9 @@ func TestNewPrefilter(t *testing.T) {
 	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "chat", LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "claude-haiku-5-5", Effort: "low"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if chat.Revision != llmops.ChatRevision() || chat.Scan == nil || rerank.Revision != "" || rerank.Scan != nil {
+		t.Fatal("a chat judge should name its prompt revision and carry the scan after writing; a reranker neither")
 	}
 	if chat.Judge != "chat:claude-haiku-5-5" || chat.Scorer.MaxBatch() != 100 || chat.Scorer.Direction() != relevance.Both {
 		t.Fatalf("judge %q: chat should start at 100 candidates a call", chat.Judge)

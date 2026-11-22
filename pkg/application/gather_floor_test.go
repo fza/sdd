@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -36,8 +37,8 @@ var floorFar = []string{floorFarLow, floorFarMid, floorFarHigh}
 const gatherSearchHits = 20
 
 // floorFixture writes the fixture graph, with far of its three far
-// entries. The scorer rates the far entries 0.1, 0.3 and 0.5, so the floor
-// of a call is 0.3.
+// entries. The scorer rates the far entries 0.1, 0.3 and 0.5, so the careful
+// line of a call is 0.1 and its median line 0.3.
 func floorFixture(t *testing.T, scorer *scriptedScorer, far int) *gatherFixture {
 	t.Helper()
 	f := newGatherFixture(t)
@@ -60,7 +61,7 @@ func floorFixture(t *testing.T, scorer *scriptedScorer, far int) *gatherFixture 
 	}
 	scorer.scores = map[string]float64{
 		floorFarLow: 0.1, floorFarMid: 0.3, floorFarHigh: 0.5,
-		floorPlain: 0.2, floorHigh: 0.9, floorTwoReads: 0, floorNear: 0, floorTopic: 0.3,
+		floorPlain: 0.1, floorHigh: 0.9, floorTwoReads: 0, floorNear: 0, floorTopic: 0.3,
 	}
 	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: gatherJudge}
 	return f
@@ -89,33 +90,43 @@ func farIn(request llmrelevance.Request) []string {
 	return far
 }
 
-// floorMissLedger holds sixty audit labels of far floor set-asides scored
-// by gatherJudge, two of them referenced: above the bar that turns the
-// floor off.
-func floorMissLedger(t *testing.T) *localadapter.MemoryRelevanceStore {
+// floorProofs holds 189 replayed checks by gatherJudge whose needed entry
+// scores above the median line of its call, a full proof of the far floor,
+// and misses of the floor from as many captures. The same checks prove the
+// threshold they calibrate, so misses from six captures hold it at
+// compute-only, leaving the floor alone to set aside.
+// and misses of the floor from as many captures.
+func floorProofs(t *testing.T, misses int) *localadapter.MemoryProofStore {
 	t.Helper()
-	var batch model.RelevanceBatch
-	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
-	for i := range 60 {
-		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-aud", i), fmt.Sprintf("20250601-%06d-d-tac-sub", i))
-		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true, Floor: true}
-		if i < 2 {
-			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true, Floor: true}
-		}
-		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
-		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: gatherJudge, Score: 5}})
+	var records model.ProofRecords
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 189 {
+		records.Replays = append(records.Replays, model.ReplayCheck{
+			Subject: fmt.Sprintf("20250701-%06d-d-tac-rpl", i), Judge: gatherJudge, At: at, GraphSize: 100000,
+			Candidates: []model.ReplayCandidate{{ID: fmt.Sprintf("20250102-%06d-s-tac-ned", i), Score: 200, Far: true, Lowest: 20, Median: 40, Needed: true}},
+		})
 	}
-	store := localadapter.NewMemoryRelevanceStore()
-	if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
+	for i := range 2 * model.MissesPerStep {
+		records.Misses = append(records.Misses, model.Miss{Capture: fmt.Sprintf("20260302-%06d-s-tac-cap", i), Hidden: floorPlain, Rule: model.RuleThreshold, Detector: model.DetectRescue, Judge: gatherJudge, At: at.Add(time.Hour)})
+	}
+	for i := range misses {
+		records.Misses = append(records.Misses, model.Miss{Capture: fmt.Sprintf("20260301-%06d-s-tac-cap", i), Hidden: floorPlain, Rule: model.RuleFarFloor, Detector: model.DetectRescue, Judge: gatherJudge, At: at.Add(time.Hour)})
+	}
+	segment, err := relevance.EncodeProofs(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := localadapter.NewMemoryProofStore()
+	if err := store.Append(t.Context(), segment); err != nil {
 		t.Fatal(err)
 	}
 	return store
 }
 
-// Every judge call carries the three far entries, and a candidate rated no
-// higher than their median is set aside in a group of its own, with and
-// without thresholds. A candidate next to the draft's reference and one two
-// reads found stay, whatever their score.
+// Every judge call carries the three far entries, and without a proof a
+// candidate rated no higher than the lowest of them is set aside in a group
+// of its own, with and without thresholds. A candidate next to the draft's
+// reference and one two reads found stay, whatever their score.
 func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -125,7 +136,7 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 			scorer := &scriptedScorer{maxBatch: 5}
 			f := floorFixture(t, scorer, 3)
 			if tc.calibrated {
-				f.relevance = calibratedLedger(t)
+				f.relevance, f.proofs = calibratedLedger(t), provenThreshold(t)
 			}
 			result, err := gather(t, f.app(t, floorPolicy(), nil), floorRequest())
 			if err != nil {
@@ -150,17 +161,11 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 				}
 			}
 			floored := setAsideCount(result.Text, model.SetAsideFloor)
-			audited := 0
-			for _, id := range []string{floorPlain, floorTopic} {
-				if slices.Contains(result.SummaryIDs, id) {
-					audited++
-					if !strings.HasPrefix(lineOf(result.Text, id), "  ?") {
-						t.Fatalf("%s, rated no higher than the floor, should show only as an audit line:\n%s", id, result.Text)
-					}
-				}
+			if slices.Contains(result.SummaryIDs, floorPlain) {
+				t.Fatalf("a candidate rated no higher than the lowest far score should be set aside by the floor:\n%s", result.Text)
 			}
-			if floored+audited != 2 {
-				t.Fatalf("%d below the floor: the two rated no higher than the floor, and only they, should be set aside by it, but for an audit line:\n%s", floored, result.Text)
+			if floored != 1 {
+				t.Fatalf("%d below the floor: without a proof the careful line holds, so the one rated no higher than the lowest far score, and only it, falls below:\n%s", floored, result.Text)
 			}
 			for _, id := range []string{floorTwoReads, floorNear} {
 				if !tc.calibrated && !slices.Contains(result.SummaryIDs, id) {
@@ -170,7 +175,7 @@ func TestGather_FarFloorSetsAsideWhatTheJudgeRatesNoHigherThanFarEntries(t *test
 			if line := lineOf(result.Text, floorHigh); line == "" || strings.HasPrefix(line[1:], " ?") {
 				t.Fatalf("a candidate rated above the floor should stay a scored line:\n%s", result.Text)
 			}
-			if floored == 0 || !strings.Contains(result.Text, fmt.Sprintf("; the far floor set aside %d\n", floored)) {
+			if !strings.Contains(result.Text, fmt.Sprintf("; the far floor set aside %d\n", floored)) {
 				t.Fatalf("the prefilter note should name the %d candidates the floor set aside:\n%s", floored, result.Text)
 			}
 		})
@@ -191,8 +196,8 @@ func TestGather_FarFloorReadsASubjectsOwnReferences(t *testing.T) {
 	if len(scorer.requests) != 1 || !slices.Equal(farIn(scorer.requests[0]), floorFar) {
 		t.Fatalf("%d calls: the subject's topic and reference should give the reading a floor", len(scorer.requests))
 	}
-	if !slices.Contains(result.SummaryIDs, floorNear) || setAsideCount(result.Text, model.SetAsideFloor) != 1 {
-		t.Fatalf("the candidate next to the subject's reference should stay above the floor, which sets aside the two low-rated ones but for an audit line:\n%s", result.Text)
+	if !slices.Contains(result.SummaryIDs, floorNear) || slices.Contains(result.SummaryIDs, floorPlain) || setAsideCount(result.Text, model.SetAsideFloor) != 1 {
+		t.Fatalf("the candidate next to the subject's reference should stay above the floor, which sets aside the low-rated one:\n%s", result.Text)
 	}
 }
 
@@ -227,20 +232,15 @@ func TestGather_FarFloorNeedsFarEntriesADraftToBeFarFromAndRoomInACall(t *testin
 		name     string
 		far      int
 		maxBatch int
-		ledger   func(*testing.T) *localadapter.MemoryRelevanceStore
 		request  func(*sdd.GatherRequest)
 	}{
 		{name: "two far entries", far: 2},
 		{name: "a draft with neither topic nor reference", far: 3, request: func(r *sdd.GatherRequest) { r.Topics, r.References = nil, nil }},
 		{name: "a scorer whose call the far entries fill", far: 3, maxBatch: 3},
-		{name: "a judge whose floor showed too many misses", far: 3, ledger: floorMissLedger},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scorer := &scriptedScorer{maxBatch: tc.maxBatch}
 			f := floorFixture(t, scorer, tc.far)
-			if tc.ledger != nil {
-				f.relevance = tc.ledger(t)
-			}
 			request := floorRequest()
 			if tc.request != nil {
 				tc.request(&request)
@@ -267,31 +267,84 @@ func TestGather_FarFloorNeedsFarEntriesADraftToBeFarFromAndRoomInACall(t *testin
 	}
 }
 
-func TestGroundingStatus_ReportsTheFarFloor(t *testing.T) {
+// The far floor's step sets its form: the median form only at the full
+// step, the careful form below it, and at compute-only the calls still
+// carry the far entries but nothing is set aside.
+func TestGather_FarFloorTakesTheFormItsStepAllows(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		ledger  func(*testing.T) *localadapter.MemoryRelevanceStore
-		verbose string
-		summary string
+		proofs  func(*testing.T) *localadapter.MemoryProofStore
+		floored []string
+		kept    []string
+		note    string
 	}{
-		{name: "on", ledger: calibratedLedger, verbose: "far floor: on; 0 referenced of the latest 0 audit labels of its set-asides", summary: "floor:   on · "},
-		{name: "off", ledger: floorMissLedger, verbose: "far floor: off, its audit showed too many misses; 2 referenced of the latest 60 audit labels of its set-asides", summary: "floor:   off, its audit showed too many misses · "},
+		{name: "full", proofs: func(t *testing.T) *localadapter.MemoryProofStore { return floorProofs(t, 0) }, floored: []string{floorPlain, floorTopic}, note: "; the far floor set aside 2;"},
+		{name: "narrowed by misses from three captures", proofs: func(t *testing.T) *localadapter.MemoryProofStore { return floorProofs(t, 3) }, floored: []string{floorPlain}, kept: []string{floorTopic}, note: "; the far floor set aside 1;"},
+		{name: "compute-only by misses from six captures", proofs: func(t *testing.T) *localadapter.MemoryProofStore { return floorProofs(t, 6) }, kept: []string{floorPlain, floorTopic}, note: "; the far-floor holds no step to hide at and would set aside 2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scorer := &scriptedScorer{maxBatch: 5}
+			f := floorFixture(t, scorer, 3)
+			f.proofs = tc.proofs(t)
+			result, err := gather(t, f.app(t, floorPolicy(), &countingEmbeddings{}), floorRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, request := range scorer.requests {
+				if !slices.Equal(farIn(request), floorFar) {
+					t.Fatal("every call should carry the far entries, at every step")
+				}
+			}
+			if setAsideCount(result.Text, model.SetAsideFloor) != len(tc.floored) {
+				t.Fatalf("%v should fall below the floor at this step, and only they:\n%s", tc.floored, result.Text)
+			}
+			for _, id := range tc.floored {
+				if slices.Contains(result.SummaryIDs, id) {
+					t.Fatalf("%s should fall below the floor at this step:\n%s", id, result.Text)
+				}
+			}
+			for _, id := range tc.kept {
+				if !slices.Contains(result.SummaryIDs, id) {
+					t.Fatalf("%s should stay to judge at this step:\n%s", id, result.Text)
+				}
+			}
+			if !strings.Contains(result.Text, tc.note) {
+				t.Fatalf("the prefilter note should hold %q:\n%s", tc.note, result.Text)
+			}
+		})
+	}
+}
+
+func TestGroundingStatus_ReportsTheHidingRules(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proofs func(*testing.T) *localadapter.MemoryProofStore
+		want   []string
+	}{
+		{name: "without a proof", want: []string{"threshold: compute-only · no proof yet", "far-floor: narrowed · no proof yet; careful form from the first check"}},
+		{name: "with proofs", proofs: func(t *testing.T) *localadapter.MemoryProofStore { return floorProofs(t, 3) }, want: []string{
+			"far-floor: narrowed · proof: 0 of 189 needed entries hidden in 189 replays, bound 0.980, graph of 100,000; 3 misses from 3 captures since its latest replay",
+			"misses: 3 rescue, 0 verifier, 0 person, 0 scan (no planted miss yet)",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := prefilterFixture(t, &scriptedScorer{})
-			f.relevance = tc.ledger(t)
+			f.relevance = calibratedLedger(t)
+			if tc.proofs != nil {
+				f.proofs = tc.proofs(t)
+			}
 			application := f.app(t, prefilterPolicy(1), nil)
 			identity := sdd.RequestIdentity{Subject: "tester"}
-			verbose, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			summary, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(verbose.Text, tc.verbose) || !strings.Contains(summary.Text, tc.summary) {
-				t.Fatalf("the status should name the floor's state and counts:\n%s\n%s", verbose.Text, summary.Text)
+			for _, verbose := range []bool{false, true} {
+				status, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{Verbose: verbose})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(status.Text, want) {
+						t.Errorf("the status lacks %q:\n%s", want, status.Text)
+					}
+				}
 			}
 		})
 	}

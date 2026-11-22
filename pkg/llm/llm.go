@@ -32,6 +32,9 @@ const (
 	// PurposeRelevance rates one candidate entry against a draft for the
 	// grounding prefilter's generate bridge.
 	PurposeRelevance Purpose = "relevance"
+	// PurposeScan asks whether entries a hiding rule hid duplicate or
+	// contradict a written entry.
+	PurposeScan Purpose = "hidden-scan"
 	// The extract purposes name the second call a JSON-shaped check makes
 	// when its first response does not parse. They are their own purposes so
 	// a host can route and bound them apart, and so the stats sink separates

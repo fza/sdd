@@ -93,7 +93,7 @@ func TestCaptureDeep_AnOpenedHiddenEntryIsAMissOnlyUnderAFinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"opened hidden: 1 entries", "1 referenced of the latest 1 audit labels"} {
+	for _, want := range []string{"opened hidden: 1 entries"} {
 		if !strings.Contains(status.Text, want) {
 			t.Errorf("status lacks %q:\n%s", want, status.Text)
 		}

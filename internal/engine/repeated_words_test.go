@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,5 +62,25 @@ func TestUserWordsMayRepeatForTheSameChoice(t *testing.T) {
 
 	if _, err := session.Answer(instance, "show", "adjust", nil, `say "an explicit error"`); err != nil {
 		t.Fatalf("the same words for the same choice should stand: %v", err)
+	}
+}
+
+// Every answer's user words stay with the instance, in order, across a
+// replay of the log.
+func TestUserWordsAreKeptInOrderAcrossAReplay(t *testing.T) {
+	sink := &recordingSink{}
+	session, spec, instance := repeatedWordsSession(t, sink)
+	if _, err := session.Answer(instance, "show", "adjust", nil, "and name d-tac-abc"); err != nil {
+		t.Fatalf("adjust: %v", err)
+	}
+	want := []string{`say "an explicit error"`, "and name d-tac-abc"}
+	if got := session.UserWords(instance); !slices.Equal(got, want) {
+		t.Fatalf("user words %q: every answer's words should be kept in order", got)
+	}
+	if got := replayAgainst(t, spec, sink.events).UserWords(instance); !slices.Equal(got, want) {
+		t.Fatalf("user words %q after a replay", got)
+	}
+	if session.UserWords("unknown") != nil {
+		t.Fatal("an unknown instance holds no words")
 	}
 }
