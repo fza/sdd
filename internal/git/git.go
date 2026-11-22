@@ -441,7 +441,9 @@ func (Repositories) Init(dir string) error {
 	return nil
 }
 
-func (Repositories) CurrentBranch(dir string) (string, error) { return currentBranch(dir, pathEnv()) }
+func (Repositories) CurrentBranch(dir string) (string, error) {
+	return currentBranch(CommandAt(context.Background(), dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
 
 func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
 
@@ -468,14 +470,19 @@ func GraphRepoRoot(graphDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// existingAncestor returns path, or the closest ancestor that exists on disk.
+// existingAncestor returns path, or the closest ancestor that exists on disk;
+// for a file, the folder holding it, so a graph_dir naming a file lies in the
+// repository its folder does.
 func existingAncestor(path string) string {
 	dir, err := filepath.Abs(path)
 	if err != nil {
 		return ""
 	}
 	for {
-		if _, err := os.Stat(dir); err == nil {
+		if info, err := os.Stat(dir); err == nil {
+			if !info.IsDir() {
+				return filepath.Dir(dir)
+			}
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -514,13 +521,11 @@ func remoteURL(repoRoot string, env []string) string {
 
 // CurrentBranch resolves the symbolic branch at repoRoot. Detached HEAD is
 // returned as an error because it cannot seed durable mutation authority.
-func CurrentBranch(repoRoot string) (string, error) { return currentBranch(repoRoot, nil) }
+func CurrentBranch(repoRoot string) (string, error) {
+	return currentBranch(exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
 
-// currentBranch is CurrentBranch run with env; nil inherits the process
-// environment.
-func currentBranch(repoRoot string, env []string) (string, error) {
-	cmd := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
-	cmd.Env = env
+func currentBranch(cmd *exec.Cmd) (string, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git current branch: %s (%w)", strings.TrimSpace(string(out)), err)
