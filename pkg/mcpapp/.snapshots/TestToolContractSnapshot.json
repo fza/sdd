@@ -117,7 +117,7 @@
           "type": "string"
         },
         "terms": {
-          "description": "your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess",
+          "description": "your keyword terms, one search each, matched as whole words regardless of case. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess",
           "items": {
             "type": "string"
           },

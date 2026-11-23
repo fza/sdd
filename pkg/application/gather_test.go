@@ -227,6 +227,35 @@ func TestGather_SearchesWithoutAnEmbeddingModel(t *testing.T) {
 	}
 }
 
+// A keyword term matches whole words, in the title too: the only search a
+// check runs without an embedding model finds no word inside another.
+func TestGather_KeywordTermsMatchWholeWords(t *testing.T) {
+	const (
+		ttl          = "20260103-100000-s-tac-ttl"
+		settle       = "20260103-100001-s-tac-set"
+		invalidation = "20260103-100002-d-tac-inv"
+	)
+	f := newGatherFixture(t)
+	f.write(t, ttl, "gap", "Product prices are kept with a TTL of one hour.", "")
+	f.write(t, settle, "gap", "Settle the little dispute first.", "")
+	f.write(t, invalidation, "directive", "Invalidate the price cache on every write.", "intent: pending\ntitle: Price cache invalidation on write\n")
+	f.withoutEmbedder = true
+	application := f.app(t, sdd.GroundingPolicy{}, nil)
+
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "Prices go stale.", Kind: "gap", Terms: []string{"TTL", "invalidation"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`keyword "TTL" 1`, `keyword "invalidation" 1`, ttl, invalidation} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("serve lacks %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, settle) {
+		t.Errorf("a term inside a longer word should find nothing:\n%s", result.Text)
+	}
+}
+
 func TestGather_ChecksTheEmbedderBeforeSearching(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)

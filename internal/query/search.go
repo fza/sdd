@@ -44,6 +44,10 @@ type SearchQuery struct {
 	// text mode.
 	Terms []string
 
+	// WholeWords keeps only the Terms matches that start and end on a word
+	// boundary, so a keyword finds no word inside another.
+	WholeWords bool
+
 	// Phrase is the --query value: a free-form phrase used for vector
 	// search. Empty disables vector mode.
 	Phrase string
