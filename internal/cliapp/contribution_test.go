@@ -38,7 +38,7 @@ func contributionFixture(t *testing.T) (f *appFixture, feature string) {
 
 func captureGap(t *testing.T, f *appFixture) appResult {
 	t.Helper()
-	return f.run(t, "new", "--confidence", "high", "--skip-preflight", "--summary", "S.", "s", "tac", "A contributed gap.")
+	return f.run(t, "new", "--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "S.", "s", "tac", "A contributed gap.")
 }
 
 func TestContributionModeCapturesOnlyOnTheFeatureBranch(t *testing.T) {
@@ -95,7 +95,7 @@ func TestContributionKeyIsRefusedInTheCommittedConfig(t *testing.T) {
 
 func TestContributionModeGuardsEveryGraphWrite(t *testing.T) {
 	for _, args := range [][]string{
-		{"new", "--confidence", "high", "--skip-preflight", "--summary", "S.", "s", "tac", "A gap."},
+		{"new", "--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "S.", "s", "tac", "A gap."},
 		{"rewrite", "--type", "d", "--kind", "directive", "20260914-020000-s-tac-cli"},
 		{"summarize", "--all"},
 		{"wip", "start", "20260914-020000-s-tac-cli", "Work in progress."},

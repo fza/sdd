@@ -123,7 +123,7 @@ func TestCLIParticipantWarningUsesErrorStream(t *testing.T) {
 
 func TestCLIWriteHandlerUsesErrorStream(t *testing.T) {
 	f := newAppFixture(t)
-	result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "--dry-run", "s", "tac", "A dry-run signal.")
+	result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "--skip-grounding", "--dry-run", "s", "tac", "A dry-run signal.")
 	if result.err != nil {
 		t.Fatalf("new --dry-run: %v\n%s", result.err, result.stderr)
 	}
@@ -137,7 +137,7 @@ func TestNewRefusesABlankTitle(t *testing.T) {
 	for _, title := range []string{"", "   "} {
 		t.Run(fmt.Sprintf("%q", title), func(t *testing.T) {
 			f := newFillFixture(t)
-			result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "--summary", "A supplied summary.", "--title", title, "s", "tac", "A signal with a blank title.")
+			result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "--skip-grounding", "--summary", "A supplied summary.", "--title", title, "s", "tac", "A signal with a blank title.")
 			if result.err == nil || !strings.Contains(result.err.Error(), "--title: the title is empty") {
 				t.Fatalf("a blank --title should be refused, got %v\n%s", result.err, result.stderr)
 			}
@@ -152,7 +152,7 @@ func TestNewDryRunKeepsPipedStdinOnAnEmptyTitle(t *testing.T) {
 	f := newFillFixture(t)
 	var stdout, stderr bytes.Buffer
 	command := f.command(strings.NewReader("piped notes"), &stdout, &stderr)
-	err := command.Run(t.Context(), []string{"sdd", "new", "--confidence", "high", "--skip-preflight", "--dry-run", "--attach", "-:notes.md", "--title", "", "s", "tac", "A dry run with an empty title."})
+	err := command.Run(t.Context(), []string{"sdd", "new", "--confidence", "high", "--skip-preflight", "--skip-grounding", "--dry-run", "--attach", "-:notes.md", "--title", "", "s", "tac", "A dry run with an empty title."})
 	if err == nil || !strings.Contains(err.Error(), "--title: the title is empty") {
 		t.Fatalf("an empty --title should be refused, got %v", err)
 	}
@@ -175,7 +175,7 @@ func TestNewBuildsTheEmbedderOnlyForATitleCall(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFillFixture(t)
 			f.write(t, ".sdd/config.yaml", f.read(t, ".sdd/config.yaml")+"embedding:\n  provider: ollama\n")
-			args := append([]string{"new", "--confidence", "high", "--skip-preflight"}, tc.args...)
+			args := append([]string{"new", "--confidence", "high", "--skip-preflight", "--skip-grounding"}, tc.args...)
 			result := f.run(t, append(args, "s", "tac", "A signal beside a broken embedding config.")...)
 			failed := result.err != nil && strings.Contains(result.err.Error(), "embedding.model is required")
 			if failed != tc.wantFails || (!tc.wantFails && result.err != nil) {

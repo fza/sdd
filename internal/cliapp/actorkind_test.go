@@ -21,8 +21,8 @@ func TestNewActorRecordsTheActorKind(t *testing.T) {
 	runApp(t, project,
 		"new", "signal", "process", "--kind", "actor",
 		"--canonical", "Claude", "--actor-kind", "machine",
-		"--confidence", "high", "--skip-preflight",
-		"--summary", "An assistant participating in the project.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding",
+		"--title", "Test title", "--summary", "An assistant participating in the project.",
 		"Claude is an assistant working on this project; the decision behind its proposals belongs to a human participant.",
 	)
 

@@ -55,7 +55,7 @@ func TestNewRefusesACredential(t *testing.T) {
 	before := graphFiles(t, graphDir)
 
 	result := f.run(t, "new", "signal", "tactical", "Deployment notes:\n"+secretFixture(t, "aws-access-token"),
-		"--confidence", "high", "--summary", "Deployment notes.")
+		"--confidence", "high", "--skip-grounding", "--summary", "Deployment notes.")
 
 	if result.err == nil || !strings.Contains(result.err.Error(), "the body looks like a credential (aws-access-token") {
 		t.Fatalf("the capture should be refused naming the body and the rule: %v\n%s", result.err, result.stderr)

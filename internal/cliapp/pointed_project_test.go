@@ -58,8 +58,8 @@ func captureSignal(t *testing.T, dir string) {
 	runApp(t, dir,
 		"new", "signal", "tactical",
 		"The work repository carries only the work, while signals and decisions live in a project beside it.",
-		"--confidence", "high", "--skip-preflight",
-		"--summary", "A project beside the work keeps the work history free of capture commits.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding",
+		"--title", "Test title", "--summary", "A project beside the work keeps the work history free of capture commits.",
 	)
 }
 
@@ -138,7 +138,7 @@ func TestPointedWriteGateReadsTheProjectSchema(t *testing.T) {
 
 	_, err := runAppAs(t, work, "1.2.3",
 		"new", "signal", "tactical", "A capture against a graph from a newer schema must not be written.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 	)
 
 	if err == nil {
@@ -287,7 +287,7 @@ func TestGraphDirIntoAnotherRepositoryIsRefused(t *testing.T) {
 
 			_, err := runAppErr(t, project,
 				"new", "signal", "tactical", "A graph reached across repositories must be refused.",
-				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 			)
 
 			if err == nil || !strings.Contains(err.Error(), "project_dir") {
@@ -613,7 +613,7 @@ func TestGraphDirOutsideAnyRepositoryIsRefused(t *testing.T) {
 
 	_, err := runAppErr(t, project,
 		"new", "signal", "tactical", "A graph outside any repository must be refused.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
@@ -645,7 +645,7 @@ func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
 
 			_, err := runAppErr(t, work,
 				"new", "signal", "tactical", "A project inside its work repository must be refused.",
-				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 			)
 
 			if err == nil || !strings.Contains(err.Error(), "a repository of its own") {
@@ -672,7 +672,7 @@ func TestProjectDirInsideAnotherRepositoryIsRefused(t *testing.T) {
 
 	_, err := runAppErr(t, work,
 		"new", "signal", "tactical", "A project inside another repository must be refused.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "lies inside the repository") {
@@ -703,7 +703,7 @@ func TestPointedCaptureUnderAnInheritedGitDir(t *testing.T) {
 
 			_, err := runAppErr(t, work,
 				"new", "signal", "tactical", "A capture from a git hook lands in the project.",
-				"--confidence", "high", "--skip-preflight", "--summary", "Capture under GIT_DIR.",
+				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Capture under GIT_DIR.",
 			)
 			if unsetErr := os.Unsetenv("GIT_DIR"); unsetErr != nil {
 				t.Fatal(unsetErr)
@@ -734,7 +734,7 @@ func TestProjectDirOutsideAnyRepositoryIsRefused(t *testing.T) {
 
 	_, err := runAppErr(t, work,
 		"new", "signal", "tactical", "A project outside any repository must be refused.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
@@ -769,7 +769,7 @@ func TestProjectDirContainingTheWorkRepositoryIsRefused(t *testing.T) {
 
 			_, err := runAppErr(t, work,
 				"new", "signal", "tactical", "A project holding its work repository must be refused.",
-				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Refused capture.",
 			)
 
 			if err == nil || !strings.Contains(err.Error(), "contains the work repository") {
