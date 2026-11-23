@@ -284,10 +284,11 @@ func appendReport(t *testing.T, world *proctest.World, id sdd.SessionID, instanc
 }
 
 // A report naming a staged attachment that lands from another attach while a
-// capture is published makes the publication's release a session conflict:
-// its claims were computed without that report, so nothing is deleted. A
-// retry from a fresh attach reports the written entry, frees the files no
-// capture claims and keeps the one the report named.
+// capture is published keeps that attachment staged: the publication's
+// release, beaten by that write, catches up and computes its claims again
+// (verification's catch-up) instead of deleting a file the report now
+// claims. The file only the published capture named is freed, and the
+// reporting capture publishes with its file.
 func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T) {
 	race := &duringPublication{}
 	world, session := newCaptureWorld(t, "staged-race", proctest.WithFinalizers(race))
@@ -301,45 +302,22 @@ func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T)
 	race.run = func() {
 		appendReport(t, world, session.ID, second.Instance, second.Step, map[string]any{"attachments": []any{handle}})
 	}
-	failed, err := session.AnswerErr(t, first.Instance, "playback", "confirm", nil, "capture it")
+	serve := session.Answer(t, first.Instance, "playback", "confirm", nil, "capture it")
 	if race.run != nil {
 		t.Fatal("the report should land during the publication")
 	}
-	refusal := ""
-	if err != nil {
-		refusal = err.Error()
-	} else if failed.PendingOperation != nil {
-		refusal = failed.PendingOperation.Error
-	}
-	if !strings.Contains(refusal, "is written: freeing its staged attachments") || !strings.Contains(refusal, "reorient with resume_session") {
-		t.Fatalf("the release should be refused as a session conflict after the write, got %q", refusal)
-	}
-	if got := stagedBlobs(t, world, session); got != 2 {
-		t.Fatalf("a refused release should delete nothing, %d staged", got)
+	proctest.RequireStep(t, serve, "verifySummary")
+	session.Answer(t, first.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	if got := stagedBlobs(t, world, session); got != 1 {
+		t.Fatalf("the publication should free the attachment no capture claims and keep the one the report named, %d staged", got)
 	}
 
-	other, resumed := world.Resume(t, session.ID, "staged-race-other")
-	if resumed.PendingOperation == nil {
-		t.Fatal("the publication should stay pending after its refused release")
-	}
-	retried, err := other.WF.Advance(t.Context(), world.Identity, sdd.WorkflowAdvanceRequest{Instance: first.Instance, RetryRef: resumed.PendingOperation.RetryRef})
-	if err != nil {
-		t.Fatal(err)
-	}
-	proctest.RequireStep(t, retried, "verifySummary")
-	published := other.Answer(t, first.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
-	if written, _ := published.Produced["entryId"].(string); written == "" || written != resumed.PendingOperation.Values["entryId"] {
-		t.Fatalf("the retry should report the entry the refused release followed, got %q", written)
-	}
-	if got := stagedBlobs(t, world, other); got != 1 {
-		t.Errorf("the retry should free the attachment no capture claims and keep the claimed one, %d staged", got)
-	}
+	other, _ := world.Resume(t, session.ID, "staged-race-other")
 	if _, _, err := other.WF.ReadStagedAttachment(t.Context(), world.Identity, "record.md", 0, 1024); err != nil {
-		t.Errorf("the attachment the report named should stay staged: %v", err)
+		t.Fatalf("the attachment the report named should stay staged: %v", err)
 	}
-
 	other.Report(t, second.Instance, captureDraft())
-	serve := other.Answer(t, second.Instance, "playback", "confirm", nil, "capture it")
+	serve = other.Answer(t, second.Instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "verifySummary")
 	serve = other.Answer(t, second.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
 	id, _ := serve.Produced["entryId"].(string)
