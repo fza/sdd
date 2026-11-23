@@ -177,6 +177,9 @@ var deepLookup = model.DeepLookup{
 		if rev == "main" && path == "internal/capture/writer.go" {
 			return "Write keeps the last attachment of a name.\n", true, nil
 		}
+		if rev == "main" && path == "internal/capture/logo.png" {
+			return "", false, model.GitReadRefusal("internal/capture/logo.png at revision main is a binary file")
+		}
 		return "", false, nil
 	},
 }
@@ -219,6 +222,7 @@ func TestCheckDeepFindings(t *testing.T) {
 		{"source request quoting nothing in the draft", sourceRequest("keeps every attachment"), `f1: pointer quote "keeps every attachment" is not in the draft`},
 		{"file at a revision without the quote", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "main", Quote: "keeps the first attachment"}), `f1: source file internal/capture/writer.go at revision main does not hold the quote "keeps the first attachment"`},
 		{"file missing at the revision", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "v0.1.0"}), "f1: source file internal/capture/writer.go is not in revision v0.1.0"},
+		{"file unreadable at the revision", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/logo.png", Rev: "main"}), "f1: source file internal/capture/logo.png at revision main cannot be read: git read refused: internal/capture/logo.png at revision main is a binary file"},
 		{"revision as an option", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "--output=leak"}), `f1: source file "internal/capture/writer.go": git read refused: revision "--output=leak" begins with -`},
 		{"revision on a commit source", evidence(model.DeepSource{Kind: "commit", Ref: "0a1b2c3d", Rev: "main"}), `f1: source commit "0a1b2c3d": only a file source names a rev`},
 		{"pointer quote not in the draft", model.DeepFinding{Verdict: "v", Axis: "inconsistent", Severity: "low", Pointers: []model.DeepPointer{{Field: "body", Quote: "drops every attachment"}}}, `f1: pointer quote "drops every attachment" is not in the draft`},
@@ -281,6 +285,8 @@ func TestGitReadRequest_Validate(t *testing.T) {
 		{"rev as an option", model.GitReadRequest{Op: model.GitReadLog, Rev: "-n1"}, `revision "-n1" begins with -`},
 		{"from as an option", model.GitReadRequest{Op: model.GitReadDiff, From: "--output=x", To: "HEAD"}, `revision "--output=x" begins with -`},
 		{"rev with whitespace", model.GitReadRequest{Op: model.GitReadCommit, Rev: "main extra"}, "holds whitespace or a control character"},
+		{"rev searching commit messages", model.GitReadRequest{Op: model.GitReadCommit, Rev: ":/fix"}, "holds a colon"},
+		{"rev naming a path", model.GitReadRequest{Op: model.GitReadLog, Rev: "main:go.mod"}, "holds a colon"},
 		{"absolute path", model.GitReadRequest{Op: model.GitReadFile, Rev: "main", Path: "/etc/passwd"}, "is no path inside the checkout"},
 		{"path leaving the checkout", model.GitReadRequest{Op: model.GitReadLog, Path: "../other"}, "is no path inside the checkout"},
 	} {

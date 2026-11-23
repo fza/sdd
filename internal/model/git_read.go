@@ -36,6 +36,10 @@ const (
 // again.
 var ErrGitReadRefused = errors.New("git read refused")
 
+// ErrGitReadMissing marks a refusal because the repository holds no such
+// revision, or the revision no such file; it also matches ErrGitReadRefused.
+var ErrGitReadMissing = errors.New("not in the repository")
+
 // GitReadRequest is one read of the project's git history. sdd builds the git
 // command from it; no field passes through as a git argument of its own.
 type GitReadRequest struct {
@@ -122,12 +126,23 @@ func validGitRevision(rev string) error {
 	if strings.ContainsFunc(rev, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
 		return gitReadRefusal(fmt.Sprintf("revision %q holds whitespace or a control character", rev))
 	}
+	// A colon names a path in a tree or, as ":/", searches every commit
+	// message; a revision here only ever names a commit.
+	if strings.Contains(rev, ":") {
+		return gitReadRefusal(fmt.Sprintf("revision %q holds a colon; name a branch, tag or commit", rev))
+	}
 	return nil
 }
 
 // GitReadRefusal returns a refusal of a git read for its input, matching
 // ErrGitReadRefused.
 func GitReadRefusal(reason string) error { return gitReadRefusal(reason) }
+
+// GitReadMissing returns a refusal of a git read whose revision or file the
+// repository does not hold, matching ErrGitReadRefused and ErrGitReadMissing.
+func GitReadMissing(reason string) error {
+	return fmt.Errorf("%w: %w: %s", ErrGitReadRefused, ErrGitReadMissing, reason)
+}
 
 func gitReadRefusal(reason string) error {
 	return fmt.Errorf("%w: %s", ErrGitReadRefused, reason)

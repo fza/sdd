@@ -590,6 +590,9 @@ func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
 		if read != nil {
 			text, found, err = read(source.Ref)
 		}
+		if errors.Is(err, ErrGitReadRefused) {
+			return fmt.Sprintf("%s cannot be read: %v", what, err), nil
+		}
 		if err == nil && !found {
 			return fmt.Sprintf("source file %s is not in %s", source.Ref, where), nil
 		}
