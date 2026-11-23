@@ -10,6 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/internal/testsupport"
 )
 
@@ -35,6 +36,7 @@ func TestCacheHandlerPruneFetchesSecretRulesPerSetting(t *testing.T) {
 			dir := filepath.Join(f.loc.CacheRoot, secrets.CacheDirName)
 			h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 				CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+				OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(),
 				State:       &recordingStateSweep{},
 				SecretRules: secrets.NewUpdater(dir, releases.GitHub(), nil),
 			})
@@ -63,6 +65,7 @@ func TestCacheHandlerPruneReportsAFailedFetchAndGoesOn(t *testing.T) {
 	releases.Publish("v99.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(),
 		State:       &recordingStateSweep{},
 		SecretRules: secrets.NewUpdater(filepath.Join(f.loc.CacheRoot, secrets.CacheDirName), releases.GitHub(), nil),
 	})

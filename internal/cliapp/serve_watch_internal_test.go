@@ -16,6 +16,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
@@ -217,7 +218,7 @@ func TestServedProjectComesFromOneRead(t *testing.T) {
 		if built.cfg.Language != "de" || built.layers.Project.Language != "de" {
 			t.Errorf("the config and the layers should come from the read, got %q and %q", built.cfg.Language, built.layers.Project.Language)
 		}
-		_, _ = built.clients.llm.Run(ctx, pkgllm.Request{UserPrompt: "ping"})
+		_, _ = built.clients.llm.Run(secrets.WithNoNewParts(ctx), pkgllm.Request{UserPrompt: "ping"})
 		mu.Lock()
 		defer mu.Unlock()
 		if len(models) == 0 || slices.ContainsFunc(models, func(model string) bool { return model != "read-model" }) {

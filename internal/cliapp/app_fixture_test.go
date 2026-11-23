@@ -103,7 +103,12 @@ func (f *appFixture) commandWith(reader io.Reader, writer, errWriter io.Writer, 
 	})
 }
 
+// gitleaks is the stand-in GitHub of the fixture's releases; a fixture
+// built without them (sync-graph-repository's) fetches no rule file.
 func (f *appFixture) gitleaks() *secrets.GitHub {
+	if f.releases == nil {
+		return nil
+	}
 	return f.releases.GitHub()
 }
 

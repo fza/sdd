@@ -71,11 +71,12 @@ func TestHooks_GuideMediumFindingIsServedWithTheGuidesFindings(t *testing.T) {
 
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
-	serve = session.Report(t, instance, captureDraft())
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	requireServedHookFinding(t, serve, "guideReview")
 
 	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
-	proctest.RequireStep(t, serve, "playback")
+	proctest.RequireStep(t, serve, "verifySummary")
 }
 
 // Weighing the assemble hooks' findings weighs those alone: the guide hooks'

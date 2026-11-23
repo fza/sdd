@@ -92,7 +92,9 @@ func TestHooks_GuideHighFindingHoldsTheDraft(t *testing.T) {
 	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, captureDraft())
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "guide")
 	if !hasDiagnostic(serve, "the opening sentence is passive") {
 		t.Fatalf("the held draft should name the hook's finding, diagnostics %v", serve.Diagnostics)
@@ -114,7 +116,7 @@ func TestHooks_PayloadCarriesTheStepTheDraftAndItsFindings(t *testing.T) {
 	payload := runs[0].Payload
 	for field, want := range map[string]any{
 		"procedure": "capture", "instance": instance, "step": "preflight", "phase": "done",
-		"transition": "write", "project": "proctest", "branch": "main", "session": string(session.ID),
+		"transition": "checked", "project": "proctest", "branch": "main", "session": string(session.ID),
 	} {
 		if payload[field] != want {
 			t.Errorf("payload %s = %v, want %v", field, payload[field], want)

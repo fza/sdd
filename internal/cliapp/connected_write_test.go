@@ -60,7 +60,7 @@ func boolText(value bool) string {
 
 func callServeTool(t *testing.T, client *mcp.ClientSession, tool string, args map[string]any) (mcpserver.ServeResult, string, bool) {
 	t.Helper()
-	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: answered(tool, args)})
 	if err != nil {
 		t.Fatalf("%s: %v", tool, err)
 	}

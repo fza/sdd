@@ -13,6 +13,7 @@ const hostSetMachine = `state:
     body: {type: text, desc: the draft}
     stamp: {type: text, optional: true, hostSet: true, desc: written by the host}
     note: {type: text, optional: true, desc: a closing note}
+    label: {type: text, optional: true, desc: a label no step collects}
 steps:
     - id: draft
       collect: [body]
@@ -44,7 +45,7 @@ func TestHostSet_StaysOutOfEverySchema(t *testing.T) {
 		}
 	}
 	report, _ := spec.ReportSchemaForStep(spec.StepByID["draft"], nil)["properties"].(map[string]any)
-	if _, ok := report["note"]; !ok {
+	if _, ok := report["label"]; !ok {
 		t.Error("an ordinary state field should stay an accepted report property")
 	}
 }
