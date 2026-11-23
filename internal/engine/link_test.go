@@ -85,6 +85,29 @@ func TestLostEmptiesTheHeldSet(t *testing.T) {
 	}
 }
 
+// lost after a response that asked nothing disproves nothing: the held set
+// stands, and the next response's questions can hold its texts again.
+func TestLostWithNoQuestionOpenKeepsTheHeldSet(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	session.BeginCall(answer(t, q, stepText), nil)
+	session.RecordServed()
+
+	session.BeginCall(model.LostAnswer, nil)
+	if session.Emptied() {
+		t.Error("lost with no question open should leave the held set standing")
+	}
+	session.RecordServed()
+	q = session.Ask()
+	if q == "" {
+		t.Fatal("the response after it should still ask about the held text")
+	}
+	session.BeginCall(answer(t, q, stepText), nil)
+	if !serve(session, stepLane, stepText) {
+		t.Error("a right answer after it should serve the held text short")
+	}
+}
+
 // A right answer to a question asked before another caller's lost holds
 // only texts served since the held set emptied.
 func TestAnAnswerFromBeforeLostHoldsOnlyLaterTexts(t *testing.T) {
