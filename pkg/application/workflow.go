@@ -20,7 +20,6 @@ import (
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -171,6 +170,9 @@ type WorkflowServe struct {
 	// Framing names the framing blocks the served step carries, for
 	// FramingBlocksFor; nil carries them all.
 	Framing []string
+	// PlaysBack is set when the serve carries a draft change not yet played
+	// back; the caller that delivers it records that with RecordPlayback.
+	PlaysBack bool
 }
 
 // WorkflowParked is where an autonomous session parked a move: the step, the
@@ -277,6 +279,12 @@ type WorkflowSession struct {
 	hooks    *workflowHooks
 	shell    string
 	staged   map[string]string
+	// stagedFrom holds the file each handle was staged from, read again
+	// before a playback confirm (stageFromSource).
+	stagedFrom map[string]string
+	// endedUnfreed marks an append that ended the session; the operation
+	// frees the staged files once it returns (freeIfEnded).
+	endedUnfreed bool
 	// instanceProjects holds the recorded per-instance targets; an instance
 	// absent here derives its project from its parent, then the home.
 	instanceProjects map[string]ProjectID
@@ -527,7 +535,7 @@ func newAttachment(subject, clientName, clientVersion string, now time.Time) *At
 func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, branch string) (*WorkflowSession, error) {
 	w := &WorkflowSession{
 		app: a, project: project, identity: identity, ctx: ctx, binding: binding, branch: branch,
-		staged: map[string]string{}, instanceProjects: map[string]ProjectID{},
+		staged: map[string]string{}, stagedFrom: map[string]string{}, instanceProjects: map[string]ProjectID{},
 	}
 	w.graphs = &workflowGraphs{workflow: w}
 	w.sink = &workflowSink{workflow: w}
@@ -553,6 +561,22 @@ func joinKinds(kinds []model.Kind) string {
 }
 
 func (w *WorkflowSession) ID() SessionID { return w.binding.SessionID }
+
+// RecordPlayback logs that serves marked PlaysBack reached their consumer.
+// Until then a confirm over their change is refused and the change served
+// again, so a serve the consumer never got is never taken as played back.
+func (w *WorkflowSession) RecordPlayback(ctx context.Context, identity RequestIdentity, serves ...*WorkflowServe) error {
+	if w.Finished() {
+		return nil
+	}
+	w.setOperation(ctx, identity)
+	for _, serve := range serves {
+		if serve != nil && serve.PlaysBack {
+			w.session.RecordPlayback(serve.Instance)
+		}
+	}
+	return w.session.SinkErr()
+}
 
 // Reorient records the consumer's request for the session's position; the
 // call in flight serves every piece in full.
@@ -715,6 +739,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		if err := w.applyDeepProposal(request); err != nil {
 			return nil, err
 		}
+		if err := w.applyStagedBody(ctx, identity, request, hasChooser && hasChoice && chooser != "" && choice != ""); err != nil {
+			return nil, err
+		}
 	}
 	if inputs == 0 {
 		serve, err = w.session.Poll(request.Instance)
@@ -782,6 +809,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err != nil {
 		return result, err
 	}
+	if err := w.freeIfEnded(ctx); err != nil {
+		return result, err
+	}
 	if serve.Status != engine.StatusRunning {
 		if serve.Instance == w.task {
 			result.Instructions = delegateEndNote(serve)
@@ -812,6 +842,9 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 	w.setOperation(ctx, identity)
 	serve, err := w.session.Serve(w.shell)
 	if err != nil {
+		return nil, err
+	}
+	if err := w.session.SinkErr(); err != nil {
 		return nil, err
 	}
 	return w.publicServe(serve)
@@ -967,6 +1000,9 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
+	if err := w.freeIfEnded(ctx); err != nil {
+		return result, err
+	}
 	base, err := w.landShell(ctx, identity)
 	if err != nil {
 		return result, fmt.Errorf("serving session shell after abandoning %s: %w", instance, err)
@@ -995,42 +1031,6 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 		return WorkflowParkResult{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step}, fmt.Errorf("serving session shell after parking %s: %w", instance, err)
 	}
 	return WorkflowParkResult{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step, Base: base}, nil
-}
-
-func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (string, error) {
-	w.setOperation(ctx, identity)
-	blob, err := w.app.StageBlob(ctx, identity, w.project, SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}, filename, content)
-	if err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(map[string]string{"handle": filename, "blob_id": blob.ID})
-	if err != nil {
-		return "", err
-	}
-	if err := w.appendStoredEvent(workflowStagedBlobCode, payload); err != nil {
-		return "", err
-	}
-	w.staged[filename] = blob.ID
-	return filename, nil
-}
-
-// EditStagedAttachment applies ordered exact search-replace pairs to a staged
-// file addressed by its handle and stages the result under the same handle,
-// so a small correction costs neither a full re-stage nor a full re-read
-// (20260826-120330-d-tac-8f8). Atomic: a failing pair names itself and the
-// staged file stays unchanged.
-func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity RequestIdentity, handle string, pairs []types.PatchPair) error {
-	w.setOperation(ctx, identity)
-	current, err := w.readStagedBlob(ctx, identity, handle)
-	if err != nil {
-		return err
-	}
-	patched, err := textpatch.Apply(string(current), pairs)
-	if err != nil {
-		return fmt.Errorf("editing staged %q: %w (nothing applied; the staged file is unchanged)", handle, err)
-	}
-	_, err = w.StageAttachment(ctx, identity, handle, []byte(patched))
-	return err
 }
 
 // ReadStagedAttachment returns one bounded page of a staged file by handle,
@@ -1625,6 +1625,9 @@ func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity,
 	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
 		return WorkflowAbandonResult{}, nil, err
 	}
+	if err := a.blobs.DeleteStaged(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: request.SessionID}); err != nil {
+		return result, w, fmt.Errorf("session %s ended; freeing its staged files: %w", request.SessionID, err)
+	}
 	return result, w, nil
 }
 
@@ -1780,6 +1783,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
 		Framing:          slices.Clone(serve.Framing),
 		Notices:          w.hooks.takeNotices(),
+		PlaysBack:        serve.PlaysBack,
 	}
 	result.Instructions = appendNotices(result.Instructions, result.Notices)
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
@@ -1943,7 +1947,9 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	// A serve is a pure read: its forensic served marker never reaches the
 	// durable log, so re-serving (ServeShell/ServeAll) writes nothing
 	// and each engine operation appends only its own event with the stamp.
-	if event.Event == engine.EventServed {
+	// The one kept marker records a delivered playback (RecordPlayback),
+	// which a replay must know.
+	if event.Event == engine.EventServed && event.Data["playedBack"] != true {
 		return 0, nil
 	}
 	w := s.workflow
@@ -2144,11 +2150,24 @@ func (w *WorkflowSession) appendStoredEventsOnce(events []StoredEvent) error {
 		return err
 	}
 	w.binding.Version = next
+	if stored.Metadata.Ended == nil && metadata.Ended != nil {
+		w.endedUnfreed = true
+	}
 	return nil
 }
 
 func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 	for _, stored := range events {
+		if stored.Code == workflowStagedBlobReleasedCode {
+			release, err := decodeStagedBlobRelease(stored)
+			if err != nil {
+				return err
+			}
+			if releaseStaged(w.staged, release) {
+				w.recordSource(release.Handle, "")
+			}
+			continue
+		}
 		if stored.Code != workflowStagedBlobCode {
 			continue
 		}
@@ -2158,6 +2177,7 @@ func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 		var item struct {
 			Handle string `json:"handle"`
 			BlobID string `json:"blob_id"`
+			Source string `json:"source"`
 		}
 		if err := json.Unmarshal(stored.Payload, &item); err != nil {
 			return fmt.Errorf("decoding staged blob event: %w", err)
@@ -2166,6 +2186,7 @@ func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 			return fmt.Errorf("decoding staged blob event: handle and blob_id are required")
 		}
 		w.staged[item.Handle] = item.BlobID
+		w.recordSource(item.Handle, item.Source)
 	}
 	return nil
 }

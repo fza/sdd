@@ -2,9 +2,11 @@ package mcpapp
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // shellSession is the server's in-memory replay of one durable session, keyed
@@ -18,6 +20,9 @@ type shellSession struct {
 	// pages holds, per tool, the pages of its last result too large for one,
 	// which later calls naming a page serve without running the read again.
 	pages map[string][]string
+	// playbacks are the serves of the call in flight whose result holds the
+	// change they play back, recorded with the served pieces.
+	playbacks []*sdd.WorkflowServe
 	// pageReads holds, per tool, the full reads of its paged result waiting
 	// on the pages not yet served.
 	pageReads map[string]pageRead
@@ -34,9 +39,27 @@ type pageRead struct {
 	unserved map[int]bool
 }
 
-// flushServed records the pieces this call served into the session ledger.
+// flushServed records the pieces this call served and the playbacks its
+// result holds into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	return ss.root.RecordPieces(ctx, identity)
+	playbacks := ss.playbacks
+	ss.playbacks = nil
+	if err := ss.root.RecordPieces(ctx, identity); err != nil {
+		return err
+	}
+	return ss.root.RecordPlayback(ctx, identity, playbacks...)
+}
+
+// notePlayback marks serve's playback delivered with the result when the
+// result holds its draft lane, keep being how many of its lanes it holds.
+func (ss *shellSession) notePlayback(serve *sdd.WorkflowServe, keep int) {
+	if serve == nil || !serve.PlaysBack {
+		return
+	}
+	draft := slices.IndexFunc(serve.InstructionLanes, func(lane types.ServeLane) bool { return lane.Name == types.DraftLane })
+	if draft >= 0 && draft < keep {
+		ss.playbacks = append(ss.playbacks, serve)
+	}
 }
 
 // sessionCache holds the loaded sessions by ID.

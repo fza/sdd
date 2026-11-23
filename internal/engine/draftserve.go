@@ -215,3 +215,10 @@ func compactJSON(v any) string {
 	}
 	return string(b)
 }
+
+// draftChangedUnserved reports whether an Update changed the instance's draft
+// since it was last played back, at a step that plays a draft back. The mark
+// rides the log, so a replayed session holds it too.
+func draftChangedUnserved(inst *Instance, step *Step) bool {
+	return len(step.ServeDelta) > 0 && inst.unservedDraft
+}

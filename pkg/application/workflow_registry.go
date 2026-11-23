@@ -565,6 +565,9 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if err != nil {
 		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
 	}
+	if err := w.releasePublished(ctx.Instance, publishedFiles(ctx.Store, staged, draft.Attachments)); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: freeing its staged attachments: %w", entryID, err)
+	}
 	w.session.LogRead("newEntry", []string{entryID}, nil)
 	return w.session.SinkErr()
 }

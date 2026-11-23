@@ -1,0 +1,11 @@
+files:
+  -
+    handle: inline.md
+    sha256: 756a47fe5bf2de73d7e51b448f17e90945aa89a4e25561485cbd6bae96faf161
+  -
+    handle: from-path.md
+    sha256: a2d1ecdfb1927545ad9f4c686476ebe4b958e5dd77713c489521bea82eadbb29
+  -
+    handle: patched.md
+    sha256: 1ef8fec2ebd54c6b2f0a59e65f76794be0b80a4b28fbbfc965d08467548925d5
+

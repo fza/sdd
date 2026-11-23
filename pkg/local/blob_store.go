@@ -126,6 +126,44 @@ func (s *FilesystemStagedBlobStore) DeleteStaged(_ context.Context, ref app.Sess
 	return nil
 }
 
+// DeleteBlob removes one blob across the session's known locations. A blob
+// that is already gone is success.
+func (s *FilesystemStagedBlobStore) DeleteBlob(_ context.Context, ref app.SessionRef, id string) error {
+	dir, err := stagingDir(ref)
+	if err != nil {
+		return err
+	}
+	if err := validBlobID(id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, location := range s.locations {
+		root, err := openStoreRoot(location.StagedBlobs, false)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		removeErr := root.Remove(filepath.Join(dir, id+blobSuffix))
+		if errors.Is(removeErr, fs.ErrNotExist) {
+			removeErr = nil
+		}
+		if removeErr == nil {
+			removeErr = syncRootDir(root, dir)
+			if errors.Is(removeErr, fs.ErrNotExist) {
+				removeErr = nil
+			}
+		}
+		if err := errors.Join(removeErr, root.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // resolve opens the location holding this session's staging area, falling back
 // to the first location so a caller reading nothing staged gets the ordinary
 // not-exist error. The caller owns closing the returned root.

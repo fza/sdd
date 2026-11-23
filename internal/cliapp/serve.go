@@ -83,7 +83,14 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			if err != nil {
 				return err
 			}
-			application, identity, err := buildServedApplication(ctx, cmd, watch)
+			transport := cmd.String("transport")
+			// Only a stdio client shares this filesystem; an HTTP client must
+			// never stage a file of the server's by naming its path.
+			var readLocalFile func(string) ([]byte, error)
+			if transport == "stdio" {
+				readLocalFile = os.ReadFile
+			}
+			application, identity, err := buildServedApplication(ctx, cmd, watch, readLocalFile)
 			if err != nil {
 				return err
 			}
@@ -95,7 +102,6 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				cacheNotice = serveCacheNotice
 			}
 
-			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
 				Application:     application,
 				LocalIdentity:   identity,
@@ -449,8 +455,8 @@ func perRepoLayer(read configRead) (*model.PerRepoConfig, error) {
 
 // buildServedApplication composes the application whose every call resolves
 // against the project watch serves at that moment.
-func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
-	return newLocalApplication(ctx, cmd, watch.served(), sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}})
+func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *configWatch, readLocalFile func(string) ([]byte, error)) (*sdd.Application, sdd.RequestIdentity, error) {
+	return newLocalApplication(ctx, cmd, watch.served(), sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, ReadLocalFile: readLocalFile})
 }
 
 // newLocalApplication completes options with the headless delegate launch,

@@ -108,8 +108,7 @@ func Register(server *mcp.Server, opts Options) error {
 	if err != nil {
 		return err
 	}
-	tools.register(server)
-	return nil
+	return tools.register(server)
 }
 
 // Server is an MCP server carrying SDD's tools alone, for compositions that
@@ -140,7 +139,10 @@ func New(opts Options) (*Server, error) {
 		}),
 	}
 	s.mcp.AddReceivingMiddleware(s.refuseWhileClosing)
-	tools.register(s.mcp)
+	err = tools.register(s.mcp)
+	if err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 

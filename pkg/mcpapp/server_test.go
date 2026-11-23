@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -405,7 +406,7 @@ func newTestServerRuntime(t *testing.T, findings []query.Finding, graphDir, sess
 		t.Fatal(err)
 	}
 	opts := testServerOptions{
-		Application: sdd.ApplicationOptions{Access: rootAccess{runtime: runtime}, Sessions: sessions, StagedBlobs: blobs, Clock: sdd.ClockFunc(func() time.Time { return now })},
+		Application: sdd.ApplicationOptions{Access: rootAccess{runtime: runtime}, Sessions: sessions, StagedBlobs: blobs, Clock: sdd.ClockFunc(func() time.Time { return now }), ReadLocalFile: os.ReadFile},
 		MCP:         mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: sdd.RequestIdentity{Subject: "tester"}, Version: "test"},
 	}
 	for _, m := range mutate {
@@ -1264,18 +1265,16 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 	var staged mcpserver.StageAttachmentResult
 	call(t, cs, "stage_attachment", map[string]any{
 		"session": session,
-		"name":    "record.md",
-		"content": "alpha beta gamma",
+		"files":   []map[string]any{{"name": "record.md", "content": "alpha beta gamma"}},
 	}, &staged)
 
 	// Edit in place by handle.
 	call(t, cs, "stage_attachment", map[string]any{
 		"session": session,
-		"name":    "record.md",
-		"patches": []map[string]any{{"old": "beta", "new": "BETA"}},
+		"files":   []map[string]any{{"name": "record.md", "patches": []map[string]any{{"old": "beta", "new": "BETA"}}}},
 	}, &staged)
-	if staged.Handle != "record.md" {
-		t.Fatalf("edit should keep the handle, got %q", staged.Handle)
+	if len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].Handle != "record.md" {
+		t.Fatalf("edit should keep the handle, got %+v", staged.StagedFiles())
 	}
 
 	// Read back in bounded pages.
@@ -1299,8 +1298,7 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 	// A failing pair refuses the edit by name; the staged bytes stay put.
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "stage_attachment", Arguments: map[string]any{
 		"session": session,
-		"name":    "record.md",
-		"patches": []map[string]any{{"old": "absent", "new": "x"}},
+		"files":   []map[string]any{{"name": "record.md", "patches": []map[string]any{{"old": "absent", "new": "x"}}}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -1316,6 +1314,51 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 	}
 }
 
+// TestStagedAttachmentHashesRawBytes pins the staging answer's sha256: the raw
+// bytes as read from a path, header, CRLF and byte order mark included, then
+// the patched bytes; the path itself is only read.
+func TestStagedAttachmentHashesRawBytes(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	raw := "\uFEFF---\r\nlayer: tactical\r\n---\r\nBody line.\r\n"
+	path := filepath.Join(t.TempDir(), "draft.md")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var staged mcpserver.StageAttachmentResult
+	call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "draft.md", "path": path}}}, &staged)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(raw))); len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].SHA256 != want {
+		t.Errorf("staging by path should answer the sha256 of the file's raw bytes, got %+v", staged.StagedFiles())
+	}
+
+	call(t, cs, "stage_attachment", map[string]any{
+		"session": session,
+		"files":   []map[string]any{{"name": "draft.md", "patches": []map[string]any{{"old": "Body line.", "new": "Patched line."}}}},
+	}, &staged)
+	patched := strings.Replace(raw, "Body line.", "Patched line.", 1)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(patched))); len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].SHA256 != want {
+		t.Errorf("a staging patch should answer the sha256 of the patched bytes, got %+v", staged.StagedFiles())
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != raw || !after.ModTime().Equal(before.ModTime()) {
+		t.Error("staging and patching should never write the source file")
+	}
+}
+
 // produced entry ID.
 func TestCaptureProcedureLoop(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
@@ -1325,11 +1368,10 @@ func TestCaptureProcedureLoop(t *testing.T) {
 	var staged mcpserver.StageAttachmentResult
 	call(t, cs, "stage_attachment", map[string]any{
 		"session": session,
-		"name":    "evidence.md",
-		"content": "# Evidence\n\nStaged before the capture ran.",
+		"files":   []map[string]any{{"name": "evidence.md", "content": "# Evidence\n\nStaged before the capture ran."}},
 	}, &staged)
-	if staged.Handle != "evidence.md" {
-		t.Fatalf("unexpected handle %q", staged.Handle)
+	if len(staged.StagedFiles()) != 1 || staged.StagedFiles()[0].Handle != "evidence.md" {
+		t.Fatalf("unexpected staged files %+v", staged.StagedFiles())
 	}
 
 	var serve mcpserver.ServeResult
@@ -1345,7 +1387,7 @@ func TestCaptureProcedureLoop(t *testing.T) {
 	}
 
 	report := assembleReport()
-	report["attachments"] = []string{staged.Handle}
+	report["attachments"] = []string{staged.StagedFiles()[0].Handle}
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": report}, &serve)
 	if serve.Step != "playback" || serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
 		t.Fatalf("expected pending user chooser at playback, got step %q chooser %+v", serve.Step, serve.PendingChooser)
@@ -2348,7 +2390,7 @@ func TestWorkToolUnknownSessionNamed(t *testing.T) {
 		"next":             {"session": unknown, "instance": serve.Instance, "report": assembleReport()},
 		"park":             {"session": unknown, "instance": serve.Instance},
 		"bind_branch":      {"session": unknown, "branch": "feature"},
-		"stage_attachment": {"session": unknown, "name": "a.md", "content": "x"},
+		"stage_attachment": {"session": unknown, "files": []map[string]any{{"name": "a.md", "content": "x"}}},
 		"abandon":          {"session": unknown, "instance": serve.Instance},
 		"resume_session":   {"session": unknown},
 		"show":             {"session": unknown, "ids": []string{fixtureGapID}},
@@ -3280,7 +3322,7 @@ func TestDoorGatingAndShellLifecycle(t *testing.T) {
 		"next":             {"instance": "i_1", "report": map[string]any{"x": "y"}},
 		"park":             {"instance": "i_1"},
 		"abandon":          {"instance": "i_1"},
-		"stage_attachment": {"name": "a.md", "content": "x"},
+		"stage_attachment": {"files": []map[string]any{{"name": "a.md", "content": "x"}}},
 	} {
 		msg := callExpectError(t, cs, tool, args)
 		if !strings.Contains(msg, "start_session") || !strings.Contains(msg, "resume_session") {

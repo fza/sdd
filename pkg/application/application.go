@@ -51,6 +51,10 @@ type ApplicationOptions struct {
 	// RoundProcesses runs the rounds sdd launches, and checks and stops them
 	// later; a DelegateLauncher needs it.
 	RoundProcesses RoundProcesses
+	// ReadLocalFile reads a file by the path a client names, for a composition
+	// whose clients share its filesystem. nil refuses staging by path, so a
+	// remote client can never stage a file of the server's.
+	ReadLocalFile func(path string) ([]byte, error)
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -66,6 +70,7 @@ type Application struct {
 	entrySuffix   func(length int) (string, error)
 	launcher      DelegateLauncher
 	processes     RoundProcesses
+	readLocalFile func(path string) ([]byte, error)
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -98,6 +103,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		entrySuffix:   suffix,
 		launcher:      options.DelegateLauncher,
 		processes:     options.RoundProcesses,
+		readLocalFile: options.ReadLocalFile,
 	}, nil
 }
 

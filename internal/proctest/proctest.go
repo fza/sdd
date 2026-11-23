@@ -204,6 +204,7 @@ type config struct {
 	prefilter     sdd.Prefilter
 	events        sdd.EventStore
 	hooks         sdd.HookCommands
+	wrapBlobs     func(sdd.StagedBlobStore) sdd.StagedBlobStore
 }
 
 // Option configures NewWorld.
@@ -283,6 +284,11 @@ func WithFinalizers(finalizers ...sdd.MutationFinalizer) Option {
 	return func(c *config) { c.finalizers = append(c.finalizers, finalizers...) }
 }
 
+// WithStagedBlobs wraps the world's staged blob store, e.g. to fail a delete.
+func WithStagedBlobs(wrap func(sdd.StagedBlobStore) sdd.StagedBlobStore) Option {
+	return func(c *config) { c.wrapBlobs = wrap }
+}
+
 // WithBranchDir registers an additional branch backed by its own graph dir —
 // for procedures that route reads and writes by branch state (implementation's
 // work branches). The default branch main stays on the world's GraphDir.
@@ -353,7 +359,9 @@ type World struct {
 	App      *sdd.Application
 	Identity sdd.RequestIdentity
 	GraphDir string
-	LLM      *LLMScript
+	// StagedBlobDir holds the staged attachments, <subject>/<session>/ below.
+	StagedBlobDir string
+	LLM           *LLMScript
 	// Sessions is the session store the application appends to.
 	Sessions sdd.SessionStore
 	// SessionsDir holds the session logs Sessions writes, <session>.jsonl.
@@ -442,9 +450,14 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(t.TempDir())
+	stagedBlobDir := t.TempDir()
+	filesystemBlobs, err := localadapter.NewFilesystemStagedBlobStoreAt(stagedBlobDir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var blobs sdd.StagedBlobStore = filesystemBlobs
+	if cfg.wrapBlobs != nil {
+		blobs = cfg.wrapBlobs(blobs)
 	}
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
@@ -470,9 +483,10 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, LLM: script, Sessions: sessions, SessionsDir: sessionsDir, dropped: dropped}
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, LLM: script, Sessions: sessions, SessionsDir: sessionsDir, dropped: dropped}
 	world.options = sdd.ApplicationOptions{
 		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+		ReadLocalFile: os.ReadFile,
 	}
 	if cfg.launcher != nil {
 		world.Rounds = test.NewRoundProcesses(t)
@@ -540,13 +554,19 @@ func (w *World) Resume(t *testing.T, sessionID sdd.SessionID, connID string) (*S
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Session{World: w, WF: workflow, ID: sessionID}, result
+	session := &Session{World: w, WF: workflow, ID: sessionID}
+	for i := range result.Open {
+		if _, err := session.deliver(t, &result.Open[i], nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return session, result
 }
 
 // Start starts a procedure instance; params may seed declared params and state.
 func (s *Session) Start(t *testing.T, canonical string, params map[string]any) *sdd.WorkflowServe {
 	t.Helper()
-	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	serve, err := s.StartErr(t, canonical, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,17 +576,51 @@ func (s *Session) Start(t *testing.T, canonical string, params map[string]any) *
 // StartErr is Start for tests asserting the failure.
 func (s *Session) StartErr(t *testing.T, canonical string, params map[string]any) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	return s.deliver(t, serve, err)
 }
 
 // Stage places bytes in the session's staged scratch and returns the handle.
 func (s *Session) Stage(t *testing.T, filename string, content []byte) string {
 	t.Helper()
-	handle, err := s.WF.StageAttachment(t.Context(), s.World.Identity, filename, content)
+	return s.StageFile(t, filename, content).Handle
+}
+
+// StageFile is Stage returning the whole staging answer.
+func (s *Session) StageFile(t *testing.T, filename string, content []byte) sdd.StagedFile {
+	t.Helper()
+	staged, err := s.StageErr(t, filename, content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return handle
+	return staged
+}
+
+// StageFrom stages the file at path, which the session reads again before a
+// playback confirm.
+func (s *Session) StageFrom(t *testing.T, filename, path string) string {
+	t.Helper()
+	staged, err := s.StageItem(t, sdd.StageItem{Name: filename, Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return staged.Handle
+}
+
+// StageErr is Stage for tests asserting the failure.
+func (s *Session) StageErr(t *testing.T, filename string, content []byte) (sdd.StagedFile, error) {
+	t.Helper()
+	return s.StageItem(t, sdd.StageItem{Name: filename, Content: content})
+}
+
+// StageItem stages one file of any source.
+func (s *Session) StageItem(t *testing.T, item sdd.StageItem) (sdd.StagedFile, error) {
+	t.Helper()
+	staged, err := s.WF.StageAttachments(t.Context(), s.World.Identity, []sdd.StageItem{item})
+	if err != nil {
+		return sdd.StagedFile{}, err
+	}
+	return staged[0], nil
 }
 
 // StartChild starts a procedure under a spawning parent, so a dispatch seed
@@ -574,6 +628,7 @@ func (s *Session) Stage(t *testing.T, filename string, content []byte) string {
 func (s *Session) StartChild(t *testing.T, canonical string, params map[string]any, parent string) *sdd.WorkflowServe {
 	t.Helper()
 	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	serve, err = s.deliver(t, serve, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +655,8 @@ func (s *Session) Report(t *testing.T, instance string, fields map[string]any) *
 // ReportErr is Report for tests asserting the failure.
 func (s *Session) ReportErr(t *testing.T, instance string, fields map[string]any) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: fields})
+	serve, err := s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: fields})
+	return s.deliver(t, serve, err)
 }
 
 // Answer answers the pending chooser.
@@ -623,7 +679,18 @@ func (s *Session) AnswerErr(t *testing.T, instance, chooser, choice string, fiel
 	if userWords != "" {
 		report["userWords"] = userWords
 	}
-	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	serve, err := s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	return s.deliver(t, serve, err)
+}
+
+// deliver records the playback a returned serve carries, as the MCP server
+// does once its response is complete.
+func (s *Session) deliver(t *testing.T, serve *sdd.WorkflowServe, err error) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	if err != nil || serve == nil {
+		return serve, err
+	}
+	return serve, s.WF.RecordPlayback(t.Context(), s.World.Identity, serve, serve.Base)
 }
 
 // Decide answers a delegable chooser the agent decides itself in an

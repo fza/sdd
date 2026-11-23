@@ -1,0 +1,277 @@
+package application
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
+
+	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
+)
+
+// A capture whose body comes from a staged file names it in bodyHandle; sdd
+// keeps body and bodyHash in step with that file, so the playback
+// confirmation, bound to the state snapshot, covers the file's bytes.
+const (
+	fieldBodyHandle = "bodyHandle"
+	fieldBodyHash   = "bodyHash"
+	fieldBodyPatch  = "bodyPatch"
+)
+
+// StagedFile is a staged file's handle and the sha256 of its raw bytes.
+type StagedFile struct {
+	Handle string
+	SHA256 string
+	// Bound names the running captures whose body the staging replaced.
+	Bound []string
+}
+
+func stagedSHA256(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+// takesStagedBody reports whether the instance's procedure declares a body
+// taken from a staged file.
+func takesStagedBody(inst *engine.Instance) bool {
+	_, ok := inst.Spec.State[fieldBodyHandle]
+	return ok
+}
+
+// stagedBodyFields resolves the staged body a report names or keeps bound. It
+// refuses what a report may not carry beside a staged body, and returns body,
+// bodyHash and bodyHandle to write when the report names a handle; nil when
+// nothing is to be written. Header and fields are compared at the confirm
+// only, so the two halves of a header edit can arrive in either order.
+func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity RequestIdentity, inst *engine.Instance, fields map[string]any) (map[string]any, error) {
+	if !takesStagedBody(inst) {
+		return nil, nil
+	}
+	if _, reported := fields[fieldBodyHash]; reported {
+		return nil, fmt.Errorf("field %q is set by sdd from %q and cannot be reported", fieldBodyHash, fieldBodyHandle)
+	}
+	named, reportsHandle := fields[fieldBodyHandle]
+	if reportsHandle && named == nil {
+		return map[string]any{fieldBodyHandle: nil, fieldBodyHash: nil}, nil
+	}
+	handle, _ := named.(string)
+	if !reportsHandle {
+		bound, _ := inst.Store.Get(fieldBodyHandle)
+		handle, _ = bound.(string)
+	}
+	if handle == "" {
+		return nil, nil
+	}
+	for _, inline := range []string{fieldBody, fieldBodyPatch} {
+		if _, ok := fields[inline]; !ok {
+			continue
+		}
+		if reportsHandle {
+			return nil, fmt.Errorf("report %q or %q, not both: the body comes from the staged file %q", fieldBodyHandle, inline, handle)
+		}
+		return nil, fmt.Errorf("field %q cannot change a body taken from the staged file %q: patch the staged file with stage_attachment, or report %q null to draft the body inline", inline, handle, fieldBodyHandle)
+	}
+	if !reportsHandle {
+		return nil, nil
+	}
+	content, err := w.readStagedBlob(ctx, identity, handle)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", fieldBodyHandle, err)
+	}
+	_, body, _ := model.SplitStagedBody(string(content))
+	return map[string]any{fieldBodyHandle: handle, fieldBody: body, fieldBodyHash: stagedSHA256(content)}, nil
+}
+
+// checkStagedHeaderAtConfirm refuses a confirm while the header of the staged
+// file a capture takes its body from states a field otherwise than the
+// capture holds it, before the answer is recorded.
+func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst, chooser, choice) {
+		return nil
+	}
+	bound, _ := inst.Store.Get(fieldBodyHandle)
+	handle, _ := bound.(string)
+	if handle == "" {
+		return nil
+	}
+	content, err := w.readStagedBlob(ctx, identity, handle)
+	if err != nil {
+		return fmt.Errorf("%s: %w", fieldBodyHandle, err)
+	}
+	header, _, ambiguous := model.SplitStagedBody(string(content))
+	if ambiguous {
+		return fmt.Errorf("the staged file %q opens with a --- block that reads both as a header and as markdown, as a line in it starts with \"#\": drop those lines to keep it a header, or start the body without a --- block; then re-stage the file and confirm", handle)
+	}
+	return stagedHeaderAgrees(header, handle, inst, nil)
+}
+
+// callsConfirmPlayback reports whether the answer confirms the playback the
+// instance is pending at; an answer at another step is the engine's to refuse.
+func callsConfirmPlayback(inst *engine.Instance, chooser, choice string) bool {
+	if inst.Step != chooser {
+		return false
+	}
+	for _, step := range inst.Spec.Steps {
+		if step.ID != chooser {
+			continue
+		}
+		for _, option := range step.Options {
+			if option.Choice == choice {
+				return option.Call == "confirmPlayback"
+			}
+		}
+	}
+	return false
+}
+
+// stagedHeaderAgrees refuses a header key stating a report field otherwise
+// than the capture does once fields land.
+func stagedHeaderAgrees(header map[string]any, handle string, inst *engine.Instance, fields map[string]any) error {
+	if header == nil {
+		return nil
+	}
+	reported := make(map[string]any, len(model.StagedHeaderKeys))
+	for _, key := range model.StagedHeaderKeys {
+		if value, ok := fields[key]; ok {
+			if value != nil {
+				reported[key] = value
+			}
+			continue
+		}
+		if value, ok := inst.Store.Get(key); ok {
+			reported[key] = value
+		}
+	}
+	if key, mismatch := model.StagedHeaderMismatch(header, reported); mismatch {
+		return fmt.Errorf("the header of the staged file %q states %q otherwise than the capture: re-stage the file or report %q so they agree, then confirm", handle, key, key)
+	}
+	return nil
+}
+
+// applyStagedBody merges the staged body a report or chooser answer names
+// into the fields it carries, so the engine validates and writes them in one
+// step and a refused answer leaves nothing behind.
+func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestIdentity, request WorkflowAdvanceRequest, answer bool) error {
+	inst, ok := w.session.Instance(request.Instance)
+	if !ok || inst.Status != engine.StatusRunning {
+		return nil
+	}
+	fields := request.Report
+	if answer {
+		fields, _ = request.Report["fields"].(map[string]any)
+		chooser, _ := request.Report["chooser"].(string)
+		choice, _ := request.Report["choice"].(string)
+		err := w.stageFromSource(ctx, identity, inst, chooser, choice)
+		if err != nil {
+			return err
+		}
+		err = w.checkStagedHeaderAtConfirm(ctx, identity, inst, chooser, choice)
+		if err != nil {
+			return err
+		}
+	}
+	resolved, err := w.stagedBodyFields(ctx, identity, inst, fields)
+	if err != nil || resolved == nil {
+		return err
+	}
+	for name, value := range resolved {
+		fields[name] = value
+	}
+	return nil
+}
+
+// checkRestagedBody refuses staging a file a running capture takes its body
+// from while an operation of the session is unfinished, before anything is
+// staged.
+func (w *WorkflowSession) checkRestagedBody(handle string) error {
+	bound := w.boundCaptures(handle)
+	if len(bound) == 0 {
+		return nil
+	}
+	if err := w.session.SinkErr(); err != nil {
+		return err
+	}
+	if pending := w.session.PendingMutation(); pending != nil {
+		return fmt.Errorf("capture %s takes its body from %q, and the operation %q in this session is unfinished: continue or cancel it before staging that file again", bound[0].ID, handle, pending.Command)
+	}
+	return nil
+}
+
+// syncRestagedBody writes a re-staged file's body and hash into every running
+// capture taking its body from the handle, so a playback confirmed before
+// the staging no longer holds.
+func (w *WorkflowSession) syncRestagedBody(handle string, content []byte) ([]string, error) {
+	_, body, _ := model.SplitStagedBody(string(content))
+	hash := stagedSHA256(content)
+	var synced []string
+	for _, inst := range w.boundCaptures(handle) {
+		current, _ := inst.Store.Get(fieldBodyHash)
+		if current == hash {
+			continue
+		}
+		if err := w.session.Update(inst.ID, map[string]any{fieldBody: body, fieldBodyHash: hash}); err != nil {
+			return synced, fmt.Errorf("capture %s: %w", inst.ID, err)
+		}
+		if err := w.session.SinkErr(); err != nil {
+			return synced, err
+		}
+		synced = append(synced, inst.ID)
+	}
+	return synced, nil
+}
+
+func (w *WorkflowSession) boundCaptures(handle string) []*engine.Instance {
+	var bound []*engine.Instance
+	for _, inst := range w.session.Instances() {
+		// A capture holding an entryId has written its entry; its body is
+		// final.
+		if inst.Status != engine.StatusRunning || !takesStagedBody(inst) || inst.Store.Has("entryId") {
+			continue
+		}
+		if named, _ := inst.Store.Get(fieldBodyHandle); named == handle {
+			bound = append(bound, inst)
+		}
+	}
+	return bound
+}
+
+// recordSource keeps the file a handle was staged from; staging the handle
+// from content or patches drops it, since the staged copy then leads.
+func (w *WorkflowSession) recordSource(handle, source string) {
+	if source == "" {
+		delete(w.stagedFrom, handle)
+		return
+	}
+	w.stagedFrom[handle] = source
+}
+
+// stageFromSource stages again the file a confirmed capture's body was staged
+// from when it changed since: the edit reaches the draft, and the confirm
+// then plays it back instead of confirming the older copy. A file gone since
+// leaves the staged copy standing.
+func (w *WorkflowSession) stageFromSource(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst, chooser, choice) {
+		return nil
+	}
+	bound, _ := inst.Store.Get(fieldBodyHandle)
+	handle, _ := bound.(string)
+	source := w.stagedFrom[handle]
+	if source == "" || w.app.readLocalFile == nil {
+		return nil
+	}
+	content, err := w.app.readLocalFile(source)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s, the file %q was staged from: %w", source, handle, err)
+	}
+	if held, _ := inst.Store.Get(fieldBodyHash); held == stagedSHA256(content) {
+		return nil
+	}
+	_, _, err = w.stage(ctx, identity, stageWrite{name: handle, source: source, content: content})
+	return err
+}
