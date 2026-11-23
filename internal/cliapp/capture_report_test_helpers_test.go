@@ -8,8 +8,14 @@ func captureReport() map[string]any {
 		"topics":      []string{"testing/connected"},
 		"confidence":  "low",
 		"widenReport": "searched the platform graph for consumer records; it holds none.",
-		// No gather reads the graph here; verification's grounding gate passes
-		// the low-confidence draft past its reading.
-		"skipGrounding": true,
 	}
+}
+
+// ungroundedCaptureReport is captureReport for a capture no gather reads:
+// verification's grounding gate passes the low-confidence draft past its
+// reading.
+func ungroundedCaptureReport() map[string]any {
+	report := captureReport()
+	report["skipGrounding"] = true
+	return report
 }

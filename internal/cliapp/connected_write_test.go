@@ -155,7 +155,7 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 		if failed {
 			t.Fatalf("start_procedure: %s", served)
 		}
-		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": opened.Session, "instance": serve.Instance, "report": captureReport()})
+		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": opened.Session, "instance": serve.Instance, "report": ungroundedCaptureReport()})
 		if failed || serve.Step != "playback" {
 			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
 		}
@@ -196,7 +196,7 @@ func TestConnectedCaptureSyncsTheDependencyOncePerLease(t *testing.T) {
 		if rounds := gitFetches(t, trace) - before; rounds != 1 {
 			t.Errorf("starting the capture should start the lease with one sync round of the dependency's clone, ran %d", rounds)
 		}
-		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": captureReport()})
+		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": ungroundedCaptureReport()})
 		if failed || serve.Step != "playback" {
 			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
 		}
@@ -284,7 +284,7 @@ func TestGraphRepoConnectedWriteFromTheCodeRepository(t *testing.T) {
 		if failed {
 			t.Fatalf("the code repository's connected.write should allow the capture:\n%s", served)
 		}
-		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": captureReport()})
+		serve, served, failed = callServeTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": ungroundedCaptureReport()})
 		if failed || serve.Step != "playback" {
 			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
 		}

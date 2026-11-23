@@ -104,6 +104,10 @@ func TestServeFollowsAnLLMChange(t *testing.T) {
 			if failed || playback.Step != "playback" {
 				t.Fatalf("the draft should reach playback, got step %q:\n%s", playback.Step, served)
 			}
+			// The writing guide runs once the user approves (verification's
+			// order); its call is the one the model sees.
+			callStepTool(t, client, "next", map[string]any{"session": session, "instance": started.Instance,
+				"report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it"}})
 		}
 
 		draft(firstBody)
