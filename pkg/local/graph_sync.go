@@ -3,11 +3,13 @@ package local
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -15,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // GraphPublisher pushes what a mutation committed under automatic sync. It
@@ -115,11 +118,46 @@ func (a *GitWorktreeAcquirer) DemandGraph(ctx context.Context, branch string, se
 	return demand, nil
 }
 
+// BackfillTitles titles the untitled entries in the checkout of branch where
+// its config switches titles.backfill on, whatever its sync mode. A backfill
+// started by a call waits out model.TitleBackfillCooldown; one from a session
+// start or a timer always runs. Under automatic sync the next round pushes its
+// commit.
+func (a *GitWorktreeAcquirer) BackfillTitles(ctx context.Context, branch string, trigger app.SyncTrigger, runner llm.Runner) error {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || cfg == nil {
+		return err
+	}
+	graphDir := meta.ResolveGraphDir(checkout, cfg)
+	sddDir := filepath.Join(checkout, model.SDDDirName)
+	opts, err := syncstate.TitlesOptions(ctx, graphDir, handlers.Options{
+		SDDDir:    sddDir,
+		Reader:    finders.New(finders.Options{Config: cfg}),
+		LLMRunner: runner,
+		Committer: git.CLI{Dir: git.RepoRootFor(graphDir)},
+		Language:  cfg.Language,
+	})
+	if err != nil {
+		return err
+	}
+	var cooldown time.Duration
+	if trigger == app.SyncOnCall {
+		cooldown = model.TitleBackfillCooldown
+	}
+	log := slogutils.FromContext(ctx)
+	ctx = handlers.WithSyncReport(ctx, func(block model.SyncBlocked) { log.Info(block.Banner()) })
+	err = handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{Enabled: cfg.Titles.Backfills(), SDDDir: sddDir, Cooldown: cooldown})
+	if err != nil {
+		return fmt.Errorf("titling the entries of %s: %w", branch, err)
+	}
+	return nil
+}
+
 // SyncNotice claims the blocked-sync notice of branch's graph repository for
-// session.
+// session. Under manual sync only a failed title backfill is served.
 func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session string) (string, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
+	if err != nil || cfg == nil {
 		return "", err
 	}
 	graphDir := meta.ResolveGraphDir(checkout, cfg)
@@ -128,7 +166,9 @@ func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session st
 		return "", err
 	}
 	var notice string
-	err = handlers.New(opts).ClaimSyncNotice(ctx, &command.ClaimSyncNoticeCmd{Session: session, OnNotice: func(text string) { notice = text }})
+	err = handlers.New(opts).ClaimSyncNotice(ctx, &command.ClaimSyncNoticeCmd{
+		Session: session, TitlesOnly: syncstate.Mode(checkout) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
+	})
 	return notice, err
 }
 
@@ -136,7 +176,7 @@ func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session st
 // branch's graph repository.
 func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
+	if err != nil || cfg == nil {
 		return "", err
 	}
 	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{})
@@ -144,7 +184,9 @@ func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, sess
 		return "", err
 	}
 	var notice string
-	err = handlers.New(opts).ReleaseSyncOwner(ctx, &command.ReleaseSyncOwnerCmd{Session: session, OnNotice: func(text string) { notice = text }})
+	err = handlers.New(opts).ReleaseSyncOwner(ctx, &command.ReleaseSyncOwnerCmd{
+		Session: session, TitlesOnly: syncstate.Mode(checkout) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
+	})
 	return notice, err
 }
 
@@ -178,15 +220,19 @@ func (a *GitWorktreeAcquirer) syncCheckout(ctx context.Context, branch string) (
 	return checkout, cfg, nil
 }
 
-// SyncBlocked reads what blocks sync of branch's graph repository.
+// SyncBlocked reads what blocks sync of branch's graph repository; under
+// manual sync only a failed title backfill.
 func (a *GitWorktreeAcquirer) SyncBlocked(ctx context.Context, branch string) (*app.SyncBlocked, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
+	if err != nil || cfg == nil {
 		return nil, err
 	}
 	block, err := syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(checkout, cfg))
 	if err != nil || block == nil {
 		return nil, err
+	}
+	if syncstate.Mode(checkout) != model.SyncModeAuto && !block.TitlesFailed() {
+		return nil, nil
 	}
 	return &app.SyncBlocked{
 		Kind: string(block.Kind), Since: block.Since, Upstream: block.Upstream, Detail: block.Detail,

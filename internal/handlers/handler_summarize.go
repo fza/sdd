@@ -58,7 +58,9 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 
 	// Determine which entries to process.
 	var entries []*model.Entry
-	if len(cmd.EntryIDs) > 0 {
+	if cmd.Backfill {
+		entries = model.UntitledNewestFirst(graph.Entries, model.TitleBackfillBatch)
+	} else if len(cmd.EntryIDs) > 0 {
 		resolvedIDs, err := graph.ResolveIDs(cmd.EntryIDs)
 		if err != nil {
 			return err
@@ -194,29 +196,36 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
 
-			// Apply the answer under write lock, then format and write file
-			// under read lock so FormatFrontmatter sees a consistent entry.
-			graphMu.Lock()
-			if writeTitle {
-				entry.Title = result.Title
-			}
-			if writeSummary {
-				entry.Summary = result.Summary
-			}
-			graphMu.Unlock()
-
 			relPath, err := model.IDToRelPath(entry.ID)
 			if err != nil {
 				return fmt.Errorf("computing path for %s: %w", entry.ID, err)
 			}
 			filePath := filepath.Join(h.graphDir, relPath)
 
-			graphMu.RLock()
-			fileContent := model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n"
-			graphMu.RUnlock()
+			if cmd.Backfill {
+				written, err := h.writeBackfilledTitle(ctx, entry.ID, filePath, result, !writeSummary)
+				if err != nil || !written {
+					return err
+				}
+			} else {
+				// Apply the answer under write lock, then format and write file
+				// under read lock so FormatFrontmatter sees a consistent entry.
+				graphMu.Lock()
+				if writeTitle {
+					entry.Title = result.Title
+				}
+				if writeSummary {
+					entry.Summary = result.Summary
+				}
+				graphMu.Unlock()
 
-			if err := os.WriteFile(filePath, []byte(fileContent), 0644); err != nil {
-				return fmt.Errorf("writing %s: %w", filePath, err)
+				graphMu.RLock()
+				fileContent := model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n"
+				graphMu.RUnlock()
+
+				if err := os.WriteFile(filePath, []byte(fileContent), 0644); err != nil {
+					return fmt.Errorf("writing %s: %w", filePath, err)
+				}
 			}
 
 			pathsMu.Lock()
@@ -233,9 +242,10 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		})
 	}
 
-	// A failed entry still commits what the others wrote in one batch: a
-	// rerun skips entries already filled, so an uncommitted file would never
-	// be committed.
+	// A failed or cancelled entry still commits what the others wrote in one
+	// batch: a rerun skips entries already filled, so an uncommitted file
+	// would never be committed. Only the local commit outlives ctx, not the
+	// publish.
 	runErr := g.Wait()
 	if h.committer != nil && len(commitPaths) > 0 {
 		msg := fmt.Sprintf("sdd: summarize %d entries", len(commitPaths))
@@ -243,7 +253,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
 		slices.Sort(commitPaths)
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
+		if err := h.commitUnderGraphLock(context.WithoutCancel(ctx), msg, commitPaths...); err != nil {
 			return errors.Join(runErr, commitFailure(err, msg, commitPaths))
 		}
 		if err := h.afterGraphCommit(ctx, msg); err != nil {
@@ -251,6 +261,37 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		}
 	}
 	return runErr
+}
+
+// writeBackfilledTitle writes a backfilled title under the graph lock onto the
+// entry as it is on disk now, and reports false for an entry that gained a
+// title since the backfill read it, which keeps that title.
+func (h *Handler) writeBackfilledTitle(ctx context.Context, id, filePath string, result llmops.DescriptionResult, titleOnly bool) (bool, error) {
+	release, err := h.lockGraph(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, fmt.Errorf("re-reading %s: %w", filePath, err)
+	}
+	current, err := model.ParseEntry(id+".md", string(data))
+	if err != nil {
+		return false, fmt.Errorf("re-reading %s: %w", filePath, err)
+	}
+	if current.Title != "" {
+		return false, nil
+	}
+	current.Title = result.Title
+	if !titleOnly && current.Summary == "" {
+		current.Summary = result.Summary
+	}
+	err = os.WriteFile(filePath, []byte(model.FormatFrontmatter(current)+"\n"+current.Content+"\n"), 0o644)
+	if err != nil {
+		return false, fmt.Errorf("writing %s: %w", filePath, err)
+	}
+	return true, nil
 }
 
 // summarizeExplicit writes a user-supplied summary, title or both on a single
@@ -305,10 +346,7 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: summarize %s (manual)", entry.ID)
-		if err := h.committer.Commit(msg, filePath); err != nil {
-			return commitFailure(err, msg, []string{filePath})
-		}
-		if err := h.afterGraphCommit(ctx, msg); err != nil {
+		if err := h.commitWritten(ctx, msg, []string{filePath}); err != nil {
 			return err
 		}
 	}
@@ -335,6 +373,16 @@ func checkWritten(result llmops.DescriptionResult, title, summary bool) error {
 		return secrets.CheckText("summary", result.Summary)
 	}
 	return nil
+}
+
+// commitWritten commits the entry files a run wrote as commitGraph does; only
+// a commit that did not land names them as uncommitted.
+func (h *Handler) commitWritten(ctx context.Context, msg string, paths []string) error {
+	err := h.commitUnderGraphLock(ctx, msg, paths...)
+	if err != nil {
+		return commitFailure(err, msg, paths)
+	}
+	return h.afterGraphCommit(ctx, msg)
 }
 
 // commitFailure names the entry files a failed commit left on disk and the

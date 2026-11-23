@@ -126,6 +126,8 @@ type Handler struct {
 	syncLock       SyncLock
 	syncRecord     SyncRecord
 	syncMode       model.SyncMode
+	graphLock      GraphLock
+	titlesLock     TitlesLock
 	graphClone     GraphCloneKeeper
 	setAsideJudge  SetAsideJudge
 	repos          *repos.Manager
@@ -171,6 +173,11 @@ type Options struct {
 	Gate       *gitgate.Gate
 	SyncLock   SyncLock
 	SyncRecord SyncRecord
+	// GraphLock serializes the title backfill's writes and commit with every
+	// other writer of the graph; nil writes without it.
+	GraphLock GraphLock
+	// TitlesLock keeps one title backfill per checkout; nil runs every one.
+	TitlesLock TitlesLock
 	// SyncMode decides whether a graph commit is pushed before the command
 	// returns; empty means manual. Only an sdd-owned graph clone syncs
 	// automatically (syncstate.Mode).
@@ -242,6 +249,8 @@ func New(opts Options) *Handler {
 		syncLock:       opts.SyncLock,
 		syncRecord:     opts.SyncRecord,
 		syncMode:       opts.SyncMode,
+		graphLock:      opts.GraphLock,
+		titlesLock:     opts.TitlesLock,
 		graphClone:     opts.GraphClone,
 		setAsideJudge:  opts.SetAsideJudge,
 		repos:          opts.Repos,

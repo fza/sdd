@@ -23,6 +23,7 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"Verify", func(c *model.PerRepoConfig) any { return &c.Verify }},
 		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
 		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
+		{"Titles", func(c *model.PerRepoConfig) any { return &c.Titles }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			overlay := &model.PerRepoConfig{}

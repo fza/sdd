@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
+
+// TitleBackfillCooldown spaces the title backfills engine calls start, so a
+// failing LLM is not retried by every call.
+const TitleBackfillCooldown = 15 * time.Minute
 
 // GraphCommitSubjectPattern matches the subject every SDD-written commit
 // starts with; sync counts commits matching it on either side of the

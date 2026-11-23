@@ -277,7 +277,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// the error propagates (durable but loud). See d-tac-zhp.
 	if h.committer != nil {
 		msg := entry.CaptureCommitMessage()
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
+		if err := h.commitUnderGraphLock(ctx, msg, commitPaths...); err != nil {
 			return errors.Join(model.IncompleteWrite(fmt.Errorf("git commit: %w", err)), summaryFailure(entry, describeErr))
 		}
 		if err := h.afterGraphCommit(ctx, msg); err != nil {

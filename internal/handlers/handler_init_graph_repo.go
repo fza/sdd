@@ -222,8 +222,10 @@ func (h *Handler) syncGraphClone(ctx context.Context, repoID model.RepoID, dir s
 	if err != nil {
 		return fmt.Errorf("syncing the clone of %s: %w", repoID, err)
 	}
-	if len(blocks) > 0 {
-		return fmt.Errorf("syncing the clone of %s: %s", repoID, blocks[0].Reason())
+	for _, block := range blocks {
+		if !block.TitlesFailed() {
+			return fmt.Errorf("syncing the clone of %s: %s", repoID, block.Reason())
+		}
 	}
 	return nil
 }

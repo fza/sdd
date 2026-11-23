@@ -78,7 +78,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 
 func summaryRunner() pkgllm.Runner {
 	return pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: "Rendered summary."}, nil
+		return pkgllm.Result{Text: `{"title": "Rendered title", "summary": "Rendered summary."}`}, nil
 	})
 }
 

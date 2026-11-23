@@ -61,7 +61,8 @@ func captureSignal(t *testing.T, dir string) {
 		"new", "signal", "tactical",
 		"The work repository carries only the work, while signals and decisions live in a project beside it.",
 		"--confidence", "high", "--skip-preflight", "--skip-grounding",
-		"--title", "Test title", "--summary", "A project beside the work keeps the work history free of capture commits.",
+		"--summary", "A project beside the work keeps the work history free of capture commits.",
+		"--title", "Project beside the work repository",
 	)
 }
 
@@ -712,7 +713,7 @@ func TestPointedCaptureUnderAnInheritedGitDir(t *testing.T) {
 
 			_, err := runAppErr(t, work,
 				"new", "signal", "tactical", "A capture from a git hook lands in the project.",
-				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--title", "Test title", "--summary", "Capture under GIT_DIR.",
+				"--confidence", "high", "--skip-preflight", "--skip-grounding", "--summary", "Capture under GIT_DIR.", "--title", "Capture under GIT_DIR",
 			)
 			if unsetErr := os.Unsetenv("GIT_DIR"); unsetErr != nil {
 				t.Fatal(unsetErr)

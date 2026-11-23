@@ -65,6 +65,7 @@ var configDefaults = map[string]string{
 	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
 
 	"sessions.retention": DefaultSessionRetention,
+	"titles.backfill":    "false",
 
 	secretRulesUpdateKey: string(DefaultSecretRulesUpdate),
 }
