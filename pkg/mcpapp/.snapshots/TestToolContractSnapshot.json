@@ -551,35 +551,55 @@
     "name": "show"
   },
   {
-    "description": "Stage a file into the session scratch (session required) and get back a handle to pass in a report's attachments field, or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs instead of re-staging it whole. Never a graph write — the write gate materializes staged files with the entry.",
+    "description": "Stage one or more files into the session scratch in one call (session required). Each files item takes a name and exactly one of content, path and patches. Returns, per file in call order, a handle and the sha256 of the staged bytes. Pass a handle in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, the file staged under name is edited in place through atomic search-replace pairs instead of re-staging it whole. A path is read now and again before a playback confirms a body staged from it, never written. Never a graph write — the write gate materializes staged files with the entry.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "content": {
-          "description": "file content to stage (UTF-8 text)",
-          "type": "string"
-        },
-        "name": {
-          "description": "target filename (plain name, no paths)",
-          "type": "string"
-        },
-        "patches": {
-          "description": "edit the already-staged file named by name in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole edit. Pass instead of content/path",
+        "files": {
+          "description": "files to stage, in order; a name appears at most once. Every file is checked before any is staged: one failing file refuses the call and nothing is staged",
           "items": {
             "additionalProperties": false,
             "properties": {
-              "new": {
-                "description": "replacement text; empty deletes the old text",
+              "content": {
+                "description": "file content to stage (UTF-8 text)",
                 "type": "string"
               },
-              "old": {
-                "description": "exact text to replace — must match exactly once in the file as it stands when this pair applies",
+              "name": {
+                "description": "target filename (plain name, no paths)",
+                "type": "string"
+              },
+              "patches": {
+                "description": "edit the file staged under name before this call in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole call. Pass instead of content/path",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "new": {
+                      "description": "replacement text; empty deletes the old text",
+                      "type": "string"
+                    },
+                    "old": {
+                      "description": "exact text to replace — must match exactly once in the file as it stands when this pair applies",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "old",
+                    "new"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "path": {
+                "description": "local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio); read again before a playback confirms a body staged from it",
                 "type": "string"
               }
             },
             "required": [
-              "old",
-              "new"
+              "name"
             ],
             "type": "object"
           },
@@ -588,17 +608,13 @@
             "array"
           ]
         },
-        "path": {
-          "description": "local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio)",
-          "type": "string"
-        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
           "type": "string"
         }
       },
       "required": [
-        "name"
+        "files"
       ],
       "type": "object"
     },
@@ -686,6 +702,30 @@
       "type": "object"
     },
     "name": "start_session"
+  },
+  {
+    "description": "Run the sync round of the connected repositories; session required. Each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "description": "connected repositories to sync, by repo ID; omitted, every repository connected on this machine",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "sync_repos"
   },
   {
     "description": "Run an sdd view layout pipeline over the graph — overview sections, topic counts, ranked lists. A free read within the session named by session (required).",
