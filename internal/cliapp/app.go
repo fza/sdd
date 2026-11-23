@@ -1927,7 +1927,7 @@ func initCmd() *cli.Command {
 					fmt.Fprintf(&report, "  participant: %s → %s\n", name, path)
 				},
 				OnLocalSettingWritten: func(path, key, value string) {
-					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
+					fmt.Fprintf(&report, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID model.RepoID) {
 					fmt.Fprintf(&report, "  repo_id: %s\n", repoID)
