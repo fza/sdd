@@ -125,7 +125,7 @@ func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 		if err != nil {
 			return nil, err
 		}
-		return claude.NewRunner(cfg.Model, credentials), nil
+		return claude.NewRunner(cfg.Model, cfg.ResolvedEffort(), credentials), nil
 	case "anthropic", "openai", "ollama":
 		return gollmrunner.NewRunner(cfg)
 	default:

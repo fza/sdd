@@ -119,7 +119,7 @@ func TestRunCredentials(t *testing.T) {
 					t.Setenv(name, "C")
 				}
 			}
-			if _, err := claude.NewRunner("sonnet", credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+			if _, err := claude.NewRunner("sonnet", "", credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			login := credentials == model.ClaudeCLICredentialsLogin
@@ -236,7 +236,7 @@ func TestRunReportsCLIFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeCLIExiting(t, tc.stdout, tc.stderr, tc.code)
-			_, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+			_, err := claude.NewRunner("sonnet", "", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 			if err == nil {
 				t.Fatal("a call the CLI reports as failed should fail")
 			}
@@ -255,7 +255,7 @@ func TestRunReportsCLIFailure(t *testing.T) {
 
 func TestRunRefusesOutputThatIsNotJSON(t *testing.T) {
 	fakeCLI(t, "plain text")
-	_, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+	_, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err == nil || !strings.Contains(err.Error(), "parsing claude JSON response") {
 		t.Fatalf("output that is not JSON should fail as such, got %v", err)
 	}
@@ -274,7 +274,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 		UserPrompt:     "USER " + problemChars,
 		ResponseSchema: json.RawMessage(wireSchema),
 	}
-	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), req)
+	res, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 // the free-text result.
 func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 	fakeCLI(t, `{"type":"result","result":"{\"reasoning\":\"r\"}","usage":{}}`)
-	_, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
+	_, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
 	if err == nil || !strings.Contains(err.Error(), "no structured output") {
 		t.Fatalf("want a missing structured output error, got %v", err)
 	}
@@ -316,7 +316,7 @@ func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 // A free-text request passes no schema and returns the CLI's result.
 func TestRunWithoutResponseSchema(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
-	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+	res, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestRunWithoutResponseSchema(t *testing.T) {
 // MCP servers, the user's customizations, a transcript holding the draft.
 func TestRunIsolationFlags(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
-	if _, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+	if _, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	args := recordedArgs(t, dir)
@@ -371,7 +371,7 @@ func TestChildPWDNamesItsDirectory(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("PWD", t.TempDir())
 
-	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+	res, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestChildRunsIsolated(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := fakeCLIExiting(t, `{"type":"result","result":"ok","usage":{}}`, "", tc.code)
-			_, _ = claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+			_, _ = claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 
 			raw, err := os.ReadFile(filepath.Join(dir, "cwd"))
 			if err != nil {
@@ -436,4 +436,22 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 	ax, _ := json.Marshal(x)
 	by, _ := json.Marshal(y)
 	return string(ax) == string(by)
+}
+
+// The effort reaches --effort as written; none leaves the flag out.
+func TestRunPassesEffort(t *testing.T) {
+	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
+	if _, err := claude.NewRunner("sonnet", "high", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := recordedArgs(t, dir)
+	if i := slices.Index(args, "--effort"); i < 0 || i+1 >= len(args) || args[i+1] != "high" {
+		t.Errorf("--effort high not passed: %q", args)
+	}
+	if _, err := claude.NewRunner("sonnet", "", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if slices.Contains(recordedArgs(t, dir), "--effort") {
+		t.Errorf("an empty effort should pass no --effort: %q", recordedArgs(t, dir))
+	}
 }

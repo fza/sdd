@@ -130,15 +130,16 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 
 	// Behaviour-affecting params go to the provider verbatim; gollm forwards
 	// unknown option keys straight into the request body.
-	for _, k := range sortedKeys(cfg.Params) {
-		client.SetOption(k, cfg.Params[k])
+	params := requestParams(cfg)
+	for _, k := range sortedKeys(params) {
+		client.SetOption(k, params[k])
 	}
 
 	return &Runner{
 		client:   client,
 		provider: cfg.Provider,
 		model:    cfg.Model,
-		variant:  canonicalVariant(cfg.Params),
+		variant:  canonicalVariant(params),
 		useCache: useCache,
 	}, nil
 }

@@ -24,14 +24,16 @@ import (
 // response into the common llm.Result.
 type Runner struct {
 	model       string
+	effort      string
 	credentials model.ClaudeCLICredentials
 }
 
-// NewRunner returns an llm.Runner backed by the claude CLI. Only
+// NewRunner returns an llm.Runner backed by the claude CLI, passing effort to
+// --effort as written; an empty effort leaves the CLI's own. Only
 // model.ClaudeCLICredentialsEnv keeps the Anthropic credentials in the child's
 // environment.
-func NewRunner(modelName string, credentials model.ClaudeCLICredentials) *Runner {
-	return &Runner{model: modelName, credentials: credentials}
+func NewRunner(modelName, effort string, credentials model.ClaudeCLICredentials) *Runner {
+	return &Runner{model: modelName, effort: effort, credentials: credentials}
 }
 
 func (r *Runner) identity() llm.Identity {
@@ -83,6 +85,9 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	defer func() { _ = os.RemoveAll(workDir) }()
 
 	args := []string{"-p", "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
+	if r.effort != "" {
+		args = append(args, "--effort", r.effort)
+	}
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}

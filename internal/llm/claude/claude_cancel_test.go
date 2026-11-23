@@ -50,7 +50,7 @@ func TestRunKillsTheCLIAndItsChildrenWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, err := claude.NewRunner("sonnet", model.ClaudeCLICredentialsLogin).Run(ctx, llm.Request{UserPrompt: "U"})
+		_, err := claude.NewRunner("sonnet", "", model.ClaudeCLICredentialsLogin).Run(ctx, llm.Request{UserPrompt: "U"})
 		done <- err
 	}()
 	var grandchild int

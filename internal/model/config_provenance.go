@@ -57,6 +57,14 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 		{&PerRepoConfig{BaseConfig: global}, ConfigSourceGlobal},
 	}
 
+	provider := ""
+	for _, layer := range layers {
+		if layer.cfg != nil && layer.cfg.LLM.Provider != "" {
+			provider = layer.cfg.LLM.Provider
+			break
+		}
+	}
+
 	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
@@ -79,6 +87,10 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 			}
 			if !set {
 				def, ok := configDefaults[leaf.path]
+				if leaf.path == "llm.effort" {
+					def = DefaultLLMEffortFor(provider)
+					ok = def != ""
+				}
 				if !ok {
 					continue
 				}
