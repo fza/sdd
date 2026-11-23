@@ -1,12 +1,16 @@
 package llmops_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
@@ -296,17 +300,46 @@ func TestDescribeRepairsALongFirstSentence(t *testing.T) {
 	}
 }
 
-func TestDescribeRefusesAFirstSentenceTheRepairLeavesLong(t *testing.T) {
+func TestDescribeGeneratesAFreshSummaryWhenTheRepairLeavesItLong(t *testing.T) {
 	entry, graph := titledFixture()
 	long := pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords + 1))
-	runner := &scriptedRunner{replies: []string{long, long}}
+	short := "The daemon project is removed."
+	runner := &scriptedRunner{replies: []string{long, long, pairedAnswer(short)}}
+	var logs bytes.Buffer
+	ctx := slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	got, err := llmops.Describe(ctx, runner, unsummarizedCopy(entry), graph, "", false, nil)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if got.Summary != short {
+		t.Errorf("the fresh generation's summary should be used, got %q", got.Summary)
+	}
+	if len(runner.requests) != 3 {
+		t.Fatalf("a repair left too long should cost one fresh generation, got %d calls", len(runner.requests))
+	}
+	if runner.requests[2].UserPrompt != runner.requests[0].UserPrompt {
+		t.Errorf("the fresh generation should send the first call's request again")
+	}
+	if !strings.Contains(logs.String(), fmt.Sprintf("words=%d", llmops.MaxFirstSentenceWords+1)) {
+		t.Errorf("the fresh generation should leave a trace naming the word count:\n%s", logs.String())
+	}
+}
+
+func TestDescribeRefusesAFirstSentenceTheFreshGenerationLeavesLong(t *testing.T) {
+	entry, graph := titledFixture()
+	long := pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords + 1))
+	runner := &scriptedRunner{replies: []string{long, long, long, long}}
 
 	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if !errors.Is(err, llmops.ErrLongFirstSentence) {
-		t.Fatalf("a first sentence still too long after the repair should fail the description, got %v", err)
+		t.Fatalf("a first sentence still too long after the fresh generation should fail the description, got %v", err)
 	}
-	if len(runner.requests) != 2 {
-		t.Errorf("only one repair call should be made, got %d calls", len(runner.requests))
+	if !strings.Contains(err.Error(), "publishing again generates a new summary") {
+		t.Errorf("the error should say that trying again can help, got %v", err)
+	}
+	if len(runner.requests) != 4 {
+		t.Errorf("one fresh generation with its own repair call should be made, got %d calls", len(runner.requests))
 	}
 }
 
