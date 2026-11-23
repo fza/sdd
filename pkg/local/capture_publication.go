@@ -101,7 +101,7 @@ func (s *FilesystemGraphStore) PublishEntry(ctx context.Context, key app.Publica
 				return app.EntryPublication{}, err
 			}
 		}
-		before, err := graphDirectoryRevision(s.dir)
+		before, err := s.revisions.current(s.dir)
 		if err != nil {
 			return app.EntryPublication{}, err
 		}
@@ -199,7 +199,7 @@ func (s *FilesystemGraphStore) readExistingEntry(ctx context.Context, logicalPat
 			document.Attachments = append(document.Attachments, file.Name())
 		}
 	}
-	revision, err := graphDirectoryRevision(s.dir)
+	revision, err := s.revisions.current(s.dir)
 	if err != nil {
 		return app.EntryPublication{}, false, err
 	}
@@ -290,13 +290,13 @@ func (s *FilesystemGraphStore) readDocumentLocked(logicalPath string) (_ app.Doc
 	defer func() { err = errors.Join(err, root.Close()) }()
 	raw, err := root.ReadFile(logicalPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		revision, err := graphDirectoryRevision(s.dir)
+		revision, err := s.revisions.current(s.dir)
 		return app.DocumentPublication{Revision: revision, Absent: true}, err
 	}
 	if err != nil {
 		return app.DocumentPublication{}, err
 	}
-	revision, err := graphDirectoryRevision(s.dir)
+	revision, err := s.revisions.current(s.dir)
 	if err != nil {
 		return app.DocumentPublication{}, err
 	}
@@ -418,7 +418,7 @@ func (s *FilesystemGraphStore) PublishDocument(ctx context.Context, key app.Publ
 			return app.DocumentPublication{}, err
 		}
 	}
-	revision, err := graphDirectoryRevision(s.dir)
+	revision, err := s.revisions.current(s.dir)
 	if err != nil {
 		return app.DocumentPublication{}, err
 	}

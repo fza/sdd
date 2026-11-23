@@ -11,8 +11,10 @@ import (
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/index"
+	llmembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/textsplitter"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/application/types"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	"github.com/networkteam/slogutils"
@@ -50,17 +52,42 @@ type IndexHandler struct {
 	excludeEmbedded bool
 }
 
-// IndexEmbedder carries the local composition size through CLI and MCP indexing.
+// IndexEmbedder carries the local composition size through CLI and MCP indexing,
+// and the calibration identity of the endpoint behind it.
 type IndexEmbedder struct {
 	embed.Embedder
 	BatchSize int
+	// CalibrationDir holds the endpoint's stored calibration. Empty probes the
+	// endpoint on every call and stores nothing.
+	CalibrationDir string
+	// CalibrationKey identifies the serving endpoint (see llmembed.LoadOrCalibrate).
+	CalibrationKey string
+}
+
+// MaxRunes returns the rune cap rows are chunked under for this endpoint,
+// calibrating the endpoint when no calibration is stored yet.
+func (e IndexEmbedder) MaxRunes(ctx context.Context) (int, error) {
+	var cal llmembed.Calibration
+	var err error
+	if e.CalibrationDir == "" {
+		cal, err = llmembed.Calibrate(ctx, e.Embedder)
+	} else {
+		cal, err = llmembed.LoadOrCalibrate(ctx, e.Embedder, e.CalibrationDir, e.CalibrationKey)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if cal.MaxRunes < llmembed.CapQuantum {
+		return 0, fmt.Errorf("calibration for %s holds no usable rune cap (%d)", e.CalibrationKey, cal.MaxRunes)
+	}
+	return cal.MaxRunes, nil
 }
 
 // IndexHandlerOptions configures NewIndexHandler. Required fields are
 // GraphDir, IndexDir, Embedder, Reader. Splitter defaults to
 // textsplitter.NewSplitter() with default options when nil; Now defaults
-// to time.Now. The store is loaded under the exclusive lock at write time
-// (see index.WriteStore), so no pre-opened index is injected.
+// to time.Now. The store is loaded and locked at write time (see
+// index.FillSession), so no pre-opened index is injected.
 type IndexHandlerOptions struct {
 	GraphDir string
 	IndexDir string
@@ -99,17 +126,19 @@ func NewIndexHandler(opts IndexHandlerOptions) *IndexHandler {
 	return h
 }
 
-// Build warms the index, persisting each complete entry before reporting progress.
+// Build warms the index, persisting each embedded batch before reporting
+// progress. It waits for a fill another process is running to finish.
 func (h *IndexHandler) Build(ctx context.Context, cmd *command.BuildIndexCmd) error {
 	if cmd == nil {
 		return errors.New("BuildIndexCmd is required")
 	}
-	return h.indexEntries(ctx, cmd.Force, cmd.OnPlanned, cmd.OnBatchStart, cmd.OnEntryIndexed, cmd.OnEntrySkipped, cmd.OnComplete)
+	return h.indexEntries(ctx, indexRun{force: cmd.Force, wait: true, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onSkipped: cmd.OnEntrySkipped, onComplete: cmd.OnComplete})
 }
 
 // LazyFill is the sdd-search prelude — only entries missing from the
 // manifest, or whose hash/fingerprint differs from current, are
-// re-embedded.
+// re-embedded. A fill another process is running is left to it: LazyFill
+// returns at once and reports the skip through OnFillBusy.
 func (h *IndexHandler) LazyFill(ctx context.Context, cmd *command.LazyFillIndexCmd) error {
 	if cmd == nil {
 		cmd = &command.LazyFillIndexCmd{}
@@ -119,38 +148,73 @@ func (h *IndexHandler) LazyFill(ctx context.Context, cmd *command.LazyFillIndexC
 			cmd.OnComplete(indexed)
 		}
 	}
-	return h.indexEntries(ctx, false, cmd.OnPlanned, cmd.OnBatchStart, cmd.OnEntryIndexed, nil, onComplete)
+	return h.indexEntries(ctx, indexRun{graph: cmd.Graph, onBusy: cmd.OnFillBusy, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onComplete: onComplete})
 }
 
-func (h *IndexHandler) indexEntries(ctx context.Context, force bool,
-	onPlanned func(int), onBatchStart func([]string, int), onIndexed func(string, int), onSkipped func(string), onComplete func(int, int)) error {
+type indexRun struct {
+	graph        *model.Graph
+	force        bool
+	wait         bool
+	onBusy       func()
+	onPlanned    func(int)
+	onBatchStart func([]string, int)
+	onIndexed    func(string, int)
+	onSkipped    func(string)
+	onComplete   func(int, int)
+}
 
-	g, err := h.reader.CurrentGraph(h.graphDir)
-	if err != nil {
-		return fmt.Errorf("loading graph: %w", err)
+// indexEntries holds the store's fill lock for the whole run, so one process
+// fills at a time, and the exclusive store lock only per embedded batch
+// (index.FillSession), so readers and short writers interleave with a long
+// fill instead of waiting out its embedding calls.
+func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err error) {
+	g := run.graph
+	if g == nil {
+		stopGraph := timing.Start(ctx, "fill-graph-load")
+		g, err = h.reader.CurrentGraph(h.graphDir)
+		stopGraph()
+		if err != nil {
+			return fmt.Errorf("loading graph: %w", err)
+		}
 	}
+	stopLock := timing.Start(ctx, "fill-lock")
+	session, err := index.BeginFill(ctx, h.indexDir, run.wait)
+	stopLock()
+	if errors.Is(err, index.ErrFillBusy) {
+		slogutils.FromContext(ctx).Info("index fill running in another process, skipping", "index", h.indexDir)
+		if run.onBusy != nil {
+			run.onBusy()
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, session.Close()) }()
 
-	// The whole write session — snapshot load, manifest read, skip pass,
-	// embedding, upserts, manifest saves — runs under the store's exclusive
-	// lock, acquired before the snapshot is loaded, so concurrent writers (a
-	// CLI build racing the MCP server's reconcile) serialize instead of
-	// interleaving chromem's per-document files.
-	return index.WriteStore(ctx, h.indexDir, func(idx *index.Index) error {
-		return h.indexEntriesLocked(ctx, idx, g, force, onPlanned, onBatchStart, onIndexed, onSkipped, onComplete)
-	})
-}
-
-func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index, g *model.Graph, force bool,
-	onPlanned func(int), onBatchStart func([]string, int), onIndexed func(string, int), onSkipped func(string), onComplete func(int, int)) error {
-	manifest, err := index.LoadManifest(h.indexDir)
+	maxRunes, err := h.embedder.MaxRunes(ctx)
+	if err != nil {
+		return fmt.Errorf("calibrating embedding endpoint: %w", err)
+	}
+	splitter := h.splitter.WithMaxRunes(maxRunes)
+	stopHashes := timing.Start(ctx, "fill-entry-hashes")
+	currentHashes, err := h.currentEntryHashes(ctx, g, maxRunes)
+	stopHashes()
+	if err != nil {
+		return err
+	}
+	// Recorded before the plan reads the manifest, so a pruning session that
+	// starts after this sees the versions the plan will skip.
+	if err := index.RecordCheckout(h.indexDir, h.graphDir, currentHashes, time.Now()); err != nil {
+		return err
+	}
+	stopManifest := timing.Start(ctx, "fill-manifest")
+	manifest, err := session.Manifest()
+	stopManifest()
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
 	fingerprint := h.embedder.Fingerprint()
-	currentHashes, err := h.currentEntryHashes(ctx, g)
-	if err != nil {
-		return err
-	}
 	var work []indexInput
 	skipped := 0
 	for _, entry := range g.Entries {
@@ -158,10 +222,10 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 		if !ok {
 			continue
 		}
-		if !force && manifest.Entries[entry.ID].HasVersion(hash, fingerprint) {
+		if !run.force && manifest.Entries[entry.ID].HasVersion(hash, fingerprint) {
 			skipped++
-			if onSkipped != nil {
-				onSkipped(entry.ID)
+			if run.onSkipped != nil {
+				run.onSkipped(entry.ID)
 			}
 			continue
 		}
@@ -169,8 +233,8 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 			Namespace: types.IndexNamespace{Project: types.ProjectID(h.graphDir), Fingerprint: fingerprint, Metric: "cosine"}, EntryID: entry.ID, EntryHash: hash,
 		}})
 	}
-	if onPlanned != nil {
-		onPlanned(len(work))
+	if run.onPlanned != nil {
+		run.onPlanned(len(work))
 	}
 	inputs := func(yield func(indexInput, error) bool) {
 		for _, input := range work {
@@ -180,30 +244,75 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 		}
 	}
 	indexed := 0
-	err = indexStream(ctx, inputs, h.embedder, h.attachments, h.splitter, nil,
-		func(ctx context.Context, entry *model.IndexWork) error {
-			if err := h.publishIndexEntry(ctx, idx, manifest, entry, force); err != nil {
+	err = indexStream(ctx, inputs, h.embedder, h.attachments, splitter, nil,
+		func(ctx context.Context, entries []*model.IndexWork) error {
+			if err := session.Commit(ctx, func(idx *index.Index, manifest *index.Manifest) error {
+				// The manifest must never name a row that is gone or not yet
+				// written, so it is saved after the batch's rows land and
+				// before the rows it replaced go (see DropVersions).
+				stale, err := h.publishIndexEntries(ctx, idx, manifest, entries, run.force)
+				if err != nil {
+					return err
+				}
+				manifest.SetMaxRunes(maxRunes)
+				if err := manifest.Save(h.indexDir); err != nil {
+					return err
+				}
+				return idx.DeleteEntry(ctx, stale)
+			}); err != nil {
 				return err
 			}
-			indexed++
-			if onIndexed != nil {
-				onIndexed(entry.Version.EntryID, len(entry.Rows))
+			for _, entry := range entries {
+				indexed++
+				if run.onIndexed != nil {
+					run.onIndexed(entry.Version.EntryID, len(entry.Rows))
+				}
 			}
 			return nil
-		}, onBatchStart)
+		}, run.onBatchStart)
 	if err != nil {
 		return err
 	}
-	if onComplete != nil {
-		onComplete(indexed, skipped)
+	// A complete fill holds every entry under maxRunes, so the store records
+	// it as its only cap, also when there was nothing to embed: an older sdd
+	// sharing the store re-saves the manifest without it.
+	if manifest.PrevMaxRunes != nil || manifest.MaxRunes != maxRunes {
+		if err := session.Commit(ctx, func(_ *index.Index, manifest *index.Manifest) error {
+			recorded := manifest.SetMaxRunes(maxRunes)
+			if settled := manifest.SettleMaxRunes(maxRunes); !recorded && !settled {
+				return nil
+			}
+			return manifest.Save(h.indexDir)
+		}); err != nil {
+			return fmt.Errorf("settling the rune cap: %w", err)
+		}
+	}
+	if err := index.RefreshSegments(ctx, h.indexDir); errors.Is(err, index.ErrLockBusy) {
+		slogutils.FromContext(ctx).Info("index store busy, search segments left to the next fill", "index", h.indexDir)
+	} else if err != nil {
+		return fmt.Errorf("refreshing search segments: %w", err)
+	}
+	if run.onComplete != nil {
+		run.onComplete(indexed, skipped)
 	}
 	return nil
 }
 
+// CurrentHashes returns the state hash under maxRunes of every entry the
+// checkout's search reads, by entry ID: the versions cache pruning keeps
+// (CurrentHashSource).
+func (h *IndexHandler) CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error) {
+	g, err := h.reader.CurrentGraph(h.graphDir)
+	if err != nil {
+		return nil, fmt.Errorf("loading graph: %w", err)
+	}
+	return h.currentEntryHashes(ctx, g, maxRunes)
+}
+
 // currentEntryHashes maps every indexable entry of the graph to its state hash
-// — the checkout's current versions, which the skip pass and version grouping
-// compare against.
-func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (map[string]string, error) {
+// under maxRunes — the versions a fill writes, which its skip pass compares
+// against.
+func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, maxRunes int) (map[string]string, error) {
 	hashes := make(map[string]string, len(g.Entries))
 	for _, entry := range g.Entries {
 		if err := ctx.Err(); err != nil {
@@ -212,7 +321,7 @@ func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (
 		if !chunking.IncludeEntry(entry, h.excludeEmbedded) {
 			continue
 		}
-		hash, err := chunking.EntryStateHash(ctx, entry, h.attachments)
+		hash, err := chunking.EntryStateHashCapped(ctx, entry, h.attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}
@@ -221,45 +330,52 @@ func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (
 	return hashes, nil
 }
 
-func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, manifest *index.Manifest, entry *model.IndexWork, force bool) error {
-	if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
-		return err
+// publishIndexEntries writes the entries' rows in one upsert and records their
+// versions in manifest, returning the rows forced versions replace.
+func (h *IndexHandler) publishIndexEntries(ctx context.Context, idx *index.Index, manifest *index.Manifest, entries []*model.IndexWork, force bool) ([]string, error) {
+	upserts := make([]index.EntryUpsert, len(entries))
+	versions := make([]index.EntryVersion, len(entries))
+	for n, entry := range entries {
+		if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
+			return nil, err
+		}
+		rows := make([]index.Row, len(entry.Rows))
+		ids := make([]string, len(rows))
+		for i, row := range entry.Rows {
+			c := row.Chunk
+			ids[i] = c.ID
+			rows[i] = index.Row{EntryID: c.EntryID, EntryHash: c.EntryHash, ChunkID: c.ID, Text: c.Text, Body: c.Body, Breadcrumb: c.Breadcrumb, Depth: c.Depth, IsSummary: c.IsSummary, IsAttachment: c.IsAttachment, SourceAttachmentPath: c.SourceAttachmentPath, ContentHash: c.ContentHash, ModelFingerprint: entry.Version.Namespace.Fingerprint, Embedding: row.Vector}
+		}
+		upserts[n] = index.EntryUpsert{EntryID: entry.Version.EntryID, Rows: rows}
+		versions[n] = index.EntryVersion{Hash: entry.Version.EntryHash, Fingerprint: entry.Version.Namespace.Fingerprint, Derivation: index.DerivationCurrent, ChunkIDs: ids, IndexedAt: h.now()}
 	}
-	rows := make([]index.Row, len(entry.Rows))
-	ids := make([]string, len(rows))
-	for i, row := range entry.Rows {
-		c := row.Chunk
-		ids[i] = c.ID
-		rows[i] = index.Row{EntryID: c.EntryID, EntryHash: c.EntryHash, ChunkID: c.ID, Text: c.Text, Body: c.Body, Breadcrumb: c.Breadcrumb, Depth: c.Depth, IsSummary: c.IsSummary, IsAttachment: c.IsAttachment, SourceAttachmentPath: c.SourceAttachmentPath, ContentHash: c.ContentHash, ModelFingerprint: entry.Version.Namespace.Fingerprint, Embedding: row.Vector}
+	if err := idx.UpsertEntries(ctx, upserts); err != nil {
+		return nil, err
 	}
-	if err := idx.UpsertEntry(ctx, entry.Version.EntryID, nil, rows); err != nil {
-		return err
-	}
-	version := index.EntryVersion{Hash: entry.Version.EntryHash, Fingerprint: entry.Version.Namespace.Fingerprint, Derivation: index.DerivationCurrent, ChunkIDs: ids, IndexedAt: h.now()}
 	if !force {
-		manifest.AddVersion(entry.Version.EntryID, version)
-		return manifest.Save(h.indexDir)
+		for n, entry := range entries {
+			manifest.AddVersion(entry.Version.EntryID, versions[n])
+		}
+		return nil, nil
 	}
 	// Force replaces only this binary's own derivation rule: another rule's
-	// versions belong to another binary sharing the store (d-tac-c9c). The
-	// replaced rows go after the manifest save, for the reason DropVersions
-	// gives; rows the new version reuses (same hash) are kept.
-	replaced := manifest.Entries[entry.Version.EntryID].ChunkIDsOf(index.DerivationCurrent)
-	manifest.SetDerivationVersion(entry.Version.EntryID, version)
-	if err := manifest.Save(h.indexDir); err != nil {
-		return err
-	}
-	kept := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		kept[id] = true
-	}
+	// versions belong to another binary sharing the store (d-tac-c9c). Rows
+	// the new version reuses (same hash) are kept.
 	var stale []string
-	for _, id := range replaced {
-		if !kept[id] {
-			stale = append(stale, id)
+	for n, entry := range entries {
+		replaced := manifest.Entries[entry.Version.EntryID].ChunkIDsOf(index.DerivationCurrent)
+		manifest.SetDerivationVersion(entry.Version.EntryID, versions[n])
+		kept := make(map[string]bool, len(versions[n].ChunkIDs))
+		for _, id := range versions[n].ChunkIDs {
+			kept[id] = true
+		}
+		for _, id := range replaced {
+			if !kept[id] {
+				stale = append(stale, id)
+			}
 		}
 	}
-	return idx.DeleteEntry(ctx, stale)
+	return stale, nil
 }
 
 // DropVersions deletes the version groups cmd names from the store — the
@@ -279,7 +395,7 @@ func (h *IndexHandler) DropVersions(ctx context.Context, cmd *command.DropIndexV
 		if err != nil {
 			return fmt.Errorf("loading manifest: %w", err)
 		}
-		current, err := h.currentEntryHashes(ctx, g)
+		current, err := chunking.ReadableEntryHashes(ctx, g.Entries, h.attachments, manifest, h.excludeEmbedded)
 		if err != nil {
 			return err
 		}

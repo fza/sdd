@@ -40,6 +40,7 @@ type FilesystemGraphStore struct {
 	dir            string
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
+	latest         *retainedSnapshot
 	publicationGit *GitFinalizer
 	contribution   string
 	// lineage maps a published revision to the revision it replaced, so a read
@@ -48,6 +49,9 @@ type FilesystemGraphStore struct {
 	// directory appends to and reads, so a reader is never limited to the
 	// writes of its own instance or process.
 	lineage map[string]string
+	// revisions answers the directory revision from stat stamps while no
+	// file changed.
+	revisions revisionCache
 }
 
 // lineageFile is the append-only record of published revisions, one line per
@@ -88,7 +92,7 @@ func (s *FilesystemGraphStore) Current(ctx context.Context) (*app.Snapshot, erro
 }
 
 func (s *FilesystemGraphStore) currentLocked(ctx context.Context) (*app.Snapshot, error) {
-	revision, err := graphDirectoryRevision(s.dir)
+	revision, err := s.revisions.current(s.dir)
 	if err != nil {
 		return nil, err
 	}

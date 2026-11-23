@@ -122,7 +122,7 @@ func (a *Application) prepareSearchTarget(ctx context.Context, target SearchTarg
 		if err != nil {
 			return err
 		}
-		if err := member.runtime.reconcileSearchSnapshot(ctx, member.selected.snapshot, member.selected.store, ns, nil, ReconcileSearchIndexCmd{}); err != nil {
+		if err := member.runtime.fillForSearch(ctx, member.selected.snapshot, member.selected.store, ns); err != nil {
 			return err
 		}
 	}

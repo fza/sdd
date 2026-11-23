@@ -1,12 +1,15 @@
 package finders
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/networkteam/sdd/internal/filestamp"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -18,16 +21,38 @@ import (
 // wip/: the CLI resolves WIP markers lazily (GraphFinder.WIPMarkers) only when
 // a layout needs them, so a plain graph load never touches or fails on them.
 type filesystemSource struct {
-	dir string
+	dir   string
+	cache GraphCache
 }
+
+// GraphCache keeps a graph directory's raw documents between processes. Load
+// answers only for exactly the file stamps the documents were saved under;
+// any other stamps, and any cache it cannot verify, are a miss. The documents
+// still pass the single ParseEntry gate on every load, so a hit hands
+// buildGraph the same bytes a fresh read would.
+type GraphCache interface {
+	Load(dir string, stamps map[string]filestamp.Stamp) (GraphDocuments, bool, error)
+	Save(dir string, stamps map[string]filestamp.Stamp, docs GraphDocuments) error
+}
+
+// runtimeDirName holds a graph store's locks and lineage. Its files never
+// become entries, so they do not count toward the graph's stamps.
+const runtimeDirName = ".sdd-runtime"
 
 // GraphDocuments walks the graph directory and reads every entry file as raw
 // canonical content. File-read and walk errors are hard failures; files that
 // do not match the ID layout are skipped (not the graph's concern). A file
 // whose content fails to parse is not detected here — the raw bytes flow to
 // buildGraph, whose single ParseEntry gate records the failure as a LoadIssue.
+// Files are read concurrently: each costs an open and a close, which dominate
+// a graph of thousands of small files.
 func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	var docs GraphDocuments
+	var paths []string
+	dirs := map[string]bool{}
+	now := time.Now()
+	stamps := map[string]filestamp.Stamp{}
+	proven := s.cache != nil
 	walkErr := filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -38,42 +63,79 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 		if meta.IsSDDMetaDir(d) {
 			return fs.SkipDir
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-
 		rel, err := filepath.Rel(s.dir, path)
 		if err != nil {
 			return fmt.Errorf("getting relative path for %s: %w", path, err)
+		}
+		if d.IsDir() {
+			dirs[rel] = true
+			return nil
+		}
+		if proven && !strings.HasPrefix(rel, runtimeDirName+string(filepath.Separator)) {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return fmt.Errorf("stamping %s: %w", path, err)
+			}
+			stamp := filestamp.Of(info)
+			// A symlink's target can change without its stamp changing.
+			if !stamp.Proves(now) || info.Mode()&fs.ModeSymlink != 0 {
+				proven = false
+			}
+			stamps[rel] = stamp
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
 		}
 		id, err := model.RelPathToID(rel)
 		if err != nil {
 			// Skip files that don't match the expected layout.
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-		docs.Entries = append(docs.Entries, EntryDocument{
-			ID:          id,
-			Raw:         data,
-			Attachments: s.scanAttachments(id),
-		})
+		docs.Entries = append(docs.Entries, EntryDocument{ID: id})
+		paths = append(paths, path)
 		return nil
 	})
 	if walkErr != nil {
 		return GraphDocuments{}, fmt.Errorf("walking graph dir: %w", walkErr)
 	}
+	if proven {
+		cached, hit, err := s.cache.Load(s.dir, stamps)
+		if err != nil {
+			return GraphDocuments{}, fmt.Errorf("loading the graph cache: %w", err)
+		}
+		if hit {
+			return cached, nil
+		}
+	}
+	errs := make([]error, len(paths))
+	forEachConcurrently(len(paths), func(i int) {
+		data, err := os.ReadFile(paths[i])
+		if err != nil {
+			errs[i] = fmt.Errorf("reading %s: %w", paths[i], err)
+			return
+		}
+		docs.Entries[i].Raw = data
+		docs.Entries[i].Attachments = s.scanAttachments(docs.Entries[i].ID, dirs)
+	})
+	if err := errors.Join(errs...); err != nil {
+		return GraphDocuments{}, err
+	}
+	// The stamps were taken before the reads, so a file written in between is
+	// saved under its earlier stamp and misses on the next load.
+	if proven {
+		if err := s.cache.Save(s.dir, stamps, docs); err != nil {
+			return GraphDocuments{}, fmt.Errorf("saving the graph cache: %w", err)
+		}
+	}
 	return docs, nil
 }
 
 // scanAttachments lists the files in an entry's co-located attachment
-// directory, returning graph-relative paths. A missing directory (the common
-// case) yields none.
-func (s filesystemSource) scanAttachments(id string) []string {
+// directory, returning graph-relative paths. dirs holds every directory the
+// walk saw, so an entry without one (the common case) costs no lookup.
+func (s filesystemSource) scanAttachments(id string, dirs map[string]bool) []string {
 	attachRel, err := model.AttachDirRelPath(id)
-	if err != nil {
+	if err != nil || !dirs[filepath.Clean(attachRel)] {
 		return nil
 	}
 	files, err := os.ReadDir(filepath.Join(s.dir, attachRel))
@@ -102,7 +164,7 @@ func (s filesystemSource) scanAttachments(id string) []string {
 // callers are untouched; the graph's directory is recorded for provenance and
 // lazy WIP resolution.
 func (f *Finder) LoadGraph(dir string) (*model.Graph, error) {
-	docs, err := filesystemSource{dir: dir}.GraphDocuments()
+	docs, err := filesystemSource{dir: dir, cache: f.graphCache}.GraphDocuments()
 	if err != nil {
 		return nil, err
 	}

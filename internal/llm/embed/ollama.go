@@ -106,14 +106,14 @@ func (e *ollamaEmbedder) request(ctx context.Context, texts []string) (result pk
 
 	var decoded ollamaEmbedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return pkgembed.Result{}, fmt.Errorf("decode ollama response (status %d): %w", resp.StatusCode, err)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("decode ollama response (status %d): %w", resp.StatusCode, err))
 	}
 	if resp.StatusCode != http.StatusOK || decoded.Error != "" {
 		msg := decoded.Error
 		if msg == "" {
 			msg = fmt.Sprintf("status %d", resp.StatusCode)
 		}
-		return pkgembed.Result{}, fmt.Errorf("ollama embed error: %s", msg)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("ollama embed error: %s", msg))
 	}
 	if len(decoded.Embeddings) != len(texts) {
 		return pkgembed.Result{}, fmt.Errorf("ollama returned %d embeddings for %d inputs (model %q)",

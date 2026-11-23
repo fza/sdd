@@ -6,6 +6,7 @@ package embed
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -133,4 +134,21 @@ func templateFor(purpose pkgembed.Purpose, document, query string) (string, erro
 	default:
 		return "", fmt.Errorf("unknown embedding purpose %q", purpose)
 	}
+}
+
+// statusError is an endpoint's answer with an HTTP status other than 200.
+type statusError struct {
+	status int
+	err    error
+}
+
+func (e *statusError) Error() string { return e.err.Error() }
+
+func (e *statusError) Unwrap() error { return e.err }
+
+func withStatus(status int, err error) error {
+	if status == http.StatusOK {
+		return err
+	}
+	return &statusError{status: status, err: err}
 }

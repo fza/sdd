@@ -48,6 +48,10 @@ type ProjectRuntimeOptions struct {
 	// HandEdits finds hand edits of committed entries for the recheck list;
 	// nil finds none.
 	HandEdits HandEditScanner
+	// RuneCap resolves the rune cap a fill chunks and hashes under: the
+	// embedding endpoint's calibrated cap, from the same calibration the CLI
+	// fill reads. A fill without it, or whose resolution fails, writes nothing.
+	RuneCap func(context.Context) (int, error)
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per

@@ -655,6 +655,48 @@ func RunSearchIndexStoreTests(t *testing.T, factory func(*testing.T) SearchIndex
 			t.Errorf("entry %q reports %d versions after adding one, want >= 2 (monotonic accumulation, no delete-on-change)", first.EntryID, versionsOfFirst)
 		}
 	}
+
+	runSearchIndexRunesTests(t, fixture, reopen)
+}
+
+// runSearchIndexRunesTests checks the rune-cap capabilities of a store that
+// has both: a recorded cap keeps the cap it replaces readable until a settle
+// under the recorded cap, and the caps survive a reopen.
+func runSearchIndexRunesTests(t *testing.T, fixture SearchIndexStoreFixture, reopen func() sdd.SearchIndexStore) {
+	t.Helper()
+	recorder, recordable := fixture.Store.(sdd.SearchIndexRunesRecorder)
+	if _, readable := fixture.Store.(sdd.SearchIndexRunes); !readable || !recordable {
+		return
+	}
+	ctx := t.Context()
+	read := func() []int {
+		t.Helper()
+		caps, err := reopen().(sdd.SearchIndexRunes).ReadMaxRunes(ctx, fixture.Namespace)
+		if err != nil {
+			t.Fatalf("ReadMaxRunes: %v", err)
+		}
+		return caps
+	}
+	step := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("recording rune caps: %v", err)
+		}
+	}
+	step(recorder.RecordMaxRunes(ctx, fixture.Namespace, 4096))
+	step(recorder.SettleMaxRunes(ctx, fixture.Namespace, 4096))
+	step(recorder.RecordMaxRunes(ctx, fixture.Namespace, 256))
+	if got := read(); !slices.Equal(got, []int{256, 4096}) {
+		t.Errorf("a recorded cap should read before the cap it replaced, got %v", got)
+	}
+	step(recorder.SettleMaxRunes(ctx, fixture.Namespace, 512))
+	if got := read(); !slices.Equal(got, []int{256, 4096}) {
+		t.Errorf("settling under another cap should keep the replaced cap, got %v", got)
+	}
+	step(recorder.SettleMaxRunes(ctx, fixture.Namespace, 256))
+	if got := read(); !slices.Equal(got, []int{256}) {
+		t.Errorf("settling under the recorded cap should drop the replaced cap, got %v", got)
+	}
 }
 
 type MutationFinalizerFixture struct {

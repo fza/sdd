@@ -58,7 +58,7 @@ func exportCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}

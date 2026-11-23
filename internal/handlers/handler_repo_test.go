@@ -230,7 +230,7 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 		OnPlanned:      func(n int) { planned += n },
 		OnEntryIndexed: func(_ string, _ int) { indexed++ },
 	}
-	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(emb), fill); err != nil {
+	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(t, emb), fill); err != nil {
 		t.Fatalf("BuildConnectedIndexes: %v", err)
 	}
 
@@ -298,13 +298,13 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 	emb := &fakeEmbedder{}
 
 	// First fill populates the member index + manifest.
-	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(emb), &command.BuildConnectedIndexesCmd{}); err != nil {
+	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(t, emb), &command.BuildConnectedIndexesCmd{}); err != nil {
 		t.Fatalf("initial lazy fill: %v", err)
 	}
 
 	// A second lazy fill over the up-to-date index plans nothing.
 	lazyPlanned := 0
-	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(emb),
+	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(t, emb),
 		&command.BuildConnectedIndexesCmd{OnPlanned: func(n int) { lazyPlanned += n }}); err != nil {
 		t.Fatalf("second lazy fill: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 
 	// A forced fill re-embeds every member entry despite the current manifest.
 	forcePlanned := 0
-	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(emb),
+	if err := h.BuildConnectedIndexes(context.Background(), []model.RepoID{repoID}, indexEmbedder(t, emb),
 		&command.BuildConnectedIndexesCmd{Force: true, OnPlanned: func(n int) { forcePlanned += n }}); err != nil {
 		t.Fatalf("forced fill: %v", err)
 	}
@@ -474,5 +474,73 @@ func TestRepoRemove_ForceStrandsAndRemoves(t *testing.T) {
 	}
 	if committer.calls != 1 {
 		t.Errorf("Committer.Commit called %d times, want 1", committer.calls)
+	}
+}
+
+// Removing a connected dependency records the disconnection cache pruning
+// needs before it removes the clone; adding it again drops the record.
+func TestRepoRemove_RecordsTheDisconnection(t *testing.T) {
+	h, _ := newRepoTestHandler(t, "graph_dir: .sdd/graph\ndependencies: ["+removeTargetRepoID+"]\n")
+	if err := h.RepoRemove(context.Background(), &command.RepoRemoveCmd{RepoID: removeTargetRepoID}); err != nil {
+		t.Fatalf("removal: %v", err)
+	}
+	dropped, err := h.repos.Registry().Disconnected(removeTargetRepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dropped {
+		t.Error("the removal should record the disconnection")
+	}
+	if err := h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: "git@github.com:networkteam/other.git"}); err != nil {
+		t.Fatalf("adding again: %v", err)
+	}
+	dropped, err = h.repos.Registry().Disconnected(removeTargetRepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Error("adding the repo again should drop the disconnection record")
+	}
+}
+
+// seedingGit clones by writing an sdd repo declaring repoID.
+type seedingGit struct{ repoID string }
+
+func (g seedingGit) Clone(_ context.Context, _ string, dir string) error {
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".sdd"), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, ".sdd", "config.yaml"), []byte("repo_id: "+g.repoID+"\ngraph_dir: .sdd/graph\n"), 0o644)
+}
+
+func (seedingGit) PullFFOnly(context.Context, string) error { return nil }
+
+// Connecting a repo again through a fresh clone drops the disconnection
+// record an earlier removal left, so pruning keeps the new clone.
+func TestRepoAdd_ClonePathClearsTheDisconnection(t *testing.T) {
+	dir := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(dir, "cache"),
+	}
+	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{})
+	const repoID = "github.com/networkteam/new"
+	manager := repos.NewManager(repos.NewRegistry(loc), seedingGit{repoID: repoID})
+	if err := manager.MarkDisconnected(repoID); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{Repos: manager})
+	if err := h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: "git@github.com:networkteam/new.git"}); err != nil {
+		t.Fatalf("adding: %v", err)
+	}
+	dropped, err := manager.Registry().Disconnected(repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Error("connecting the repo again should drop its disconnection record")
 	}
 }

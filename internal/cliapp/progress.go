@@ -2,6 +2,8 @@ package cliapp
 
 import (
 	"fmt"
+	"io"
+	"time"
 
 	"github.com/networkteam/sdd/internal/cliout"
 	"github.com/networkteam/sdd/internal/command"
@@ -106,5 +108,43 @@ func (p *embedProgress) connected(force bool) *command.BuildConnectedIndexesCmd 
 		OnBatchStart:   p.onBatchStart,
 		OnEntryIndexed: p.onEntryIndexed,
 		OnPhase:        p.onPhase,
+	}
+}
+
+// fillProgressInterval paces plain progress lines: a fill shorter than one
+// interval prints nothing, a longer one shows it is alive.
+const fillProgressInterval = 15 * time.Second
+
+// plainFillProgress reports a long lazy-fill as plain stderr lines, for a
+// non-interactive caller that gets no footer.
+type plainFillProgress struct {
+	writer   io.Writer
+	now      func() time.Time
+	total    int
+	indexed  int
+	last     time.Time
+	reported bool
+}
+
+func newPlainFillProgress(writer io.Writer, now func() time.Time) *plainFillProgress {
+	return &plainFillProgress{writer: writer, now: now, last: now()}
+}
+
+func (p *plainFillProgress) lazyFill() *command.LazyFillIndexCmd {
+	return &command.LazyFillIndexCmd{
+		OnPlanned: func(n int) { p.total += n },
+		OnEntryIndexed: func(string, int) {
+			p.indexed++
+			if now := p.now(); now.Sub(p.last) >= fillProgressInterval {
+				p.last = now
+				p.reported = true
+				_, _ = fmt.Fprintf(p.writer, "sdd: indexing for search: %d of %d entries embedded\n", p.indexed, p.total)
+			}
+		},
+		OnComplete: func(indexed int) {
+			if p.reported {
+				_, _ = fmt.Fprintf(p.writer, "sdd: indexing for search: done, %d of %d entries embedded\n", indexed, p.total)
+			}
+		},
 	}
 }

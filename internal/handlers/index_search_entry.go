@@ -21,6 +21,8 @@ type SearchEntryHandler struct {
 	Embedder    embed.Embedder
 	Entry       *model.Entry
 	Attachments chunking.AttachmentReader
+	// MaxRunes is the rune cap the descriptor's entry hash was computed under.
+	MaxRunes int
 }
 
 func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEntryCmd) error {
@@ -33,8 +35,8 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 		return err
 	}
 	inputs := func(yield func(indexInput, error) bool) { yield(indexInput{entry: h.Entry, version: key}, nil) }
-	return indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), nil,
-		func(ctx context.Context, entry *model.IndexWork) error {
+	return indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter().WithMaxRunes(h.MaxRunes), nil,
+		eachEntry(func(ctx context.Context, entry *model.IndexWork) error {
 			if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
 				return err
 			}
@@ -45,5 +47,27 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 				cmd.OnPublished(key.EntryID, len(entry.Rows))
 			}
 			return nil
-		}, nil)
+		}), nil)
+}
+
+// EntryBatchPublisher is the optional store capability publishing several
+// entry versions in one write.
+type EntryBatchPublisher interface {
+	PublishEntries(context.Context, []types.SearchEntryPublication) error
+}
+
+func publishEntries(ctx context.Context, store EntryPublisher, batch []*model.IndexWork) error {
+	publications := make([]types.SearchEntryPublication, len(batch))
+	for i, entry := range batch {
+		publications[i] = types.SearchEntryPublication{Version: entry.Version, Chunks: entry.Rows}
+	}
+	if batcher, ok := store.(EntryBatchPublisher); ok {
+		return batcher.PublishEntries(ctx, publications)
+	}
+	for _, publication := range publications {
+		if err := store.PublishEntry(ctx, publication.Version, publication.Chunks); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -22,11 +22,18 @@ func counterStoreDir(cacheRoot string) string {
 	return index.StoreDir(cacheRoot, "counter/repo", counterFingerprint)
 }
 
-// entryStateHashOf computes an entry's state hash exactly as the application
-// does — parse the file with model.ParseEntry (the snapshot loader's path),
-// then chunking.EntryStateHash — so a seeded legacy manifest can record the
-// hash that the running app will independently compute for the same entry.
+// entryStateHashOf computes an entry's uncapped state hash, the hash a store
+// chunked without a rune cap records.
 func entryStateHashOf(t *testing.T, graphDir, id string) string {
+	t.Helper()
+	return entryStateHashCappedOf(t, graphDir, id, 0)
+}
+
+// entryStateHashCappedOf computes an entry's state hash under maxRunes exactly
+// as the application does — parse the file with model.ParseEntry (the snapshot
+// loader's path), then chunking.EntryStateHashCapped — so a seeded manifest can
+// record the hash that the running app will independently compute.
+func entryStateHashCappedOf(t *testing.T, graphDir, id string, maxRunes int) string {
 	t.Helper()
 	path := filepath.Join(graphDir, id[:4], id[4:6], id[6:]+".md")
 	data, err := os.ReadFile(path)
@@ -37,9 +44,9 @@ func entryStateHashOf(t *testing.T, graphDir, id string) string {
 	if err != nil {
 		t.Fatalf("ParseEntry(%s): %v", id, err)
 	}
-	hash, err := chunking.EntryStateHash(t.Context(), entry, chunking.DiskAttachmentReader{GraphDir: graphDir})
+	hash, err := chunking.EntryStateHashCapped(t.Context(), entry, chunking.DiskAttachmentReader{GraphDir: graphDir}, maxRunes)
 	if err != nil {
-		t.Fatalf("EntryStateHash(%s): %v", id, err)
+		t.Fatalf("EntryStateHashCapped(%s, %d): %v", id, maxRunes, err)
 	}
 	return hash
 }
@@ -91,7 +98,8 @@ func seedLegacyStore(t *testing.T, cacheRoot, entryID, hash, summaryText, bodyTe
 
 // TestVectorSearchLegacyStoreAnswersAndAccumulates is the hard compatibility
 // guard: a store built with legacy chunk IDs and a legacy manifest answers
-// immediately (no re-embed), and a changed entry then adds a new version.
+// immediately, its uncapped version is kept, and the first sync adds the entry
+// once under the endpoint's rune cap. A changed entry then adds a new version.
 func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 	graphDir := t.TempDir()
 	cacheRoot := t.TempDir()
@@ -109,12 +117,10 @@ func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 	if !strings.Contains(res.Results, "s-tac-aaa") {
 		t.Fatalf("legacy store did not answer the search: %q", res.Results)
 	}
-	// The legacy-seeded entry must be recognized as present and NOT re-embedded
-	// (the embedded base procedures the graph also carries are absent from this
-	// hand-seeded store, so they embed on first touch — that is orthogonal to
-	// the legacy-compat question, which is about the seeded entry's version).
-	if got := entryVersionCount(t, cacheRoot, id); got != 1 {
-		t.Errorf("legacy-seeded entry has %d versions after the first search, want 1; presence check must see its legacy version", got)
+	// The seeded version is uncapped, so the capped hash of the same entry is
+	// absent and is embedded once beside it. The legacy version is never removed.
+	if got := entryVersionCount(t, cacheRoot, id); got != 2 {
+		t.Errorf("legacy-seeded entry has %d versions after the first search, want 2 (legacy kept + capped added)", got)
 	}
 	// The answer must come from the seeded legacy rows.
 	if !strings.Contains(res.Results, "legacy") {
@@ -135,8 +141,8 @@ func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 			t.Errorf("embedded a chunk %q not belonging to the changed entry %q", text, id)
 		}
 	}
-	if got := entryVersionCount(t, cacheRoot, id); got != 2 {
-		t.Errorf("entry has %d versions after a change, want 2 (legacy kept + new added)", got)
+	if got := entryVersionCount(t, cacheRoot, id); got != 3 {
+		t.Errorf("entry has %d versions after a change, want 3 (legacy and capped kept + new added)", got)
 	}
 	if !strings.Contains(res.Results, "s-tac-aaa") {
 		t.Errorf("search lost the entry after the change: %q", res.Results)
