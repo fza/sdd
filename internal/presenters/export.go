@@ -58,6 +58,7 @@ type exportEntryJSON struct {
 	Body             string                 `json:"body,omitempty"`
 	Canonical        string                 `json:"canonical,omitempty"`
 	Aliases          []string               `json:"aliases,omitempty"`
+	ActorKind        model.ActorKind        `json:"actor_kind,omitempty"`
 	Class            model.ProcedureClass   `json:"class,omitempty"`
 	Actor            string                 `json:"actor,omitempty"`
 	Override         string                 `json:"override,omitempty"`
@@ -182,7 +183,7 @@ func exportEntryJSONFrom(x query.ExportEntry) exportEntryJSON {
 		Time: e.Time.Format(wallClockLayout), Status: x.Status.Kind, StatusBy: x.Status.By,
 		ClosedBy: x.ClosedBy, SupersededBy: x.SupersededBy, Closes: e.Closes, Supersedes: e.Supersedes,
 		Heat: x.Heat, InDegree: x.InDegree, Summary: e.Summary, Body: e.Content,
-		Canonical: e.Canonical, Aliases: e.Aliases, Class: e.Class, Actor: e.Actor, Override: e.Override,
+		Canonical: e.Canonical, Aliases: e.Aliases, ActorKind: e.ActorKind, Class: e.Class, Actor: e.Actor, Override: e.Override,
 		FocusActors: e.FocusActors, FocusWhen: focusWhenJSONFrom(e.FocusWhen), Preflight: e.Preflight,
 	}
 	if p, err := model.ParseID(e.ID); err == nil {

@@ -158,6 +158,50 @@ func TestCLIExportJSON(t *testing.T) {
 	}
 }
 
+// TestCLIExportActorKind checks that the export carries an actor's kind when
+// it is set and leaves the key out when it is unknown.
+func TestCLIExportActorKind(t *testing.T) {
+	f := newAppFixture(t)
+	const (
+		machineID = "20260914-040000-s-prc-cla"
+		unknownID = "20260914-050000-s-prc-ada"
+	)
+	f.write(t, "decisions/2026/09/14-040000-s-prc-cla.md", "---\ntype: signal\nkind: actor\nlayer: process\nconfidence: high\nparticipants: [Local Author]\ncanonical: Claude\nactor_kind: machine\n---\n\nAn assistant working on the project.\n")
+	f.write(t, "decisions/2026/09/14-050000-s-prc-ada.md", "---\ntype: signal\nkind: actor\nlayer: process\nconfidence: high\nparticipants: [Local Author]\ncanonical: Ada\n---\n\nA developer.\n")
+
+	result := f.run(t, "export", "--dependencies", "none")
+	if result.err != nil {
+		t.Fatalf("export: %v\n%s", result.err, result.stderr)
+	}
+	var doc struct {
+		Repos []struct {
+			Entries []map[string]json.RawMessage `json:"entries"`
+		} `json:"repos"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &doc); err != nil || len(doc.Repos) != 1 {
+		t.Fatalf("export emitted %d repos (%v):\n%s", len(doc.Repos), err, result.stdout)
+	}
+	byID := map[string]map[string]json.RawMessage{}
+	for _, e := range doc.Repos[0].Entries {
+		var id string
+		if err := json.Unmarshal(e["id"], &id); err != nil {
+			t.Fatal(err)
+		}
+		byID[id] = e
+	}
+
+	if got := string(byID[machineID]["actor_kind"]); got != `"machine"` {
+		t.Errorf("actor with a kind exported actor_kind = %s, want the declared kind", got)
+	}
+	unknown, ok := byID[unknownID]
+	if !ok {
+		t.Fatalf("actor without a kind missing from the export")
+	}
+	if raw, present := unknown["actor_kind"]; present {
+		t.Errorf("actor without a kind exported actor_kind = %s, want the key left out", raw)
+	}
+}
+
 // newDependencyRepo commits a graph declaring repoID (and deps) in a fresh
 // repository and connects it, so the export's cache freshening clones it.
 func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string, entries map[string]string) {

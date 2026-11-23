@@ -270,7 +270,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -384,6 +384,7 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 		draft.ProcedureSpec = spec
 	}
 	draft.Aliases = workflowStoreStrings(store, "aliases")
+	draft.ActorKind, _ = workflowStoreString(store, "actorKind")
 	draft.FocusActors = workflowStoreStrings(store, "focusActors")
 	// Store values are normalized JSON documents, so focusWhen comes back as a
 	// map keyed by its JSON field names and involvement as a list of such maps —
