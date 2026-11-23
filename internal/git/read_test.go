@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/model"
@@ -152,6 +153,29 @@ func TestReadGit_TellsWhatIsMissingFromWhatIsRefused(t *testing.T) {
 	}
 	if noRepo == nil || errors.Is(noRepo, model.ErrGitReadRefused) {
 		t.Fatalf("a checkout git cannot open should fail, not be refused as the caller's input, got %v", noRepo)
+	}
+}
+
+// A process git leaves behind that holds its output must not keep a read past
+// its deadline: the read stops git's whole process group.
+func TestReadGit_StopsWhatGitLeftRunningAtItsDeadline(t *testing.T) {
+	fake := t.TempDir()
+	script := "#!/bin/sh\nsleep 30 &\nsleep 30\n"
+	err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err = git.CLI{Dir: t.TempDir()}.ReadGit(ctx, model.GitReadRequest{Op: model.GitReadLog})
+	if err == nil {
+		t.Fatalf("a read past its deadline should fail")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the read should end at its deadline, not when what git left running ends, took %s", elapsed)
 	}
 }
 

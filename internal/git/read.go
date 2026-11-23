@@ -156,6 +156,8 @@ func (c CLI) readOutput(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := CommandAt(ctx, c.Dir, append(slices.Clone(gitReadOptions), args...)...)
 	cmd.Env = append(readEnvBase(), gitReadEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// A child git leaves holding stdout would keep the read past its deadline.
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
