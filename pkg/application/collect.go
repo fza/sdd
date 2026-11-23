@@ -8,8 +8,7 @@ import (
 )
 
 // CollectSessionsCmd asks for one page of session reclamation. Retention is how
-// long a session is kept after it ended, or after its log's last event while
-// it is open with no move in progress; zero removes it at once. Limit zero
+// long a session is kept after it ended; zero removes it at once. Limit zero
 // means every match. After continues from a previous result's Next cursor.
 type CollectSessionsCmd struct {
 	Retention time.Duration
@@ -29,9 +28,8 @@ type CollectSessionsResult struct {
 // CollectSessions removes resources before deleting their session. A failed
 // resource deletion leaves the session available for the next pass.
 // Collection never executes pending user writes. It removes a session ended
-// longer than the retention ago, and an open one whose log holds no event
-// inside the retention and no move in progress, parked or left mid-step; the
-// shell's own instance is no move (20261121-223858-d-tac-cg2).
+// longer than the retention ago; an open session stays however long it is
+// idle, since its handle can still resume it.
 func (a *Application) CollectSessions(ctx context.Context, cmd CollectSessionsCmd) (CollectSessionsResult, error) {
 	return collectSessions(ctx, a.sessions, a.blobs, a.now(), cmd)
 }
@@ -96,31 +94,6 @@ func collectable(session StoredSession, cutoff time.Time) (bool, error) {
 	if err := validateStoredSession(session); err != nil {
 		return false, err
 	}
-	if end := session.Metadata.Ended; end != nil {
-		return end.EndedAt.Before(cutoff), nil
-	}
-	events, err := decodeWorkflowEvents(session.Events)
-	if err != nil {
-		return false, err
-	}
-	summary := deriveWorkflowSummary(session.Metadata.ID, events)
-	if len(summary.Open) > 0 {
-		return false, nil
-	}
-	return lastLogged(session, summary.LastActivity).Before(cutoff), nil
-}
-
-// lastLogged is the latest time a session log records: an event's append
-// time, a workflow event's own time or the metadata's last update.
-func lastLogged(session StoredSession, lastWorkflowEvent time.Time) time.Time {
-	last := session.Metadata.UpdatedAt
-	if lastWorkflowEvent.After(last) {
-		last = lastWorkflowEvent
-	}
-	for _, event := range session.Events {
-		if event.CreatedAt.After(last) {
-			last = event.CreatedAt
-		}
-	}
-	return last
+	end := session.Metadata.Ended
+	return end != nil && end.EndedAt.Before(cutoff), nil
 }
