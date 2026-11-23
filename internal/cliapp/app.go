@@ -454,7 +454,7 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
-			currentGate = &invocationGate{ctx: ctx}
+			currentGate = &invocationGate{ctx: ctx, configWrite: writesConfig(cmd)}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
@@ -480,8 +480,8 @@ func New(options Options) *cli.Command {
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
-				if err != nil {
-					return ctx, err
+				if err != nil && !repairingConfig(writesConfig(cmd), err) {
+					return ctx, recordScheduledPruneFailure(ctx, cmd, err)
 				}
 			}
 
