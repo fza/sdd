@@ -26,7 +26,7 @@ func gatherCmd() *cli.Command {
 			&cli.StringFlag{Name: "kind", Usage: "The draft's entry kind"},
 			&cli.StringSliceFlag{Name: "topic", Usage: "A draft topic label, listed in full (repeatable)"},
 			&cli.StringFlag{Name: "query", Aliases: []string{"q"}, Usage: "Semantic search phrase, instead of the query writer"},
-			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each, instead of the query writer (repeatable)"},
+			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, matched as whole words; one search each, instead of the query writer (repeatable)"},
 			&cli.StringFlag{Name: "subject", Usage: "An existing entry the reading grounds: its text stands in for the draft, and stored verdicts against it answer repeat pairs"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
