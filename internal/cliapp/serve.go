@@ -457,7 +457,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		LLM: runner, Events: events, Relevance: verdicts, Prefilter: prefilter,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Grounding: groundingPolicy(cfg), Verifier: verifierPolicy(cfg), ContextTokens: cfg.LLM.ContextTokens,
-		Checkout: os.DirFS(workRoot), Commits: git.CLI{Dir: workRoot},
+		Checkout: os.DirFS(workRoot), Commits: git.CLI{Dir: workRoot}, Git: localadapter.GitHistory{Dir: workRoot},
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
@@ -497,7 +497,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
 				ExcludeEmbeddedFromIndex: true,
 				Verifier:                 verifierPolicy(dependencyCfg),
-				Checkout:                 os.DirFS(cache.Dir), Commits: git.CLI{Dir: cache.Dir},
+				Checkout:                 os.DirFS(cache.Dir), Commits: git.CLI{Dir: cache.Dir}, Git: localadapter.GitHistory{Dir: cache.Dir},
 			})
 		}},
 	}

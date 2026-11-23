@@ -67,12 +67,12 @@ func TestRun_ClaudeRunsHeadlessWithTheReadOnlyToolSet(t *testing.T) {
 	}
 	want := []string{
 		"-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands",
-		"--tools", "Read,Grep,Glob,WebFetch,WebSearch,Bash",
-		"--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch,mcp__sdd__*,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git blame:*)",
+		"--tools", "Read,Grep,Glob,WebFetch,WebSearch",
+		"--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch,mcp__sdd__*",
 		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{"sdd":{"args":["serve"],"command":"/opt/sdd/bin/sdd","type":"stdio"}}}`,
 	}
 	if !slices.Equal(call.Args, want) {
-		t.Fatalf("claude should run with the read-only flag set and sdd as its only MCP server, got %q", call.Args)
+		t.Fatalf("claude should run with the read-only tools, no shell, and sdd as its only MCP server, got %q", call.Args)
 	}
 }
 

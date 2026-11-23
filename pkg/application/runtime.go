@@ -69,6 +69,9 @@ type ProjectRuntimeOptions struct {
 	// Commits looks up the commits the deep verifier's findings cite; nil
 	// finds none.
 	Commits CommitLookup
+	// Git reads the project checkout's git history for read_git and for the
+	// deep verifier's file sources at a revision; nil leaves both unavailable.
+	Git GitReader
 }
 
 // CommitLookup returns the message of a commit in the project checkout's

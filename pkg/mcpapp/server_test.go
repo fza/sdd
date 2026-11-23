@@ -340,6 +340,13 @@ func newTestServer(t *testing.T, findings []query.Finding, graphDir, sessionsDir
 
 func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessionsDir, language string, mutate ...func(*testServerOptions)) testEnv {
 	t.Helper()
+	return newTestServerRuntime(t, findings, graphDir, sessionsDir, language, nil, mutate...)
+}
+
+// newTestServerRuntime is newTestServerConfig with runtime tweaking the
+// project runtime's options before the runtime is built.
+func newTestServerRuntime(t *testing.T, findings []query.Finding, graphDir, sessionsDir, language string, runtimeTweak func(*sdd.ProjectRuntimeOptions), mutate ...func(*testServerOptions)) testEnv {
+	t.Helper()
 	if graphDir == "" {
 		graphDir = writeFixtureGraph(t)
 	}
@@ -364,7 +371,7 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 	// stamp — the real world's invariant — so recency-sorted lanes rank
 	// test-written entries above the merged base facts.
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(testRuntimeGeneration.Add(1)) * time.Hour)
-	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+	runtimeOptions := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "test", DisplayName: "Test"}, DefaultBranch: "main", Language: language,
 		Graph: testBranchReadStore{GraphStore: graph, targets: targets}, Targets: targets,
 		Branches: sdd.BranchValidatorFunc(func(_ context.Context, target sdd.MutationTarget) error {
@@ -389,7 +396,11 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 			output, marshalErr := json.Marshal(map[string]any{"findings": items})
 			return pkgllm.Result{Text: string(output), Identity: identity}, marshalErr
 		}),
-	})
+	}
+	if runtimeTweak != nil {
+		runtimeTweak(&runtimeOptions)
+	}
+	runtime, err := sdd.NewProjectRuntime(runtimeOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,7 +796,7 @@ func TestToolSurfaceMatchesSpec(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment", "read_value",
+		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment", "read_git", "read_value",
 		"registry", "resume_session", "search", "show", "stage_attachment",
 		"start_procedure", "start_session", "view",
 	}
