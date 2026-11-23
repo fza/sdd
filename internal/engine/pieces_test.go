@@ -117,6 +117,30 @@ func TestTheFirstQuestionAsksAboutTheOldestTextByItsLatestCopy(t *testing.T) {
 	}
 }
 
+// A right answer beside a wrong one proves the right part's text and every
+// text newer than it, not the older text the wrong part asked about.
+func TestARightAnswerBesideAWrongOneHoldsFromItsOwnText(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	_, q = respond(t, session, answer(t, q, stepText), map[engine.Piece]string{introLane: introText})
+	questions := test.Questions(q)
+	if len(questions) != 2 || questions[0].Name != stepLane.Name || questions[1].Name != introLane.Name {
+		t.Fatalf("the response should ask about the older step text first and the newer intro text second, got %q", q)
+	}
+	right := strings.Split(answer(t, q, stepText, introText), " ; ")
+
+	session.BeginCall("nothing here ; "+right[1], nil)
+	if serve(session, stepLane, stepText) {
+		t.Error("the older text the wrong part asked about should serve in full")
+	}
+	if !serve(session, introLane, introText) {
+		t.Error("the text the right part answers should serve short")
+	}
+	if session.Emptied() {
+		t.Error("a right answer beside a wrong one should leave the held set standing")
+	}
+}
+
 func TestAResponseAsksTwoQuestionsAboutTwoTexts(t *testing.T) {
 	session := newPieceSession(nil)
 	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText, introLane: introText})
@@ -138,7 +162,10 @@ func TestOneTextYieldsTwoQuestionsAtTwoSpots(t *testing.T) {
 	}
 }
 
-func TestBothAnswersMustBeRight(t *testing.T) {
+// Both answers right, or a right one beside a wrong one, serve short; lost
+// to either, or every part wrong, serves in full
+// (20261122-234358-d-tac-lv2 keeps lost as the compaction guard).
+func TestARightAnswerServesShortUnlessAPartIsLost(t *testing.T) {
 	pieces := map[engine.Piece]string{stepLane: stepText, introLane: introText}
 	tests := []struct {
 		name  string
@@ -147,8 +174,9 @@ func TestBothAnswersMustBeRight(t *testing.T) {
 	}{
 		{"both right", func(r []string) string { return r[0] + " ; " + r[1] }, true},
 		{"swapped", func(r []string) string { return r[1] + " ; " + r[0] }, true},
+		{"right about the oldest text, other wrong", func(r []string) string { return r[0] + " ; nothing here" }, true},
+		{"both wrong", func([]string) string { return "nothing here ; nor here" }, false},
 		{"one lost", func(r []string) string { return r[0] + " ; " + model.LostAnswer }, false},
-		{"one wrong", func(r []string) string { return "nothing here ; " + r[1] }, false},
 		{"one of two", func(r []string) string { return r[0] }, false},
 		{"lost", func([]string) string { return model.LostAnswer }, false},
 	}
@@ -163,7 +191,7 @@ func TestBothAnswersMustBeRight(t *testing.T) {
 			held, q := respond(t, session, tc.given(right), pieces)
 			for p := range pieces {
 				if held[p] != tc.short {
-					t.Errorf("%s should serve short only when both answers are right", p.Name)
+					t.Errorf("%s should serve short only when no part is lost and one is right", p.Name)
 				}
 			}
 			if tc.short {

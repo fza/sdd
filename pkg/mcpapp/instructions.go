@@ -92,6 +92,7 @@ abandon) must answer both in answer, in their order and parted by ;, as in
 reach sdd ; 280: the words each asks for, looked up in its text, or lost
 for one whose text you no longer see. A response with one question takes
 one answer; saw no question, answer lost. Never guess. Both right serve
-repeated instructions and report schemas short; lost or a wrong answer to
-either serves them in full. List in reread the name of a piece you no
-longer see: it serves in full again.`
+repeated instructions and report schemas short; a right answer beside a
+wrong one serves short what came since its text; lost to either serves
+them in full. List in reread the name of a piece you no longer see: it
+serves in full again.`

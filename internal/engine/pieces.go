@@ -50,8 +50,8 @@ type pieceCall struct {
 	answered   int
 	provedFrom int
 	short      bool
-	// reset is set by lost or a wrong answer: the held set empties when the
-	// call records what it served.
+	// reset is set by an answer crediting no question: the held set empties
+	// when the call records what it served.
 	reset bool
 	// carried is set when the call carries an answer.
 	carried bool
@@ -89,13 +89,13 @@ func (s *Session) nextSeq() int {
 }
 
 // BeginCall starts a call carrying answer, the agent's answers to the
-// questions a response asked (model.RoundAnswered), and the piece names it
-// lists in reread, which serve in full. An answer that answers every
-// question of a round still unanswered makes the texts whose latest copy is
-// at least the oldest of that round's hold for the call. None holds
-// nothing; lost or a wrong answer to any question holds nothing and empties
-// the held set, so only texts served from this call on count as held
-// (20261122-105026-d-tac-wl5).
+// questions a response asked (model.RoundCredit), and the piece names it
+// lists in reread, which serve in full. The questions of a round still
+// unanswered that the answer credits make the texts whose latest copy is at
+// least the oldest of the credited questions' hold for the call. None holds
+// nothing; an answer crediting no question, lost to any among them, holds
+// nothing and empties the held set, so only texts served from this call on
+// count as held (20261122-105026-d-tac-wl5).
 func (s *Session) BeginCall(answer string, reread []string) {
 	s.call = pieceCall{reread: map[string]bool{}}
 	for _, r := range reread {
@@ -110,22 +110,27 @@ func (s *Session) BeginCall(answer string, reread []string) {
 		return
 	}
 	for round, asked := range s.openRounds() {
-		if !model.RoundAnswered(asked.questions, answer) {
+		credited := model.RoundCredit(asked.questions, answer)
+		if len(credited) == 0 {
 			continue
 		}
-		earlier := asked.latest < s.call.provedFrom || asked.latest == s.call.provedFrom && round+1 < s.call.answered
+		proved := asked.latests[credited[0]]
+		for _, i := range credited[1:] {
+			proved = min(proved, asked.latests[i])
+		}
+		earlier := proved < s.call.provedFrom || proved == s.call.provedFrom && round+1 < s.call.answered
 		if s.call.answered == 0 || earlier {
-			s.call.answered, s.call.provedFrom = round+1, asked.latest
+			s.call.answered, s.call.provedFrom = round+1, proved
 		}
 	}
 	s.call.reset = s.call.answered == 0
 }
 
 // openRound is a round of questions still unanswered: its questions and the
-// oldest latest copy they asked about.
+// latest copy each asked about.
 type openRound struct {
 	questions []model.TextQuestion
-	latest    int
+	latests   []int
 }
 
 // openRounds lists the rounds still unanswered by the index of their first
@@ -138,11 +143,11 @@ func (s *Session) openRounds() map[int]*openRound {
 		}
 		round, ok := rounds[asked.round]
 		if !ok {
-			round = &openRound{latest: asked.latest}
+			round = &openRound{}
 			rounds[asked.round] = round
 		}
 		round.questions = append(round.questions, asked.question)
-		round.latest = min(round.latest, asked.latest)
+		round.latests = append(round.latests, asked.latest)
 	}
 	return rounds
 }
@@ -425,9 +430,10 @@ func (s *Session) foldAnswered(n int) {
 	}
 }
 
-// foldOutcome folds what a call's answer showed: a lost or wrong answer
-// right after a call of the same caller that served short is a late catch,
-// a compaction the short serve could not see (20261121-230157-d-tac-ym8).
+// foldOutcome folds what a call's answer showed: an answer crediting no
+// question right after a call of the same caller that served short is a late
+// catch, a compaction the short serve could not see
+// (20261121-230157-d-tac-ym8).
 func (s *Session) foldOutcome(data map[string]any) {
 	caller, _ := data["caller"].(string)
 	if data["reset"] == true {
@@ -441,9 +447,9 @@ func (s *Session) foldOutcome(data map[string]any) {
 	}
 }
 
-// LateCatches counts, in a session log, the lost or wrong answers given right
-// after a call that served short: each a compaction caught one call late,
-// as a right answer to a question asked before it cannot show it.
+// LateCatches counts, in a session log, the answers crediting no question
+// given right after a call that served short: each a compaction caught one
+// call late, as a right answer to a question asked before it cannot show it.
 func LateCatches(events []Event) int {
 	s := &Session{}
 	for _, ev := range events {
