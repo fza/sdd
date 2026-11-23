@@ -25,6 +25,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `llm_prefilter.*` | User-global | Any file works, as for `llm.*`. |
 | `verify.*` | Project or user-global | Each key names its files under [verify](#verify). The local file may only tighten `verify.mode`, `verify.kinds` and `verify.skip`, and wins for the keys that describe the machine. |
 | `cache.retention`, `index.replaced_retention` | User-global | The cache is shared by every project on the machine. sdd ignores them in the project files, and `sdd config set --local` refuses them. |
+| `secrets.rules_update` | User-global | Every scan on the machine shares one rule file. sdd ignores it in the project files with a warning, and `sdd config set --local` refuses it. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `events`, `recheck` | Project | The team's choice. sdd ignores them in the local file and in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
@@ -108,6 +109,7 @@ sdd init                                           # repeat in the work reposito
 - `set` refuses an empty value, since `unset` removes a key, and a value sdd would ignore or refuse when it reads the file: one outside a setting's fixed set, such as `embedding.provider voyage`, `skill_scope machine` or `dialogue.mode x`, or a `verify` value the layers do not allow together, such as a local `verify.mode` below the shared one. The refusal names the allowed values, and the file stays unchanged.
 - `set` writes `8`, `0.5`, `true` and `false` as numbers and booleans, and everything else as text. Edit list values, such as `supported_agents`, in the file.
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
+- `set` and `unset` run on a user-global file whose only fault is a value sdd refuses to load, such as a `secrets.rules_update` outside `daily` and `off`, so you repair it through them. A file that does not parse still fails them.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
 
 :::note[A running server follows config changes]
@@ -405,6 +407,14 @@ Both keys accept days, such as `90d`, or a duration, such as `2160h`. `sdd confi
 | `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot or an embedding calibration nothing used for longer than this, and the session folder and staged attachments of a project unused that long. Also how long a checkout's record keeps the index versions it reads. |
 | `index.replaced_retention` | `14d` | `sdd cache prune` deletes an index version replaced longer ago than this, versions of an older index format unused that long, and the index store of an embedding setup another one replaced. |
 
+### Credential scan
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `secrets.rules_update` | `daily` | `daily`: the [daily cleanup](#cleanup) fetches the rule file of gitleaks' latest release when it is newer than the one in use. `off`: sdd asks GitHub nothing and [scans for credentials](/sdd/working-modes/#capture) with the rule file built into sdd only, also when it fetched a newer one before. Read from the user-global file only. |
+
+`sdd config set` refuses any other value. In the user-global file, another value fails every command but `sdd config set` and `unset` with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
+
 ### Connected repositories
 
 | Key | File | Default | Meaning |
@@ -660,6 +670,8 @@ sdd runs `sdd cache prune` in the background at most once a day. Any command exc
 - leftovers of killed processes older than a day
 
 It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
+
+While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use and does not stop the run's other work, but fails the run: the next command, or the next MCP tool result in `notices.cache`, reports it once, and `sdd info` shows it with its reason until a later check succeeds. `sdd cache prune` by hand fetches nothing.
 
 `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version no search of this checkout reads.
 

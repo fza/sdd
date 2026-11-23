@@ -93,6 +93,8 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 				_, err = model.ResolveCacheRetention(global.Cache)
 			case "index.replaced_retention":
 				_, err = model.ResolveReplacedRetention(global.Index)
+			case "secrets.rules_update":
+				err = global.Secrets.RulesUpdate.Validate()
 			}
 			if err != nil {
 				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)

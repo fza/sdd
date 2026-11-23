@@ -1,0 +1,149 @@
+package testsupport
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/secrets"
+)
+
+// GitleaksReleases fakes the two GitHub hosts the secret rule fetch reads:
+// the API naming gitleaks' latest release and the raw host serving its rule
+// file. One server answers both, so URL is the base of each.
+type GitleaksReleases struct {
+	URL    string
+	Client *http.Client
+
+	mu         sync.Mutex
+	latest     string
+	tags       map[string]string
+	files      map[string][]byte
+	failWith   int
+	requests   []string
+	userAgents []string
+}
+
+// GitHubUserAgent is the User-Agent GitHub sends the stand-in.
+const GitHubUserAgent = "sdd/test"
+
+// GitHub reads the stand-in as the fetch reads GitHub.
+func (g *GitleaksReleases) GitHub() *secrets.GitHub {
+	return secrets.NewGitHub(secrets.GitHubOptions{APIBase: g.URL, RawBase: g.URL, UserAgent: GitHubUserAgent, Client: g.Client})
+}
+
+// UserAgents lists the User-Agent of each request so far.
+func (g *GitleaksReleases) UserAgents() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.userAgents...)
+}
+
+// NewGitleaksReleases starts a GitleaksReleases with no release, closed when
+// the test ends.
+func NewGitleaksReleases(t testing.TB) *GitleaksReleases {
+	t.Helper()
+	g := &GitleaksReleases{tags: map[string]string{}, files: map[string][]byte{}}
+	server := httptest.NewServer(http.HandlerFunc(g.serve))
+	t.Cleanup(server.Close)
+	g.URL, g.Client = server.URL, server.Client()
+	return g
+}
+
+// NewerGitleaksRules is the built-in rule file with the rule of
+// rules/extra-rule.toml appended, as a gitleaks release adding one rule
+// would publish it.
+func NewerGitleaksRules(t testing.TB) []byte {
+	t.Helper()
+	builtin, err := secrets.BuiltinRuleFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(append([]byte(nil), builtin.Data...), SecretRuleFixture(t, "extra-rule.toml")...)
+}
+
+// Publish makes tag the latest release, pointing at a commit that holds file
+// as its rule file. Publishing a tag again moves it to a new commit; the raw
+// host serves rule files by commit only.
+func (g *GitleaksReleases) Publish(tag string, file []byte) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	sum := sha1.Sum(append([]byte(tag+"\x00"), file...))
+	commit := hex.EncodeToString(sum[:])
+	g.latest, g.tags[tag], g.files[commit] = tag, commit, file
+}
+
+// Commit is the commit tag points at now.
+func (g *GitleaksReleases) Commit(tag string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.tags[tag]
+}
+
+// FailWith answers every request with status; 0 answers normally again.
+func (g *GitleaksReleases) FailWith(status int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failWith = status
+}
+
+// Requests lists the paths requested so far.
+func (g *GitleaksReleases) Requests() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.requests...)
+}
+
+// Downloads counts the rule file downloads so far.
+func (g *GitleaksReleases) Downloads() int {
+	count := 0
+	for _, path := range g.Requests() {
+		if strings.HasSuffix(path, "/config/gitleaks.toml") {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *GitleaksReleases) serve(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.requests = append(g.requests, r.URL.Path)
+	g.userAgents = append(g.userAgents, r.UserAgent())
+	if g.failWith != 0 {
+		http.Error(w, "failing on purpose", g.failWith)
+		return
+	}
+	if r.URL.Path == "/repos/gitleaks/gitleaks/releases/latest" {
+		if g.latest == "" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": g.latest})
+		return
+	}
+	if tag, ok := strings.CutPrefix(r.URL.Path, "/repos/gitleaks/gitleaks/commits/"); ok {
+		commit, published := g.tags[tag]
+		if !published {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(commit))
+		return
+	}
+	commit, ok := strings.CutPrefix(r.URL.Path, "/gitleaks/gitleaks/")
+	if ok {
+		commit, ok = strings.CutSuffix(commit, "/config/gitleaks.toml")
+	}
+	file, published := g.files[commit]
+	if !ok || !published {
+		http.NotFound(w, r)
+		return
+	}
+	_, _ = w.Write(file)
+}

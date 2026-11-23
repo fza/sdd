@@ -55,6 +55,9 @@ type ApplicationOptions struct {
 	// whose clients share its filesystem. nil refuses staging by path, so a
 	// remote client can never stage a file of the server's.
 	ReadLocalFile func(path string) ([]byte, error)
+	// SecretRules reports the credential rule file the host's scans use; Info
+	// carries it. nil reports none.
+	SecretRules func() (SecretRules, error)
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -71,6 +74,7 @@ type Application struct {
 	launcher      DelegateLauncher
 	processes     RoundProcesses
 	readLocalFile func(path string) ([]byte, error)
+	secretRules   func() (SecretRules, error)
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -104,6 +108,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		launcher:      options.DelegateLauncher,
 		processes:     options.RoundProcesses,
 		readLocalFile: options.ReadLocalFile,
+		secretRules:   options.SecretRules,
 	}, nil
 }
 
@@ -123,7 +128,17 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return a.infoFromRuntime(ctx, principal, runtime, snapshot)
+	result, err := a.infoFromRuntime(ctx, principal, runtime, snapshot)
+	if err != nil {
+		return InfoResult{}, err
+	}
+	if a.secretRules != nil {
+		result.SecretRules, err = a.secretRules()
+		if err != nil {
+			return InfoResult{}, fmt.Errorf("reading the secret rules in use: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime, source *Snapshot) (InfoResult, error) {

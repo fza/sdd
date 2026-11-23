@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -24,10 +25,7 @@ import (
 func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...string) appResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	command := cliapp.New(cliapp.Options{
-		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
-		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
-	})
+	command := f.commandWith(strings.NewReader(""), &stdout, &stderr, func(dir, _ string) error { *launched = append(*launched, dir); return nil })
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
 }
@@ -83,6 +81,77 @@ func TestScheduledCachePrunePrintsNothing(t *testing.T) {
 	}
 	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: last run") {
 		t.Errorf("the background pass should still be on record, stdout:\n%s", info.stdout)
+	}
+}
+
+// The scheduled pass of every CLI test fetches from the fixture's stand-in
+// for GitHub; one that reached a real host would fail at the closed proxy
+// and leave the built-in rules in use.
+func TestScheduledCachePruneFetchesFromTheConfiguredHosts(t *testing.T) {
+	f := newAppFixture(t)
+	f.releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
+
+	r := f.run(t, "cache", "prune", "--scheduled")
+
+	if r.err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	}
+	if len(f.releases.Requests()) == 0 {
+		t.Error("the pass should ask the configured hosts")
+	}
+	if info := f.run(t, "info"); !strings.Contains(info.stdout, "gitleaks v99.0.0 (fetched)") {
+		t.Errorf("the pass should have stored the stand-in's release, stdout:\n%s", info.stdout)
+	}
+}
+
+// Only the sdd binary names GitHub: a host that names no release hosts, a
+// test or an embedder, fetches nothing.
+func TestScheduledCachePruneFetchesNothingWithoutReleaseHosts(t *testing.T) {
+	f := newAppFixture(t)
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr})
+
+	err := command.Run(t.Context(), []string{"sdd", "cache", "prune", "--scheduled"})
+
+	if err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", err, stderr.String())
+	}
+	_, err = os.Stat(filepath.Join(f.root, "cache", "sdd", "secret-rules", "state.json"))
+	if !os.IsNotExist(err) {
+		t.Errorf("no fetch should have been tried, the fetch state: %v", err)
+	}
+}
+
+// A scheduled run refused before it starts, on a secrets.rules_update sdd
+// does not know, is recorded like any failed run, so the next command
+// reports it instead of only the run's log.
+// A run by hand shows the refusal as its own error and records nothing.
+func TestScheduledCachePruneRecordsARefusedRulesUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		args     []string
+		recorded bool
+	}{
+		{args: []string{"cache", "prune", "--scheduled"}, recorded: true},
+		{args: []string{"cache", "prune"}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, "config/sdd/config.yaml", "participant: Global Author\nsecrets:\n  rules_update: weekly\n")
+
+			r := f.run(t, tc.args...)
+
+			if r.err == nil {
+				t.Fatal("a run on a refused value should fail")
+			}
+			status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorded := strings.Contains(status.Error, "secrets.rules_update") && status.FailureNotice() != ""
+			if recorded != tc.recorded {
+				t.Errorf("only the scheduled run's failure should be recorded for the next command, got %+v", status)
+			}
+		})
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/networkteam/sdd/internal/cliapp"
+	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/urfave/cli/v3"
 )
 
@@ -23,20 +25,33 @@ const (
 	appBody    = "The command renders this entry through the configured graph directory."
 )
 
+// appFixture runs commands in a project of its own. releases stands in for
+// GitHub, so no command reaches it.
 type appFixture struct {
 	root string
 	// client is the name the serve's MCP client reports; cli-test when empty.
-	client string
+	client   string
+	releases *testsupport.GitleaksReleases
 }
 
 func newAppFixture(t *testing.T) *appFixture {
 	t.Helper()
-	f := &appFixture{root: t.TempDir()}
+	f := &appFixture{root: t.TempDir(), releases: testsupport.NewGitleaksReleases(t)}
+	// GitHub always names a latest release; with none newer than the
+	// built-in file a scheduled pass only records its check.
+	builtin, err := secrets.BuiltinRuleFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.releases.Publish(builtin.Tag, builtin.Data)
 	t.Chdir(f.root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(f.root, "state"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(f.root, "data"))
+	// A request that still leaves for a real host fails at a closed port.
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\n")
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\n")
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\n")
@@ -69,9 +84,20 @@ func (f *appFixture) run(t *testing.T, args ...string) appResult {
 }
 
 func (f *appFixture) command(reader io.Reader, writer, errWriter io.Writer) *cli.Command {
+	return f.commandWith(reader, writer, errWriter, nil)
+}
+
+// commandWith builds the CLI with launch standing in for the detached cache
+// pruning process; nil launches none.
+func (f *appFixture) commandWith(reader io.Reader, writer, errWriter io.Writer, launch func(dir, logPath string) error) *cli.Command {
 	return cliapp.New(cliapp.Options{
 		Version: appVersion, Reader: reader, Writer: writer, ErrWriter: errWriter,
+		Gitleaks: f.gitleaks(), LaunchCachePrune: launch,
 	})
+}
+
+func (f *appFixture) gitleaks() *secrets.GitHub {
+	return f.releases.GitHub()
 }
 
 func (r appResult) exitCode() int {
@@ -96,17 +122,31 @@ func assertContainsOutput(t *testing.T, stream, output string, expected ...strin
 
 func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
-	f.serveArgs(t, nil, check)
+	f.serveRun(t, nil, nil, check)
 }
 
 // serveArgs is serve with extra serve flags.
 func (f *appFixture) serveArgs(t *testing.T, flags []string, check func(*mcp.ClientSession)) {
 	t.Helper()
+	f.serveRun(t, flags, nil, check)
+}
+
+// serveWith runs sdd serve with launch as its cache pruning launcher (see
+// commandWith).
+func (f *appFixture) serveWith(t *testing.T, launch func(dir, logPath string) error, check func(*mcp.ClientSession)) {
+	t.Helper()
+	f.serveRun(t, nil, launch, check)
+}
+
+// serveRun runs sdd serve with extra serve flags and launch as its cache
+// pruning launcher.
+func (f *appFixture) serveRun(t *testing.T, flags []string, launch func(dir, logPath string) error, check func(*mcp.ClientSession)) {
+	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	var stderr bytes.Buffer
-	command := f.command(serverInput, serverOutput, &stderr)
+	command := f.commandWith(serverInput, serverOutput, &stderr, launch)
 	done := make(chan struct{})
 	var runErr error
 	go func() {

@@ -30,6 +30,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -47,6 +48,10 @@ type Options struct {
 	// --scheduled` in dir, detached, with its output in logPath. Nil launches
 	// nothing: an in-process host or a test runs no background pass.
 	LaunchCachePrune func(dir, logPath string) error
+	// Gitleaks reads gitleaks' releases for the daily rule fetch. Nil fetches
+	// nothing: only the sdd binary names GitHub, so no test or embedder
+	// reaches it unasked.
+	Gitleaks *secrets.GitHub
 }
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
@@ -385,6 +390,10 @@ func New(options Options) *cli.Command {
 			}
 
 			warnUnknownConfigKeys(ctx)
+			err := useSecretRules(ctx)
+			if err != nil && !repairingConfig(writesConfig(cmd), err) {
+				return ctx, recordScheduledPruneFailure(ctx, cmd, err)
+			}
 
 			// sdd cache is the pass itself. sdd serve shows a failed pass
 			// through its tool results instead.
@@ -430,7 +439,7 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
-			cacheCmd(),
+			cacheCmd(options.Gitleaks),
 			searchCmd(),
 			gatherCmd(),
 			groundingCmd(),
@@ -481,8 +490,17 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			rules, err := secrets.Active().Status()
+			if err != nil {
+				return err
+			}
 			presenters.RenderInfo(cmd.Writer, result)
-			return renderCachePruneStatus(cmd.Writer)
+			err = renderCachePruneStatus(cmd.Writer)
+			if err != nil {
+				return err
+			}
+			presenters.RenderSecretRules(cmd.Writer, rules)
+			return nil
 		},
 	}
 }

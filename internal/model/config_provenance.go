@@ -53,6 +53,8 @@ var configDefaults = map[string]string{
 	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
 
 	"sessions.retention": DefaultSessionRetention,
+
+	secretRulesUpdateKey: string(DefaultSecretRulesUpdate),
 }
 
 // EffectiveConfigValues computes the effective config overlay with per-key

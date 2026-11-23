@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -25,7 +26,7 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd() *cli.Command {
+func cacheCmd(gitleaks *secrets.GitHub) *cli.Command {
 	return &cli.Command{
 		Name:  cacheCommandName,
 		Usage: "Manage the machine-global cache",
@@ -40,8 +41,11 @@ graph snapshots, embedder calibrations and the session folder and staged
 attachments of an unused project after cache.retention (default ` + model.DefaultCacheRetention + `);
 graph snapshots of vanished folders and clones sdd repo remove
 dropped that the repos list no longer names at once; and crash leftovers a
-day old. All three keys live in the user-global config. Open sessions,
-unreadable session logs and the versions any checkout read within
+day old. All three keys live in the user-global config. While
+secrets.rules_update is daily (the default), the background pass also fetches
+the rule file of gitleaks' newest release for credential scans; a failed fetch
+fails the run after its other work, and a run by hand fetches nothing. Open
+sessions, unreadable session logs and the versions any checkout read within
 cache.retention always stay. One run at a time per machine: a run started by
 hand while another runs fails. A failed background run is reported once, by
 the next command or MCP tool result, and sdd info shows the last run. sdd
@@ -67,9 +71,14 @@ index gc removes more on request.`,
 					}
 					return err
 				}
+				var secretRules handlers.SecretRulesUpdater
+				if gitleaks != nil {
+					secretRules = secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil)
+				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
-					State: stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+					SecretRules: secretRules,
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
@@ -150,8 +159,50 @@ func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) er
 			return
 		case <-ticker.C:
 			backgroundCachePrune(ctx, launch, false)
+			secrets.Active().Recheck(ctx)
 		}
 	}
+}
+
+func secretRulesDir(loc repos.Locations) string {
+	return filepath.Join(loc.CacheRoot, secrets.CacheDirName)
+}
+
+// useSecretRules points credential scans at the rule file
+// secrets.rules_update allows: the copies the daily pass fetches while it is
+// daily, the built-in file while it is off. The root command calls it on
+// every start, sdd serve's included; serve's hourly timer only rechecks for
+// a newly fetched copy.
+func useSecretRules(ctx context.Context) error {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return err
+	}
+	cfg, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return err
+	}
+	dir := ""
+	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
+		dir = secretRulesDir(loc)
+	}
+	secrets.Use(ctx, dir)
+	return nil
+}
+
+// recordScheduledPruneFailure records err as the run's failure when the
+// invocation is the scheduled pass, which nothing else shows, and returns it.
+func recordScheduledPruneFailure(ctx context.Context, root *cli.Command, err error) error {
+	leaf := invokedCommand(root)
+	lineage := leaf.Lineage()
+	if len(lineage) != 3 || lineage[1].Name != cacheCommandName || leaf.Name != "prune" || !leaf.Bool(scheduledFlag) {
+		return err
+	}
+	loc, locErr := repos.DefaultLocations()
+	if locErr != nil {
+		return errors.Join(err, locErr)
+	}
+	return errors.Join(err, cacheprune.RecordFailure(ctx, loc.StateRoot, time.Now(), err))
 }
 
 // serveCacheNotice is serve's notices.cache: a failed run's notice, handed

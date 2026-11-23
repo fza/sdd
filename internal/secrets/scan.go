@@ -1,6 +1,7 @@
 // Package secrets finds credentials in text bound for the graph, using
-// gitleaks' default rule file as gitleaks publishes it, built into the binary.
-// A finding refuses the write: an entry is shared and immutable, and a
+// gitleaks' default rule file as gitleaks publishes it: the copy built into
+// the binary, or a newer release the daily pass fetched. A finding refuses
+// the write: an entry is shared and immutable, and a
 // redacted copy beside a missed variant of the same credential is worse than
 // a refusal. Findings name the rule and the line, never the matched text.
 package secrets
@@ -66,11 +67,23 @@ func (s *RuleSet) RuleIDs() []string {
 	return ids
 }
 
+// missing lists the rule ids of floor the set lacks.
+func (s *RuleSet) missing(floor *RuleSet) []string {
+	have := s.RuleIDs()
+	var missing []string
+	for _, id := range floor.RuleIDs() {
+		if !slices.Contains(have, id) {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
 // Scan reports the credentials in text that has no file path, such as an
-// entry's body or summary, using the built-in rule set. Rules scoped to file
-// paths never apply.
+// entry's body or summary, using the active rule set (see Use). Rules scoped
+// to file paths never apply.
 func Scan(text string) ([]Finding, error) {
-	set, err := builtinRules()
+	set, err := Active().Rules()
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +93,7 @@ func Scan(text string) ([]Finding, error) {
 // ScanFile reports the credentials in a file's content; rules and allowlists
 // scoped to file paths apply to path.
 func ScanFile(path string, content []byte) ([]Finding, error) {
-	set, err := builtinRules()
+	set, err := Active().Rules()
 	if err != nil {
 		return nil, err
 	}

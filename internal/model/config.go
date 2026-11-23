@@ -89,6 +89,7 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	Secrets   SecretsConfig   `yaml:"secrets,omitempty"`
 	// Verify makes captures read the graph before they are written and checks
 	// every draft against that reading; DefaultVerifyMode unless a layer sets
 	// its mode.
@@ -986,4 +987,11 @@ func ValidateEmbeddingPath(path string) error {
 		return fmt.Errorf("embedding.path: %q is not a request path; use one starting with \"/\", such as %q, and put the scheme and host in embedding.endpoint", path, "/v1/embeddings")
 	}
 	return nil
+}
+
+// IsRefusedConfigValue reports whether err is a load refusing a value of a
+// key sdd knows, the one fault `sdd config set` and `unset` write past so the
+// file can be repaired through them.
+func IsRefusedConfigValue(err error) bool {
+	return errors.Is(err, ErrUnknownSecretRulesUpdate)
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/secrets"
@@ -60,6 +61,21 @@ func TestParseRulesRefusesAnInvalidFile(t *testing.T) {
 	}
 }
 
+func TestParseFetchedRulesNeedsEveryBuiltinRule(t *testing.T) {
+	_, err := secrets.ParseFetchedRules(testsupport.SecretRuleFixture(t, "one-rule.toml"))
+	if err == nil || !strings.Contains(err.Error(), "github-pat") {
+		t.Errorf("a copy lacking built-in rules should be refused naming them, got %v", err)
+	}
+
+	set, err := secrets.ParseFetchedRules(testsupport.NewerGitleaksRules(t))
+	if err != nil {
+		t.Fatalf("a copy keeping every built-in rule should pass: %v", err)
+	}
+	if !slices.Contains(set.RuleIDs(), "sdd-fixture-token") {
+		t.Error("the copy's added rule should be read")
+	}
+}
+
 func TestParseRulesNormalizesAsGitleaks(t *testing.T) {
 	set, err := secrets.ParseRules(testsupport.SecretRuleFixture(t, "normalized.toml"))
 	if err != nil {
@@ -109,5 +125,31 @@ func TestParseRulesReadsBothAllowlistForms(t *testing.T) {
 	}
 	if len(findings) == 0 {
 		t.Error("text no allowlist names should raise the rule")
+	}
+}
+
+// A value sdd does not read as gitleaks does refuses the file, as an unknown
+// key does: misread, it would weaken or switch off a rule.
+func TestParseRulesRefusesValuesItCannotRead(t *testing.T) {
+	rule := "[[rules]]\nid = \"sdd-fixture-token\"\nregex = '''sddfixture_[a-z0-9]{16}'''\nkeywords = [\"sddfixture_\"]\n"
+	cases := []struct {
+		name   string
+		file   string
+		reason string
+	}{
+		{name: "unknown condition", file: rule + "[[rules.allowlists]]\ncondition = \"XOR\"\nstopwords = [\"x\"]\n", reason: "XOR"},
+		{name: "unknown regexTarget", file: rule + "[[rules.allowlists]]\nregexTarget = \"nonsense\"\nregexes = ['''x''']\n", reason: "nonsense"},
+		{name: "unknown global regexTarget", file: "[[allowlists]]\nregexTarget = \"nonsense\"\nregexes = ['''x''']\n\n" + rule, reason: "nonsense"},
+		{name: "newer minVersion", file: "minVersion = \"v99.0.0\"\n\n" + rule, reason: "v99.0.0"},
+		{name: "minVersion that is no version", file: "minVersion = \"soon\"\n\n" + rule, reason: "soon"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := secrets.ParseRules([]byte(tc.file))
+
+			if err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("the file should be refused naming the value, got %v", err)
+			}
+		})
 	}
 }
