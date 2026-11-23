@@ -36,19 +36,18 @@ func cacheCmd(secretRulesGitHub *secrets.GitHub) *cli.Command {
 			Name:  "prune",
 			Usage: "Delete data nothing needs from sdd's cache, state and data folders now",
 			Description: `sdd runs this in the background at most once a day. It removes ended
-sessions after sessions.retention (default ` + model.DefaultSessionRetention + `), and open sessions
-untouched for as long with no move in progress; replaced index data after
+sessions after sessions.retention (default ` + model.DefaultSessionRetention + `); replaced index data after
 index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores, graph
 snapshots, git gate records, calibrations and the state of unused projects
 after cache.retention (default ` + model.DefaultCacheRetention + `); clones the repos list no longer names;
 and crash leftovers a day old. The background pass also fetches the rule file
 of gitleaks' newest release for credential scans while secrets.rules_update is
-daily (the default). All four keys live in the user-global config. Sessions
-with a move in progress, parked or left mid-step, unreadable session logs and
-the versions the current checkout searches always stay. So do index stores
-and projects this sdd holds no record of using, and every clone under the
-cache folder: another sdd version may use them. sdd index gc removes more
-on request.`,
+daily (the default). All four keys live in the user-global config. Open
+sessions, however long they are idle, unreadable session logs and the
+versions the current checkout searches always stay. So do index stores and
+projects this sdd holds no record of using, and every clone under the cache
+folder: another sdd version may use them. sdd index gc removes more on
+request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,

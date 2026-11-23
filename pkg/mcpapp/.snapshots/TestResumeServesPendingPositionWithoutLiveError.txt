@@ -122,7 +122,7 @@ open_instances:
       - One worth dropping is abandoned with a reason.
       - What is open is worth keeping? Keep the session instead of ending it.
 
-      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: stopping without a word costs nothing. A move parked or left mid-step keeps the session for its handle to resume. A session with no move in progress is removed once it has gone untouched for the session retention.
+      A session can always be closed with matter left untackled, but never without saying what that matter was. User would rather leave it open? Leave it: a session nobody ended stays resumable by its handle, so stopping without a word costs nothing.
 
       **Standing goal.** This junction stays pending while you talk. Nothing here demands an answer, and leaving the session parks or ends it on its own. Answer conclude only when the user deliberately wants to wrap up the session, and only after the check above.
     open_threads: |

@@ -191,19 +191,19 @@ func TestCollectRemovesEndedSessionsPastRetention(t *testing.T) {
 	}
 }
 
-// TestCollectOpenSessions covers the rule for open sessions: one idle past the
-// retention goes with its staged attachments unless a move is in progress in
-// it, parked or left mid-step; one active inside the retention stays.
-func TestCollectOpenSessions(t *testing.T) {
+// TestCollectKeepsOpenSessions covers the rule for open sessions: one stays
+// with its staged attachments however long it is idle, with or without a move
+// in progress.
+func TestCollectKeepsOpenSessions(t *testing.T) {
 	const retention = 14 * 24 * time.Hour
 	for _, tc := range []struct {
-		name        string
-		idle        time.Duration
-		move        func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity)
-		wantRemoved bool
+		name string
+		idle time.Duration
+		move func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity)
 	}{
-		{name: "no move, idle past the retention", idle: retention + time.Hour, wantRemoved: true},
-		{name: "abandoned move, idle past the retention", idle: retention + time.Hour, wantRemoved: true, move: func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) {
+		{name: "no move, idle past the retention", idle: retention + time.Hour},
+		{name: "no move, idle far past the retention", idle: 20 * retention},
+		{name: "abandoned move, idle past the retention", idle: retention + time.Hour, move: func(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity) {
 			serve := startCapture(t, workflow, identity)
 			if _, err := workflow.Abandon(t.Context(), identity, serve.Instance, "dropped"); err != nil {
 				t.Fatalf("Abandon: %v", err)
@@ -239,15 +239,14 @@ func TestCollectOpenSessions(t *testing.T) {
 
 			result := f.collect(t, retention)
 
-			removed := slices.Contains(result.RemovedSessions, workflow.ID())
-			if removed != tc.wantRemoved {
-				t.Fatalf("session removed should be %v, removed %v", tc.wantRemoved, result.RemovedSessions)
+			if len(result.RemovedSessions) != 0 {
+				t.Fatalf("an open session should stay, removed %v", result.RemovedSessions)
 			}
-			if listed := slices.Contains(f.listedIDs(t), string(workflow.ID())); listed == tc.wantRemoved {
-				t.Fatalf("session log kept should be %v", !tc.wantRemoved)
+			if !slices.Contains(f.listedIDs(t), string(workflow.ID())) {
+				t.Fatal("the open session's log should stay")
 			}
-			if staged := len(f.stagedIDs(t)) == 1; staged == tc.wantRemoved {
-				t.Fatalf("staged attachments kept should be %v", !tc.wantRemoved)
+			if len(f.stagedIDs(t)) != 1 {
+				t.Fatal("the open session's staged attachments should stay")
 			}
 		})
 	}

@@ -150,13 +150,13 @@ func TestUserDialogue_ConcludeCarriesNoDischargeGate(t *testing.T) {
 
 	// The teaching half of leaving threads behind: the agent names what is
 	// open before the offer, since the answer is final.
-	for _, want := range []string{"name each of those threads", "left behind", "keeps the session for its handle to resume", "no move in progress is removed"} {
+	for _, want := range []string{"name each of those threads", "left behind", "stays resumable by its handle"} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the opening serve should teach ending the session; missing %q", want)
 		}
 	}
-	if strings.Contains(serve.Instructions, "a session nobody ended stays resumable") {
-		t.Error("the opening serve should no longer promise that every session nobody ended stays resumable")
+	if strings.Contains(serve.Instructions, "no move in progress is removed") {
+		t.Error("the opening serve should not say an open session is removed")
 	}
 
 	done := session.Answer(t, serve.Instance, "junction", "conclude", nil, "wrap it up")

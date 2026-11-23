@@ -145,9 +145,9 @@ func (f stateFixture) stagedExists(t *testing.T, key string, id sdd.SessionID) b
 }
 
 // Rule 2: an ended session goes once sessions.retention passed since it
-// ended, with its staged attachments, and so does an open session untouched
-// for sessions.retention with no move in progress; an open session with a
-// move in progress and unreadable logs stay.
+// ended, with its staged attachments; open sessions, idle past
+// sessions.retention with or without a move in progress, and unreadable logs
+// stay.
 func TestStateSweepCollectsSessions(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
@@ -163,10 +163,10 @@ func TestStateSweepCollectsSessions(t *testing.T) {
 
 	removed := f.sweep(t)
 
-	if removed.Sessions != 2 || removed.Unreadable != 1 {
-		t.Errorf("the sweep should remove one ended and one idle open session and report one unreadable log, got %+v", removed)
+	if removed.Sessions != 1 || removed.Unreadable != 1 {
+		t.Errorf("the sweep should remove only the ended session past the retention and report one unreadable log, got %+v", removed)
 	}
-	for id, wantKept := range map[sdd.SessionID]bool{"s_old": false, "s_recent": true, "s_open": true, "s_idle": false} {
+	for id, wantKept := range map[sdd.SessionID]bool{"s_old": false, "s_recent": true, "s_open": true, "s_idle": true} {
 		if kept := f.logExists(t, key, id); kept != wantKept {
 			t.Errorf("session %s kept should be %v", id, wantKept)
 		}
@@ -237,7 +237,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 		}
 	}
 	if !f.logExists(t, unusedOpen, "s_open") || !f.stagedExists(t, unusedOpen, "s_open") {
-		t.Error("an open session with a move in progress and its attachments stay however long the project was unused")
+		t.Error("an open session and its attachments stay however long the project was unused")
 	}
 	if !f.logExists(t, retained, "s_recent") || !f.stagedExists(t, retained, "s_recent") {
 		t.Error("an ended session not yet collected keeps its attachments however long the project was unused")

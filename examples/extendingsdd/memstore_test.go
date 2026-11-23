@@ -169,18 +169,18 @@ func TestExternalCollectionThroughExportedAPI(t *testing.T) {
 
 	result := f.collect(t, 24*time.Hour)
 
-	if got, want := result.RemovedSessions, []sdd.SessionID{"ended-old", "idle-open"}; !slices.Equal(got, want) {
+	if got, want := result.RemovedSessions, []sdd.SessionID{"ended-old"}; !slices.Equal(got, want) {
 		t.Fatalf("RemovedSessions = %v, want %v", got, want)
 	}
-	if got, want := f.listedIDs(t), []string{"ended-recent", "still-open"}; !slices.Equal(got, want) {
+	if got, want := f.listedIDs(t), []string{"ended-recent", "idle-open", "still-open"}; !slices.Equal(got, want) {
 		t.Fatalf("listed = %v, want %v", got, want)
 	}
-	if got, want := result.RemovedStaged, []sdd.SessionRef{{Subject: collectSubject, Session: "ended-old"}, {Subject: collectSubject, Session: "idle-open"}}; !slices.Equal(got, want) {
+	if got, want := result.RemovedStaged, []sdd.SessionRef{{Subject: collectSubject, Session: "ended-old"}}; !slices.Equal(got, want) {
 		t.Fatalf("RemovedStaged = %v, want %v", got, want)
 	}
 	for id, blob := range blobs {
 		reader, err := f.blobs.Open(t.Context(), sdd.SessionRef{Subject: collectSubject, Session: id}, blob.ID)
-		if id == "ended-old" || id == "idle-open" {
+		if id == "ended-old" {
 			if err == nil {
 				_ = reader.Close()
 				t.Fatal("collected session's blob remains readable")
@@ -206,7 +206,7 @@ func TestExternalCollectionThroughExportedAPI(t *testing.T) {
 	if len(again.RemovedSessions) != 0 || len(again.RemovedStaged) != 0 {
 		t.Fatalf("second pass removed %v / %v, want nothing", again.RemovedSessions, again.RemovedStaged)
 	}
-	if got, want := f.listedIDs(t), []string{"ended-recent", "still-open"}; !slices.Equal(got, want) {
+	if got, want := f.listedIDs(t), []string{"ended-recent", "idle-open", "still-open"}; !slices.Equal(got, want) {
 		t.Fatalf("listed after second pass = %v, want %v", got, want)
 	}
 }
