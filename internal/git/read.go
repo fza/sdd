@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -68,18 +69,28 @@ func (c CLI) readFileAt(ctx context.Context, rev, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	object := commit + ":" + path
-	kind, err := c.readOutput(ctx, "cat-file", "-t", object)
-	if code := errExitCode(err); code == 128 {
-		return "", model.GitReadRefusal(fmt.Sprintf("revision %s holds no file %s", rev, path))
-	}
+	listing, err := c.readOutput(ctx, "ls-tree", "-l", "-z", commit, "--", path)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(string(kind)) != "blob" {
+	// One record, "<mode> <type> <object> <size>\t<path>"; none when the
+	// revision holds nothing at path.
+	meta, _, found := strings.Cut(strings.TrimSuffix(string(listing), "\x00"), "\t")
+	fields := strings.Fields(meta)
+	if !found || len(fields) != 4 {
+		return "", model.GitReadMissing(fmt.Sprintf("revision %s holds no file %s", rev, path))
+	}
+	if fields[1] != "blob" {
 		return "", model.GitReadRefusal(fmt.Sprintf("%s at revision %s is no file", path, rev))
 	}
-	content, err := c.readOutput(ctx, "cat-file", "blob", object)
+	size, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("reading the size of %s at %s: %w", path, rev, err)
+	}
+	if size > gitReadMaxBytes {
+		return "", model.GitReadRefusal(fmt.Sprintf("%s at revision %s holds %d bytes, more than one read returns (%d)", path, rev, size, gitReadMaxBytes))
+	}
+	content, err := c.readOutput(ctx, "cat-file", "blob", fields[2])
 	if err != nil {
 		return "", err
 	}
@@ -114,8 +125,8 @@ func (c CLI) readLog(ctx context.Context, request model.GitReadRequest) (string,
 // revision the repository holds no commit for.
 func (c CLI) resolveCommit(ctx context.Context, rev string) (string, error) {
 	out, err := c.readOutput(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
-	if code := errExitCode(err); code == 1 || code == 128 {
-		return "", model.GitReadRefusal(fmt.Sprintf("revision %q resolves to no commit", rev))
+	if errExitCode(err) == 1 {
+		return "", model.GitReadMissing(fmt.Sprintf("revision %q resolves to no commit", rev))
 	}
 	if err != nil {
 		return "", err
@@ -133,22 +144,41 @@ func (c CLI) readText(ctx context.Context, args ...string) (string, error) {
 
 // readOutput runs one read-only git command in the repository, detached from
 // any terminal, and returns its standard output; a failure carries git's own
-// error output.
+// error output. Output past gitReadMaxBytes stops the command and refuses the
+// read, so a large answer never sits in memory whole.
 func (c CLI) readOutput(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", c.at(append(slices.Clone(gitReadOptions), args...)...)...)
 	cmd.Env = append(readEnvBase(), gitReadEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w", args[0], err)
+	}
+	err = cmd.Start()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w", args[0], err)
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, gitReadMaxBytes+1))
+	tooLarge := len(out) > gitReadMaxBytes
+	if tooLarge {
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	if tooLarge {
+		return nil, model.GitReadRefusal(fmt.Sprintf("git %s returned more than %d bytes; narrow it with a path or a smaller limit", args[0], gitReadMaxBytes))
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("git %s: timed out after %s", args[0], detachedTimeout)
 	}
-	if err != nil {
-		return nil, &readError{args: args[0], err: err, stderr: strings.TrimSpace(stderr.String())}
+	if waitErr != nil {
+		return nil, &readError{args: args[0], err: waitErr, stderr: strings.TrimSpace(stderr.String())}
 	}
-	if len(out) > gitReadMaxBytes {
-		return nil, model.GitReadRefusal(fmt.Sprintf("git %s returned more than %d bytes; narrow it with a path or a smaller limit", args[0], gitReadMaxBytes))
+	if readErr != nil {
+		return nil, fmt.Errorf("git %s: reading its output: %w", args[0], readErr)
 	}
 	return out, nil
 }
