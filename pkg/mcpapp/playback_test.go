@@ -124,7 +124,8 @@ func TestResumeOmittingAPlaybackLeavesItUnserved(t *testing.T) {
 	env := newPlaybackServer(t)
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
-	for range 7 {
+	// Eight moves fill the resume cap; the capture started after them is past it.
+	for range 8 {
 		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, new(mcpserver.ServeResult))
 	}
 	instance := stagePlaybackCapture(t, cs, session)

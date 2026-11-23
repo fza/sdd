@@ -215,7 +215,7 @@ func TestSyncNoticeIsPlainContent(t *testing.T) {
 }
 
 func TestEveryToolSchemaListsTheSyncNotice(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
+	env := newTestServer(t, nil, "", "", withOutputSchema)
 	cs := connect(t, env.srv)
 	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
 	if err != nil {

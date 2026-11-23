@@ -54,8 +54,12 @@ func stagedOf(t *testing.T, cs *mcp.ClientSession, session string, handles ...st
 	return staged
 }
 
+// stdioClient serves a client sharing the server's filesystem, the only one
+// that may stage by path (stage-path-local-only).
+func stdioClient(o *testServerOptions) { o.MCP.LocalClient = true }
+
 func TestStageAttachmentStagesEveryFileInCallOrder(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
+	env := newTestServer(t, nil, "", "", stdioClient)
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 	path := filepath.Join(t.TempDir(), "from-path.md")
@@ -105,7 +109,7 @@ func TestStageAttachmentRefusesTheWholeCallOnAFailingFile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := newTestServer(t, nil, "", "")
+			env := newTestServer(t, nil, "", "", stdioClient)
 			cs := connect(t, env.srv)
 			session := openSession(t, cs).Session
 			call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "base.md", "content": "base\n"}}}, new(mcpserver.StageAttachmentResult))
@@ -126,7 +130,7 @@ func TestStageAttachmentRefusesTheWholeCallOnAFailingFile(t *testing.T) {
 }
 
 func TestStageAttachmentRefusesAPathOnAServerSharingNoFilesystem(t *testing.T) {
-	env := newTestServer(t, nil, "", "", func(o *testServerOptions) {
+	env := newTestServer(t, nil, "", "", stdioClient, func(o *testServerOptions) {
 		o.Application.ReadLocalFile = nil
 	})
 	cs := connect(t, env.srv)
@@ -177,7 +181,7 @@ func TestStageAttachmentTakesTheOneFileCallShape(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := newTestServer(t, nil, "", "")
+			env := newTestServer(t, nil, "", "", stdioClient)
 			cs := connect(t, env.srv)
 			session := openSession(t, cs).Session
 			call(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "base.md", "content": "alpha beta\n"}}}, new(mcpserver.StageAttachmentResult))

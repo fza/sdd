@@ -223,7 +223,10 @@ func TestBeforeCallRunsForEveryTool(t *testing.T) {
 		var schema struct {
 			Required   []string `json:"required"`
 			Properties map[string]struct {
-				Type json.RawMessage `json:"type"`
+				Type  json.RawMessage `json:"type"`
+				Items struct {
+					Type json.RawMessage `json:"type"`
+				} `json:"items"`
 			} `json:"properties"`
 		}
 		err = json.Unmarshal(encoded, &schema)
@@ -235,9 +238,14 @@ func TestBeforeCallRunsForEveryTool(t *testing.T) {
 			args["session"] = session
 		}
 		for _, name := range schema.Required {
-			if strings.Contains(string(schema.Properties[name].Type), "array") {
+			property := schema.Properties[name]
+			switch {
+			// stage_attachment's files (staged-capture-bodies) are objects.
+			case strings.Contains(string(property.Type), "array") && strings.Contains(string(property.Items.Type), "object"):
+				args[name] = []map[string]any{{"name": "x", "content": "x"}}
+			case strings.Contains(string(property.Type), "array"):
 				args[name] = []string{"x"}
-			} else if name != "session" {
+			case name != "session":
 				args[name] = "x"
 			}
 		}
@@ -250,8 +258,12 @@ func TestBeforeCallRunsForEveryTool(t *testing.T) {
 
 // Every tool declares notices.config, so a notice reaches reads as well as steps.
 // Notices ride on the top-level result only, never on a serve nested in it.
+// withOutputSchema lists each tool's output schema, which serve-token-cost
+// leaves out of the listing by default.
+func withOutputSchema(o *testServerOptions) { o.MCP.OutputSchema = true }
+
 func TestEveryToolDeclaresNotices(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
+	env := newTestServer(t, nil, "", "", withOutputSchema)
 	cs := connect(t, env.srv)
 
 	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})

@@ -1322,7 +1322,7 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 // bytes as read from a path, header, CRLF and byte order mark included, then
 // the patched bytes; the path itself is only read.
 func TestStagedAttachmentHashesRawBytes(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
+	env := newTestServer(t, nil, "", "", stdioClient)
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 	raw := "\uFEFF---\r\nlayer: tactical\r\n---\r\nBody line.\r\n"
