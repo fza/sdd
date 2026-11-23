@@ -8,6 +8,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // StartWIP creates a WIP marker for cmd.EntryID, commits it, and optionally
@@ -35,6 +36,12 @@ func (h *Handler) StartWIP(ctx context.Context, cmd *command.StartWIPCmd) error 
 		if cmd.OnExclusiveCollision != nil {
 			cmd.OnExclusiveCollision(existing)
 		}
+	}
+
+	// The description names the branch too, so it is refused before either.
+	err = secrets.CheckText("WIP description", cmd.Description)
+	if err != nil {
+		return err
 	}
 
 	var branchName string

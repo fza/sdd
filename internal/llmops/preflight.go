@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/mdcompose"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -91,7 +92,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 		return nil, fmt.Errorf("rendering pre-flight prompt: %w", err)
 	}
 
-	result, err := runJSONCheck(ctx, runner, req, preflightExtraction, parsePreflightResult)
+	result, err := runJSONCheck(secrets.WithNewParts(ctx, secrets.EntryParts(entry)...), runner, req, preflightExtraction, parsePreflightResult)
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
 	}

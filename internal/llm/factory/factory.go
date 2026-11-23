@@ -13,6 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm/claude"
 	gollmrunner "github.com/networkteam/sdd/internal/llm/gollm"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -64,7 +65,8 @@ func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 		}
 	}
 
-	return boundedPerPurpose(runner, b, extractTimeout), nil
+	// Every prompt crosses this boundary, whatever produced it.
+	return secrets.GuardRunner(boundedPerPurpose(runner, b, extractTimeout)), nil
 }
 
 // Option adjusts the runner New composes.

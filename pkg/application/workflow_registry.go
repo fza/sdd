@@ -1,12 +1,14 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -420,7 +422,9 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 		}
 	}
 	findings, err := w.app.WritingGuideCheck(w.ctx, w.identity, w.instanceProject(ctx.Instance), w.draftFromStore(ctx.Store))
-	if err != nil {
+	if errors.Is(err, secrets.ErrCredential) {
+		findings = []GuideFinding{{Reasoning: err.Error(), Axis: credentialFinding, Quote: secrets.RefusedPassage(err), Repair: "remove the credential from the draft", Severity: string(query.GuideSubstantive)}}
+	} else if err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}
 	guideFindings := make([]query.GuideFinding, 0, len(findings))

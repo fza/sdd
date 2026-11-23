@@ -13,6 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // Summarize executes a SummarizeCmd: loads the graph, determines which
@@ -117,11 +118,15 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			}
 
 			// LLM call without the graph lock; the injected runner bounds it.
-			output, err := h.llmRunner.Run(ctx, req)
+			output, err := h.llmRunner.Run(secrets.WithNoNewParts(ctx), req)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
 			summary := strings.TrimSpace(output.Text)
+			err = secrets.CheckText("summary", summary)
+			if err != nil {
+				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
+			}
 
 			// Apply summary under write lock, then format and write file
 			// under read lock so FormatFrontmatter sees a consistent entry.
@@ -191,6 +196,10 @@ func (h *Handler) summarizeExplicit(graph *model.Graph, idArg, text string, onSu
 	summary := strings.TrimSpace(text)
 	if summary == "" {
 		return fmt.Errorf("--text value is empty after trimming whitespace")
+	}
+	err = secrets.CheckText("summary", summary)
+	if err != nil {
+		return err
 	}
 
 	entry.Summary = summary

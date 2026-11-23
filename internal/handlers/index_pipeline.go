@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"iter"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/textsplitter"
 	"github.com/networkteam/sdd/pkg/application/types"
 	"github.com/networkteam/sdd/pkg/llm/embed"
@@ -53,9 +56,18 @@ func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.At
 	prepared := &model.IndexWork{Version: input.version}
 	for _, chunk := range chunks {
 		canonical := chunking.CanonicalChunk(input.entry.ID, hash, chunk)
-		if skip == nil || !skip(canonical) {
-			prepared.Rows = append(prepared.Rows, types.IndexedChunk{Chunk: canonical})
+		if skip != nil && skip(canonical) {
+			continue
 		}
+		indexable, reason, err := secrets.IndexableChunk(canonical.Text)
+		if err != nil {
+			return nil, err
+		}
+		if !indexable {
+			slogutils.FromContext(ctx).Warn("kept a chunk out of the vector index", "entry", input.entry.ID, "reason", reason)
+			continue
+		}
+		prepared.Rows = append(prepared.Rows, types.IndexedChunk{Chunk: canonical})
 	}
 	return prepared, nil
 }

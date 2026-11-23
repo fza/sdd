@@ -82,6 +82,14 @@ Show the user the proposed version, the reasoning, and the full draft. **Wait fo
 
 ### 5. Ship, in one command
 
+Before tagging, refresh the built-in credential-scan rules from gitleaks' latest release tag:
+
+```bash
+devbox run refresh-secret-rules
+```
+
+When `internal/secrets/gitleaks.toml` or `internal/secrets/gitleaks.source.json` changed, commit both (`chore(secrets): refresh built-in gitleaks rules`) and ask the user to push before going on, since `--target main` tags GitHub's `main`.
+
 ```bash
 gh release create vX.Y.Z --title vX.Y.Z --notes-file .sdd/tmp/vX.Y.Z-notes.md --target main
 ```

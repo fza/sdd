@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
@@ -392,6 +394,14 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 		Terms:    request.Terms, Phrase: request.Phrase, Filter: filter,
 		IncludeSuperseded: request.IncludeSuperseded, Limit: request.Limit, MaxCitationsPerEntry: request.MaxCitations,
 	}
+	literal, credentialNotice, err := secrets.SearchPhrase(q.Phrase)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	if literal {
+		q.Terms = append(append([]string(nil), q.Terms...), regexp.QuoteMeta(q.Phrase))
+		q.Phrase = ""
+	}
 	members := []*searchTargetMember{{runtime: runtime, selected: selected}}
 	target := SearchTarget{state: &searchTargetState{members: members, mode: request.SyncMode}}
 	defer target.state.closed.Store(true)
@@ -422,6 +432,9 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	}
 	hits := searchResult.Hits(snapshot.graph)
 	search := SearchResult{Project: runtime.options.Project, Hits: hits, Coverage: coverage}
+	if credentialNotice != "" {
+		search.Notices = append(search.Notices, credentialNotice)
+	}
 	for _, member := range coverage {
 		if !member.Complete {
 			search.Notices = append(search.Notices, "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later.")
