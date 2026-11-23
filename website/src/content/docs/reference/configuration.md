@@ -20,7 +20,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | Keys | Belong in | Notes |
 | --- | --- | --- |
 | `participant`, `llm.*`, `embedding.*`, `sync.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
-| `sessions.retention` | User-global | sdd currently ignores it in the project files. |
+| `sessions.retention` | User-global | One daily pass collects the sessions of every project on the machine. sdd ignores it in the project files with a warning, and `sdd config set --local` refuses it. |
 | `dialogue.mode` | User-global or local | Set per person. sdd ignores it in the project file. |
 | `llm_prefilter.*` | User-global | Any file works, as for `llm.*`. |
 | `verify.*` | Project or user-global | Each key names its files under [verify](#verify). The local file may only tighten `verify.mode`, `verify.kinds` and `verify.skip`, and wins for the keys that describe the machine. |
@@ -394,7 +394,7 @@ Every write adds a file `<time>-<random>.jsonl` and never changes one, so files 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `sync.cooldown` | `15m` | Every sdd command except `sdd init` runs `git fetch` in the background at most once per this interval, and reports when your branch is behind or ahead of its upstream. An invalid value counts as `15m`. |
-| `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
+| `sessions.retention` | `14d` | The daily `sdd cache prune` deletes the logs and staged attachments of sessions, in every project, that ended longer ago than this. Open sessions and logs sdd cannot read stay. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value fails the prune run. |
 
 ### Cache
 
@@ -402,7 +402,7 @@ Both keys accept days, such as `90d`, or a duration, such as `2160h`. `sdd confi
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot or an embedding calibration nothing used for longer than this. Also how long a checkout's record keeps the index versions it reads. |
+| `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot or an embedding calibration nothing used for longer than this, and the session folder and staged attachments of a project unused that long. Also how long a checkout's record keeps the index versions it reads. |
 | `index.replaced_retention` | `14d` | `sdd cache prune` deletes an index version replaced longer ago than this, versions of an older index format unused that long, and the index store of an embedding setup another one replaced. |
 
 ### Connected repositories
@@ -646,17 +646,20 @@ Each embedding endpoint accepts a limited input, in tokens. On its first fill, s
 
 #### Cleanup
 
-`sdd cache prune` deletes what nothing needs and reports the bytes freed:
+sdd runs `sdd cache prune` in the background at most once a day. Any command except `sdd cache` starts it as its own process when the last run started or was launched a day ago or more, and a running `sdd serve` checks every hour. The command never waits for it, and the run prints nothing; its output goes to `~/.local/state/sdd/cache-prune.log`, replaced per run. A failed background run is reported once: as a warning by the next command, or in `notices.cache` on the next MCP tool result. `sdd cache prune` deletes what nothing needs and reports the bytes freed:
 
+- after `sessions.retention`: ended sessions of every project, with their staged attachments, in the state folder and in the `.sdd/sessions` of every checkout sdd opened the project from
 - after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
 - after `cache.retention`: unused index stores, graph snapshots and calibrations
+- after `cache.retention`: the session folder of a project no session-store write and no `sdd serve` start used, once no session log is left in it, and its staged attachments once no session on the machine owns them, a session open in a checkout the project was opened from included. They stay while no checkout of the project is on record, or a recorded one has been missing for less than `cache.retention` since a run first found it missing, as on an unmounted volume. A checkout missing longer, as a removed worktree, drops out of the record.
 - at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped under the same config file that `repos` no longer names
 - a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
 - a dropped clone holding another clone, or the path of a repository `repos` names, stays, with a warning
 - with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
+- with `XDG_STATE_HOME` set while `XDG_CACHE_HOME` or `XDG_DATA_HOME` is not, or the reverse, a run sweeps no session or project state and fails; `XDG_CONFIG_HOME` plays no part
 - leftovers of killed processes older than a day
 
-It never deletes a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
+It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
 
 `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version no search of this checkout reads.
 
@@ -757,7 +760,7 @@ jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
 | --- | --- | --- |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations, graph snapshots and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs, the hook allow record, the relevance ledger, the logs of verifier rounds and the record of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs, project use stamps, the hook allow record, the relevance ledger, the logs of verifier rounds and the record and log of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. A cache dir sdd cannot write costs one warning and no failure. `off` reads every entry file, for sandboxes and read-only homes. |
 | `SDD_TIMING` | Off | Any true value prints one line on stderr per ended phase of a command, `timing: <phase> <duration>ms at <offset>ms`. Same as `--timing`. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |

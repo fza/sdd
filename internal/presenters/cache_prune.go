@@ -23,10 +23,15 @@ func CachePruneLine(s model.CachePruneStatus) string {
 		s.FinishedAt.Format(time.RFC3339), CachePruneRemoved(s.Removed), HumanBytes(s.Removed.Bytes))
 }
 
-// CachePruneRemoved names what a run removed.
+// CachePruneRemoved names what a run removed, and the unreadable session logs
+// it kept.
 func CachePruneRemoved(c model.CachePruneCounts) string {
-	return fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers",
-		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers)
+	text := fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers, %d sessions, %d unused projects",
+		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers, c.Sessions, c.Projects)
+	if c.Unreadable > 0 {
+		text += fmt.Sprintf("; kept %d unreadable session logs", c.Unreadable)
+	}
+	return text
 }
 
 // RenderCachePruneStatus writes CachePruneLine when there is a run to name.

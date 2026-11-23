@@ -11,6 +11,9 @@ const (
 	// an unused index store, snapshot or calibration after its last use, and
 	// a newer derivation rule's versions after that rule's last use.
 	DefaultCacheRetention = "90d"
+	// CachePruneInterval is the least time between two background pruning
+	// runs on one machine.
+	CachePruneInterval = 24 * time.Hour
 	// CachePruneRunLimit bounds one pruning run, so a hung run cannot hold
 	// the machine's run lock for good; what it did not reach waits for the
 	// next run.
@@ -72,12 +75,46 @@ func ResolveReplacedRetention(cfg IndexConfig) (time.Duration, error) {
 
 // CachePruneStatus is the record of the latest cache pruning run.
 type CachePruneStatus struct {
+	// LaunchedAt is when a command last started a background run; StartedAt
+	// when a run last began work. Either keeps the next launch a day away.
+	LaunchedAt time.Time
 	StartedAt  time.Time
 	FinishedAt time.Time
 	Removed    CachePruneCounts
 	// Error is the failure of the latest finished run, empty when it
 	// succeeded.
 	Error string
+	// Reported marks a failure some command has already shown.
+	Reported bool
+}
+
+// cachePruneClockSlack is how far ahead of now a recorded time may lie and
+// still count as recent. Further ahead, the clock was set back, and runs do
+// not wait until it passes that time.
+const cachePruneClockSlack = time.Minute
+
+// Due reports whether a background run should start at now.
+func (s CachePruneStatus) Due(now time.Time) bool {
+	return !recentRun(s.LaunchedAt, now) && !s.StartedRecently(now)
+}
+
+// StartedRecently reports whether a run started less than
+// CachePruneInterval before now.
+func (s CachePruneStatus) StartedRecently(now time.Time) bool {
+	return recentRun(s.StartedAt, now)
+}
+
+func recentRun(t, now time.Time) bool {
+	return !t.After(now.Add(cachePruneClockSlack)) && now.Sub(t) < CachePruneInterval
+}
+
+// FailureNotice is the one line a command shows for a failed run nobody was
+// told about yet, empty otherwise.
+func (s CachePruneStatus) FailureNotice() string {
+	if s.Error == "" || s.Reported {
+		return ""
+	}
+	return fmt.Sprintf("background cache pruning failed at %s: %s; see sdd info", s.FinishedAt.Format(time.RFC3339), s.Error)
 }
 
 // CachePruneCounts tallies what one run deleted.
@@ -91,5 +128,26 @@ type CachePruneCounts struct {
 	// Leftovers are what killed writers left: index staging dirs, orphan
 	// rows and retired stores.
 	Leftovers int
-	Bytes     int64
+	// Sessions are ended sessions removed with their staged attachments.
+	Sessions int
+	// Projects are unused projects whose session folder or staged
+	// attachments went.
+	Projects int
+	// Unreadable counts session logs kept because they could not be read.
+	Unreadable int
+	Bytes      int64
+}
+
+// Add adds what another part of a run removed.
+func (c *CachePruneCounts) Add(o CachePruneCounts) {
+	c.Versions += o.Versions
+	c.Stores += o.Stores
+	c.Snapshots += o.Snapshots
+	c.Clones += o.Clones
+	c.Records += o.Records
+	c.Leftovers += o.Leftovers
+	c.Sessions += o.Sessions
+	c.Projects += o.Projects
+	c.Unreadable += o.Unreadable
+	c.Bytes += o.Bytes
 }

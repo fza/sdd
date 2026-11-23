@@ -18,7 +18,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
@@ -34,7 +33,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-func serveCmd() *cli.Command {
+func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
 		Usage: "Run the workflow MCP server: dialogue-loop tools over stdio or HTTP",
@@ -75,15 +74,15 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := loadConfig()
-			if err != nil {
-				return err
+			var beforeCall func(context.Context, string) (context.Context, mcpserver.Notices, error)
+			if launchCachePrune != nil {
+				timerCtx, stopTimer := context.WithCancel(ctx)
+				defer stopTimer()
+				go runCachePruneTimer(timerCtx, launchCachePrune)
+				beforeCall = func(ctx context.Context, _ string) (context.Context, mcpserver.Notices, error) {
+					return ctx, mcpserver.Notices{Cache: serveCacheNotice(ctx)}, nil
+				}
 			}
-			retention, err := model.ResolveSessionRetention(cfg)
-			if err != nil {
-				return err
-			}
-			collectSessions(ctx, application, retention)
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
@@ -93,6 +92,7 @@ func serveCmd() *cli.Command {
 				Version:         cmd.Root().Version,
 				OutputSchema:    cmd.Bool("output-schema"),
 				MCPOutputTokens: cmd.Int("mcp-output-tokens"),
+				BeforeCall:      beforeCall,
 			})
 			if err != nil {
 				return err
@@ -393,8 +393,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
+	storeLocations, err := resolveSessionLocations(ctx, sddDir, cfg, locations)
 	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	// A server that writes no session for a while still uses its project.
+	if err := localadapter.MarkProjectUsed(locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot), time.Now()); err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	project := sessionStoreProject(cfg)
@@ -527,43 +531,6 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	return application, project, identity, nil
-}
-
-// collectSessions runs one reclamation pass at startup. This is the trigger
-// rather than a command because the store is being opened anyway and collection
-// involves no procedure and no served instruction, so it stays host-neutral by
-// construction.
-//
-// CollectSessions itself returns its error, so a composition calling it on a
-// schedule can act on one. This adapter cannot: over stdio a server that exits
-// leaves the agent with a dead pipe and no way to act, which is worse than the
-// unreclaimed disk it would be reporting. So startup logs and serves.
-func collectSessions(ctx context.Context, application *sdd.Application, retention time.Duration) {
-	const pageSize = 200
-	log := slogutils.FromContext(ctx)
-	cmd := sdd.CollectSessionsCmd{Retention: retention, Limit: pageSize}
-	var total sdd.CollectSessionsResult
-	for {
-		result, err := application.CollectSessions(ctx, cmd)
-		if err != nil {
-			log.Warn("session collection did not complete", "err", err, "after", cmd.After)
-			return
-		}
-		total.RemovedSessions = append(total.RemovedSessions, result.RemovedSessions...)
-		total.RemovedStaged = append(total.RemovedStaged, result.RemovedStaged...)
-		total.Skipped = append(total.Skipped, result.Skipped...)
-		if result.Next == "" {
-			break
-		}
-		cmd.After = result.Next
-	}
-	if len(total.RemovedSessions) > 0 || len(total.RemovedStaged) > 0 {
-		log.Info("collected session scaffolding",
-			"sessions", len(total.RemovedSessions),
-			"staged_sessions", len(total.RemovedStaged),
-			"skipped", len(total.Skipped),
-		)
-	}
 }
 
 func optionalSearchIndex(embeddings embed.Embedder, index sdd.SearchIndexStore) sdd.SearchIndexStore {

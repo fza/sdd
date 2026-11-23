@@ -130,7 +130,7 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		Keep: keep,
+		State: &recordingStateSweep{}, Keep: keep,
 	})
 }
 
@@ -327,26 +327,86 @@ func TestCacheHandlerPruneLeavesARunningPassAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = held.Unlock() }()
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Errorf("a scheduled run while another runs should leave quietly, got %v", err)
+	}
 	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); !errors.Is(err, handlers.ErrCachePruneRunning) {
 		t.Errorf("a run by hand while another runs should be refused, got %v", err)
 	}
 	if !exists(t, f.staleClone) {
 		t.Error("a second run while one holds the run lock should do nothing")
 	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.StartedAt.IsZero() {
+		t.Errorf("a run refused the run lock should record no start, got %+v", status)
+	}
+}
+
+func TestCacheHandlerPruneRunsOncePerDayWhenScheduled(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := cacheprune.Update(t.Context(), f.loc.StateRoot, func(s *model.CachePruneStatus) { s.StartedAt = time.Now().Add(-time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, f.staleClone) {
+		t.Error("a scheduled run within a day of the last should do nothing")
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, f.staleClone) {
+		t.Error("a run by hand should prune regardless of the last run")
+	}
+}
+
+// A start stamp further ahead than clock jitter means the clock was set back:
+// it should not hold the scheduled run off until the clock passes it.
+func TestCacheHandlerPruneRunsWhenScheduledAfterTheClockWentBack(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := cacheprune.Update(t.Context(), f.loc.StateRoot, func(s *model.CachePruneStatus) { s.StartedAt = time.Now().Add(12 * time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, f.staleClone) {
+		t.Error("a scheduled run should prune when the last start lies ahead of the clock")
+	}
 }
 
 func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
-	f := newPruneFixture(t, "cache:\n  retention: soon\n")
-	err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{})
-	if err == nil {
-		t.Fatal("a run on an invalid retention should fail")
-	}
-	status, loadErr := cacheprune.Load(f.loc.StateRoot)
-	if loadErr != nil {
-		t.Fatal(loadErr)
-	}
-	if status.Error == "" || !strings.Contains(status.Error, "cache.retention") {
-		t.Errorf("the failure should be recorded for sdd info, got %+v", status)
+	for _, tc := range []struct {
+		name         string
+		scheduled    bool
+		wantReported bool
+	}{
+		{name: "by hand", wantReported: true},
+		{name: "scheduled", scheduled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPruneFixture(t, "cache:\n  retention: soon\n")
+			err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: tc.scheduled})
+			if err == nil {
+				t.Fatal("a run on an invalid retention should fail")
+			}
+			status, loadErr := cacheprune.Load(f.loc.StateRoot)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if status.Error == "" || !strings.Contains(status.Error, "cache.retention") {
+				t.Errorf("the failure should be recorded for sdd info, got %+v", status)
+			}
+			// A run by hand showed its failure as the command's error; a
+			// scheduled one leaves it for the next command to report.
+			if status.Reported != tc.wantReported {
+				t.Errorf("the failure should be marked reported: %v", tc.wantReported)
+			}
+		})
 	}
 }
 
@@ -413,7 +473,7 @@ func TestCacheHandlerPruneKeepsAClonesNoRepoRemoveDropped(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
 		t.Fatalf("pruning: %v", err)
 	}
@@ -434,7 +494,7 @@ func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
 	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
 	if !errors.Is(err, repos.ErrClonePassRefused) {
 		t.Errorf("the run should fail with the refused clone pass, got %v", err)
@@ -469,11 +529,37 @@ func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
 	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("git.example.com/foo"); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
 		t.Fatalf("a clone kept for the clone it holds should not fail the run: %v", err)
 	}
 	if !exists(t, filepath.Join(inner, ".git")) || !exists(t, filepath.Join(outer, ".git")) {
 		t.Error("a dropped clone holding a connected one should stay, and the connected one with it")
+	}
+}
+
+// A run failing before its pass, here on a run lock it cannot open, records
+// the failure, so a scheduled one is reported by the next command.
+func TestCacheHandlerPruneRecordsAFailureBeforeItsPass(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := os.MkdirAll(f.loc.StateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(f.loc.StateRoot, cacheprune.RunLockFile)
+	if err := os.WriteFile(lock, nil, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err == nil {
+		t.Fatal("a run that cannot open its run lock should fail")
+	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.FailureNotice() == "" {
+		t.Errorf("the failure should be recorded for the next command to report, got %+v", status)
+	}
+	if !exists(t, f.staleClone) {
+		t.Error("a run failing before its pass should remove nothing")
 	}
 }

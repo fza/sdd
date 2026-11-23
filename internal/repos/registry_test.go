@@ -228,6 +228,38 @@ func TestDefaultLocationsNameMixedXDGRoots(t *testing.T) {
 	}
 }
 
+// The state root counts as mixed only against the cache and data homes: a
+// tool redirecting those may leave state on the real home. XDG_CONFIG_HOME
+// plays no part.
+func TestDefaultLocationsNameMixedStateXDGRoots(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		config, cache, data, state string
+		wantMixed                  bool
+	}{
+		{name: "none set"},
+		{name: "config alone set", config: "/tmp/xdg-config"},
+		{name: "all but config set", cache: "/tmp/xdg-cache", data: "/tmp/xdg-data", state: "/tmp/xdg-state"},
+		{name: "cache and data set, state not", config: "/tmp/xdg-config", cache: "/tmp/xdg-cache", data: "/tmp/xdg-data", wantMixed: true},
+		{name: "data set, state not", data: "/tmp/xdg-data", wantMixed: true},
+		{name: "state set, cache and data not", state: "/tmp/xdg-state", wantMixed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", tc.config)
+			t.Setenv("XDG_CACHE_HOME", tc.cache)
+			t.Setenv("XDG_DATA_HOME", tc.data)
+			t.Setenv("XDG_STATE_HOME", tc.state)
+			loc, err := repos.DefaultLocations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mixed := loc.MixedStateXDG != ""; mixed != tc.wantMixed {
+				t.Errorf("the state root should read as mixed: %v, got %q", tc.wantMixed, loc.MixedStateXDG)
+			}
+		})
+	}
+}
+
 func TestRetireUnconnectedClone(t *testing.T) {
 	root := t.TempDir()
 	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}

@@ -1,8 +1,11 @@
 package cliapp
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"time"
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/index"
@@ -21,8 +24,10 @@ func sessionStoreProject(cfg *model.PerRepoConfig) sdd.ProjectID {
 
 // resolveSessionLocations names every store location sessions may be found in,
 // most current first. Nothing is moved between them: a session is read from and
-// appended to wherever it already lies.
+// appended to wherever it already lies. It records the checkout under each
+// state key, so the sweep reads the in-tree sessions there.
 func resolveSessionLocations(
+	ctx context.Context,
 	sddDir string,
 	cfg *model.PerRepoConfig,
 	locations repos.Locations,
@@ -36,6 +41,11 @@ func resolveSessionLocations(
 	stableRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
 	if err != nil {
 		return nil, err
+	}
+	for _, key := range slices.Compact([]string{index.RepoKey(repoID, stableRoot), index.RepoKey("", stableRoot)}) {
+		if err := localadapter.RecordCheckout(ctx, locations.StateRoot, key, filepath.Dir(sddDir), time.Now()); err != nil {
+			return nil, err
+		}
 	}
 	return localadapter.SessionLocations(locations.StateRoot, sddDir, repoID, stableRoot)
 }

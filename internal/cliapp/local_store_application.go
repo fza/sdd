@@ -35,7 +35,7 @@ func buildLocalStoreApplication(ctx context.Context, cmd *cli.Command) (*sdd.App
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
+	storeLocations, err := resolveSessionLocations(ctx, sddDir, cfg, locations)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

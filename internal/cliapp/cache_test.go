@@ -1,16 +1,90 @@
 package cliapp_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/networkteam/sdd/internal/cacheprune"
+	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
+
+// runWithPrune runs one command with a recording launcher in place of the
+// detached process.
+func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...string) appResult {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{
+		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
+		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
+	})
+	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
+	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+}
+
+func TestCommandsLaunchTheDailyCachePruneOnce(t *testing.T) {
+	f := newAppFixture(t)
+	var launched []string
+	for range 3 {
+		if r := f.runWithPrune(t, &launched, "show", appEntryID); r.err != nil {
+			t.Fatalf("show: %v\n%s", r.err, r.stderr)
+		}
+	}
+	if len(launched) != 1 || launched[0] != f.root {
+		t.Errorf("three commands should launch one pass from the working directory, launched %v", launched)
+	}
+	if r := f.run(t, "show", appEntryID); r.err != nil {
+		t.Fatalf("show: %v\n%s", r.err, r.stderr)
+	}
+	status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LaunchedAt.IsZero() {
+		t.Error("the launch should be on record, so the next command starts none")
+	}
+}
+
+func TestCachePruneLaunchesNoSecondPass(t *testing.T) {
+	f := newAppFixture(t)
+	var launched []string
+	if r := f.runWithPrune(t, &launched, "cache", "prune"); r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+	if len(launched) != 0 {
+		t.Errorf("sdd cache prune is the pass itself and should launch none, launched %v", launched)
+	}
+	if r := f.runWithPrune(t, &launched, "show", appEntryID); r.err != nil {
+		t.Fatalf("show: %v\n%s", r.err, r.stderr)
+	}
+	if len(launched) != 0 {
+		t.Errorf("a pass run by hand counts as the day's pass, launched %v", launched)
+	}
+}
+
+func TestScheduledCachePrunePrintsNothing(t *testing.T) {
+	f := newAppFixture(t)
+	r := f.run(t, "cache", "prune", "--scheduled")
+	if r.err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	}
+	if r.stdout != "" {
+		t.Errorf("a background pass should print nothing, stdout:\n%s", r.stdout)
+	}
+	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: last run") {
+		t.Errorf("the background pass should still be on record, stdout:\n%s", info.stdout)
+	}
+}
 
 func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
 	f := newAppFixture(t)
@@ -18,25 +92,35 @@ func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
 	if r := f.run(t, "cache", "prune"); r.err == nil || !strings.Contains(r.err.Error(), "cache.retention") {
 		t.Fatalf("a run on an invalid retention should fail with its cause, got %v", r.err)
 	}
-	if next := f.run(t, "show", appEntryID); strings.Contains(next.stderr, "cache pruning") {
+	var launched []string
+	if next := f.runWithPrune(t, &launched, "show", appEntryID); strings.Contains(next.stderr, "cache pruning") {
 		t.Errorf("a later command should not repeat the run's failure, stderr:\n%s", next.stderr)
 	}
 }
 
-func TestInfoShowsAFailedCachePrune(t *testing.T) {
+func TestCommandsReportAFailedCachePruneOnce(t *testing.T) {
 	f := newAppFixture(t)
 	stateRoot := filepath.Join(f.root, "state", "sdd")
 	err := cacheprune.Update(t.Context(), stateRoot, func(s *model.CachePruneStatus) {
-		s.StartedAt, s.FinishedAt, s.Error = time.Now(), time.Now(), "removing clone: permission denied"
+		s.LaunchedAt, s.FinishedAt, s.Error = time.Now(), time.Now(), "removing clone: permission denied"
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next := f.run(t, "show", appEntryID); next.err != nil || strings.Contains(next.stderr, "permission denied") {
-		t.Errorf("a recorded failure should neither fail nor reach another command, got %v, stderr:\n%s", next.err, next.stderr)
+	var launched []string
+	first := f.runWithPrune(t, &launched, "show", appEntryID)
+	second := f.runWithPrune(t, &launched, "show", appEntryID)
+	if first.err != nil || second.err != nil {
+		t.Fatalf("a failed pass must not fail the command: %v, %v", first.err, second.err)
+	}
+	if !strings.Contains(first.stderr, "permission denied") {
+		t.Errorf("the first command should report the failed pass, stderr:\n%s", first.stderr)
+	}
+	if strings.Contains(second.stderr, "permission denied") {
+		t.Errorf("the failure should be reported once, second stderr:\n%s", second.stderr)
 	}
 	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: failed") || !strings.Contains(info.stdout, "permission denied") {
-		t.Errorf("sdd info should show the failed run, stdout:\n%s", info.stdout)
+		t.Errorf("sdd info should keep showing the failed pass, stdout:\n%s", info.stdout)
 	}
 }
 
@@ -100,5 +184,108 @@ func TestConfigSetIndexReplacedRetention(t *testing.T) {
 	}
 	if r := f.run(t, "config", "set", "--local", "index.replaced_retention", "7d"); r.err == nil || !strings.Contains(r.err.Error(), "not a valid per-repo config key") {
 		t.Error("a per-repo retention should be refused: the index is machine-global")
+	}
+}
+
+// Session collection runs in the daily sweep, also with no server running,
+// and no longer when sdd serve starts.
+func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
+	f := newAppFixture(t)
+	location := localadapter.StoreLocation{
+		Name:        "test",
+		Sessions:    filepath.Join(f.root, "state", "sdd", "sessions", "example.test", "cli"),
+		StagedBlobs: filepath.Join(f.root, "state", "sdd", "staged-blobs", "example.test", "cli"),
+		Subject:     "local",
+		Project:     "example.test/cli",
+	}
+	sessions, err := localadapter.NewFilesystemSessionStore(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := time.Now().UTC().Add(-30 * 24 * time.Hour).Round(0)
+	metadata := sdd.SessionMetadata{ID: "s_ended", Subject: "local", Project: "example.test/cli", Participant: "Local Author", UpdatedAt: ended}
+	created, err := sessions.Create(t.Context(), metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
+	payload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), "s_ended", created.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(location.Sessions, "s_ended.jsonl")
+
+	f.serve(t, func(*mcp.ClientSession) {})
+	if _, err := os.Stat(log); err != nil {
+		t.Fatalf("sdd serve should no longer collect sessions when it starts: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp")); err != nil {
+		t.Errorf("a served project should be stamped as used, so the sweep keeps its state: %v", err)
+	}
+	r := f.run(t, "cache", "prune")
+	if r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Errorf("the sweep should remove a session ended past sessions.retention, stat says %v", err)
+	}
+	if !strings.Contains(r.stdout, "1 sessions") {
+		t.Errorf("the run should count the session, stdout:\n%s", r.stdout)
+	}
+}
+
+// Opening a project records its checkout, so retiring the unused project keeps
+// the staged attachments of a session still open in that checkout's
+// .sdd/sessions.
+func TestTheSweepKeepsTheStagedAttachmentsOfAnOpenInRepoSession(t *testing.T) {
+	f := newAppFixture(t)
+	inRepo, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(f.root, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := sdd.SessionMetadata{ID: "s_inrepo", Subject: "local", Project: "local", Participant: "Local Author", UpdatedAt: time.Now().UTC().Round(0)}
+	if _, err := inRepo.Create(t.Context(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(f.root, "state", "sdd", "staged-blobs", "example.test", "cli")
+	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: "s_inrepo"}, "evidence.md", strings.NewReader("evidence")); err != nil {
+		t.Fatal(err)
+	}
+
+	f.serve(t, func(*mcp.ClientSession) {})
+	unused := time.Now().Add(-200 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp"), unused, unused); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.run(t, "cache", "prune"); r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(staged, "local", "s_inrepo")); err != nil {
+		t.Errorf("the staged attachments of a session open in the checkout should stay: %v", err)
+	}
+}
+
+// A background run that fails before its pass, here on a config it cannot
+// read, records the failure, so the next command reports it.
+func TestAScheduledCachePruneRecordsAFailureBeforeItsPass(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "graph_dir: [\n")
+	if r := f.run(t, "cache", "prune", "--scheduled"); r.err == nil {
+		t.Fatal("a background run on a broken config should fail")
+	}
+	status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.FailureNotice() == "" {
+		t.Fatalf("the failure should be recorded for the next command to report, got %+v", status)
 	}
 }

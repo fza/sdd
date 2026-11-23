@@ -1,0 +1,861 @@
+package local
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/networkteam/slogutils"
+
+	app "github.com/networkteam/sdd/pkg/application"
+)
+
+// The state root keeps per-project state under one repository key
+// (index.RepoKey) per category; StateSweep tends it.
+const (
+	sessionsCategory    = "sessions"
+	stagedBlobsCategory = "staged-blobs"
+	usedCategory        = "used"
+	usedStampSuffix     = ".stamp"
+	checkoutsCategory   = "checkouts"
+	checkoutsSuffix     = ".list"
+	// projectUseRefresh is how stale a project's use stamp may grow before a
+	// use rewrites it.
+	projectUseRefresh = 24 * time.Hour
+	collectPageSize   = 200
+)
+
+// MarkProjectUsed stamps the project keyed repoKey (index.RepoKey) as used at
+// now, rewriting the stamp at most once a day.
+func MarkProjectUsed(stateRoot, repoKey string, now time.Time) error {
+	path, err := projectStampPath(stateRoot, repoKey)
+	if err != nil {
+		return err
+	}
+	return markUsed(path, now)
+}
+
+// markUsed refreshes the use stamp at path; an empty path stamps nothing.
+func markUsed(path string, now time.Time) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		if now.Sub(info.ModTime()) < projectUseRefresh {
+			return nil
+		}
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("creating project use stamps: %w", err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			return fmt.Errorf("creating project use stamp: %w", err)
+		}
+	default:
+		return fmt.Errorf("reading project use stamp: %w", err)
+	}
+	if err := os.Chtimes(path, now, now); err != nil {
+		return fmt.Errorf("refreshing project use stamp: %w", err)
+	}
+	return nil
+}
+
+func projectStampPath(stateRoot, repoKey string) (string, error) {
+	dir, err := confinedStatePath(stateRoot, usedCategory, repoKey)
+	if err != nil {
+		return "", err
+	}
+	return dir + usedStampSuffix, nil
+}
+
+// RecordCheckout notes checkout as a working tree the project keyed repoKey
+// is opened from, seen at now, so the sweep reads the sessions earlier
+// versions logged into its .sdd/sessions. A checkout seen within a day is
+// left as recorded. The malformed lines of the record are dropped, and a
+// record it cannot read at all is started afresh, each with a warning, so a
+// corrupt record never keeps a project from opening; the sweep fails on one.
+func RecordCheckout(ctx context.Context, stateRoot, repoKey, checkout string, now time.Time) error {
+	path, err := checkoutsPath(stateRoot, repoKey)
+	if err != nil {
+		return err
+	}
+	return updateCheckoutRecord(ctx, stateRoot, path, true, func(record *checkoutRecord) {
+		record.see(checkout, now)
+	})
+}
+
+func checkoutsPath(stateRoot, repoKey string) (string, error) {
+	dir, err := confinedStatePath(stateRoot, checkoutsCategory, repoKey)
+	if err != nil {
+		return "", err
+	}
+	return dir + checkoutsSuffix, nil
+}
+
+// checkoutRecord lists a project's checkouts with when each was last seen on
+// disk and, once a sweep found it missing, since when: one
+// "<path>\t<RFC 3339 time>[\t<RFC 3339 time>]" line each.
+type checkoutRecord struct {
+	exists   bool
+	entries  []checkoutEntry
+	modified bool
+}
+
+type checkoutEntry struct {
+	path    string
+	seen    time.Time
+	missing time.Time
+}
+
+// see records checkout as seen at now, at most once a day, and no longer
+// missing.
+func (r *checkoutRecord) see(checkout string, now time.Time) {
+	for i := range r.entries {
+		entry := &r.entries[i]
+		if entry.path != checkout {
+			continue
+		}
+		if now.Sub(entry.seen) >= projectUseRefresh || !entry.missing.IsZero() {
+			entry.seen, entry.missing, r.modified = now, time.Time{}, true
+		}
+		return
+	}
+	r.entries, r.modified = append(r.entries, checkoutEntry{path: checkout, seen: now}), true
+}
+
+func (r checkoutRecord) paths() []string {
+	paths := make([]string, len(r.entries))
+	for i, entry := range r.entries {
+		paths[i] = entry.path
+	}
+	return paths
+}
+
+// loadCheckoutRecord reads the record at path; a missing one lists nothing,
+// a malformed line fails it.
+func loadCheckoutRecord(path string) (checkoutRecord, error) {
+	record, malformed, err := readCheckoutRecord(path)
+	if err != nil {
+		return checkoutRecord{}, err
+	}
+	if len(malformed) > 0 {
+		return checkoutRecord{}, fmt.Errorf("reading checkout record %s: malformed line %q", path, malformed[0])
+	}
+	return record, nil
+}
+
+// readCheckoutRecord reads the record at path, returning the lines it cannot
+// parse apart from the rest; the error is the read's alone.
+func readCheckoutRecord(path string) (record checkoutRecord, malformed []string, err error) {
+	content, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return checkoutRecord{}, nil, nil
+	}
+	if err != nil {
+		return checkoutRecord{}, nil, fmt.Errorf("reading checkout record %s: %w", path, err)
+	}
+	record = checkoutRecord{exists: true}
+	for line := range strings.Lines(string(content)) {
+		line = strings.TrimSuffix(line, "\n")
+		entry, ok := parseCheckoutLine(line)
+		if !ok {
+			malformed = append(malformed, line)
+			continue
+		}
+		if !slices.Contains(record.paths(), entry.path) {
+			record.entries = append(record.entries, entry)
+		}
+	}
+	return record, malformed, nil
+}
+
+// parseCheckoutLine reads one record line, its times split off from the end
+// so a path may hold a tab.
+func parseCheckoutLine(line string) (checkoutEntry, bool) {
+	rest, last, ok := cutLastTime(line)
+	if !ok {
+		return checkoutEntry{}, false
+	}
+	if path, seen, ok := cutLastTime(rest); ok {
+		return checkoutEntry{path: path, seen: seen, missing: last}, true
+	}
+	return checkoutEntry{path: rest, seen: last}, rest != ""
+}
+
+func cutLastTime(s string) (string, time.Time, bool) {
+	i := strings.LastIndex(s, "\t")
+	if i <= 0 {
+		return "", time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, s[i+1:])
+	return s[:i], t, err == nil
+}
+
+func (e checkoutEntry) line() string {
+	line := e.path + "\t" + e.seen.UTC().Format(time.RFC3339)
+	if !e.missing.IsZero() {
+		line += "\t" + e.missing.UTC().Format(time.RFC3339)
+	}
+	return line + "\n"
+}
+
+// checkoutRecordWait bounds how long a writer waits for another one; a
+// record update is one small file write.
+const checkoutRecordWait = time.Second
+
+// updateCheckoutRecord applies change to the record at path as one locked
+// read-modify-write, writing it back only when change modified it. A record
+// left with no checkout stays as an empty file, so the sweep can tell every
+// recorded checkout gone from none ever recorded. repair drops malformed
+// lines, and starts a record it cannot read at all afresh, with a warning,
+// instead of failing.
+func updateCheckoutRecord(ctx context.Context, stateRoot, path string, repair bool, change func(*checkoutRecord)) (err error) {
+	if err := os.MkdirAll(filepath.Join(stateRoot, checkoutsCategory), 0o755); err != nil {
+		return fmt.Errorf("creating checkout records: %w", err)
+	}
+	lock := flock.New(filepath.Join(stateRoot, checkoutsCategory+".lock"))
+	lockCtx, cancel := context.WithTimeout(ctx, checkoutRecordWait)
+	defer cancel()
+	if _, err := lock.TryLockContext(lockCtx, 10*time.Millisecond); err != nil {
+		return fmt.Errorf("locking checkout records: %w", err)
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	log := slogutils.FromContext(ctx)
+	record, malformed, err := readCheckoutRecord(path)
+	switch {
+	case err != nil && repair:
+		log.Warn("starting an unreadable checkout record afresh", "record", path, "err", err)
+		record = checkoutRecord{exists: true, modified: true}
+	case err != nil:
+		return err
+	case len(malformed) > 0 && repair:
+		log.Warn("dropping malformed checkout record lines", "record", path, "lines", malformed)
+		record.modified = true
+	case len(malformed) > 0:
+		return fmt.Errorf("reading checkout record %s: malformed line %q", path, malformed[0])
+	}
+	change(&record)
+	if !record.modified {
+		return nil
+	}
+	var content strings.Builder
+	for _, entry := range record.entries {
+		content.WriteString(entry.line())
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating checkout records: %w", err)
+	}
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, []byte(content.String()), 0o644); err != nil {
+		return fmt.Errorf("writing checkout record: %w", err)
+	}
+	if err := os.Rename(temp, path); err != nil {
+		return fmt.Errorf("writing checkout record: %w", err)
+	}
+	return nil
+}
+
+// StateSwept is what one StateSweep pass removed. Unreadable counts the
+// session logs it kept because it could not read them.
+type StateSwept struct {
+	Sessions   int
+	Projects   int
+	Unreadable int
+	Bytes      int64
+}
+
+func (s *StateSwept) add(o StateSwept) {
+	s.Sessions += o.Sessions
+	s.Projects += o.Projects
+	s.Unreadable += o.Unreadable
+	s.Bytes += o.Bytes
+}
+
+// StateSweep removes the per-project state under StateRoot nothing needs:
+// ended sessions past their retention with their staged attachments, in the
+// state folder and in the .sdd/sessions of each recorded checkout
+// (RecordCheckout), and the empty session folder and unowned staged
+// attachments of a project unused for longer than the unused retention. It
+// never removes an open session, a log it cannot read, or the staged
+// attachments of either.
+type StateSweep struct {
+	StateRoot string
+}
+
+// Sweep runs one pass and reports what it removed.
+func (s StateSweep) Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (StateSwept, error) {
+	var counts StateSwept
+	keys, err := s.projectKeys()
+	if err != nil {
+		return counts, err
+	}
+	var errs []error
+	recordedBy, err := s.tendCheckoutRecords(ctx, keys, now, unusedRetention)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			break
+		}
+		collected, err := s.collect(ctx, key, now, sessionRetention)
+		counts.add(collected)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("collecting the sessions of %s: %w", key, err))
+		}
+	}
+	checkouts := slices.Sorted(maps.Keys(recordedBy))
+	for _, checkout := range checkouts {
+		if ctx.Err() != nil {
+			break
+		}
+		collected, err := s.collectInTree(ctx, checkout, recordedBy[checkout], now, sessionRetention)
+		counts.add(collected)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("collecting the in-repo sessions of %s: %w", checkout, err))
+		}
+	}
+	live, err := s.sessionIDs()
+	if err != nil {
+		return counts, errors.Join(append(errs, err)...)
+	}
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			break
+		}
+		removed, err := s.retireUnused(ctx, key, now, unusedRetention, live)
+		counts.add(removed)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("removing the state of unused project %s: %w", key, err))
+		}
+	}
+	return counts, errors.Join(errs...)
+}
+
+func (s StateSweep) dir(category, key string) string {
+	return filepath.Join(s.StateRoot, category, filepath.FromSlash(key))
+}
+
+// collect runs session collection over one project's session folder.
+func (s StateSweep) collect(ctx context.Context, key string, now time.Time, retention time.Duration) (StateSwept, error) {
+	location := StoreLocation{
+		Name: key, Sessions: s.dir(sessionsCategory, key), StagedBlobs: s.dir(stagedBlobsCategory, key),
+		Subject: "local", Project: projectOfKey(key),
+	}
+	return collectIn(ctx, key, location, []StoreLocation{location}, now, retention)
+}
+
+// tendCheckoutRecords refreshes when each recorded checkout was last seen,
+// notes when a sweep first found one missing, and drops one missing for
+// longer than retention since, as a removed worktree; one missing for less,
+// as an unmounted volume, stays. It returns the keys recording each checkout
+// found on disk. The checkouts are looked up outside the record lock, so a
+// hanging mount never holds up a command recording its checkout.
+func (s StateSweep) tendCheckoutRecords(ctx context.Context, keys []string, now time.Time, retention time.Duration) (map[string][]string, error) {
+	recordedBy := map[string][]string{}
+	var errs []error
+	for _, key := range keys {
+		path, err := checkoutsPath(s.StateRoot, key)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		record, err := loadCheckoutRecord(path)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		present := map[string]bool{}
+		absent := map[string]bool{}
+		for _, checkout := range record.paths() {
+			_, statErr := os.Stat(checkout)
+			switch {
+			case statErr == nil:
+				present[checkout] = true
+				recordedBy[checkout] = append(recordedBy[checkout], key)
+			case errors.Is(statErr, fs.ErrNotExist):
+				absent[checkout] = true
+			}
+		}
+		err = updateCheckoutRecord(ctx, s.StateRoot, path, false, func(record *checkoutRecord) {
+			kept := record.entries[:0]
+			for _, entry := range record.entries {
+				switch {
+				case present[entry.path]:
+					if now.Sub(entry.seen) >= projectUseRefresh || !entry.missing.IsZero() {
+						entry.seen, entry.missing, record.modified = now, time.Time{}, true
+					}
+				case absent[entry.path] && entry.missing.IsZero():
+					entry.missing, record.modified = now, true
+				case absent[entry.path] && now.Sub(entry.missing) > retention:
+					record.modified = true
+					continue
+				}
+				kept = append(kept, entry)
+			}
+			record.entries = kept
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tending the checkout record of %s: %w", key, err))
+		}
+	}
+	return recordedBy, errors.Join(errs...)
+}
+
+// collectInTree runs session collection over the .sdd/sessions of checkout,
+// where earlier versions logged sessions. Those sessions staged their
+// attachments in the state folder of a key recording the checkout.
+func (s StateSweep) collectInTree(ctx context.Context, checkout string, keys []string, now time.Time, retention time.Duration) (StateSwept, error) {
+	sddDir := filepath.Join(checkout, ".sdd")
+	inTree := StoreLocation{
+		Name: sddDir, Sessions: filepath.Join(sddDir, sessionsCategory), StagedBlobs: filepath.Join(sddDir, stagedBlobsCategory),
+		Subject: "local", Project: "local",
+	}
+	blobs := []StoreLocation{inTree}
+	for _, key := range keys {
+		blobs = append(blobs, StoreLocation{Name: key, StagedBlobs: s.dir(stagedBlobsCategory, key), Subject: "local", Project: "local"})
+	}
+	return collectIn(ctx, checkout, inTree, blobs, now, retention)
+}
+
+// collectIn collects the ended sessions logged under location.Sessions, with
+// their attachments staged under any of blobLocations.
+func collectIn(ctx context.Context, key string, location StoreLocation, blobLocations []StoreLocation, now time.Time, retention time.Duration) (StateSwept, error) {
+	var counts StateSwept
+	if _, err := os.Stat(location.Sessions); errors.Is(err, fs.ErrNotExist) {
+		return counts, nil
+	}
+	sessions, err := NewFilesystemSessionStore(location)
+	if err != nil {
+		return counts, err
+	}
+	blobs, err := NewFilesystemStagedBlobStore(blobLocations...)
+	if err != nil {
+		return counts, err
+	}
+	measured := []string{location.Sessions}
+	for _, blob := range blobLocations {
+		measured = append(measured, blob.StagedBlobs)
+	}
+	before, err := treeSize(measured...)
+	if err != nil {
+		return counts, err
+	}
+	cmd := app.CollectSessionsCmd{Retention: retention, Limit: collectPageSize}
+	for {
+		result, err := app.CollectSessionsIn(ctx, sessions, blobs, now, cmd)
+		counts.Sessions += len(result.RemovedSessions)
+		for _, id := range result.Skipped {
+			slogutils.FromContext(ctx).Warn("kept a session log sdd cannot read", "project", key, "session", id)
+		}
+		counts.Unreadable += len(result.Skipped)
+		if err != nil {
+			return counts, err
+		}
+		if result.Next == "" || ctx.Err() != nil {
+			break
+		}
+		cmd.After = result.Next
+	}
+	if counts.Sessions > 0 {
+		after, err := treeSize(measured...)
+		if err != nil {
+			return counts, err
+		}
+		counts.Bytes += max(before-after, 0)
+	}
+	return counts, nil
+}
+
+// retireUnused removes the state of a project unused for longer than
+// retention: its session folder once no session is left, and its staged
+// attachments once no session owns them, with its use stamp, and its
+// checkout record once they are gone. The stamp stays while a session does,
+// so collecting that session later does not read as fresh use.
+func (s StateSweep) retireUnused(ctx context.Context, key string, now time.Time, retention time.Duration, live map[app.SessionID]bool) (counts StateSwept, err error) {
+	// Judged again right before each removal: a server opening the project
+	// meanwhile stamps it, and must not lose what it writes.
+	unused := func() (bool, error) {
+		last, err := s.lastUse(key)
+		return err == nil && now.Sub(last) > retention, err
+	}
+	if idle, err := unused(); err != nil || !idle {
+		return counts, err
+	}
+	removed := false
+	defer func() {
+		if removed {
+			counts.Projects++
+		}
+		for _, category := range []string{sessionsCategory, stagedBlobsCategory, usedCategory, checkoutsCategory} {
+			removeEmptyParents(filepath.Join(s.StateRoot, category), filepath.Dir(s.dir(category, key)))
+		}
+	}()
+	sessions := s.dir(sessionsCategory, key)
+	gone, err := removeEmptySessionFolder(sessions, unused)
+	if err != nil {
+		return counts, err
+	}
+	if !gone && exists(sessions) {
+		return counts, nil
+	}
+	removed = gone
+	staged := s.dir(stagedBlobsCategory, key)
+	owned, err := s.stagedOwned(ctx, key, staged, live)
+	if err != nil {
+		return counts, err
+	}
+	if exists(staged) && !owned {
+		size, err := treeSize(staged)
+		if err != nil {
+			return counts, err
+		}
+		if idle, err := unused(); err != nil || !idle {
+			return counts, err
+		}
+		if err := os.RemoveAll(staged); err != nil {
+			return counts, err
+		}
+		counts.Bytes += size
+		removed = true
+	}
+	stamp, err := projectStampPath(s.StateRoot, key)
+	if err != nil {
+		return counts, err
+	}
+	records := []string{stamp}
+	if !exists(staged) {
+		checkouts, err := checkoutsPath(s.StateRoot, key)
+		if err != nil {
+			return counts, err
+		}
+		records = append(records, checkouts)
+	}
+	for _, record := range records {
+		if err := os.Remove(record); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return counts, err
+		}
+	}
+	return counts, nil
+}
+
+// stagedOwned reports whether a session may still own staged attachments
+// under dir: one whose log lies in the state folder, or one open in a checkout
+// recorded for key. Without a checkout record, or with a recorded checkout
+// missing, as on an unmounted volume, an open session may lie where the sweep
+// cannot read, so the attachments count as owned.
+func (s StateSweep) stagedOwned(ctx context.Context, key, dir string, live map[app.SessionID]bool) (bool, error) {
+	owners, err := stagedSessions(dir)
+	if err != nil || len(owners) == 0 {
+		return false, err
+	}
+	if slices.ContainsFunc(owners, func(id app.SessionID) bool { return live[id] }) {
+		return true, nil
+	}
+	open, known, err := s.openInCheckouts(ctx, key)
+	if err != nil || !known {
+		return true, err
+	}
+	return slices.ContainsFunc(owners, func(id app.SessionID) bool { return open[id] }), nil
+}
+
+// openInCheckouts lists the sessions open in the .sdd/sessions of each
+// checkout recorded for key. A log it cannot read counts as open. known is
+// false when no record was ever written for key, or a recorded checkout is
+// missing (tendCheckoutRecords drops one gone past the retention).
+func (s StateSweep) openInCheckouts(ctx context.Context, key string) (open map[app.SessionID]bool, known bool, err error) {
+	path, err := checkoutsPath(s.StateRoot, key)
+	if err != nil {
+		return nil, false, err
+	}
+	record, err := loadCheckoutRecord(path)
+	if err != nil || !record.exists {
+		return nil, false, err
+	}
+	open = map[app.SessionID]bool{}
+	for _, checkout := range record.paths() {
+		if _, err := os.Stat(checkout); errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		} else if err != nil {
+			return nil, false, err
+		}
+		dir := filepath.Join(checkout, ".sdd", sessionsCategory)
+		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, false, err
+		}
+		sessions, err := NewFilesystemSessionStore(StoreLocation{Name: dir, Sessions: dir, Subject: "local", Project: "local"})
+		if err != nil {
+			return nil, false, err
+		}
+		ids, err := app.OpenSessionsIn(ctx, sessions)
+		if err != nil {
+			return nil, false, fmt.Errorf("listing the sessions in %s: %w", dir, err)
+		}
+		for _, id := range ids {
+			open[id] = true
+		}
+	}
+	return open, true, nil
+}
+
+// lastUse is the project's use stamp, or for a project no binary stamped yet
+// the latest change in its session folder.
+func (s StateSweep) lastUse(key string) (time.Time, error) {
+	stamp, err := projectStampPath(s.StateRoot, key)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if info, err := os.Stat(stamp); err == nil {
+		return info.ModTime(), nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, err
+	}
+	var last time.Time
+	err = filepath.WalkDir(s.dir(sessionsCategory, key), func(_ string, d fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return last, nil
+}
+
+// removeEmptySessionFolder removes a session folder holding no session log,
+// once no process holds a lock file in it and unused still holds.
+func removeEmptySessionFolder(dir string, unused func() (bool, error)) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), sessionLogSuffix) || entry.IsDir() {
+			return false, nil
+		}
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".lock") {
+			continue
+		}
+		lock := flock.New(filepath.Join(dir, entry.Name()))
+		taken, err := lock.TryLock()
+		if err != nil {
+			return false, err
+		}
+		if !taken {
+			return false, nil
+		}
+		defer func() { _ = lock.Unlock() }()
+	}
+	if idle, err := unused(); err != nil || !idle {
+		return false, err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// projectKeys lists the repository keys holding state in any category.
+func (s StateSweep) projectKeys() ([]string, error) {
+	seen := map[string]bool{}
+	root := filepath.Join(s.StateRoot, sessionsCategory)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && path == root {
+				return filepath.SkipAll
+			}
+			return err
+		}
+		if !d.IsDir() || path == root {
+			return nil
+		}
+		leaf, err := holdsState(path)
+		if err != nil || !leaf {
+			return err
+		}
+		key, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		seen[filepath.ToSlash(key)] = true
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", root, err)
+	}
+	for category, suffix := range map[string]string{usedCategory: usedStampSuffix, checkoutsCategory: checkoutsSuffix} {
+		root := filepath.Join(s.StateRoot, category)
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) && path == root {
+					return filepath.SkipAll
+				}
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(d.Name(), suffix) {
+				return nil
+			}
+			key, err := filepath.Rel(root, strings.TrimSuffix(path, suffix))
+			if err != nil {
+				return err
+			}
+			seen[filepath.ToSlash(key)] = true
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing %s: %w", root, err)
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys, nil
+}
+
+// holdsState reports whether dir is a project's own folder: it holds a file
+// or nothing at all, where a folder above the keys holds only folders.
+func holdsState(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			return true, nil
+		}
+	}
+	return !slices.ContainsFunc(entries, fs.DirEntry.IsDir), nil
+}
+
+// sessionIDs lists every session log under the state root.
+func (s StateSweep) sessionIDs() (map[app.SessionID]bool, error) {
+	ids := map[app.SessionID]bool{}
+	root := filepath.Join(s.StateRoot, sessionsCategory)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && path == root {
+				return filepath.SkipAll
+			}
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), sessionLogSuffix) {
+			ids[app.SessionID(strings.TrimSuffix(d.Name(), sessionLogSuffix))] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", root, err)
+	}
+	return ids, nil
+}
+
+// stagedSessions lists the sessions a staged-blobs folder holds attachments
+// of: <subject>/<session>/ below it.
+func stagedSessions(dir string) ([]app.SessionID, error) {
+	subjects, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []app.SessionID
+	for _, subject := range subjects {
+		if !subject.IsDir() {
+			continue
+		}
+		sessions, err := os.ReadDir(filepath.Join(dir, subject.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			if session.IsDir() {
+				ids = append(ids, app.SessionID(session.Name()))
+			}
+		}
+	}
+	return ids, nil
+}
+
+// projectOfKey is the project a log under key is attributed to, as
+// SessionLocations attributes the location of that key.
+func projectOfKey(key string) app.ProjectID {
+	if strings.HasPrefix(key, "local/") {
+		return "local"
+	}
+	return app.ProjectID(key)
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// treeSize sums the sizes of the files under dirs; a missing one counts zero.
+func treeSize(dirs ...string) (int64, error) {
+	var total int64
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil || d.IsDir() {
+				return err
+			}
+			info, err := d.Info()
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+			return nil
+		})
+		if err != nil {
+			return 0, fmt.Errorf("measuring %s: %w", dir, err)
+		}
+	}
+	return total, nil
+}
+
+// removeEmptyParents removes dir and its parents up to, not including, root
+// while they are empty.
+func removeEmptyParents(root, dir string) {
+	for dir != root && strings.HasPrefix(dir, root+string(filepath.Separator)) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}

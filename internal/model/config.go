@@ -864,12 +864,10 @@ func FormatConfig(cfg PerRepoConfig) string {
 // ResolveSessionRetention returns the effective session retention from cfg.
 // Retention is expressed in days ("14d") or as a Go duration; empty means
 // DefaultSessionRetention. A value that does not parse is a config error the
-// caller must surface, never a silent default.
-func ResolveSessionRetention(cfg *PerRepoConfig) (time.Duration, error) {
-	raw := ""
-	if cfg != nil {
-		raw = strings.TrimSpace(cfg.Sessions.Retention)
-	}
+// caller must surface, never a silent default. Only the user-global config
+// sets it (IgnoredSettings).
+func ResolveSessionRetention(cfg SessionsConfig) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.Retention)
 	if raw == "" {
 		raw = DefaultSessionRetention
 	}

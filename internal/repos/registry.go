@@ -47,6 +47,12 @@ func (r *Registry) CacheRoot() string {
 	return r.loc.CacheRoot
 }
 
+// MixedStateXDG is Locations.MixedStateXDG of the locations the registry
+// reads.
+func (r *Registry) MixedStateXDG() string {
+	return r.loc.MixedStateXDG
+}
+
 // CacheDir resolves a connected repo's clone location under the cache root.
 // The repo-id's host/path shape nests naturally under the root. RepoAdd
 // clears the path and every clone write goes through it, so a path at or

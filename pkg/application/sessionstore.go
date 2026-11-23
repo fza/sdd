@@ -143,6 +143,7 @@ func (s legacyEndStore) List(ctx context.Context, filter SessionFilter) (Session
 	for i := range page.Sessions {
 		if err := deriveLegacyEnd(&page.Sessions[i]); err != nil {
 			slogutils.FromContext(ctx).Warn("skipping unreadable session ending", "session", page.Sessions[i].Metadata.ID, "err", err)
+			page.Unreadable = append(page.Unreadable, page.Sessions[i].Metadata.ID)
 			continue
 		}
 		if filter.Matches(page.Sessions[i].Metadata) {
@@ -287,6 +288,9 @@ func (f SessionFilter) Matches(m SessionMetadata) bool {
 type SessionPage struct {
 	Sessions []StoredSession
 	Next     SessionID
+	// Unreadable names the sessions within the page's range the store holds
+	// but could not read, whatever the filter.
+	Unreadable []SessionID
 }
 
 type SessionAppend struct {

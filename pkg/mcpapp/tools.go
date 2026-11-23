@@ -90,6 +90,7 @@ type AbandonArgs struct {
 }
 
 type AbandonResult struct {
+	NoticesField
 	Abandoned bool   `json:"abandoned"`
 	Session   string `json:"session,omitempty" jsonschema:"the torn-down session, on teardown by handle"`
 	Label     string `json:"label,omitempty" jsonschema:"the torn-down session's subject label"`
@@ -111,6 +112,7 @@ type ParkArgs struct {
 }
 
 type ParkResult struct {
+	NoticesField
 	Parked       bool       `json:"parked"`
 	Instance     string     `json:"instance"`
 	Procedure    string     `json:"procedure"`
@@ -184,6 +186,13 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 		result.Effects = append(result.Effects, EffectResult{Kind: effect.Kind, ID: effect.ID, State: effect.State})
 	}
 	return result
+}
+
+// ServeResponse is a ServeResult as a tool answers with it, carrying the
+// call's notices; the serves nested in resume_session carry none.
+type ServeResponse struct {
+	NoticesField
+	ServeResult
 }
 
 // ServeResult is the loop's uniform response shape: where the instance
@@ -262,6 +271,7 @@ type ResumeSessionArgs struct {
 }
 
 type ResumeSessionResult struct {
+	NoticesField
 	Session          string                  `json:"session" jsonschema:"session handle (the session ID)"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this session is bound to"`
 	Participant      string                  `json:"participant,omitempty"`
@@ -292,6 +302,7 @@ type BindBranchArgs struct {
 }
 
 type BindBranchResult struct {
+	NoticesField
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
 }
@@ -311,6 +322,7 @@ type SearchReplaceArg struct {
 }
 
 type StageAttachmentResult struct {
+	NoticesField
 	Handle string `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field"`
 }
 
@@ -335,6 +347,7 @@ type SearchArgs struct {
 }
 
 type SearchResult struct {
+	NoticesField
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
@@ -351,6 +364,7 @@ type ViewArgs struct {
 }
 
 type ViewResult struct {
+	NoticesField
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, on the first view of a session and after resume_session"`
 }
@@ -366,6 +380,7 @@ type ShowArgs struct {
 }
 
 type ShowResult struct {
+	NoticesField
 	Entries string `json:"entries"`
 }
 
@@ -380,6 +395,7 @@ type GatherArgs struct {
 }
 
 type GatherResult struct {
+	NoticesField
 	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
 }
 
@@ -401,10 +417,12 @@ type ReadValueArgs struct {
 }
 
 type ReadValueResult struct {
+	NoticesField
 	Value string `json:"value" jsonschema:"the value whole, never cut; a value past one result comes in pages"`
 }
 
 type ReadAttachmentResult struct {
+	NoticesField
 	Name       string   `json:"name"`
 	Content    string   `json:"content"`
 	Offset     int64    `json:"offset"`
@@ -428,6 +446,7 @@ type ReadGitArgs struct {
 }
 
 type ReadGitResult struct {
+	NoticesField
 	Text       string `json:"text" jsonschema:"one page of what git returned for the read, cut at a line end"`
 	Offset     int64  `json:"offset"`
 	NextOffset int64  `json:"next_offset,omitempty"`
@@ -441,6 +460,7 @@ type InfoArgs struct {
 }
 
 type InfoResult struct {
+	NoticesField
 	Project      string `json:"project,omitempty" jsonschema:"the session's project ID"`
 	Participant  string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
 	Language     string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
@@ -464,6 +484,7 @@ type RegistryFuncResult struct {
 }
 
 type RegistryResult struct {
+	NoticesField
 	Functions []RegistryFuncResult `json:"functions"`
 	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
 }
@@ -695,7 +716,7 @@ func noHandleError() error {
 
 // startSession opens a fresh dialogue: a new durable session under a new
 // handle, every call. Nothing is derived from the connection.
-func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, args StartSessionArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, args StartSessionArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	identity := s.requestIdentity(req)
 	// The door is the one tool that takes a project. Left empty, the
 	// application infers a sole accessible project or reports the ambiguity,
@@ -709,9 +730,9 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 		var appErr *sdd.ApplicationError
 		if project == "" && errors.As(err, &appErr) && appErr.Code == sdd.ErrorProjectRequired {
 			result, err := s.serveProjects(ctx, identity)
-			return nil, result, err
+			return nil, ServeResponse{ServeResult: result}, err
 		}
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	workflow.CutRepeats()
 	ss := s.sessions.put(&shellSession{root: workflow})
@@ -725,14 +746,14 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	}
 	guide, err := resultChars(lead)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	result, err := s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget(ctx)-guide)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	result.Instructions = lead + result.Instructions
-	return nil, result, nil
+	return nil, ServeResponse{ServeResult: result}, nil
 }
 
 // serveProjects is start_session's answer when the principal reaches several
@@ -759,13 +780,13 @@ func (s *toolSet) serveProjects(ctx context.Context, identity sdd.RequestIdentit
 	return result, nil
 }
 
-func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, args StartProcedureArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, args StartProcedureArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	if strings.TrimSpace(args.Canonical) == "" {
-		return nil, ServeResult{}, toolError("canonical is required")
+		return nil, ServeResponse{}, toolError("canonical is required")
 	}
 	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	defer ss.mu.Unlock()
 	ss.root.SetCaller(args.Caller)
@@ -775,27 +796,27 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 		Project: sdd.ProjectID(strings.TrimSpace(args.Project)),
 	})
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
-	return nil, result, err
+	return nil, ServeResponse{ServeResult: result}, err
 }
 
-func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	defer ss.mu.Unlock()
 	ss.root.SetCaller(args.Caller)
 	if args.Instance == "" {
-		return nil, ServeResult{}, toolError("instance is required")
+		return nil, ServeResponse{}, toolError("instance is required")
 	}
 	identity := s.requestIdentity(req)
 	ss.root.FollowDeferral(args.Instance)
 	serve, err := ss.root.Advance(ctx, identity, sdd.WorkflowAdvanceRequest{Instance: args.Instance, Report: args.Report, Label: args.Label, RetryRef: args.RetryRef, CancelRef: args.CancelRef})
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	if ss.root.Finished() {
 		// The conclude serve is the dialogue's last; a finished session is
@@ -803,7 +824,7 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		defer s.sessions.evict(ss.root.ID())
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
-	return nil, result, err
+	return nil, ServeResponse{ServeResult: result}, err
 }
 
 func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args AbandonArgs) (*mcp.CallToolResult, AbandonResult, error) {
@@ -1416,30 +1437,64 @@ func addTool[In, Out any](srv *mcp.Server, s *toolSet, tool *mcp.Tool, handler f
 // toolBoundary is where an error meets the agent: a coded application error
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
+// The host's BeforeCall runs first and refuses the call, or hands it notices.
 func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		var res *mcp.CallToolResult
+		var out Out
+		call, notices, err := s.beforeCall(ctx, req)
+		if call == nil {
+			call = ctx
+		}
 		bound := model.ResultBoundFor(mcpClientName(req.Session), s.mcpOutputTokens)
-		ctx = sdd.WithResultBound(ctx, int(bound))
+		call = sdd.WithResultBound(call, int(bound))
 		slot := &callSlot{}
-		res, out, err := handler(context.WithValue(ctx, callSlotKey{}, slot), req, in)
+		if err == nil {
+			res, out, err = handler(context.WithValue(call, callSlotKey{}, slot), req, in)
+		}
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
 		if slot.finish != nil {
-			err = errors.Join(err, slot.finish(ctx, err != nil))
+			err = errors.Join(err, slot.finish(call, err != nil))
 		}
+		texts := notices.texts()
 		if err != nil {
 			if slot.notice != "" {
 				err = fmt.Errorf("%w\n\n%s", err, slot.notice)
 			}
+			if len(texts) > 0 {
+				err = fmt.Errorf("%w\n\n%s", err, strings.Join(texts, "\n\n"))
+			}
 			return res, out, err
+		}
+		if carrier, ok := any(&out).(interface{ setNotices(Notices) }); ok && len(texts) > 0 {
+			carrier.setNotices(notices)
 		}
 		if carrier, ok := any(&out).(interface{ setQuestion(string) }); ok && slot.question != "" {
 			carrier.setQuestion(slot.question)
 		}
 		return res, out, err
 	}
+}
+
+// beforeCall runs the host's BeforeCall for the session the call names, ""
+// for a call that names none.
+func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (context.Context, Notices, error) {
+	if s.before == nil {
+		return ctx, Notices{}, nil
+	}
+	var named struct {
+		Session string `json:"session"`
+	}
+	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
+		err := json.Unmarshal(req.Params.Arguments, &named)
+		if err != nil {
+			return ctx, Notices{}, fmt.Errorf("reading the session the call names: %w", err)
+		}
+	}
+	return s.before(ctx, strings.TrimSpace(named.Session))
 }
 
 type callSlotKey struct{}

@@ -27,13 +27,20 @@ type CurrentHashSource interface {
 	CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error)
 }
 
-// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot and
-// Registry are required; Keep is nil outside an sdd checkout; Now defaults to
-// time.Now.
+// StateSweeper tends the per-project state under the state root: sessions
+// past sessionRetention and projects unused for unusedRetention.
+type StateSweeper interface {
+	Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error)
+}
+
+// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
+// Registry and State are required; Keep is nil outside an sdd checkout; Now
+// defaults to time.Now.
 type CacheHandlerOptions struct {
 	CacheRoot string
 	StateRoot string
 	Registry  *repos.Registry
+	State     StateSweeper
 	Keep      CurrentHashSource
 	Now       func() time.Time
 }
@@ -43,23 +50,26 @@ type CacheHandler struct {
 	cacheRoot string
 	stateRoot string
 	registry  *repos.Registry
+	state     StateSweeper
 	keep      CurrentHashSource
 	now       func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, state: opts.State, keep: opts.Keep, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
 	return h
 }
 
-// ErrCachePruneRunning refuses a pass while another process runs one.
+// ErrCachePruneRunning refuses a pass asked for by hand while another process
+// runs one; a scheduled pass leaves quietly instead.
 var ErrCachePruneRunning = errors.New("another cache pruning run is in progress")
 
 // Prune runs one pruning pass over the whole cache and records its result in
-// the pruning status, failure included, so sdd info shows it.
+// the pruning status, failure included, so sdd info shows it and, for a
+// scheduled pass, the next command reports it.
 func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (err error) {
 	if err := os.MkdirAll(h.stateRoot, 0o755); err != nil {
 		return fmt.Errorf("creating state dir: %w", err)
@@ -67,16 +77,29 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	run := flock.New(filepath.Join(h.stateRoot, cacheprune.RunLockFile))
 	locked, err := run.TryLock()
 	if err != nil {
-		return fmt.Errorf("locking cache pruning: %w", err)
+		return h.recordEarlyFailure(ctx, cmd, fmt.Errorf("locking cache pruning: %w", err))
 	}
 	if !locked {
+		if cmd.Scheduled {
+			slogutils.FromContext(ctx).Info("cache pruning already running in another process")
+			return nil
+		}
 		return ErrCachePruneRunning
 	}
 	defer func() { err = errors.Join(err, run.Unlock()) }()
 
 	now := h.now()
+	if cmd.Scheduled {
+		status, err := cacheprune.Load(h.stateRoot)
+		if err != nil {
+			return h.recordEarlyFailure(ctx, cmd, err)
+		}
+		if status.StartedRecently(now) {
+			return nil
+		}
+	}
 	if err := cacheprune.Update(ctx, h.stateRoot, func(s *model.CachePruneStatus) { s.StartedAt = now }); err != nil {
-		return err
+		return h.recordEarlyFailure(ctx, cmd, err)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, model.CachePruneRunLimit)
 	defer cancel()
@@ -87,12 +110,22 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	recordErr := cacheprune.Update(context.WithoutCancel(ctx), h.stateRoot, func(s *model.CachePruneStatus) {
 		s.FinishedAt = h.now()
 		s.Removed = counts
-		s.Error = ""
+		s.Error, s.Reported = "", false
 		if runErr != nil {
-			s.Error = runErr.Error()
+			// A run by hand shows its failure as its own error.
+			s.Error, s.Reported = runErr.Error(), !cmd.Scheduled
 		}
 	})
 	return errors.Join(runErr, recordErr)
+}
+
+// recordEarlyFailure records a failure before the pass started as the run's
+// own; it may not reach the record when the record itself is what failed.
+func (h *CacheHandler) recordEarlyFailure(ctx context.Context, cmd *command.PruneCacheCmd, failure error) error {
+	recordErr := cacheprune.Update(context.WithoutCancel(ctx), h.stateRoot, func(s *model.CachePruneStatus) {
+		s.FinishedAt, s.Error, s.Reported = h.now(), failure.Error(), !cmd.Scheduled
+	})
+	return errors.Join(failure, recordErr)
 }
 
 func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePruneCounts, error) {
@@ -106,6 +139,10 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		return counts, err
 	}
 	replaced, err := model.ResolveReplacedRetention(cfg.Index)
+	if err != nil {
+		return counts, err
+	}
+	sessionRetention, err := model.ResolveSessionRetention(cfg.Sessions)
 	if err != nil {
 		return counts, err
 	}
@@ -146,6 +183,21 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	counts.Records += calibrations
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	switch mixed := h.registry.MixedStateXDG(); {
+	case h.state == nil:
+		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
+	case mixed != "":
+		// The state root may be another setup's, whose sessions this
+		// config's retention must not judge.
+		errs = append(errs, fmt.Errorf("sweeping the state folder %s refused: XDG_STATE_HOME, XDG_CACHE_HOME and XDG_DATA_HOME come from mixed sources (%s); set all three or none", h.stateRoot, mixed))
+	default:
+		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
+		counts.Add(swept)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sweeping the state folder: %w", err))
+		}
 	}
 
 	clones, err := h.registry.UnconnectedClones()

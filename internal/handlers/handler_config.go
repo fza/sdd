@@ -66,8 +66,8 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
 		for _, ignored := range model.IgnoredSettings(settings, source) {
-			if ignored.Key == cmd.Key {
-				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
+			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {
+				return nil, fmt.Errorf("%s is not valid for the %s config: %s", cmd.Key, layer, ignored.Reason)
 			}
 		}
 		if cmd.Key == "llm_prefilter.provider" {
