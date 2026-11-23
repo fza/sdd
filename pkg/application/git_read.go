@@ -69,14 +69,16 @@ func (a *Application) ReadGit(ctx context.Context, identity RequestIdentity, pro
 }
 
 // gitFileAt is the file-at-revision lookup of the deep verifier's sources,
-// read through reader; nil when the runtime has no reader.
+// read through reader; nil when the runtime has no reader. A revision or
+// file the repository lacks is not found; any other refusal, such as a
+// binary file, returns as the refusal it is.
 func gitFileAt(ctx context.Context, reader GitReader) func(rev, path string) (string, bool, error) {
 	if reader == nil {
 		return nil
 	}
 	return func(rev, path string) (string, bool, error) {
 		text, err := reader.ReadGit(ctx, GitReadRequest{Op: string(model.GitReadFile), Rev: rev, Path: path})
-		if errors.Is(err, ErrGitReadRefused) {
+		if errors.Is(err, model.ErrGitReadMissing) {
 			return "", false, nil
 		}
 		if err != nil {

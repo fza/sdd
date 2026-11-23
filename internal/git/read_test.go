@@ -123,6 +123,54 @@ func TestReadGit_RefusesWhatTheRepositoryCannotServe(t *testing.T) {
 	}
 }
 
+func TestReadGit_TellsWhatIsMissingFromWhatIsRefused(t *testing.T) {
+	dir := historyRepo(t)
+	err := os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{'a', 0, 'b'}, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, "add", "blob.bin")
+	gitIn(t, dir, "commit", "-q", "-m", "add blob")
+	read := func(request model.GitReadRequest) error {
+		_, err := git.CLI{Dir: dir}.ReadGit(context.Background(), request)
+		return err
+	}
+
+	missingRev := read(model.GitReadRequest{Op: model.GitReadCommit, Rev: "no-such-branch"})
+	missingFile := read(model.GitReadRequest{Op: model.GitReadFile, Rev: "HEAD", Path: "absent.txt"})
+	binary := read(model.GitReadRequest{Op: model.GitReadFile, Rev: "HEAD", Path: "blob.bin"})
+	noRepo := func() error {
+		_, err := git.CLI{Dir: filepath.Join(t.TempDir(), "none")}.ReadGit(context.Background(), model.GitReadRequest{Op: model.GitReadLog})
+		return err
+	}()
+
+	if !errors.Is(missingRev, model.ErrGitReadMissing) || !errors.Is(missingFile, model.ErrGitReadMissing) {
+		t.Fatalf("a revision or file the repository lacks should read as missing, got %v and %v", missingRev, missingFile)
+	}
+	if !errors.Is(binary, model.ErrGitReadRefused) || errors.Is(binary, model.ErrGitReadMissing) {
+		t.Fatalf("a binary file should be refused, not read as missing, got %v", binary)
+	}
+	if noRepo == nil || errors.Is(noRepo, model.ErrGitReadRefused) {
+		t.Fatalf("a checkout git cannot open should fail, not be refused as the caller's input, got %v", noRepo)
+	}
+}
+
+func TestReadGit_RefusesAnAnswerPastItsBound(t *testing.T) {
+	dir := historyRepo(t)
+	large := strings.Repeat("a line long enough to grow the file quickly\n", 70000)
+	commitFile(t, dir, "large.txt", large, "add a large file")
+
+	_, fileErr := git.CLI{Dir: dir}.ReadGit(context.Background(), model.GitReadRequest{Op: model.GitReadFile, Rev: "HEAD", Path: "large.txt"})
+	_, diffErr := git.CLI{Dir: dir}.ReadGit(context.Background(), model.GitReadRequest{Op: model.GitReadDiff, From: "HEAD~1", To: "HEAD"})
+
+	if !errors.Is(fileErr, model.ErrGitReadRefused) || !strings.Contains(fileErr.Error(), "more than one read returns") {
+		t.Fatalf("a file past the bound should be refused by its size, got %v", fileErr)
+	}
+	if !errors.Is(diffErr, model.ErrGitReadRefused) || !strings.Contains(diffErr.Error(), "narrow it with a path") {
+		t.Fatalf("a diff past the bound should be stopped and refused, got %v", diffErr)
+	}
+}
+
 // TestReadGit_RunsNoProgramTheRepositoryNames configures an external diff, a
 // textconv driver and a pager that each leave a mark when run; no read may run
 // one, nor write a file a path shaped like an option names.
