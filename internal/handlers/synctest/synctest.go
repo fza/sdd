@@ -204,14 +204,18 @@ func (r *Record) Update(change func(*model.SyncBlocked) *model.SyncBlocked) erro
 
 // CheckoutLocks stands in for a checkout's graph lock and title backfill
 // lock. TitlesHeld makes TryLockTitles find a backfill running; GraphTaken
-// counts the graph lock's acquisitions.
+// counts the graph lock's acquisitions. As the file lock does, LockGraph
+// takes nothing once its context ended.
 type CheckoutLocks struct {
 	mu         sync.Mutex
 	TitlesHeld bool
 	GraphTaken int
 }
 
-func (l *CheckoutLocks) LockGraph(context.Context) (func(), error) {
+func (l *CheckoutLocks) LockGraph(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.GraphTaken++

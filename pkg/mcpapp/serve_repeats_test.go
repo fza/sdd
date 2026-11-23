@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/engine"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -99,5 +100,58 @@ func TestAMoveEndsWithAShortLanding(t *testing.T) {
 		if open.Instance == door.Instance && !strings.Contains(open.Instructions, baseText) && !strings.Contains(open.Instructions, "lanes of these instructions wait") {
 			t.Fatalf("resume_session should serve the base step in full, got %.300q", open.Instructions)
 		}
+	}
+}
+
+// A move ending on a call that answers lost lands on the base step's text in
+// full: the answer emptied the held set (20261122-105026-d-tac-wl5).
+// Framing stays once per change (TestCompactionAnswersLost).
+func TestALostAnswerLandsOnTheBaseStepInFull(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSessionWhole(t, cs)
+
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
+	var ended mcpserver.AbandonResult
+	call(t, cs, "abandon", map[string]any{"session": door.Session, "instance": serve.Instance, "reason": "not needed", "answer": "lost"}, &ended)
+	base := ended.Base
+	if base == nil || base.Instance != door.Instance {
+		t.Fatalf("abandon should land on the base step, got %+v", base)
+	}
+	if !strings.Contains(base.Instructions, "Ending is part of the arc") && !strings.Contains(base.Instructions, "lanes of these instructions wait") {
+		t.Errorf("the landing should serve the base step's text, got %.300q", base.Instructions)
+	}
+	if strings.Contains(base.Instructions, "resume_session sends them in full") {
+		t.Errorf("the landing should not point at a text it serves, got %.300q", base.Instructions)
+	}
+}
+
+// A refused call answers no question, and its refusal says the questions the
+// last response ended with still stand.
+func TestARefusedCallSaysTheQuestionsStand(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSessionWhole(t, cs)
+
+	refusal := callExpectError(t, cs, "abandon", map[string]any{"session": door.Session, "instance": "i_99", "reason": "not needed"})
+	if !strings.Contains(refusal, "questions the last response ended with still stand") {
+		t.Errorf("the refusal should say the questions still stand, got %q", refusal)
+	}
+
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
+	events, err := readSessionLog(t, env.sessionsDir, door.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last engine.Event
+	for _, event := range events {
+		if event.Event == engine.EventTexts {
+			last = event
+		}
+	}
+	if _, answered := last.Data["answered"]; !answered || last.Data["reset"] == true {
+		t.Errorf("the answer the refused call carried should answer the next call, got %v", last.Data)
 	}
 }

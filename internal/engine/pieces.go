@@ -52,7 +52,9 @@ type pieceCall struct {
 	short      bool
 	// reset is set by lost or a wrong answer: the held set empties when the
 	// call records what it served.
-	reset   bool
+	reset bool
+	// carried is set when the call carries an answer.
+	carried bool
 	reread  map[string]bool
 	full    bool
 	issued  map[Piece]bool
@@ -102,6 +104,7 @@ func (s *Session) BeginCall(answer string, reread []string) {
 	if strings.TrimSpace(answer) == "" {
 		return
 	}
+	s.call.carried = true
 	if model.IsLost(answer) {
 		s.call.reset = true
 		return
@@ -147,6 +150,14 @@ func (s *Session) openRounds() map[int]*openRound {
 // Answered reports whether the call's answer answers a question still
 // unanswered.
 func (s *Session) Answered() bool { return s.call.answered > 0 }
+
+// Emptied reports whether the call's answer, lost or wrong, empties the held
+// set, so no piece it serves is held by an answer.
+func (s *Session) Emptied() bool { return s.call.reset }
+
+// QuestionsStand reports whether the call carried an answer while a round
+// of questions is still open, which a call that fails leaves open.
+func (s *Session) QuestionsStand() bool { return s.call.carried && len(s.openRounds()) > 0 }
 
 // Holds reports whether the call in flight holds the piece: received earlier
 // in this call, carried whole by a piece received in it, held by a right

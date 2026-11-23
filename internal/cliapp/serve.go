@@ -76,12 +76,14 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				},
 			},
 		),
-		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withShutdownWindow(shutdownWindow, withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
-			children := claude.NewChildren()
-			ctx = claude.WithChildren(ctx, children)
+			children := servedChildren(ctx)
 			kill := func(context.Context) { killServedChildren(ctx, children) }
-			defer kill(ctx)
+			defer func() {
+				enterServeStage(ctx, "killing the claude CLI calls still running")
+				kill(ctx)
+			}()
 			watch, err := newServedWatch(ctx, cmd)
 			if err != nil {
 				return err
@@ -119,8 +121,11 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			// call outlives the server.
 			defer func() {
 				stopTimer()
+				enterServeStage(ctx, "waiting for the sync round in flight")
 				<-timerDone
+				enterServeStage(ctx, "waiting for the background calibration")
 				<-calibrationDone
+				enterServeStage(ctx, "waiting for the embedding model's warm-up")
 				<-warmDone
 			}()
 			var cacheNotice func(context.Context) string
@@ -128,17 +133,19 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				go runCachePruneTimer(timerCtx, launchCachePrune)
 				cacheNotice = serveCacheNotice
 			}
+			enterServeStage(ctx, "closing the MCP connection and the work its calls started")
 			return runMCPServerWith(ctx, cmd, mcpserver.Options{
 				Application:     application,
 				LocalIdentity:   identity,
 				CacheNotice:     cacheNotice,
 				MCPOutputTokens: cmd.Int("mcp-output-tokens"),
+				OnClient:        prefilterWarnings(ctx, application, identity, watch.served().access.project),
 				BeforeCall: func(ctx context.Context) (context.Context, string, error) {
 					activity.touch()
 					return watch.admit(ctx)
 				},
 			})
-		})),
+		}))),
 	}
 }
 
@@ -612,21 +619,43 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
-	state, err := application.PrefilterState(ctx, identity, watch.served().access.project)
-	if err != nil {
-		return nil, sdd.RequestIdentity{}, err
-	}
-	switch {
-	case state.Judge == "" || state.Calibrated:
-	case state.AutoCalibrate:
-		slogutils.FromContext(ctx).Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: this server scores the labelled pairs in the background, which spends model calls (verify.auto_calibrate)", "judge", state.Judge)
-	default:
-		slogutils.FromContext(ctx).Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: run `sdd grounding update` to label the graph's own references and score them", "judge", state.Judge)
-	}
-	for _, weak := range state.Weak {
-		slogutils.FromContext(ctx).Warn(fmt.Sprintf("the ranking judge's recall is below the bar %.2f, so the deep reading doubles the entries it serves in full and lists with their summary; see `sdd grounding status`", model.RankingRecallBar), "judge", weak.Judge, "recall", weak.Recall, "referenced labels", weak.Positives)
-	}
 	return application, identity, nil
+}
+
+// prefilterWarnings logs, once per MCP client name, what limits the ranking
+// judge that client's readings rank with: no recall stage yet, or a recall
+// below model.RankingRecallBar. The judge depends on the client
+// (sdd.Application.PrefilterState), so serve names it once the client
+// reports its name, to the logger serveCtx carries.
+func prefilterWarnings(serveCtx context.Context, application *sdd.Application, identity sdd.RequestIdentity, project sdd.ProjectID) func(context.Context, string) error {
+	var (
+		mu     sync.Mutex
+		warned = map[string]bool{}
+	)
+	return func(ctx context.Context, client string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if warned[client] {
+			return nil
+		}
+		state, err := application.PrefilterState(ctx, identity, project, client)
+		if err != nil {
+			return err
+		}
+		warned[client] = true
+		logger := slogutils.FromContext(serveCtx)
+		switch {
+		case state.Judge == "" || state.Calibrated:
+		case state.AutoCalibrate:
+			logger.Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: this server scores the labelled pairs in the background, which spends model calls (verify.auto_calibrate)", "judge", state.Judge, "client", client)
+		default:
+			logger.Warn("the grounding prefilter holds no recall stage yet, so it hides nothing: run `sdd grounding update` to label the graph's own references and score them", "judge", state.Judge, "client", client)
+		}
+		if weak := state.Weak; weak != nil {
+			logger.Warn(fmt.Sprintf("the ranking judge's recall is below the bar %.2f, so the deep reading doubles the entries it serves in full and lists with their summary; see `sdd grounding status`", model.RankingRecallBar), "judge", weak.Judge, "client", client, "recall", weak.Recall, "referenced labels", weak.Positives)
+		}
+		return nil
+	}
 }
 
 // buildServedProject resolves the project serve answers calls with from one

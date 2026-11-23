@@ -29,21 +29,27 @@ type recordingGraphSync struct {
 	// every backfill running until it is closed.
 	backfills []sdd.SyncTrigger
 	hold      chan struct{}
+	// untilStopped keeps every backfill running until its context ends.
+	untilStopped bool
 	// demand is what DemandGraph returns; leases records its calls.
 	demand sdd.GraphDemand
 	leases demandRecord
 }
 
-func (s *recordingGraphSync) BackfillTitles(_ context.Context, _ string, trigger sdd.SyncTrigger, runner pkgllm.Runner) error {
+func (s *recordingGraphSync) BackfillTitles(ctx context.Context, _ string, trigger sdd.SyncTrigger, runner pkgllm.Runner) error {
 	s.mu.Lock()
 	s.backfills = append(s.backfills, trigger)
-	hold := s.hold
+	hold, untilStopped := s.hold, s.untilStopped
 	s.mu.Unlock()
 	if runner == nil {
 		return errors.New("the backfill should be handed the runtime's runner")
 	}
 	if hold != nil {
 		<-hold
+	}
+	if untilStopped {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	return nil
 }
@@ -324,6 +330,29 @@ func TestShutdownWaitsForTheTitleBackfill(t *testing.T) {
 	}
 	if triggers := sync.backfillTriggers(); len(triggers) != 1 {
 		t.Errorf("no backfill should start after shutdown began, got %v", triggers)
+	}
+}
+
+// Shutdown ends the title backfills a session start and a call began: each
+// outlives its call and ends with the server.
+func TestShutdownEndsTheTitleBackfills(t *testing.T) {
+	sync := &recordingGraphSync{untilStopped: true}
+	application, _ := syncedApplication(t, sync)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = application.RefreshWorkflow(t.Context(), identity, workflow.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitBackfills(t, sync, 2)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := application.Shutdown(ctx); err != nil {
+		t.Errorf("shutdown should end the running backfills and return, got %v", err)
 	}
 }
 

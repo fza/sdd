@@ -15,15 +15,15 @@ type GroundingStatus struct {
 	Text  string
 }
 
-// PrefilterState is a project's prefilter judge, empty while the prefilter
-// is off, whether it holds a recall stage, so its thresholds decide, whether
-// a server calibrates it in the background, and the judges whose ranking
-// health is weak (model.RankingHealth).
+// PrefilterState is the ranking judge of one MCP client's readings, empty
+// while the prefilter is off, whether it holds a recall stage, so its
+// thresholds decide, whether a server calibrates it in the background, and
+// its ranking health when weak (model.RankingHealth).
 type PrefilterState struct {
 	Judge         string
 	Calibrated    bool
 	AutoCalibrate bool
-	Weak          []WeakJudge
+	Weak          *WeakJudge
 }
 
 // WeakJudge is a judge whose ranking recall over Positives referenced labels
@@ -34,23 +34,22 @@ type WeakJudge struct {
 	Positives int
 }
 
-// PrefilterState reports the ranking judge of a reading without a client
-// (rankingJudge), its calibration, and the ranking health of every judge.
-func (a *Application) PrefilterState(ctx context.Context, identity RequestIdentity, project ProjectID) (PrefilterState, error) {
+// PrefilterState reports the ranking judge the readings of a session under
+// the MCP client client rank with, the empty name for a reading without a
+// client (rankingJudge), with its calibration and ranking health.
+func (a *Application) PrefilterState(ctx context.Context, identity RequestIdentity, project ProjectID, client string) (PrefilterState, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return PrefilterState{}, err
 	}
-	judge := runtime.rankingJudge("").Judge
+	judge := runtime.rankingJudge(client).Judge
 	ledger, thresholds, err := runtime.judgeCalibration(ctx, judge)
 	if err != nil {
 		return PrefilterState{}, err
 	}
 	state := PrefilterState{Judge: judge, Calibrated: thresholds.Valid, AutoCalibrate: runtime.options.Grounding.AutoCalibrate && runtime.options.CalibrationRuns != nil}
-	for _, judge := range runtime.judges() {
-		if health := model.JudgeRankingHealth(ledger.Labels(judge.Judge)); health.Weak() {
-			state.Weak = append(state.Weak, WeakJudge{Judge: judge.Judge, Recall: health.Recall, Positives: health.Positives})
-		}
+	if health := model.JudgeRankingHealth(ledger.Labels(judge)); judge != "" && health.Weak() {
+		state.Weak = &WeakJudge{Judge: judge, Recall: health.Recall, Positives: health.Positives}
 	}
 	return state, nil
 }

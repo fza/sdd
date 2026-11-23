@@ -162,6 +162,31 @@ func TestServeLogsAnUncalibratedPrefilterOnce(t *testing.T) {
 	}
 }
 
+// serve warns of the judge the connecting client's readings rank with: the
+// Claude host's for Claude Code, chat on the llm provider for any other
+// client.
+func TestServeWarnsOfTheJudgeTheClientRanksWith(t *testing.T) {
+	const warning = "holds no recall stage yet"
+	for _, tc := range []struct {
+		client, judge, other string
+	}{
+		{client: "claude-code", judge: "judge=chat:claude-haiku-5-5", other: "chat:gpt-5.5"},
+		{client: "codex-mcp-client", judge: "judge=chat:gpt-5.5", other: "claude-haiku-5-5"},
+	} {
+		t.Run(tc.client, func(t *testing.T) {
+			f := newAppFixture(t)
+			claudeOnPath(t, f, true)
+			f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm:\n  provider: codex\n  model: gpt-5.5\n")
+			f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n  auto_calibrate: false\n")
+			f.client = tc.client
+			stderr := f.serveArgs(t, nil, nil, func(*mcp.ClientSession) {})
+			if strings.Count(stderr, warning) != 1 || !strings.Contains(stderr, tc.judge) || strings.Contains(stderr, tc.other) {
+				t.Fatalf("serve should warn once of the judge this client ranks with:\n%s", stderr)
+			}
+		})
+	}
+}
+
 // updateProject is a graph of two decisions referencing the fixture's
 // signal, ranked by chat on an ollama listener that refuses every call and,
 // with claude installed, by Haiku chat through a claude on PATH that fails
