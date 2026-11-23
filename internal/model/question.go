@@ -96,36 +96,42 @@ func (q TextQuestion) Answered(given string) bool {
 	return len(want) > 0 && slices.Equal(want, answerWords(given))
 }
 
-// RoundAnswered reports whether given answers every question of a
-// response's round, one answer each, parted by AnswerSeparator, in either
-// order. An answer lost for any question answers none.
-func RoundAnswered(questions []TextQuestion, given string) bool {
+// RoundCredit returns the indexes of the questions of a response's round
+// that given answers right, one answer each, parted by AnswerSeparator, in
+// either order, each part answering one question at most. lost for any
+// question, or a part count other than the round's, credits none: lost is
+// how an agent reports a compaction, and a summary can carry the answer to
+// one question of the round (20261122-234358-d-tac-lv2). A wrong part beside
+// a right one is a misread, so the right one counts.
+func RoundCredit(questions []TextQuestion, given string) []int {
 	parts := strings.Split(given, AnswerSeparator)
-	if len(questions) == 0 || len(parts) != len(questions) {
-		return false
-	}
-	if slices.ContainsFunc(parts, IsLost) {
-		return false
+	if len(questions) == 0 || len(parts) != len(questions) || slices.ContainsFunc(parts, IsLost) {
+		return nil
 	}
 	used := make([]bool, len(parts))
-	var match func(i int) bool
-	match = func(i int) bool {
+	var best, current []int
+	var match func(i int)
+	match = func(i int) {
 		if i == len(questions) {
-			return true
+			if len(current) > len(best) {
+				best = slices.Clone(current)
+			}
+			return
 		}
 		for j, part := range parts {
 			if used[j] || !questions[i].Answered(part) {
 				continue
 			}
 			used[j] = true
-			if match(i + 1) {
-				return true
-			}
+			current = append(current, i)
+			match(i + 1)
+			current = current[:len(current)-1]
 			used[j] = false
 		}
-		return false
+		match(i + 1)
 	}
-	return match(0)
+	match(0)
+	return best
 }
 
 func answerWords(s string) []string {

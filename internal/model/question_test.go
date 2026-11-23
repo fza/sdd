@@ -3,6 +3,7 @@ package model_test
 import (
 	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -169,7 +170,7 @@ func TestQuestionsStayShortForLongWords(t *testing.T) {
 	}
 }
 
-func TestRoundAnswered(t *testing.T) {
+func TestRoundCredit(t *testing.T) {
 	first := model.TextQuestion{Kind: model.AskWordsAfter, Phrase: "the draft must", Answer: "reach the"}
 	second := model.TextQuestion{Kind: model.AskBetween, Phrase: "ask the user", Second: "confirm it now", Answer: "to"}
 	pair := []model.TextQuestion{first, second}
@@ -177,24 +178,29 @@ func TestRoundAnswered(t *testing.T) {
 		name      string
 		questions []model.TextQuestion
 		given     string
-		right     bool
+		credited  []int
 	}{
-		{"both in order", pair, "reach the ; to", true},
-		{"no spaces", pair, "reach the;to", true},
-		{"swapped", pair, "to ; reach the", true},
-		{"one of two", pair, "reach the", false},
-		{"one lost", pair, "reach the ; lost", false},
-		{"both lost", pair, "lost ; lost", false},
-		{"lost alone", pair, "lost", false},
-		{"one wrong", pair, "reach the ; from", false},
-		{"three parts", pair, "reach the ; to ; to", false},
-		{"one question", pair[:1], "reach the", true},
-		{"one question, two answers", pair[:1], "reach the ; to", false},
+		{"both in order", pair, "reach the ; to", []int{0, 1}},
+		{"no spaces", pair, "reach the;to", []int{0, 1}},
+		{"swapped", pair, "to ; reach the", []int{0, 1}},
+		{"first right, second wrong", pair, "reach the ; from", []int{0}},
+		{"first wrong, second right", pair, "from ; to", []int{1}},
+		{"right answer in the other slot beside a wrong one", pair, "from ; reach the", []int{0}},
+		{"one answer for both", pair, "to ; to", []int{1}},
+		{"both wrong", pair, "from ; into", nil},
+		{"one of two", pair, "reach the", nil},
+		{"one lost", pair, "reach the ; lost", nil},
+		{"both lost", pair, "lost ; lost", nil},
+		{"lost alone", pair, "lost", nil},
+		{"three parts", pair, "reach the ; to ; to", nil},
+		{"one question", pair[:1], "reach the", []int{0}},
+		{"one question wrong", pair[:1], "from", nil},
+		{"one question, two answers", pair[:1], "reach the ; to", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := model.RoundAnswered(tc.questions, tc.given); got != tc.right {
-				t.Errorf("RoundAnswered should report %v for this answer", tc.right)
+			if got := model.RoundCredit(tc.questions, tc.given); !slices.Equal(got, tc.credited) {
+				t.Errorf("RoundCredit should credit exactly the questions a right part answers, got %v", got)
 			}
 		})
 	}
