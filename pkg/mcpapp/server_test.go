@@ -993,6 +993,29 @@ func TestToolContractSnapshot(t *testing.T) {
 	cupaloy.New(cupaloy.SnapshotFileExtension(".json")).SnapshotT(t, string(encoded))
 }
 
+// The gather description is served alike with and without an embedding
+// model, so it promises a search by meaning only where a model is set.
+func TestGatherDescriptionHoldsWithoutAnEmbeddingModel(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+
+	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Tools, func(tool *mcp.Tool) bool { return tool.Name == "gather" })
+	if i < 0 {
+		t.Fatal("the server should list the gather tool")
+	}
+	description := res.Tools[i].Description
+	if strings.Count(description, "by meaning") != strings.Count(description, "by meaning where an embedding model is set") {
+		t.Errorf("every search by meaning the description names should hold only where an embedding model is set: %q", description)
+	}
+	if !strings.Contains(description, "keyword") {
+		t.Errorf("the description should name the keyword searches that run either way: %q", description)
+	}
+}
+
 // TestOrientationListsMoveParamSignatures verifies the shell orientation's
 // move listing carries each move's accepted start-param signature, so a
 // caller sees the params where the move is offered rather than only through a

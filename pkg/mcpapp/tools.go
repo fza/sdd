@@ -677,9 +677,9 @@ func (s *toolSet) register(srv *mcp.Server) error {
 
 	addTool(srv, s, &mcp.Tool{
 		Name: "gather",
-		Description: "Ground a draft before its capture, in one call; session required. Runs a search by " +
-			"meaning with the draft's own text, your query and terms, and the live listing of every " +
-			"draft topic, and has the ranking judge order what they found. Name the running capture as instance: only " +
+		Description: "Ground a draft before its capture, in one call; session required. Runs a keyword search " +
+			"per term, the live listing of every draft topic, and a search by meaning where an embedding model " +
+			"is set, with the draft's own text and your query; the ranking judge orders what they found. Name the running capture as instance: only " +
 			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
 			"An entry already served in full in the same result prints as a pointer with its brief.",
 	}, s.gather)
