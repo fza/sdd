@@ -50,7 +50,7 @@ type pieceCall struct {
 	answered   int
 	provedFrom int
 	short      bool
-	// reset is set by an answer crediting no question: the held set empties
+	// reset is set by an answer to open questions crediting none: the held set empties
 	// when the call records what it served.
 	reset bool
 	// carried is set when the call carries an answer.
@@ -93,9 +93,10 @@ func (s *Session) nextSeq() int {
 // lists in reread, which serve in full. The questions of a round still
 // unanswered that the answer credits make the texts whose latest copy is at
 // least the oldest of the credited questions' hold for the call. None holds
-// nothing; an answer crediting no question, lost to any among them, holds
-// nothing and empties the held set, so only texts served from this call on
-// count as held (20261122-105026-d-tac-wl5).
+// nothing; an answer to open questions that credits none, lost to any among
+// them, holds nothing and empties the held set, so only texts served from this
+// call on count as held (20261122-105026-d-tac-wl5). With no question open an
+// answer holds nothing and empties nothing (20261123-094106-d-tac-yja).
 func (s *Session) BeginCall(answer string, reread []string) {
 	s.call = pieceCall{reread: map[string]bool{}}
 	for _, r := range reread {
