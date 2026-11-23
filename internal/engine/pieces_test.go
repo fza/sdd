@@ -599,3 +599,59 @@ func TestServeChangedServesEachCallerOncePerChange(t *testing.T) {
 		t.Error("a third caller should get the block")
 	}
 }
+
+// Emptied tells a call whose answer, lost or wrong, emptied the held set
+// from one a right answer or no answer leaves standing.
+func TestEmptiedNamesTheAnswersThatEmptyTheHeldSet(t *testing.T) {
+	session := newPieceSession(nil)
+	_, q := respond(t, session, "", map[engine.Piece]string{stepLane: stepText})
+	right := answer(t, q, stepText)
+	tests := []struct {
+		name    string
+		given   string
+		emptied bool
+	}{
+		{"none", "", false},
+		{"right", right, false},
+		{"lost", model.LostAnswer, true},
+		{"wrong", "nothing here", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session.BeginCall(tt.given, nil)
+			switch {
+			case tt.emptied && !session.Emptied():
+				t.Error("the answer should empty the held set")
+			case !tt.emptied && session.Emptied():
+				t.Error("the answer should leave the held set standing")
+			}
+		})
+	}
+}
+
+// A call that fails leaves the questions it answered open, and says so to
+// an agent whose call carried an answer.
+func TestAFailedCallSaysItsQuestionsStand(t *testing.T) {
+	session := newPieceSession(nil)
+	session.BeginCall("", nil)
+	serve(session, stepLane, stepText)
+	session.RecordServed()
+	q := session.Ask()
+
+	session.BeginCall("", nil)
+	if session.QuestionsStand() {
+		t.Error("a call that carried no answer should say nothing of the questions")
+	}
+	for _, given := range []string{answer(t, q, stepText), model.LostAnswer} {
+		session.BeginCall(given, nil)
+		if !session.QuestionsStand() {
+			t.Errorf("a call answering %q should report its questions still open", given)
+		}
+	}
+	session.BeginCall(answer(t, q, stepText), nil)
+	session.RecordServed()
+	session.BeginCall(model.LostAnswer, nil)
+	if session.QuestionsStand() {
+		t.Error("no question should stand once every round is answered")
+	}
+}

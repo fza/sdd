@@ -1369,6 +1369,9 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 			err = errors.Join(err, slot.finish(ctx, err != nil))
 		}
 		if err != nil {
+			if slot.notice != "" {
+				err = fmt.Errorf("%w\n\n%s", err, slot.notice)
+			}
 			return res, out, err
 		}
 		if carrier, ok := any(&out).(interface{ setQuestion(string) }); ok && slot.question != "" {
@@ -1380,14 +1383,17 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 
 type callSlotKey struct{}
 
+const questionsStandNotice = "This call answered no question: the questions the last response ended with still stand. Answer them again on your next call."
+
 // callSlot lets the session a call attaches name how the call ends once its
 // handler ran: finish records what the call served and, with ask set, leaves
 // in question the line the response of a call that succeeded ends with. A
-// failed call answers no question.
+// failed call answers no question; notice then says so where questions stand.
 type callSlot struct {
 	finish   func(ctx context.Context, failed bool) error
 	ask      bool
 	question string
+	notice   string
 }
 
 // askQuestion marks the call in flight as one whose response ends with a
@@ -1408,6 +1414,9 @@ func noteCallSession(ctx context.Context, identity sdd.RequestIdentity, ss *shel
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		if failed {
+			if ss.root.QuestionsStand() {
+				slot.notice = questionsStandNotice
+			}
 			ss.root.DropAnswer()
 		}
 		err := ss.root.RecordPieces(ctx, identity)

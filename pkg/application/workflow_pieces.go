@@ -166,6 +166,10 @@ func jsonEscaped(text string) string {
 // for a call that failed.
 func (w *WorkflowSession) DropAnswer() { w.session.DropAnswer() }
 
+// QuestionsStand reports whether the call carried an answer while questions
+// are still open, which a failed call leaves open.
+func (w *WorkflowSession) QuestionsStand() bool { return w.session.QuestionsStand() }
+
 // RecordPieces logs the texts the call served and the question its answer
 // answered. A finished session records nothing: its last serve is the one
 // that ended it.
