@@ -48,11 +48,7 @@ func SDDDir(repoRoot string) string {
 // the same PerRepoConfig schema, and carries genuinely machine-specific
 // overrides (API keys, endpoints).
 func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
-	base, err := readCommittedConfigFile(sddDir)
-	if err != nil {
-		return nil, err
-	}
-	overlay, err := readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
+	base, overlay, err := ReadConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
 	}
@@ -84,9 +80,10 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 
 // ReadConfigLayers returns the two per-repo config layers separately —
 // committed .sdd/config.yaml and machine-local .sdd/config.local.yaml —
-// each nil when its file is absent. The effective-config view needs the
-// layers for per-value provenance; everything else wants ReadConfig's
-// merged result.
+// each nil when its file is absent and each without the settings it may not
+// make (model.HonoredCommitted, model.HonoredLocal). The effective-config
+// view needs the layers for per-value provenance; everything else wants
+// ReadConfig's merged result.
 func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err error) {
 	committed, err = readCommittedConfigFile(sddDir)
 	if err != nil {
@@ -96,7 +93,7 @@ func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err
 	if err != nil {
 		return nil, nil, err
 	}
-	return committed, local, nil
+	return model.HonoredCommitted(committed), model.HonoredLocal(local), nil
 }
 
 func readCommittedConfigFile(sddDir string) (*model.PerRepoConfig, error) {

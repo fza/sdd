@@ -147,6 +147,9 @@ type PerRepoConfig struct {
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
 	// committed config.yaml never does.
 	Contribution string `yaml:"contribution,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
 }
 
 // DefaultLLMTimeoutFor is the llm.timeout in effect for provider when none
@@ -511,6 +514,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	return &out
 }
 

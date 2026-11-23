@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,7 +27,11 @@ import (
 // (handlers.Committer/Brancher/Mover/Puller, finders.GitSyncer, repos.Git);
 // the one exception is the staged-deletion commit variant, which shares the
 // Commit method name and therefore lives on its own type (RemovalCommitter).
-type CLI struct{}
+type CLI struct {
+	// Dir is the directory the commands that read a repository run in;
+	// empty means the process's working directory.
+	Dir string
+}
 
 // commitTimeout caps the detached auto-commit. A signing or credential helper
 // blocking on input would otherwise hang indefinitely when sdd runs as a
@@ -44,6 +49,11 @@ func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
 	defer cancel()
 
+	segments, err := c.PendingSegments(ctx)
+	if err != nil {
+		return err
+	}
+	paths = slices.Concat(paths, segments)
 	// git add refuses a path gone from disk and index alike, as git rm leaves
 	// it; the commit pathspec below records that deletion on its own.
 	present := onDisk(paths)
@@ -160,7 +170,17 @@ func (RemovalCommitter) Commit(message string, paths ...string) error {
 			}
 		}
 	}
-	commitArgs := append([]string{"commit", "-m", message, "--"}, paths...)
+	segments, err := CLI{}.PendingSegments(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(segments) > 0 {
+		add := exec.Command("git", append([]string{"add", "--all", "--"}, segments...)...)
+		if out, err := add.CombinedOutput(); err != nil {
+			return fmt.Errorf("git add shared segments: %s (%w)", out, err)
+		}
+	}
+	commitArgs := append(append([]string{"commit", "-m", message, "--"}, paths...), segments...)
 	commit := exec.Command("git", commitArgs...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
