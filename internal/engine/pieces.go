@@ -105,11 +105,17 @@ func (s *Session) BeginCall(answer string, reread []string) {
 		return
 	}
 	s.call.carried = true
+	open := s.openRounds()
+	// With no question open, as after a response that asked none, an answer
+	// disproves nothing; the call still holds nothing by it.
+	if len(open) == 0 {
+		return
+	}
 	if model.IsLost(answer) {
 		s.call.reset = true
 		return
 	}
-	for round, asked := range s.openRounds() {
+	for round, asked := range open {
 		credited := model.RoundCredit(asked.questions, answer)
 		if len(credited) == 0 {
 			continue
