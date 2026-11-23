@@ -10,6 +10,8 @@ import (
 	"text/template"
 	"unicode"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
@@ -170,11 +172,27 @@ func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph 
 
 // Run makes the call and parses its answer. An empty summary
 // (ErrEmptySummary), or a first sentence over MaxFirstSentenceWords, gets one
-// repair call naming the defect.
+// repair call naming the defect. A first sentence the repair leaves too long
+// gets one fresh generation with its own repair call (20261123-140726-d-tac-7he).
 func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionResult, error) {
+	result, words, err := d.generate(ctx, runner)
+	if !errors.Is(err, ErrLongFirstSentence) {
+		return result, err
+	}
+	slogutils.FromContext(ctx).Info("summary's first sentence too long after the repair call, generating a fresh summary", "words", words, "limit", MaxFirstSentenceWords)
+	result, words, err = d.generate(ctx, runner)
+	if errors.Is(err, ErrLongFirstSentence) {
+		return DescriptionResult{}, fmt.Errorf("%w: %d words after a fresh generation and its repair call, limit %d; publishing again generates a new summary", ErrLongFirstSentence, words, MaxFirstSentenceWords)
+	}
+	return result, err
+}
+
+// generate makes one call with its one repair call; on ErrLongFirstSentence it
+// reports the repaired first sentence's word count.
+func (d *Description) generate(ctx context.Context, runner llm.Runner) (DescriptionResult, int, error) {
 	output, err := runner.Run(ctx, d.Request)
 	if err != nil {
-		return DescriptionResult{}, fmt.Errorf("running %s call: %w", d.Request.Purpose, err)
+		return DescriptionResult{}, 0, fmt.Errorf("running %s call: %w", d.Request.Purpose, err)
 	}
 	result, err := d.Parse(output.Text)
 	words := firstSentenceWords(result.Summary)
@@ -183,29 +201,29 @@ func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionRe
 	case errors.Is(err, ErrEmptySummary):
 		repair, err = d.repairRequest("summary_empty_repair_user", output.Text, 0)
 	case err != nil:
-		return DescriptionResult{}, err
+		return DescriptionResult{}, 0, err
 	case words <= MaxFirstSentenceWords:
-		return result, nil
+		return result, 0, nil
 	default:
 		repair, err = d.repairRequest("summary_repair_user", output.Text, words)
 	}
 	if err != nil {
-		return DescriptionResult{}, err
+		return DescriptionResult{}, 0, err
 	}
 
 	output, err = runner.Run(ctx, repair)
 	if err != nil {
-		return DescriptionResult{}, fmt.Errorf("running %s repair call: %w", d.Request.Purpose, err)
+		return DescriptionResult{}, 0, fmt.Errorf("running %s repair call: %w", d.Request.Purpose, err)
 	}
 	result, err = d.Parse(output.Text)
 	if err != nil {
-		return DescriptionResult{}, fmt.Errorf("after the repair call: %w", err)
+		return DescriptionResult{}, 0, fmt.Errorf("after the repair call: %w", err)
 	}
 	words = firstSentenceWords(result.Summary)
 	if words > MaxFirstSentenceWords {
-		return DescriptionResult{}, fmt.Errorf("%w: %d words after the repair call, limit %d", ErrLongFirstSentence, words, MaxFirstSentenceWords)
+		return DescriptionResult{}, words, fmt.Errorf("%w: %d words after the repair call, limit %d", ErrLongFirstSentence, words, MaxFirstSentenceWords)
 	}
-	return result, nil
+	return result, 0, nil
 }
 
 func (d *Description) repairRequest(name, answer string, words int) (llm.Request, error) {
