@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/index"
@@ -127,6 +129,9 @@ func (f *SearchFinder) textSearch(q query.SearchQuery) (*query.SearchResult, err
 		allHit := true
 		for _, re := range regexes {
 			locs := re.FindAllStringIndex(text, -1)
+			if q.WholeWords {
+				locs = wholeWordMatches(text, locs)
+			}
 			if len(locs) == 0 {
 				allHit = false
 				break
@@ -434,6 +439,29 @@ func compileTerms(terms []string) ([]*regexp.Regexp, error) {
 		out = append(out, re)
 	}
 	return out, nil
+}
+
+// wholeWordMatches keeps the matches that no word character continues on
+// either side. An edge of the match that is itself no word character, like
+// the end of "C++", needs no boundary.
+func wholeWordMatches(text string, locs [][]int) [][]int {
+	var kept [][]int
+	for _, loc := range locs {
+		match := text[loc[0]:loc[1]]
+		first, _ := utf8.DecodeRuneInString(match)
+		last, _ := utf8.DecodeLastRuneInString(match)
+		before, _ := utf8.DecodeLastRuneInString(text[:loc[0]])
+		after, _ := utf8.DecodeRuneInString(text[loc[1]:])
+		if match == "" || isWordRune(first) && isWordRune(before) || isWordRune(last) && isWordRune(after) {
+			continue
+		}
+		kept = append(kept, loc)
+	}
+	return kept
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || r == '_'
 }
 
 // searchableText concatenates the entry's summary, body, and (markdown)
