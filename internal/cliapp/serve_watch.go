@@ -299,6 +299,10 @@ func (a servedAccess) ResolveParticipant(ctx context.Context, principal sdd.Prin
 	return a.access(ctx).ResolveParticipant(ctx, principal, project)
 }
 
+func (a servedAccess) ResolveDialogue(ctx context.Context, principal sdd.Principal, project sdd.ProjectID) (sdd.Dialogue, error) {
+	return a.access(ctx).ResolveDialogue(ctx, principal, project)
+}
+
 func (a servedAccess) ListProjects(ctx context.Context, principal sdd.Principal) (sdd.ProjectList, error) {
 	return a.access(ctx).ListProjects(ctx, principal)
 }
