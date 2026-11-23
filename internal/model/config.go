@@ -243,6 +243,11 @@ func DialogueModes() []DialogueMode {
 	return []DialogueMode{DialogueGuided, DialogueAuto}
 }
 
+// AllowedValues lists the dialogue modes.
+func (DialogueMode) AllowedValues() []string {
+	return closedValues(DialogueModes()...)
+}
+
 func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 	switch {
 	case mode == "":
@@ -428,6 +433,11 @@ const (
 const DefaultClaudeCLICredentials = ClaudeCLICredentialsLogin
 
 var knownClaudeCLICredentials = []ClaudeCLICredentials{ClaudeCLICredentialsLogin, ClaudeCLICredentialsEnv}
+
+// AllowedValues lists the llm.claude_cli.credentials values.
+func (ClaudeCLICredentials) AllowedValues() []string {
+	return closedValues(knownClaudeCLICredentials...)
+}
 
 // ParseClaudeCLICredentials validates s against the known values, resolving
 // empty to DefaultClaudeCLICredentials.

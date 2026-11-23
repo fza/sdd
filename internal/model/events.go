@@ -27,6 +27,11 @@ const (
 	EventShareGit EventShare = "git"
 )
 
+// AllowedValues lists the sharing modes.
+func (EventShare) AllowedValues() []string {
+	return closedValues(EventShareLocal, EventShareGit)
+}
+
 // EventsConfig is the `events` block: the sharing mode per channel. Only the
 // committed .sdd/config.yaml sets it, since sharing is the team's choice.
 type EventsConfig struct {
