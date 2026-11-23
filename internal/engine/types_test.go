@@ -81,7 +81,7 @@ func TestValidateValue(t *testing.T) {
 		{name: "fact index blank title", typ: "fact-index", value: map[string]any{"title": " ", "topic": "cli/view"}, wantErr: "trimmed, non-empty"},
 		{name: "fact index bad topic", typ: "fact-index", value: map[string]any{"title": "View grammar", "topic": "cli view"}, wantErr: "invalid character"},
 		{name: "list ok", typ: "list<label>", value: []any{"cli/ux", "type-system"}},
-		{name: "list element invalid", typ: "list<label>", value: []any{"ok", ""}, wantErr: "item 1"},
+		{name: "list element invalid", typ: "list<label>", value: []any{"ok", ""}, wantErr: "item 2:"},
 		{name: "list not list", typ: "list<label>", value: "cli/ux", wantErr: "expected a list"},
 		{name: "involvement ok", typ: "involvement", value: map[string]any{"target": goodID}},
 		{name: "involvement bad target", typ: "involvement", value: map[string]any{"target": "nope"}, wantErr: "not a full entry ID"},
