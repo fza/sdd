@@ -381,6 +381,26 @@ type ReadAttachmentResult struct {
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
 }
 
+type ReadGitArgs struct {
+	Session string `json:"session,omitempty" jsonschema:"attached session's handle; required. The read runs in that session's project checkout"`
+	Project string `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Op      string `json:"op,omitempty" jsonschema:"file: a file's content at rev; log: the commits from rev (default HEAD), not reachable from from when given, touching path when given; commit: one commit's message and changed files; diff: between from and to, for path when given"`
+	Rev     string `json:"rev,omitempty" jsonschema:"revision a file, log or commit read starts from: a branch, tag or commit hash such as main or HEAD~2"`
+	From    string `json:"from,omitempty" jsonschema:"diff: the older revision; log: commits reachable from it are left out"`
+	To      string `json:"to,omitempty" jsonschema:"diff: the newer revision"`
+	Path    string `json:"path,omitempty" jsonschema:"file: the file to read; log and diff: narrows them to this path. Relative to the checkout root"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"log: at most this many commits; default 20, at most 200"`
+	Offset  int64  `json:"offset,omitempty" jsonschema:"byte position to continue from: next_offset of the previous page, with the same other arguments"`
+}
+
+type ReadGitResult struct {
+	Text       string `json:"text" jsonschema:"one page of what git returned for the read, cut at a line end"`
+	Offset     int64  `json:"offset"`
+	NextOffset int64  `json:"next_offset,omitempty"`
+	TotalBytes int64  `json:"total_bytes"`
+	More       bool   `json:"more"`
+}
+
 type InfoArgs struct {
 	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the header describes that session's project"`
 	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
@@ -522,6 +542,14 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"an entry's by ID and filename, or a file staged in the session (before any entry carries it) " +
 			"by handle. Never derive storage paths.",
 	}, toolBoundary(s.readAttachment))
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "read_git",
+		Description: "Read the project checkout's git history, read-only, paged, within the session named by " +
+			"session (required). op file returns a file at a revision, log the commits of a revision or range, " +
+			"commit one commit's message and changed files, diff the change between two revisions. sdd builds " +
+			"the git command itself: no raw arguments.",
+	}, toolBoundary(s.readGit))
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "info",
@@ -1292,6 +1320,39 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 
 	return nil, output, nil
 
+}
+
+// readGitPageBytes bounds one read_git page by the host budget
+// maxViewResultBytes keeps.
+const readGitPageBytes = maxViewResultBytes
+
+func (s *toolSet) readGit(ctx context.Context, req *mcp.CallToolRequest, args ReadGitArgs) (*mcp.CallToolResult, ReadGitResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	defer ss.mu.Unlock()
+	project, _, _, err := s.readScope(ctx, req, ss, args.Project)
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	result, err := s.app.ReadGit(ctx, s.requestIdentity(req), project, sdd.GitReadRequest{
+		Op: strings.TrimSpace(args.Op), Rev: args.Rev, From: args.From, To: args.To, Path: args.Path, Limit: args.Limit,
+	})
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	total := int64(len(result.Text))
+	if args.Offset < 0 || args.Offset > total {
+		return nil, ReadGitResult{}, toolError("offset %d lies outside the read's %d bytes", args.Offset, total)
+	}
+	page := truncate.Bytes(result.Text[args.Offset:], readGitPageBytes, "")
+	next := args.Offset + int64(page.Cut.KeptBytes)
+	output := ReadGitResult{Text: page.Text, Offset: args.Offset, TotalBytes: total, More: next < total}
+	if output.More {
+		output.NextOffset = next
+	}
+	return nil, output, nil
 }
 
 func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoArgs) (*mcp.CallToolResult, InfoResult, error) {

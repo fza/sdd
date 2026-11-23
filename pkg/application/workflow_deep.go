@@ -510,7 +510,8 @@ func weighDeep(store *engine.Store, checkout fs.FS) string {
 }
 
 // deepLookup resolves what deep findings cite: entries in the instance's
-// graph, files in its project's checkout and commits in its repository.
+// graph, files in its project's checkout, at a revision too, and commits in
+// its repository.
 func (w *WorkflowSession) deepLookup(ctx *engine.Context) (model.DeepLookup, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
 	if err != nil {
@@ -529,6 +530,7 @@ func (w *WorkflowSession) deepLookup(ctx *engine.Context) (model.DeepLookup, err
 	if commits := runtime.options.Commits; commits != nil {
 		lookup.Commit = func(hash string) (string, bool, error) { return commits.CommitMessage(w.ctx, hash) }
 	}
+	lookup.FileAt = gitFileAt(w.ctx, runtime.options.Git)
 	return lookup, nil
 }
 

@@ -79,6 +79,8 @@ At a natural stop, the agent offers to wrap up and names every thread that is st
 
 `verify.mode: deep` has a second agent, run by Claude Code, check each draft. In Codex, a session under `deep`, or under a kind set to `deep` in `verify.kinds`, fails to start or resume and names the setting. For a project you work on in Codex, set it to `prose`, `grounding` or `off`, which work with every agent. Codex cannot run the verifier read-only, does not follow the served instructions reliably, and ends its turn while a verifier round still runs.
 
+The verifier checks history through `read_git`, an sdd tool every runner reaches the same way: a file at a revision such as `main`, the log of a revision or range, one commit's message and changed files, or the diff between two revisions. A claim that names a branch, tag or commit it checks at that revision, not in the working tree. sdd builds each git command itself and runs it read-only, detached from any terminal, with no external diff or textconv program; it reads only the project's own checkout, and a project served without one gets an answer that the tool is not available. A finding that cites a file at another revision names it in the source's `rev`, and sdd checks the quote against that revision. A draft claim the verifier cannot check with any source comes as a finding with no sources and no edits that quotes the claim: it asks the agent for the source, which the agent adds or contests. The headless `claude` runner has no shell.
+
 ## In the dialogue
 
 - **Read the playback.** Confirming writes exactly what the agent showed. Ask for changes until it says what you mean.

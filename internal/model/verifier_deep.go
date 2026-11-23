@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"regexp"
 	"slices"
@@ -65,8 +64,11 @@ func DeepSourceKinds() []string { return slices.Clone(deepSourceKinds) }
 // DeepSource is one source a finding cites: a checkout file, a commit, a URL
 // or a graph entry, with the words it quotes from it.
 type DeepSource struct {
-	Kind  string `json:"kind"`
-	Ref   string `json:"ref"`
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+	// Rev names the revision a file source is read at; empty reads the
+	// checkout as it stands.
+	Rev   string `json:"rev,omitempty"`
 	Quote string `json:"quote,omitempty"`
 }
 
@@ -75,10 +77,19 @@ var deepCommitRef = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 // Validate checks the source's form: a known kind, a path inside the
 // checkout, a commit hash, an http or https URL, or a full entry ID.
 func (s DeepSource) Validate() error {
+	if s.Rev != "" && s.Kind != DeepSourceFile {
+		return fmt.Errorf("source %s %q: only a file source names a rev", s.Kind, s.Ref)
+	}
 	switch s.Kind {
 	case DeepSourceFile:
-		if !fs.ValidPath(s.Ref) || s.Ref == "." {
+		if !GitPathInCheckout(s.Ref) {
 			return fmt.Errorf("source file %q is no path inside the checkout, relative to its root", s.Ref)
+		}
+		if s.Rev != "" {
+			err := ValidGitRevision(s.Rev)
+			if err != nil {
+				return fmt.Errorf("source file %q: %w", s.Ref, err)
+			}
 		}
 	case DeepSourceCommit:
 		if !deepCommitRef.MatchString(s.Ref) {
@@ -106,7 +117,10 @@ type DeepLookup struct {
 	Entry func(id string) (text string, found bool)
 	// File returns the content of a file in the checkout; found is false when
 	// no file is at path.
-	File   func(path string) (content string, found bool, err error)
+	File func(path string) (content string, found bool, err error)
+	// FileAt returns the content of a file at a revision of the checkout's
+	// repository; found is false when the revision or the file is missing.
+	FileAt func(rev, path string) (content string, found bool, err error)
 	Commit func(hash string) (message string, found bool, err error)
 }
 
@@ -124,7 +138,8 @@ type DeepFinding struct {
 
 // Validate checks the finding's shape: the closed axis and severity sets, an
 // owner finding without edits, evidence with sources unless only the user can
-// settle it, full entry IDs, and sources of a valid form.
+// settle it or it asks the drafter for a source, full entry IDs, and sources
+// of a valid form.
 func (f DeepFinding) Validate() error {
 	if strings.TrimSpace(f.Verdict) == "" {
 		return errors.New("verdict must say in words what is wrong")
@@ -138,8 +153,8 @@ func (f DeepFinding) Validate() error {
 	if f.Owner && len(f.Edits) > 0 {
 		return errors.New("an owner finding carries no edits: only the user can settle it")
 	}
-	if f.Axis == "evidence" && !f.Owner && len(f.Sources) == 0 {
-		return errors.New("an evidence finding names its sources")
+	if f.Axis == "evidence" && !f.Owner && len(f.Sources) == 0 && !f.asksForSource() {
+		return errors.New("an evidence finding names its sources; one that asks the drafter for a source carries no edits and a pointer quoting the claim; one only the user can settle sets owner: true")
 	}
 	for _, id := range f.Basis {
 		if _, err := ParseID(id); err != nil {
@@ -157,6 +172,14 @@ func (f DeepFinding) Validate() error {
 		}
 	}
 	return nil
+}
+
+// asksForSource reports whether the finding asks the drafter for a source of
+// a claim it quotes, as an evidence finding without sources may: it carries
+// no edits and a pointer quoting the claim, which CheckDeepFindings finds in
+// the draft.
+func (f DeepFinding) asksForSource() bool {
+	return len(f.Edits) == 0 && slices.ContainsFunc(f.Pointers, func(p DeepPointer) bool { return strings.TrimSpace(p.Quote) != "" })
 }
 
 // DeepAnswer is the drafter's answer to one finding.
@@ -556,11 +579,19 @@ func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
 	switch source.Kind {
 	case DeepSourceFile:
 		what = fmt.Sprintf("source file %s", source.Ref)
-		if lookup.File != nil {
-			text, found, err = lookup.File(source.Ref)
+		where, read := "the checkout", lookup.File
+		if source.Rev != "" {
+			what += " at revision " + source.Rev
+			where, read = "revision "+source.Rev, nil
+			if lookup.FileAt != nil {
+				read = func(path string) (string, bool, error) { return lookup.FileAt(source.Rev, path) }
+			}
+		}
+		if read != nil {
+			text, found, err = read(source.Ref)
 		}
 		if err == nil && !found {
-			return what + " is not in the checkout", nil
+			return fmt.Sprintf("source file %s is not in %s", source.Ref, where), nil
 		}
 	case DeepSourceCommit:
 		what = fmt.Sprintf("source commit %s", source.Ref)

@@ -525,6 +525,7 @@ func deepFindingSchema() map[string]any {
 					"properties": map[string]any{
 						"kind":  map[string]any{"type": "string", "enum": enumOf(model.DeepSourceKinds())},
 						"ref":   map[string]any{"type": "string", "minLength": 1},
+						"rev":   map[string]any{"type": "string", "description": "a file source: the revision read through read_git"},
 						"quote": map[string]any{"type": "string"},
 					},
 					"required":             []string{"kind", "ref"},

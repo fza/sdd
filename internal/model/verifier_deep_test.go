@@ -173,6 +173,20 @@ var deepLookup = model.DeepLookup{
 		}
 		return "", false, nil
 	},
+	FileAt: func(rev, path string) (string, bool, error) {
+		if rev == "main" && path == "internal/capture/writer.go" {
+			return "Write keeps the last attachment of a name.\n", true, nil
+		}
+		return "", false, nil
+	},
+}
+
+// sourceRequest is an evidence finding that asks the drafter for the source
+// of a claim it quotes, with no sources of its own.
+func sourceRequest(quote string, edits ...model.DeepEdit) model.DeepFinding {
+	finding := deepFinding("evidence", edits...)
+	finding.Pointers = []model.DeepPointer{{Field: "body", Quote: quote}}
+	return finding
 }
 
 func evidence(sources ...model.DeepSource) model.DeepFinding {
@@ -201,6 +215,12 @@ func TestCheckDeepFindings(t *testing.T) {
 		{"malformed url", evidence(model.DeepSource{Kind: "url", Ref: "example.org/spec"}), `f1: source url "example.org/spec" is no http or https URL`},
 		{"unknown kind", evidence(model.DeepSource{Kind: "chat", Ref: "the user said so"}), `f1: source kind "chat" is not one of`},
 		{"path leaving the checkout", evidence(model.DeepSource{Kind: "file", Ref: "../secrets.txt"}), `f1: source file "../secrets.txt" is no path inside the checkout`},
+		{"source request with edits", sourceRequest("drops the second attachment", model.DeepEdit{Old: "drops", New: "keeps"}), "f1: an evidence finding names its sources; one that asks the drafter for a source carries no edits and a pointer quoting the claim; one only the user can settle sets owner: true"},
+		{"source request quoting nothing in the draft", sourceRequest("keeps every attachment"), `f1: pointer quote "keeps every attachment" is not in the draft`},
+		{"file at a revision without the quote", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "main", Quote: "keeps the first attachment"}), `f1: source file internal/capture/writer.go at revision main does not hold the quote "keeps the first attachment"`},
+		{"file missing at the revision", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "v0.1.0"}), "f1: source file internal/capture/writer.go is not in revision v0.1.0"},
+		{"revision as an option", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "--output=leak"}), `f1: source file "internal/capture/writer.go": git read refused: revision "--output=leak" begins with -`},
+		{"revision on a commit source", evidence(model.DeepSource{Kind: "commit", Ref: "0a1b2c3d", Rev: "main"}), `f1: source commit "0a1b2c3d": only a file source names a rev`},
 		{"pointer quote not in the draft", model.DeepFinding{Verdict: "v", Axis: "inconsistent", Severity: "low", Pointers: []model.DeepPointer{{Field: "body", Quote: "drops every attachment"}}}, `f1: pointer quote "drops every attachment" is not in the draft`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,11 +247,65 @@ func TestCheckDeepFindings_CitationsThatResolveStand(t *testing.T) {
 		model.DeepSource{Kind: "commit", Ref: "0a1b2c3d", Quote: "keep the first attachment"},
 		model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-abc", Quote: "keeps the first attachment"},
 		model.DeepSource{Kind: "url", Ref: "https://example.org/never-fetched"},
+		model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Rev: "main", Quote: "keeps the last attachment"},
 	)
 	finding.Pointers = []model.DeepPointer{{Field: "body", Quote: "drops the second\n  attachment."}, {Field: "layer", Quote: "tactical"}}
 	problems, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{finding}, deepLookup)
 	if err != nil || len(problems) != 0 {
 		t.Fatalf("citations that resolve should stand, got %v, %v", problems, err)
+	}
+}
+
+func TestCheckDeepFindings_ASourceRequestQuotingTheClaimStands(t *testing.T) {
+	problems, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{sourceRequest("drops the second attachment")}, deepLookup)
+
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("an evidence finding without sources or edits that quotes the claim should stand, got %v, %v", problems, err)
+	}
+}
+
+func TestGitReadRequest_Validate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request model.GitReadRequest
+		want    string
+	}{
+		{"file", model.GitReadRequest{Op: model.GitReadFile, Rev: "main", Path: "go.mod"}, ""},
+		{"log from HEAD", model.GitReadRequest{Op: model.GitReadLog}, ""},
+		{"commit", model.GitReadRequest{Op: model.GitReadCommit, Rev: "HEAD~1"}, ""},
+		{"diff", model.GitReadRequest{Op: model.GitReadDiff, From: "main", To: "HEAD", Path: "internal"}, ""},
+		{"file without a path", model.GitReadRequest{Op: model.GitReadFile, Rev: "main"}, "a file read names rev and path"},
+		{"commit without a rev", model.GitReadRequest{Op: model.GitReadCommit}, "a commit read names rev"},
+		{"diff without to", model.GitReadRequest{Op: model.GitReadDiff, From: "main"}, "a diff names from and to"},
+		{"unknown op", model.GitReadRequest{Op: "blame"}, `op "blame" is not one of file, log, commit, diff`},
+		{"rev as an option", model.GitReadRequest{Op: model.GitReadLog, Rev: "-n1"}, `revision "-n1" begins with -`},
+		{"from as an option", model.GitReadRequest{Op: model.GitReadDiff, From: "--output=x", To: "HEAD"}, `revision "--output=x" begins with -`},
+		{"rev with whitespace", model.GitReadRequest{Op: model.GitReadCommit, Rev: "main extra"}, "holds whitespace or a control character"},
+		{"absolute path", model.GitReadRequest{Op: model.GitReadFile, Rev: "main", Path: "/etc/passwd"}, "is no path inside the checkout"},
+		{"path leaving the checkout", model.GitReadRequest{Op: model.GitReadLog, Path: "../other"}, "is no path inside the checkout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.request.Validate()
+
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("the request should pass, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, model.ErrGitReadRefused) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the request should be refused naming why, got %v", err)
+			}
+		})
+	}
+}
+
+func TestGitReadRequest_LogLimit(t *testing.T) {
+	if got := (model.GitReadRequest{}).LogLimit(); got != model.GitLogDefaultLimit {
+		t.Fatalf("no limit should give the default, got %d", got)
+	}
+	if got := (model.GitReadRequest{Limit: 5000}).LogLimit(); got != model.GitLogMaxLimit {
+		t.Fatalf("a limit past the cap should give the cap, got %d", got)
 	}
 }
 
