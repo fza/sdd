@@ -73,7 +73,7 @@ func (r *Reading) Stale(judge, subject string) map[string]uint8 {
 }
 
 // DraftMoved reports whether the draft moved from the draft as judged: fewer
-// than half of the entries nearest to it are among those nearest to the
+// than three quarters of the entries nearest to it are among those nearest to the
 // draft now. Without a list of nearest entries nothing moves.
 func DraftMoved(judged *DraftMark, nearest []string) bool {
 	if judged == nil || len(judged.Nearest) == 0 {
@@ -85,7 +85,7 @@ func DraftMoved(judged *DraftMark, nearest []string) bool {
 			kept++
 		}
 	}
-	return 2*kept < len(judged.Nearest)
+	return 4*kept < 3*len(judged.Nearest)
 }
 
 // JudgedBearing reports whether a judgement places its entry as likely
