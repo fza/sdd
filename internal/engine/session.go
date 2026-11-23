@@ -655,6 +655,15 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 			return nil, fmt.Errorf("field %q is not collected by option %q", name, choice)
 		}
 	}
+	// An answer whose command records no mutation intent stands only once the
+	// command accepts it: its fields are undone on refusal and the answer is
+	// logged right before the command's result. A command with an intent keeps
+	// the answer through a refusal, since its retry needs the answer's fields.
+	deferred := opt.Call != "" && !s.prepares(opt.Call)
+	var before *Store
+	if deferred {
+		before = inst.Store.Clone()
+	}
 	if _, err := inst.Store.writeState(fields, func(candidate *Store) error {
 		for _, cf := range opt.Collect {
 			if !cf.Optional && !candidate.Has(cf.Name) {
@@ -677,19 +686,33 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	if len(fields) > 0 {
 		data["fields"] = fields
 	}
-	s.appendEvent(inst.ID, EventChooserAnswer, data)
-	if err := s.checkSink(); err != nil {
-		return nil, err
+	answer := func() error {
+		s.appendEvent(inst.ID, EventChooserAnswer, data)
+		if err := s.checkSink(); err != nil {
+			return err
+		}
+		s.clearCancellation(inst.ID)
+		inst.interactionStep = inst.Step
+		// A dispatching junction's declared handoff rides the answered option:
+		// stash it so the next child started under this instance inherits it.
+		recordDispatchSeed(inst, opt)
+		return nil
 	}
-	s.clearCancellation(inst.ID)
-	inst.interactionStep = inst.Step
 
-	// A dispatching junction's declared handoff rides the answered option:
-	// stash it so the next child started under this instance inherits it.
-	recordDispatchSeed(inst, opt)
-
+	if !deferred {
+		if err := answer(); err != nil {
+			return nil, err
+		}
+	}
 	if opt.Call != "" {
-		if err := s.runCommand(inst, opt.Call, opt.To); err != nil {
+		var beforeResult func() error
+		if deferred {
+			beforeResult = answer
+		}
+		if err := s.runCommand(inst, opt.Call, opt.To, beforeResult); err != nil {
+			if deferred {
+				inst.Store.commit(before)
+			}
 			return nil, err
 		}
 	}
