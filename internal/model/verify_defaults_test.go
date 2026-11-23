@@ -1,6 +1,8 @@
 package model_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -50,11 +52,12 @@ func TestGroundingPolicy_PrefilterOnByDefault(t *testing.T) {
 }
 
 // Without an llm_prefilter block the prefilter runs on the llm provider and
-// model; every value llm_prefilter sets wins.
+// model; every value llm_prefilter sets wins. A dedicated provider takes the
+// block as set.
 func TestResolvedPrefilter(t *testing.T) {
 	llm := model.LLMConfig{Provider: "openai", Model: "gpt-x", Timeout: "5m", Concurrency: 2, APIKeys: map[string]string{"openai": "k"}}
 
-	derived := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
+	derived := mustResolvePrefilter(t, model.BaseConfig{LLM: llm})
 	if derived.Provider != "openai" || derived.Model != "gpt-x" {
 		t.Errorf("no block should derive the llm provider and model, got %+v", derived)
 	}
@@ -62,8 +65,62 @@ func TestResolvedPrefilter(t *testing.T) {
 		t.Errorf("the derived block should keep the prefilter's own bounds and the llm connection, got %+v", derived)
 	}
 
-	set := model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Model: "gpt-mini", Timeout: "45s"}}}.ResolvedPrefilter()
+	set := mustResolvePrefilter(t, model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{Model: "gpt-mini", Timeout: "45s"}})
 	if set.Provider != "openai" || set.Model != "gpt-mini" || set.Timeout != "45s" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
+	}
+
+	for _, provider := range []model.PrefilterProvider{model.PrefilterSystemOne, model.PrefilterCohere} {
+		block := model.LLMPrefilterConfig{Provider: provider, APIKeys: map[string]string{string(provider): "p"}}
+		dedicated := mustResolvePrefilter(t, model.BaseConfig{LLM: llm, LLMPrefilter: block})
+		if dedicated.Model != "" || dedicated.Endpoint != "" || dedicated.APIKeys["openai"] != "" || dedicated.APIKeys[string(provider)] != "p" {
+			t.Errorf("%s should take the block as set, nothing from llm, got %+v", provider, dedicated)
+		}
+	}
+}
+
+// A dedicated judge is named by llm_prefilter.provider only: from
+// llm.provider it would run on the llm block's key, endpoint and model.
+func TestResolvedPrefilter_RefusesADedicatedJudgeFromTheLLMBlock(t *testing.T) {
+	for _, llm := range []model.LLMConfig{
+		{Provider: "systemone", Model: "haiku", APIKeys: map[string]string{"systemone": "k"}},
+		{Provider: "cohere", Model: "haiku", APIKeys: map[string]string{"cohere": "k"}},
+	} {
+		_, err := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
+		if err == nil || !strings.Contains(err.Error(), "llm_prefilter.provider") {
+			t.Errorf("llm.provider %s should be refused, pointing at llm_prefilter.provider, got %v", llm.Provider, err)
+		}
+	}
+}
+
+func mustResolvePrefilter(t *testing.T, b model.BaseConfig) model.LLMPrefilterConfig {
+	t.Helper()
+	resolved, err := b.ResolvedPrefilter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+// llm_prefilter.provider takes every chat provider the llm block knows, then
+// the dedicated judges.
+func TestPrefilterProvider_AllowsEveryChatProviderAndTheDedicatedJudges(t *testing.T) {
+	allowed := model.PrefilterProvider("").AllowedValues()
+	for _, provider := range append(model.LLMProviders(), "systemone", "cohere") {
+		if !slices.Contains(allowed, provider) {
+			t.Errorf("llm_prefilter.provider should allow %s, allows %v", provider, allowed)
+		}
+	}
+}
+
+// The block holds its provider in a field of its own, beside the llm keys.
+func TestParseConfig_ReadsTheLLMPrefilterBlock(t *testing.T) {
+	cfg, err := model.ParseConfig([]byte("llm_prefilter:\n  provider: cohere\n  model: m\n  endpoint: https://example.invalid/rerank\n  timeout: 10s\n  api_keys:\n    cohere: k\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.LLMPrefilter
+	if got.Provider != model.PrefilterCohere || got.Model != "m" || got.Endpoint != "https://example.invalid/rerank" || got.Timeout != "10s" || got.APIKeys["cohere"] != "k" {
+		t.Fatalf("the block should read every key it sets, got %+v", got)
 	}
 }

@@ -32,7 +32,11 @@ func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
 	if !base.Verify.GroundingPolicy().Prefilter {
 		return sdd.Prefilter{}, nil
 	}
-	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), statsSink())
+	resolved, err := base.ResolvedPrefilter()
+	if err != nil {
+		return sdd.Prefilter{}, err
+	}
+	prefilter, err := factory.NewPrefilter(resolved, statsSink())
 	if err != nil {
 		return sdd.Prefilter{}, err
 	}
