@@ -41,6 +41,7 @@ import (
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/pkg/llm"
 )
 
 const evalTopN = 10
@@ -315,6 +316,6 @@ func shortID(id string) string {
 // noopRunner satisfies llm.Runner for the read-only LoadGraph path.
 type noopRunner struct{}
 
-func (noopRunner) Run(context.Context, llm.Request) (*llm.RunResult, error) {
-	return nil, fmt.Errorf("noop")
+func (noopRunner) Run(context.Context, llm.Request) (llm.Result, error) {
+	return llm.Result{}, fmt.Errorf("noop")
 }
