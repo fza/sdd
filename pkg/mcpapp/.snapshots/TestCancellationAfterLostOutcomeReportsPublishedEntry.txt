@@ -38,7 +38,7 @@ framing: |
   ## Recent graph movement, newest 5
 
     20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high finding open: it reads the draft and its grounding reading page by page, checks the draft with its own tools, and returns findings with exact edits over the draft.
-    20260921-120000-s-tac-op1 tactical gap signal Test capture entry summary.
+    20260921-120000-s-tac-op1 tactical gap signal Test title
     20260828-160000-s-prc-rfk process fact signal The reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source naming why it points at its target — with each kind's direction, when it applies over a sharper or weaker neighbor, and the calibration that keeps related a floor rather than a default and a terminal done never "addressed".
   (+30 more: call view with layout `skip(3):n(30):rank(by(date)):brief:as-list`)
 
