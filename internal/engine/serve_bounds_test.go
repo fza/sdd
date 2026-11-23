@@ -221,6 +221,7 @@ func TestStoreValueCutServesOnlyWhereTheLanesReadIt(t *testing.T) {
 		{"else condition", "{{if .other}}x{{else if .note}}A note is held.{{end}}", false},
 		{"with condition", "{{with .note}}A note is held.{{end}}", false},
 		{"condition and field", "{{if .note}}{{.note}}{{end}}", true},
+		{"condition and other field", "{{if .note}}{{.other}}{{end}}", false},
 		{"condition variable", "{{if $n := .note}}{{$n}}{{end}}", true},
 		{"with dot", "{{with .note}}{{.}}{{end}}", true},
 		{"with dot argument", `{{with .note}}{{printf "%s" .}}{{end}}`, true},
