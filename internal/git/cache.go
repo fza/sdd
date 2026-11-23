@@ -30,6 +30,9 @@ func run(ctx context.Context, dir string, args ...string) error {
 		args = append([]string{"-C", dir}, args...)
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
+	if dir != "" {
+		cmd.Env = pathEnv()
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = nil

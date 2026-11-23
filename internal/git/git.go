@@ -177,8 +177,12 @@ func (RemovalCommitter) Commit(message string, paths ...string) error {
 func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	env := os.Environ()
+	if len(args) > 1 && args[0] == "-C" {
+		env = pathEnv()
+	}
 	// sdd names files, never patterns: a glob character stays part of the name.
-	cmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
+	cmd.Env = append(env, "GIT_LITERAL_PATHSPECS=1")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)

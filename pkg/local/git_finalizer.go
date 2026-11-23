@@ -107,7 +107,7 @@ func (f GitFinalizer) lookupTrailer(ctx context.Context, trailer string) (string
 		return "", fmt.Errorf("git finalizer: concrete branch is required")
 	}
 	trailerPattern := "^" + regexp.QuoteMeta(trailer) + "$"
-	out, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "log", f.Branch, "--extended-regexp", "--grep="+trailerPattern, "--format=%H", "-n", "1").CombinedOutput()
+	out, err := git.CommandAt(ctx, f.Checkout, "log", f.Branch, "--extended-regexp", "--grep="+trailerPattern, "--format=%H", "-n", "1").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git finalizer log: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
@@ -118,14 +118,14 @@ func (f GitFinalizer) lookupTrailer(ctx context.Context, trailer string) (string
 // revision carries it at all.
 func (f GitFinalizer) readCommittedFile(ctx context.Context, revision, logicalPath string) ([]byte, bool, error) {
 	filename := path.Join(f.GraphDir, logicalPath)
-	listed, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "ls-tree", "--name-only", revision, "--", filename).Output()
+	listed, err := git.CommandAt(ctx, f.Checkout, "ls-tree", "--name-only", revision, "--", filename).Output()
 	if err != nil {
 		return nil, false, fmt.Errorf("listing %s at %s: %w", filename, revision, err)
 	}
 	if strings.TrimSpace(string(listed)) == "" {
 		return nil, false, nil
 	}
-	content, err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "show", revision+":"+filename).Output()
+	content, err := git.CommandAt(ctx, f.Checkout, "show", revision+":"+filename).Output()
 	if err != nil {
 		return nil, false, fmt.Errorf("reading %s at %s: %w", filename, revision, err)
 	}
@@ -134,7 +134,7 @@ func (f GitFinalizer) readCommittedFile(ctx context.Context, revision, logicalPa
 
 // isAncestor reports whether the revision is reachable from the branch head.
 func (f GitFinalizer) isAncestor(ctx context.Context, revision string) (bool, error) {
-	err := exec.CommandContext(ctx, "git", "-C", f.Checkout, "merge-base", "--is-ancestor", revision, f.Branch).Run()
+	err := git.CommandAt(ctx, f.Checkout, "merge-base", "--is-ancestor", revision, f.Branch).Run()
 	if err == nil {
 		return true, nil
 	}

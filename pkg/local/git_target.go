@@ -43,10 +43,6 @@ func NewGitWorktreeAcquirer(options GitWorktreeAcquirerOptions) (*GitWorktreeAcq
 	return &GitWorktreeAcquirer{project: options.Project, serverCheckout: root, factory: options.Factory, readFactory: options.ReadFactory, runGit: runGitTargetCommand}, nil
 }
 
-func runGitTargetCommand(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "git", args...).CombinedOutput()
-}
-
 func (a *GitWorktreeAcquirer) Acquire(ctx context.Context, target app.MutationTarget) (*app.AcquiredTarget, error) {
 	if a.factory == nil {
 		return nil, fmt.Errorf("sdd: mutation acquisition is not configured")

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -60,8 +59,7 @@ func AuthorizeInTreeSessionSource(
 			sourceAuthority, currentAuthority,
 		)
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", currentRepoRoot, "worktree", "list", "--porcelain")
-	output, err := cmd.CombinedOutput()
+	output, err := CommandAt(ctx, currentRepoRoot, "worktree", "list", "--porcelain").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("listing authorized Git worktrees: %w: %s", err, strings.TrimSpace(string(output)))
 	}
