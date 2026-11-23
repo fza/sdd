@@ -437,7 +437,7 @@ type GatherArgs struct {
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text, searched by meaning as it stands; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels; with one: topics listed beside the draft's own. Each is listed in full"`
 	Query    string   `json:"query,omitempty" jsonschema:"your search phrase, searched by meaning beside the draft's own text. Write it for one hypothesis about how the sought entry was written: who wrote it, what prompted it, and whether it frames the situation, the solution or the mechanism"`
-	Terms    []string `json:"terms,omitempty" jsonschema:"your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess"`
+	Terms    []string `json:"terms,omitempty" jsonschema:"your keyword terms, one search each, matched as whole words regardless of case. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess"`
 	Wait     bool     `json:"wait,omitempty" jsonschema:"have the ranking judge score until the minimum is judged, without its time limit: what to pass, with the same searches, when a check judged too few and the person chose to wait"`
 	Rejudge  bool     `json:"rejudge,omitempty" jsonschema:"have the ranking judge score every candidate against the draft as it stands, the judgements the capture keeps from earlier drafts included"`
 	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names, leaving the other arguments aside; with instance, the next page of that capture's graph check, built from the scores that arrived by then"`
@@ -677,9 +677,9 @@ func (s *toolSet) register(srv *mcp.Server) error {
 
 	addTool(srv, s, &mcp.Tool{
 		Name: "gather",
-		Description: "Ground a draft before its capture, in one call; session required. Runs a search by " +
-			"meaning with the draft's own text, your query and terms, and the live listing of every " +
-			"draft topic, and has the ranking judge order what they found. Name the running capture as instance: only " +
+		Description: "Ground a draft before its capture, in one call; session required. Runs a keyword search " +
+			"per term, the live listing of every draft topic, and a search by meaning where an embedding model " +
+			"is set, with the draft's own text and your query; the ranking judge orders what they found. Name the running capture as instance: only " +
 			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
 			"An entry already served in full in the same result prints as a pointer with its brief.",
 	}, s.gather)

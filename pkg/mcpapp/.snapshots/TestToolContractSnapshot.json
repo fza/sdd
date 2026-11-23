@@ -68,7 +68,7 @@
     "name": "bind_branch"
   },
   {
-    "description": "Ground a draft before its capture, in one call; session required. Runs a search by meaning with the draft's own text, your query and terms, and the live listing of every draft topic, and has the ranking judge order what they found. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call; session required. Runs a keyword search per term, the live listing of every draft topic, and a search by meaning where an embedding model is set, with the draft's own text and your query; the ranking judge orders what they found. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -117,7 +117,7 @@
           "type": "string"
         },
         "terms": {
-          "description": "your keyword terms, one search each. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess",
+          "description": "your keyword terms, one search each, matched as whole words regardless of case. Each tests another hypothesis about the sought entry's wording, not a rephrasing of the same guess",
           "items": {
             "type": "string"
           },

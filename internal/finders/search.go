@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/index"
@@ -113,7 +115,7 @@ func (f *SearchFinder) Search(ctx context.Context, q query.SearchQuery) (*query.
 }
 
 // textSearch runs a multi-term AND grep over each entry's searchable
-// text (summary + body + attachments). Entries are kept only if every
+// text (title + summary + body + attachments). Entries are kept only if every
 // term's regex matches at least once. The score is the total match count
 // across all terms; ties broken by earliest-match position.
 //
@@ -145,6 +147,9 @@ func (f *SearchFinder) textSearch(q query.SearchQuery) (*query.SearchResult, err
 		allHit := true
 		for _, re := range regexes {
 			locs := re.FindAllStringIndex(text, -1)
+			if q.WholeWords {
+				locs = wholeWordMatches(text, locs)
+			}
 			if len(locs) == 0 {
 				allHit = false
 				break
@@ -480,13 +485,40 @@ func compileTerms(terms []string) ([]*regexp.Regexp, error) {
 	return out, nil
 }
 
-// searchableText concatenates the entry's summary, body, and (markdown)
-// attachments into one string for grep matching. Returns the combined
-// text and the body alone (the body is reserved for breadcrumb-aware
-// citation in a future iteration; today's text-mode citation uses only
-// the snippet).
+// wholeWordMatches keeps the matches that no word character continues on
+// either side. An edge of the match that is itself no word character, like
+// the end of "C++", needs no boundary.
+func wholeWordMatches(text string, locs [][]int) [][]int {
+	var kept [][]int
+	for _, loc := range locs {
+		match := text[loc[0]:loc[1]]
+		first, _ := utf8.DecodeRuneInString(match)
+		last, _ := utf8.DecodeLastRuneInString(match)
+		before, _ := utf8.DecodeLastRuneInString(text[:loc[0]])
+		after, _ := utf8.DecodeRuneInString(text[loc[1]:])
+		if match == "" || isWordRune(first) && isWordRune(before) || isWordRune(last) && isWordRune(after) {
+			continue
+		}
+		kept = append(kept, loc)
+	}
+	return kept
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || r == '_'
+}
+
+// searchableText concatenates the entry's title, summary, body, and
+// (markdown) attachments into one string for grep matching. Returns the
+// combined text and the body alone (the body is reserved for
+// breadcrumb-aware citation in a future iteration; today's text-mode
+// citation uses only the snippet).
 func searchableText(graphDir string, e *model.Entry) (combined, body string) {
 	var b strings.Builder
+	if e.Title != "" {
+		b.WriteString(e.Title)
+		b.WriteByte('\n')
+	}
 	if e.Summary != "" {
 		b.WriteString(e.Summary)
 		b.WriteByte('\n')

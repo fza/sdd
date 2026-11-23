@@ -532,7 +532,7 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingSemantic, Text: phrase, IDs: ids})
 	}
 	for _, term := range request.Terms {
-		ids, err := run(query.SearchQuery{Terms: []string{regexp.QuoteMeta(term)}})
+		ids, err := run(query.SearchQuery{Terms: []string{regexp.QuoteMeta(term)}, WholeWords: true})
 		if err != nil {
 			return nil, fmt.Errorf("sdd: gather: keyword search %q: %w", term, err)
 		}

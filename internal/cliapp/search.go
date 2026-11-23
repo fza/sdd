@@ -38,6 +38,12 @@ const searchLockBound = 5 * time.Second
 // waited for once, by the snapshot open, not twice.
 const searchPrepareBound = 100 * time.Millisecond
 
+// setEmbeddingProvider names the user-global config, where the configuration
+// reference places embedding.*.
+const setEmbeddingProvider = "set embedding.provider in the user-global config (`sdd config set embedding.provider <provider>`)"
+
+var errNoEmbeddingProvider = errors.New("no embedding provider configured (" + setEmbeddingProvider + " or pass --embedding-provider)")
+
 // resolveEmbeddingConfig builds the effective EmbeddingConfig by merging
 // .sdd/config.yaml + .sdd/config.local.yaml and applying CLI flag
 // overrides. Mirrors resolveLLMConfig — same precedence rules, same
@@ -280,7 +286,7 @@ func indexCmd() *cli.Command {
 				return err
 			}
 			if emb.Embedder == nil {
-				return fmt.Errorf("no embedding provider configured (set embedding.provider in .sdd/config.local.yaml or pass --embedding-provider)")
+				return errNoEmbeddingProvider
 			}
 
 			graphDir, err := resolveGraphDir(cmd)
@@ -494,7 +500,7 @@ func searchCmd() *cli.Command {
 					return err
 				}
 				if emb.Embedder == nil {
-					return fmt.Errorf("vector search requires an embedding provider — set embedding.provider in .sdd/config.local.yaml")
+					return errors.New("vector search requires an embedding provider — " + setEmbeddingProvider)
 				}
 				idxDir, err = resolveIndexStore(emb)
 				if err != nil {
