@@ -132,7 +132,7 @@ func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, 
 		return nil, emb, nil, err
 	}
 	if emb.Embedder == nil {
-		return nil, emb, nil, fmt.Errorf("no embedding provider configured (set embedding.provider in .sdd/config.local.yaml or pass --embedding-provider)")
+		return nil, emb, nil, errNoEmbeddingProvider
 	}
 	graphDir, err := resolveGraphDir(cmd)
 	if err != nil {
