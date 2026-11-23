@@ -125,6 +125,7 @@ Default rate limits:
 | `embedding.endpoint` | `https://api.openai.com` | Base URL of an OpenAI-compatible embeddings service, for `openai` only. sdd appends `/v1/embeddings`, so leave `/v1` off. |
 | `embedding.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. Independent of `llm.ollama_endpoint`. |
 | `embedding.timeout` | `2m` | Time limit for one request. |
+| `embedding.keep_alive` | `30m` | How long Ollama keeps the model loaded after sdd's last request, as a Go duration. A negative one, such as `-1s`, keeps it loaded; `0` unloads it at once. Ollama's own default unloads it after 5 idle minutes, so a search after a pause waits for a reload. `openai` ignores it. |
 | `embedding.batch_size` | `100` for `openai`, `64` for `ollama` | Texts sent in one request. |
 | `embedding.dimensions` | The model's own size | Shorter vectors, for `openai` models that support it, such as `text-embedding-3-small`. `ollama` ignores it. |
 | `embedding.rate_limit_rps` | `5` for `text-embedding-3` models, `3` for other `openai` models | Maximum requests per second to `openai`. `ollama` has no limit. |

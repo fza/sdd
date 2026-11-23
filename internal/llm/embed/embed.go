@@ -44,7 +44,7 @@ func New(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	case "openai":
 		adapter, err = newOpenAI(cfg)
 	case "ollama":
-		adapter = newOllama(cfg)
+		adapter, err = newOllama(cfg)
 	default:
 		return nil, fmt.Errorf("unknown embedding provider %q (supported: openai, ollama)", cfg.Provider)
 	}
