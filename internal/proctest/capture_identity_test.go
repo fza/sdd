@@ -271,7 +271,7 @@ func startReclassifyingCapture(t *testing.T, connID string) (*proctest.Session, 
 	t.Helper()
 	session, instance := draftReclassifyingCapture(t, connID)
 	serve := session.Answer(t, instance, "playback", "confirm", nil, "go")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if !strings.Contains(serve.Instructions, "actor_kind") || !strings.Contains(serve.Instructions, "contradicts") {
 		t.Fatalf("the hold should name the actor kind contradicting its chain, got %q", serve.Instructions)
 	}
@@ -345,7 +345,7 @@ func TestCapture_ATimeoutWithAHighFindingOpenRefusesTheSkip(t *testing.T) {
 func TestCapture_ActorKindReclassificationHeldAtPreflight(t *testing.T) {
 	session, instance := startReclassifyingCapture(t, "identity-actor-kind-reclassify")
 
-	serve := session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"actorKind": "machine"}, "keep it a machine")
+	serve := session.Answer(t, instance, "preflightRoute", "revise", map[string]any{"actorKind": "machine"}, "")
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "go")
 	proctest.RequireStep(t, serve, "verifySummary")
@@ -355,8 +355,8 @@ func TestCapture_ActorKindWrittenAfterPreflightReruns(t *testing.T) {
 	session, instance := startReclassifyingCapture(t, "identity-actor-kind-stale-preflight")
 
 	session.Report(t, instance, map[string]any{"actorKind": "human"})
-	serve := session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	serve := session.Answer(t, instance, "preflightRoute", "hold", nil, "")
+	proctest.RequireStep(t, serve, "preflightRoute")
 }
 
 func TestReportSchema_AdvertisesActorKindSorts(t *testing.T) {

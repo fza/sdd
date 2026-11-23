@@ -6,12 +6,11 @@ import (
 
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// A writing-guide finding the agent dismisses on proceed is named to the
-// user before it proceeds, since no playback follows the proceed.
-func TestCapture_TheGuideReviewNamesDismissedFindingsBeforeProceed(t *testing.T) {
+// A writing-guide finding the agent dismisses goes into its report, not to
+// the user: the playback shows what the checks changed instead.
+func TestCapture_TheGuideReviewNamesNoFindingToTheUser(t *testing.T) {
 	world, session := newCaptureWorld(t, "guide-dismissed-told")
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
 		Reasoning: "the body leans on 'the earlier approach' without naming it",
@@ -22,90 +21,29 @@ func TestCapture_TheGuideReviewNamesDismissedFindingsBeforeProceed(t *testing.T)
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "looks right")
 	proctest.RequireStep(t, serve, "guideReview")
-	want := "Before you choose **proceed**, name to the user in your own words each `substantive` finding you dismiss: no playback follows."
-	if text := serve.Instructions; !strings.Contains(text, want) {
-		t.Fatalf("guideReview should carry %q:\n%s", want, text)
+	if text := serve.Instructions; strings.Contains(text, "name to the user") || strings.Contains(text, "no playback follows") {
+		t.Fatalf("guideReview should have no finding named to the user:\n%s", text)
 	}
 }
 
-// A deep finding accepted without an edit is played back to the user before
-// the write, so the user can still adjust the draft on it; the replay runs no
-// second pre-flight, and the summary check names it again.
-func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *testing.T) {
-	world, session := newDeepWorld(t, "deep-unedited-told", sdd.VerifierPolicy{})
-	x := startDeep(t, world, session, captureDraft())
-	verdict := "the gap claims an observation the graph records nowhere"
-	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
-	serve := x.pickUp(t)
-	proctest.RequireStep(t, serve, "deepAnswer")
-	if !strings.Contains(serve.Instructions, "- f1 [medium, inconsistent]: "+verdict) {
-		t.Fatalf("deepAnswer should serve the finding in full:\n%s", serve.Instructions)
-	}
-	preflights := world.LLM.Calls(llm.PurposePreflight)
-	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
-	proctest.RequireStep(t, serve, "playback")
-	settled := "- f1 [medium, inconsistent] accepted without an edit\n"
-	replay := serve.Instructions
-	for _, want := range []string{"The deep verifier left these findings without a change to the draft", settled, "Show the user each one before they confirm or adjust the draft: the finding as you were served it in full, never a paraphrase, and how it was settled."} {
-		if !strings.Contains(replay, want) {
-			t.Fatalf("the replayed playback should carry %q:\n%s", want, replay)
-		}
-	}
-	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
-	proctest.RequireStep(t, serve, "verifySummary")
-	if calls := world.LLM.Calls(llm.PurposePreflight); calls != preflights {
-		t.Fatalf("the replay should run no second pre-flight, got %d calls after %d", calls, preflights)
-	}
-	text := serve.Instructions
-	for _, want := range []string{"You accepted these findings of the deep verifier, which carried no edit, so the entry was written without a change for them:", settled, "Tell the user each one."} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("verifySummary should carry %q:\n%s", want, text)
-		}
-	}
-	for name, text := range map[string]string{"playback": replay, "verifySummary": text} {
-		if strings.Contains(text, verdict) {
-			t.Errorf("%s should name the settled finding in one line, not repeat it in full:\n%s", name, text)
-		}
-	}
-}
-
-// A playback round carrying the deep exchange's settled findings is the only
-// one: the round after an adjust leaves them out.
-func TestCaptureDeep_SettledFindingsRideOnePlaybackRound(t *testing.T) {
-	world, session := newDeepWorld(t, "deep-settled-once", sdd.VerifierPolicy{})
-	x := startDeep(t, world, session, captureDraft())
-	x.judge(t, []any{map[string]any{"verdict": "the gap claims an observation the graph records nowhere", "axis": "inconsistent", "severity": "medium"}})
-	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
-	proctest.RequireStep(t, serve, "playback")
-	const settled = "- f1 [medium, inconsistent] accepted without an edit"
-	if !strings.Contains(serve.Instructions, settled) {
-		t.Fatalf("the first playback after the exchange should carry the settled finding:\n%s", serve.Instructions)
-	}
-	serve = session.Answer(t, x.instance, "playback", "adjust", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "say one thing")
-	proctest.RequireStep(t, serve, "playback")
-	if text := serve.Instructions; strings.Contains(text, settled) || strings.Contains(text, "left these findings without a change") {
-		t.Fatalf("a playback round after the one that carried the settled findings should leave them out:\n%s", text)
-	}
-}
-
-// A deep finding that turns on facts only the user knows goes to the user:
-// the answer step says so with an example.
+// A deep finding that turns on facts only the user knows goes to the user at
+// the playback, never asked during the exchange: the answer step says so with
+// an example.
 func TestCaptureDeep_AFindingOnFactsOnlyTheUserKnowsGoesToTheUser(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-user-facts", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, subjectFinding("observes something."))
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	want := "A finding without that mark that turns on facts only the user knows, such as whether incidents were ever recorded: never accept or contest it on your own guess. Ask the user; when their answer refutes it, contest it, quoting them in the reason."
-	if text := serve.Instructions; !strings.Contains(text, want) {
-		t.Fatalf("deepAnswer should carry %q:\n%s", want, text)
+	want := "A finding without that mark that turns on facts only the user knows, such as whether incidents were ever recorded: never accept it on your own guess, and never put it to the user here. Contest it, naming the fact only they know; if the verifier holds it, it is open for them at the playback."
+	if text := serve.Instructions; !strings.Contains(text, want) || strings.Contains(text, "Ask the user") {
+		t.Fatalf("deepAnswer should carry %q and ask the user nothing:\n%s", want, text)
 	}
 }
 
-// A finding the verifier holds against the drafter's contest goes to the user
-// and is never named as taken without an edit, nor is one it withdrew.
-func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
+// A finding the verifier holds against the drafter's contest is open at the
+// playback; one it withdrew is not.
+func TestCaptureDeep_OnlyAHeldContestIsOpenAtThePlayback(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-unedited-only", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{
@@ -125,14 +63,13 @@ func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
 	}}, "")
 	session.Refresh(t)
 	proctest.RequireStep(t, session.Report(t, x.instance, nil), "deepProposal")
-	proctest.RequireStep(t, session.Answer(t, x.instance, "deepProposal", "escalate", nil, ""), "deepUser")
-	serve := session.Answer(t, x.instance, "deepUser", "settle", nil, "they were recorded in the tracker")
-	proctest.RequireStep(t, serve, "playback")
-	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
-	proctest.RequireStep(t, serve, "verifySummary")
-	if text := serve.Instructions; strings.Contains(text, "which carried no edit") {
-		t.Fatalf("a held or withdrawn finding is not one taken without an edit:\n%s", text)
+	serve := session.Answer(t, x.instance, "deepProposal", "escalate", nil, "")
+	requireOpenPoint(t, serve, "- f1 [medium, missing-ref]: contested, and the verifier holds it")
+	if strings.Contains(serve.Instructions, "- f2 ") {
+		t.Errorf("a withdrawn finding is not open for the user:\n%s", serve.Instructions)
 	}
+	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "they were recorded in the tracker")
+	proctest.RequireStep(t, serve, "verifySummary")
 }
 
 // No user reads an autonomous playback, so a deep finding accepted without an

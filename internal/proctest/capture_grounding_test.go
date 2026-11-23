@@ -200,13 +200,13 @@ func TestCaptureGrounding_EntryLandingAfterTheConfirmReachesLateEntries(t *testi
 			serve = session.Report(t, instance, captureDraft())
 			proctest.RequireStep(t, serve, "playback")
 			serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-			proctest.RequireStep(t, serve, "reviseOrOverride")
+			proctest.RequireStep(t, serve, "preflightRoute")
 
 			late := &model.Entry{ID: tc.id, Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 				Summary: "A gap that landed after the confirm.", Content: "A gap that landed after the confirm."}
 			proctest.WriteEntry(t, world.GraphDir, late)
 
-			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
+			serve = holdAndConfirm(t, session, instance, "write it anyway")
 			proctest.RequireStep(t, serve, "lateEntries")
 			if !strings.Contains(serve.Instructions, late.ID) || !strings.Contains(serve.Instructions, "A gap that landed after the confirm.") {
 				t.Fatalf("lateEntries should list the landed entry as its brief:\n%s", serve.Instructions)
@@ -254,7 +254,7 @@ func TestCaptureGrounding_ReviseFromLateEntriesReopensPlayback(t *testing.T) {
 	late := &model.Entry{ID: "20260603-110000-s-tac-rev", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 		Summary: "A gap that changes the draft.", Content: "A gap that changes the draft."}
 	proctest.WriteEntry(t, world.GraphDir, late)
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
+	serve = holdAndConfirm(t, session, instance, "write it anyway")
 	proctest.RequireStep(t, serve, "lateEntries")
 
 	world.LLM.PreflightFindings = nil
@@ -587,7 +587,7 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 			serve = session.Report(t, instance, captureDraft())
 			proctest.RequireStep(t, serve, "playback")
 			serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-			proctest.RequireStep(t, serve, "reviseOrOverride")
+			proctest.RequireStep(t, serve, "preflightRoute")
 
 			late := &model.Entry{ID: "20260603-090000-s-tac-lat", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 				Summary: "A gap that landed after the confirm.", Content: "A gap that landed after the confirm."}
@@ -595,7 +595,7 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 			session.WF.BeginCall("", nil)
 			session.WF.ServeEntry(late.ID, late.Content)
 
-			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
+			serve = holdAndConfirm(t, session, instance, "write it anyway")
 			proctest.RequireStep(t, serve, "lateEntries")
 			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (served in full")
 			if pointed != tc.cut {

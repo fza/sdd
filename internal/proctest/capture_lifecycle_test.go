@@ -202,13 +202,13 @@ func TestCapture_LifecycleFieldsCorrectableAfterWriteRejection(t *testing.T) {
 	instance := serve.Instance
 	session.Report(t, instance, lifecycleDraft())
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 
 	// The correction the rejection calls for: the edge moves fields.
-	serve = session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{
+	serve = session.Answer(t, instance, "preflightRoute", "revise", map[string]any{
 		"closes":     nil,
 		"supersedes": []any{captureRef2ID},
-	}, "make it a supersede instead")
+	}, "")
 	proctest.RequireStep(t, serve, "playback")
 	if !strings.Contains(serve.Instructions, captureRef2ID) {
 		t.Errorf("playback should render the corrected supersede target, got %q", serve.Instructions)

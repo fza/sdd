@@ -143,7 +143,7 @@ func TestCapture_BodyAssertingMissingAttachmentBlockedAtGate(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if !strings.Contains(serve.Instructions, "broken attachment link") || !strings.Contains(serve.Instructions, "review.md") {
 		t.Errorf("blocked write should serve the broken-link finding naming the file, got %q", serve.Instructions)
 	}
@@ -373,7 +373,7 @@ func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 		t.Fatalf("guideReview must serve an agent chooser, got %+v", serve.PendingChooser)
 	}
 	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved",
-		"(repair: write-in) This finding names what is missing, not its content. Write in only what the user said; otherwise ask the user, or dismiss it.",
+		"(repair: write-in) This finding names what is missing, not its content. Write in only what the user said; otherwise dismiss it.",
 		"A revision adds nothing the user did not say and keeps every line the user gave."} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("guideReview unit missing %q:\n%s", want, serve.Instructions)
@@ -463,7 +463,7 @@ func TestCapture_GuideRevisionPlaybackListsRemovedSentences(t *testing.T) {
 	session.Answer(t, instance, "playback", "confirm", nil, "yes")
 	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "")
 	proctest.RequireStep(t, serve, "playback")
-	for _, want := range []string{"Removed by the revision:", `- "It blocks the release."`} {
+	for _, want := range []string{"Changed by the checks", "Removed:", `- "It blocks the release."`} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("playback should list the sentence the revision removed, missing %q:\n%s", want, serve.Instructions)
 		}
@@ -508,7 +508,7 @@ func TestCapture_GuideRevisionPlaybackListsAddedSentences(t *testing.T) {
 			serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": tt.body}, "")
 			proctest.RequireStep(t, serve, "playback")
 
-			const header = "Added by the revision, not your words:"
+			const header = "Added, not the user's words:"
 			if len(tt.wantAdded) == 0 {
 				if strings.Contains(serve.Instructions, header) {
 					t.Fatalf("a revision adding no sentence should list none, got:\n%s", serve.Instructions)
@@ -747,17 +747,19 @@ func TestCapture_HighFindingsRouteToOverride(t *testing.T) {
 	instance := serve.Instance
 	session.Report(t, instance, captureDraft())
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if !strings.Contains(serve.Instructions, "Pre-flight findings") {
-		t.Errorf("reviseOrOverride should render the findings unit, got %q", serve.Instructions)
+		t.Errorf("preflightRoute should render the findings, got %q", serve.Instructions)
 	}
 	if got := world.LLM.Calls("preflight"); got != 1 {
 		t.Fatalf("pre-flight ran %d times before override, want 1", got)
 	}
 
-	// The override is a user-only chooser exit; it re-runs the write gate with
-	// the recorded override, which skips pre-flight and writes the entry.
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "skip it, the finding is wrong")
+	// The agent holds the finding for the user; their confirm at the
+	// playback records the override, which skips pre-flight and writes.
+	serve = session.Answer(t, instance, "preflightRoute", "hold", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "skip it, the finding is wrong")
 	proctest.RequireStep(t, serve, "verifySummary")
 	if got := world.LLM.Calls("preflight"); got != 1 {
 		t.Fatalf("pre-flight ran %d times after override, want still 1 (override skips it)", got)
@@ -782,15 +784,15 @@ func TestCapture_EditAfterConfirmReopensPlayback(t *testing.T) {
 	instance := serve.Instance
 	session.Report(t, instance, captureDraft())
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 
-	// Blocked at reviseOrOverride. The agent edits the body — the confirmed
+	// Blocked at preflightRoute. The agent edits the body — the confirmed
 	// state is now stale.
 	session.Report(t, instance, map[string]any{"body": "Edited after confirmation is a stale draft."})
 
-	// Overriding would jump back to the write gate — but the confirmation no
-	// longer covers the state, so playback reopens instead of writing.
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "just write it")
+	// A hold would go on toward the write — but the confirmation no longer
+	// covers the state, so playback reopens instead of writing.
+	serve = session.Answer(t, instance, "preflightRoute", "hold", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	if got := world.LLM.Calls("preflight"); got != 1 {
 		t.Fatalf("the write gate must not re-run on a stale confirmation, pre-flight ran %d times", got)
@@ -799,13 +801,14 @@ func TestCapture_EditAfterConfirmReopensPlayback(t *testing.T) {
 		t.Fatalf("no entry may be written on a stale confirmation, produced %v", id)
 	}
 
-	// Changed input invalidates the earlier finding and its override.
+	// Changed input invalidates the earlier finding and its hold.
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes, with the edit")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if got := world.LLM.Calls("preflight"); got != 2 {
 		t.Fatalf("edited input needs a new preflight, got %d calls", got)
 	}
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "override this finding for the edited input")
+	proctest.RequireStep(t, session.Answer(t, instance, "preflightRoute", "hold", nil, ""), "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "override this finding for the edited input")
 	proctest.RequireStep(t, serve, "verifySummary")
 	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
 	proctest.RequireStatus(t, serve, "completed")

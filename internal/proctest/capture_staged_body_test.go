@@ -256,11 +256,11 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 			instance := serve.Instance
 			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
 			serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-			proctest.RequireStep(t, serve, "reviseOrOverride")
+			proctest.RequireStep(t, serve, "preflightRoute")
 
 			tt.restage(t, session, handle)
 			world.LLM.PreflightFindings = nil
-			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "the finding does not apply")
+			serve = session.Answer(t, instance, "preflightRoute", "hold", nil, "")
 			proctest.RequireStep(t, serve, "playback")
 			if unchanged := strings.Contains(serve.Instructions, "Draft unchanged"); unchanged != tt.headerOnly {
 				t.Errorf("the reopened playback should show what the staging changed to the draft, and only that:\n%s", serve.Instructions)
@@ -431,7 +431,7 @@ func TestCapture_RefusedAnswerLeavesTheStagedBodyAlone(t *testing.T) {
 		name, chooser, choice string
 	}{
 		{name: "an option collecting nothing", chooser: "playback", choice: "confirm"},
-		{name: "a chooser not pending", chooser: "reviseOrOverride", choice: "revise"},
+		{name: "a chooser not pending", chooser: "preflightRoute", choice: "revise"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -542,12 +542,12 @@ func TestCapture_RestagedBodySurvivesAResume(t *testing.T) {
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
-	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "reviseOrOverride")
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "preflightRoute")
 	session.Stage(t, handle, []byte(unseenStagedBody))
 	world.LLM.PreflightFindings = nil
 
 	resumed, _ := world.Resume(t, session.ID, "staged-body-replay-resumed")
-	serve = resumed.Answer(t, instance, "reviseOrOverride", "override", nil, "the finding does not apply")
+	serve = resumed.Answer(t, instance, "preflightRoute", "hold", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	proctest.RequireStep(t, resumed.Answer(t, instance, "playback", "confirm", nil, "capture the revision"), "verifySummary")
 	serve = resumed.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")

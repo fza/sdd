@@ -3,6 +3,7 @@ package application
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -330,6 +331,44 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 		return err
 	}
 	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "preflightHeld", Doc: "The agent held the current pre-flight's high findings for the person, and no override settled them yet.", Reads: captureDraftFields},
+		Fn:  w.preflightHeld,
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterCommand(engine.Command{
+		Doc: engine.FuncDoc{Name: commandHoldPreflight, Doc: "Holds the current pre-flight's high findings for the person, who settles them at playback; refused over a credential, which no override lifts.",
+			Reads: []string{"findings"}},
+		Fn: holdPreflightFindings,
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "openPoints", Doc: "The points held for the person over the current input, one line each: the deep verifier's open points by their labels, then the held high pre-flight findings.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict, fieldDeepOpen, "findings")},
+		ServeSafe: true,
+		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DefaultResultBound.DeepPage()}},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			var lines string
+			deep, err := w.deepHeld(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if deep {
+				lines, _ = workflowStoreString(ctx.Store, fieldDeepOpen)
+			}
+			preflight, err := w.preflightHeld(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if preflight {
+				lines += heldPreflightLines(ctx.Store)
+			}
+			return truncate.Bytes(lines, resultBound(w.ctx).DeepPage(), ""), nil
+		},
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{Name: "preflightCut", Doc: "Pre-flight's model answer was cut at the output token cap, so the model did not judge the draft.", Reads: []string{fieldPreflightCut}},
 		Fn: func(ctx *engine.Context) (bool, error) {
 			cut, _ := workflowStoreString(ctx.Store, fieldPreflightCut)
@@ -349,7 +388,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut or timeout of its model's call.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightTimeout, fieldPreflightSkip}},
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightTimeout, fieldPreflightSkip, fieldCheckBase}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {
@@ -379,7 +418,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "writingGuide", Doc: "Runs the writing guide against the draft in isolation (d-cpt-20r); findings are drafting input, never a gate. Runs once per capture — a recorded run is never repeated implicitly; requestGuideRecheck clears it for an explicit re-run.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings", fieldGuideBase},
+			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings", fieldGuideBase, fieldCheckBase},
 		},
 		Fn: w.runWorkflowWritingGuide,
 	}); err != nil {
@@ -436,6 +475,9 @@ func (w *WorkflowSession) registerWorkflowWIP(registry *engine.Registry) error {
 // failure returns loudly: the op re-runs on the next report rather than
 // degrading to a silent pass.
 func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
+	if err := noteCheckBase(ctx.Store); err != nil {
+		return err
+	}
 	// A nil value is a cleared run (requestGuideRecheck), not a recorded one.
 	if v, ok := ctx.Store.Get("guideFindings"); ok && v != nil {
 		return nil

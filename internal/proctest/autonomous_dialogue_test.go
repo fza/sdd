@@ -132,7 +132,7 @@ func TestAutonomousDialogue_GuideRevisionRemovalsAddressTheAgent(t *testing.T) {
 	proctest.RequireStep(t, serve, "guideReview")
 	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "")
 	proctest.RequireStep(t, serve, "playback")
-	if strings.Contains(serve.Instructions, "Removed by the revision:") {
+	if strings.Contains(serve.Instructions, "Changed by the checks") {
 		t.Errorf("an autonomous playback should not address a user about the removal, got:\n%s", serve.Instructions)
 	}
 	for _, want := range []string{"Removed by your revision", `- "It blocks the release."`} {

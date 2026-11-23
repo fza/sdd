@@ -27,12 +27,19 @@ func TestCapture_PreflightTracksSelectedStagedAttachments(t *testing.T) {
 			draft["body"] = "The observation has a [full record]({{attachments}}/record.md)."
 			session.Report(t, serve.Instance, draft)
 			serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "capture it")
-			proctest.RequireStep(t, serve, "reviseOrOverride")
+			proctest.RequireStep(t, serve, "preflightRoute")
 
 			session.Stage(t, scenario.restaged, []byte("Revised record."))
 			session, _ = world.Resume(t, session.ID, "staged-preflight-resumed")
 			world.LLM.PreflightFindings = nil
-			serve = session.Answer(t, serve.Instance, "reviseOrOverride", "override", nil, "the finding does not apply")
+			instance := serve.Instance
+			serve = session.Answer(t, instance, "preflightRoute", "hold", nil, "")
+			if scenario.wantPreflights == 1 {
+				// The held finding still covers the draft, so it waits for the
+				// user's confirm at the playback.
+				proctest.RequireStep(t, serve, "playback")
+				serve = session.Answer(t, instance, "playback", "confirm", nil, "the finding does not apply")
+			}
 			proctest.RequireStep(t, serve, "verifySummary")
 			if got := world.LLM.Calls("preflight"); got != scenario.wantPreflights {
 				t.Fatalf("preflight calls = %d, want %d", got, scenario.wantPreflights)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/networkteam/slogutils"
 
@@ -74,6 +75,9 @@ func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 }
 
 func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
+	if err := noteCheckBase(ctx.Store); err != nil {
+		return err
+	}
 	target, fromBinding := w.effectiveTargetFor(w.instanceProject(ctx.Instance), ctx.Store)
 	if err := w.authorizeTarget(target.Project, AccessWrite); err != nil {
 		return err
@@ -161,6 +165,13 @@ func (w *WorkflowSession) prepareWorkflowNewEntry(ctx *engine.Context) (map[stri
 	if !current {
 		return nil, fmt.Errorf("capture requires a current deep verdict or skip for its current input")
 	}
+	held, err := w.deepHeld(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		return nil, fmt.Errorf("capture holds the deep verifier's open points for the person: their confirm at playback settles them")
+	}
 	branch, _ := workflowStoreString(ctx.Store, "resolvedCaptureBranch")
 	if branch == "" {
 		return nil, fmt.Errorf("capture has no preflight-resolved branch")
@@ -245,27 +256,43 @@ func (w *WorkflowSession) stagedAt(position uint64) (map[string]string, error) {
 }
 
 func (w *WorkflowSession) capturePreflightCurrent(ctx *engine.Context) (bool, error) {
-	current, _, err := w.capturePreflightState(ctx)
-	return current, err
+	state, err := w.capturePreflightState(ctx)
+	return state.current, err
+}
+
+// preflightHeld reports whether the current input's high pre-flight findings
+// wait for the person at playback: the agent held them, and no override
+// settled them yet.
+func (w *WorkflowSession) preflightHeld(ctx *engine.Context) (bool, error) {
+	state, err := w.capturePreflightState(ctx)
+	return state.current && state.held, err
 }
 
 func (w *WorkflowSession) verifyCapturePreflight(ctx *engine.Context) error {
-	current, accepted, err := w.capturePreflightState(ctx)
+	state, err := w.capturePreflightState(ctx)
 	if err != nil {
 		return err
 	}
-	if !current || !accepted {
+	if !state.current || !state.accepted {
 		return fmt.Errorf("capture requires accepted preflight for its current input")
 	}
 	return nil
 }
 
-func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool, error) {
+// preflightState is what the session log says of the pre-flight over the
+// current input: whether one covers it, whether it leaves no high finding
+// open, and whether the agent held the step's high findings, a hook's among
+// them, for the person.
+type preflightState struct {
+	current, accepted, held bool
+}
+
+func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (preflightState, error) {
 	_, _, stored, err := w.app.resolveSession(w.ctx, w.identity, w.ID())
 	if err != nil {
-		return false, false, err
+		return preflightState{}, err
 	}
-	current, accepted, mechanicalOnly, credential, unjudged := false, false, false, false, false
+	current, accepted, held, mechanicalOnly, credential, unjudged := false, false, false, false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -276,10 +303,10 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				BlobID string `json:"blob_id"`
 			}
 			if err := json.Unmarshal(event.Payload, &item); err != nil {
-				return false, false, err
+				return preflightState{}, err
 			}
 			if slices.Contains(selected, item.Handle) && staged[item.Handle] != item.BlobID {
-				current, accepted, unjudged = false, false, false
+				current, accepted, held, unjudged = false, false, false, false
 			}
 			staged[item.Handle] = item.BlobID
 			continue
@@ -289,7 +316,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 		}
 		var record engine.Event
 		if err := json.Unmarshal(event.Payload, &record); err != nil {
-			return false, false, err
+			return preflightState{}, err
 		}
 		if record.Instance != ctx.Instance {
 			continue
@@ -299,7 +326,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 			if fields, ok := record.Data["fields"].(map[string]any); ok {
 				for name := range fields {
 					if slices.Contains(captureDraftFields, name) {
-						current, accepted, unjudged = false, false, false
+						current, accepted, held, unjudged = false, false, false, false
 					}
 				}
 			}
@@ -308,17 +335,17 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 			if name == "preflightEntry" {
 				writes, _ := record.Data["writes"].(map[string]any)
 				unjudged = writes[fieldPreflightCut] != nil || writes[fieldPreflightTimeout] != nil
-				current, accepted = !unjudged, true
+				current, accepted, held = !unjudged, true, false
 				checkedBranch, _ = writes["resolvedCaptureBranch"].(string)
 				rubric, _ := writes[fieldPreflightRubric].(string)
 				mechanicalOnly = rubric != ""
 				encoded, err := json.Marshal(writes["findings"])
 				if err != nil {
-					return false, false, err
+					return preflightState{}, err
 				}
 				var findings []Finding
 				if err := json.Unmarshal(encoded, &findings); err != nil {
-					return false, false, err
+					return preflightState{}, err
 				}
 				credential = false
 				for _, finding := range findings {
@@ -343,33 +370,64 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				} else {
 					accepted = true
 				}
+				held = false
+			}
+			if name == commandHoldPreflight && current {
+				held = true
 			}
 		}
 	}
 	if !current {
-		return false, false, nil
+		return preflightState{}, nil
 	}
 	if mechanicalOnly {
 		judges, err := w.deepJudgesPreflight(ctx)
 		if err != nil || !judges {
-			return false, false, err
+			return preflightState{}, err
 		}
 	}
 	target, _ := w.effectiveTargetFor(w.instanceProject(ctx.Instance), ctx.Store)
 	if target.Branch == "" {
 		runtime, err := w.targetRuntime(target.Project, AccessWrite)
 		if err != nil {
-			return false, false, err
+			return preflightState{}, err
 		}
 		target, _, err = runtime.baseTarget(w.ctx)
 		if err != nil {
-			return false, false, err
+			return preflightState{}, err
 		}
 	}
 	if checkedBranch != target.Branch {
-		return false, false, nil
+		return preflightState{}, nil
 	}
-	return current, accepted, nil
+	return preflightState{current: current, accepted: accepted, held: held}, nil
+}
+
+// commandHoldPreflight holds the current input's high pre-flight findings for
+// the person, who settles them at playback (recordOverride on confirm).
+const commandHoldPreflight = "holdPreflightFindings"
+
+// holdPreflightFindings refuses a hold over a credential refusal, which no
+// override lifts.
+func holdPreflightFindings(ctx *engine.Context) error {
+	for _, finding := range workflowStoreDocuments(ctx.Store, "findings") {
+		if finding["category"] == credentialFinding {
+			return errors.New("an override cannot lift a credential, so it is never held for the person: revise the draft to drop it")
+		}
+	}
+	return nil
+}
+
+// heldPreflightLines renders the high pre-flight findings held for the
+// person, one line each.
+func heldPreflightLines(store *engine.Store) string {
+	var b strings.Builder
+	for _, finding := range workflowStoreDocuments(store, "findings") {
+		if finding["severity"] == string(query.SeverityHigh) {
+			fmt.Fprintf(&b, "- pre-flight [%v] %v: %v\n", finding["severity"], finding["category"], finding["observation"])
+		}
+	}
+	return b.String()
 }
 
 // instanceReading is the capture's credited grounding reading as the light

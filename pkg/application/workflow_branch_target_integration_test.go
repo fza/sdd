@@ -409,15 +409,15 @@ This reference exists only on the bound work branch.
 	serve = advanceWorkflow(t, retry, identity, serve.Instance, map[string]any{
 		"chooser": "playback", "choice": "confirm", "userWords": "try the write",
 	})
-	if serve.Step != "reviseOrOverride" {
-		t.Fatalf("rejected default attempt step = %q, want reviseOrOverride", serve.Step)
+	if serve.Step != "preflightRoute" {
+		t.Fatalf("rejected default attempt step = %q, want preflightRoute", serve.Step)
 	}
 	previousPreflightCalls := preflightCalls
 	if err := retry.BindBranch(t.Context(), identity, "work", false); err != nil {
 		t.Fatal(err)
 	}
 	serve = advanceWorkflow(t, retry, identity, serve.Instance, map[string]any{
-		"chooser": "reviseOrOverride", "choice": "override", "userWords": "retry on the bound work branch",
+		"chooser": "preflightRoute", "choice": "hold",
 	})
 	if serve.Step != "verifySummary" {
 		t.Fatalf("bound retry step = %q, want verifySummary", serve.Step)

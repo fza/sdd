@@ -45,7 +45,7 @@ func TestHooks_PreflightFindingJoinsTheWriteGateAndRoutesToOverride(t *testing.T
 	instance := serve.Instance
 	session.Report(t, instance, captureDraft())
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if !strings.Contains(serve.Instructions, "prose-lint: the opening sentence is passive") {
 		t.Errorf("the hook's finding should join pre-flight's findings, served %q", serve.Instructions)
 	}
@@ -53,7 +53,7 @@ func TestHooks_PreflightFindingJoinsTheWriteGateAndRoutesToOverride(t *testing.T
 		t.Fatalf("a blocked write should publish nothing, entry.written ran %d times", len(runs))
 	}
 
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "the lint is wrong here")
+	serve = holdAndConfirm(t, session, instance, "the lint is wrong here")
 	proctest.RequireStep(t, serve, "verifySummary")
 	written := scripted.RunsAt("entry.written")
 	if len(written) != 1 {

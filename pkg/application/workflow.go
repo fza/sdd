@@ -686,6 +686,12 @@ func (w *WorkflowSession) assisted() bool {
 	return w.session.DialogueMode == model.DialogueAssisted
 }
 
+// personPlayback reports whether a person sees the capture's playback: any
+// mode but auto.
+func (w *WorkflowSession) personPlayback() bool {
+	return !w.Autonomous() || w.assisted()
+}
+
 // Finished reports whether this dialogue is over: the shell has left running,
 // which is the act that wrote the terminal record. A finished session is spent —
 // the door opens a new one rather than re-serving it, and no move may carry it on.

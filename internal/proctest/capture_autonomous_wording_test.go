@@ -11,7 +11,8 @@ import (
 
 // No user reads what an autonomous capture serves the agent, so what a guided
 // capture tells the user goes to the agent's own check or its report; a guided
-// capture keeps its wording for the user.
+// capture keeps its wording for the user, apart from check findings, which
+// reach the user only at the playback.
 
 type wordingMode struct {
 	name     string
@@ -45,7 +46,8 @@ func TestCaptureWording_SummaryCheckNamesTheDeepFindings(t *testing.T) {
 	)
 	for _, mode := range []wordingMode{
 		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue(), clientActor("deep-summary-autonomous")}, want: []string{ownWithdrawn, ownUnedited}, unwanted: []string{"Tell the user"}},
-		{name: "guided", guided: true, want: []string{toldWithdrawn, toldUnedited}, unwanted: []string{"in what you report"}},
+		{name: "assisted", options: []proctest.Option{proctest.WithAssistedDialogue(), clientActor("deep-summary-assisted")}, unwanted: []string{"Tell the user", ownWithdrawn, ownUnedited, "withdrew", "which carried no edit"}},
+		{name: "guided", guided: true, unwanted: []string{"Tell the user", ownWithdrawn, ownUnedited, "withdrew", "which carried no edit"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			world, session := newDeepWorld(t, "deep-summary-"+mode.name, sdd.VerifierPolicy{}, mode.options...)
@@ -74,11 +76,13 @@ func TestCaptureWording_SummaryCheckNamesTheDeepFindings(t *testing.T) {
 			}}, "")
 			session.Refresh(t)
 			serve := session.Report(t, x.instance, nil)
-			proctest.RequireStep(t, serve, "playback")
-			if mode.guided {
-				serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
-			} else {
+			switch mode.name {
+			case "autonomous":
+				proctest.RequireStep(t, serve, "playback")
 				serve = session.Decide(t, x.instance, "playback", "confirm", nil, "the draft holds")
+			case "assisted":
+				proctest.RequireStep(t, serve, "playback")
+				serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 			}
 			proctest.RequireStep(t, serve, "verifySummary")
 			requireWording(t, serve, mode)
@@ -89,7 +93,7 @@ func TestCaptureWording_SummaryCheckNamesTheDeepFindings(t *testing.T) {
 func TestCaptureWording_GuideReviewNamesSubstantiveFindings(t *testing.T) {
 	for _, mode := range []wordingMode{
 		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue(), clientActor("guide-wording-autonomous")}, want: []string{"Name each `substantive` finding you act on or dismiss in what you report."}, unwanted: []string{"to the user in your own words"}},
-		{name: "guided", guided: true, want: []string{"name to the user in your own words each `substantive` finding you dismiss"}, unwanted: []string{"in what you report"}},
+		{name: "guided", guided: true, want: []string{"Name each `substantive` finding you act on or dismiss in what you report.", "Write in only what the user said; otherwise dismiss it."}, unwanted: []string{"to the user in your own words", "ask the user"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			world, session := newCaptureWorld(t, "guide-wording-"+mode.name, mode.options...)
@@ -112,7 +116,7 @@ func TestCaptureWording_GuideReviewNamesSubstantiveFindings(t *testing.T) {
 func TestCaptureWording_LightVerdictNamesSetAsideFindings(t *testing.T) {
 	for _, mode := range []wordingMode{
 		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue(), clientActor("light-wording-autonomous")}, want: []string{"Set aside a finding only a person can settle.", "Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words", "Ask the user"}},
-		{name: "guided", guided: true, want: []string{"Ask the user where only they can settle a finding.", "Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report", "only a person can settle"}},
+		{name: "guided", guided: true, want: []string{"Set aside a finding only a person can settle.", "Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words", "Ask the user"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			world, session := newCaptureWorld(t, "light-wording-"+mode.name, append([]proctest.Option{proctest.WithGroundingEnforced(),
@@ -137,7 +141,7 @@ func TestCaptureWording_LightVerdictNamesSetAsideFindings(t *testing.T) {
 func TestCaptureWording_VerifyHookReviewNamesSetAsideFindings(t *testing.T) {
 	for _, mode := range []wordingMode{
 		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue(), clientActor("verify-hook-wording-autonomous")}, want: []string{"Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words"}},
-		{name: "guided", guided: true, want: []string{"Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report"}},
+		{name: "guided", guided: true, want: []string{"Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			scripted := &proctest.ScriptedHooks{

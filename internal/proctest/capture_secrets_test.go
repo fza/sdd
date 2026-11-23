@@ -11,7 +11,8 @@ import (
 
 // A draft holding a credential reaches no model: the writing guide and the
 // write gate each report the refusal as a finding, an override sends the
-// draft back to revise, and revising it lets the capture go on.
+// draft back to revise, a hold for the person is refused, and revising it
+// lets the capture go on.
 func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
@@ -34,21 +35,19 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 		t.Errorf("the guide finding should quote the words before the credential:\n%s", serve.Instructions)
 	}
 	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if !strings.Contains(serve.Instructions, "looks like a credential") {
-		t.Errorf("reviseOrOverride should name the credential refusal:\n%s", serve.Instructions)
+	proctest.RequireStep(t, serve, "preflightRoute")
+	if !strings.Contains(serve.Instructions, "looks like a credential") || !strings.Contains(serve.Instructions, "an override cannot lift it") {
+		t.Errorf("preflightRoute should name the credential refusal and that an override cannot lift it:\n%s", serve.Instructions)
 	}
 
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if !strings.Contains(serve.Instructions, "an override cannot lift it") {
-		t.Errorf("reviseOrOverride should say an override cannot lift the credential:\n%s", serve.Instructions)
+	if _, err := session.AnswerErr(t, instance, "preflightRoute", "hold", nil, ""); err == nil || !strings.Contains(err.Error(), "an override cannot lift a credential") {
+		t.Fatalf("holding a credential refusal for the person should be refused, got %v", err)
 	}
 	if world.LLM.Calls("writing-guide") != 0 || world.LLM.Calls("preflight") != 0 {
 		t.Fatal("a draft holding a credential must reach no model")
 	}
 
-	serve = session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "drop the token")
+	serve = session.Answer(t, instance, "preflightRoute", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "")
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	if serve.Step == "guideReview" {

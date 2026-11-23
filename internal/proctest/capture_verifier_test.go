@@ -66,13 +66,13 @@ func TestCaptureVerifier_LightBlocksOnHighAndRerunsAfterRevise(t *testing.T) {
 	world, session := newLightWorld(t, "light-high")
 	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "duplicates", Observation: "the draft repeats a live entry"}}
 	instance, serve := confirmedLightCapture(t, session)
-	proctest.RequireStep(t, serve, "reviseOrOverride")
+	proctest.RequireStep(t, serve, "preflightRoute")
 	if !strings.Contains(serve.Instructions, "duplicates: the draft repeats a live entry") {
 		t.Fatalf("the blocking finding should be served:\n%s", serve.Instructions)
 	}
 
 	world.LLM.PreflightFindings = nil
-	serve = session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "A tactical gap: the fixture observes something new."}, "revise it")
+	serve = session.Answer(t, instance, "preflightRoute", "revise", map[string]any{"body": "A tactical gap: the fixture observes something new."}, "")
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "now write it")
 	proctest.RequireStep(t, serve, "verifySummary")

@@ -73,7 +73,8 @@ type deepVerdict struct {
 	// Document is the draft document the verdict covers, which a later
 	// exchange's delta reading compares against.
 	Document string `json:"document"`
-	// Outcome is verified, settled (by the user after the rounds) or skipped.
+	// Outcome is verified, held (its open points wait for the person at
+	// playback), settled (by the user after the rounds) or skipped.
 	Outcome string `json:"outcome"`
 	Skip    string `json:"skip,omitempty"`
 	Rounds  int    `json:"rounds"`
@@ -148,6 +149,15 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 	}
 	verdict, ok := readDeepVerdict(ctx.Store)
 	return ok && verdict.Fingerprint == w.deepFingerprint(ctx), nil
+}
+
+const deepOutcomeHeld = "held"
+
+// deepHeld reports whether the current input's deep verdict holds open points
+// for the person.
+func (w *WorkflowSession) deepHeld(ctx *engine.Context) (bool, error) {
+	verdict, ok := readDeepVerdict(ctx.Store)
+	return ok && verdict.Outcome == deepOutcomeHeld && verdict.Fingerprint == w.deepFingerprint(ctx), nil
 }
 
 // deepEditSettled reports whether a guided capture's draft changed since the
@@ -276,18 +286,8 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepNotesUnplayed", Doc: "The deep exchange left the draft as it judged it, with findings taken without an edit or withdrawn, and no playback has shown them yet; a changed draft already went back through playback.", Reads: append(slices.Clone(captureDraftFields), fieldDeepBase, fieldDeepUnedited, fieldDeepWithdrawn, fieldDeepReplayed)},
-			Fn: func(ctx *engine.Context) (bool, error) {
-				if replayed, _ := ctx.Store.Get(fieldDeepReplayed); replayed == true {
-					return false, nil
-				}
-				if base, _ := workflowStoreString(ctx.Store, fieldDeepBase); draftText(ctx.Store) != base {
-					return false, nil
-				}
-				unedited, _ := workflowStoreString(ctx.Store, fieldDeepUnedited)
-				withdrawn, _ := workflowStoreString(ctx.Store, fieldDeepWithdrawn)
-				return unedited != "" || withdrawn != "", nil
-			},
+			Doc: engine.FuncDoc{Name: "deepHeld", Doc: "The deep exchange held its open points for the person over the current draft, staged attachments and target, and no confirm settled them yet.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict)},
+			Fn:  w.deepHeld,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "deepEditSettled", Doc: "A guided capture whose draft changed since the deep verdict only by reverting or restoring edits the last exchange's proposal applied, each where it applied it, its attachments and target unchanged.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict, fieldDeepBase, fieldDeepFindings, fieldDeepHistory)},
@@ -375,8 +375,17 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's settled findings as shown once a playback that carried them is answered, so no later round carries them again.", Writes: []string{fieldDeepReplayed}},
-			Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine(fieldDeepReplayed, true) },
+			Doc: engine.FuncDoc{Name: "markPlaybackAnswered", Doc: "Marks what a playback carried as shown once it is answered: the deep exchange's settled findings, and the draft the checks began on, so a later round lists only what the checks change after it.", Writes: []string{fieldDeepReplayed, fieldCheckBase}},
+			Fn: func(ctx *engine.Context) error {
+				if err := ctx.Store.WriteEngine(fieldDeepReplayed, true); err != nil {
+					return err
+				}
+				return ctx.Store.WriteEngine(fieldCheckBase, nil)
+			},
+		},
+		{
+			Doc: engine.FuncDoc{Name: "holdDeepOpen", Doc: "Holds the deep exchange's open points for the person as the verdict over the current draft; the person's confirm settles them (recordDeepSettled), and the write refuses a verdict still held.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
+			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, deepOutcomeHeld, "") },
 		},
 		{
 			Doc: engine.FuncDoc{Name: "recordDeepVerdict", Doc: "Records the deep verdict over the current draft.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
@@ -1138,7 +1147,7 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 	// sizes against.
 	pageCap := engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DefaultResultBound.DeepPage()}}
 	err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: the findings, the proposal or its hunks, up to one page of the reading. Arg unplayed: nothing once a playback carrying the settled findings was answered (markDeepReplayed)."},
+		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: the findings, the proposal or its hunks, up to one page of the reading. Arg unplayed: nothing once a playback carrying the settled findings was answered (markPlaybackAnswered)."},
 		ServeSafe: true,
 		Bound:     pageCap,
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {

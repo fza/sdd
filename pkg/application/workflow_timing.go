@@ -30,8 +30,7 @@ type guideBase struct {
 }
 
 // fieldGuideAdded records the sentences a guide revision added to the body
-// and removed from it, listed at playback until the user confirms a draft
-// after it.
+// and removed from it, listed at an auto playback until a confirm follows it.
 const fieldGuideAdded = "guideAdded"
 
 // guideAdded is the value of fieldGuideAdded. Confirmation is the playback
@@ -40,6 +39,39 @@ type guideAdded struct {
 	Confirmation string   `json:"confirmation"`
 	Sentences    []string `json:"sentences"`
 	Removed      []string `json:"removed"`
+}
+
+// fieldCheckBase records the body the checks began on since a playback was
+// last answered; a person's playback lists what the checks changed against
+// it.
+const fieldCheckBase = "checkBase"
+
+func noteCheckBase(store *engine.Store) error {
+	if value, ok := store.Get(fieldCheckBase); ok && value != nil {
+		return nil
+	}
+	body, _ := workflowStoreString(store, fieldBody)
+	return store.WriteEngine(fieldCheckBase, body)
+}
+
+// checksChangedList renders the sentences the checks added to the body since
+// the check base, or with added false the ones they removed, one quoted
+// bullet each.
+func checksChangedList(store *engine.Store, added bool) string {
+	base, ok := workflowStoreString(store, fieldCheckBase)
+	if !ok {
+		return ""
+	}
+	body, _ := workflowStoreString(store, fieldBody)
+	sentences := textdiff.AddedSentences(base, body)
+	if !added {
+		sentences = textdiff.AddedSentences(body, base)
+	}
+	var b strings.Builder
+	for _, sentence := range sentences {
+		b.WriteString("- \"" + sentence + "\"\n")
+	}
+	return b.String()
 }
 
 // guideDraftFields are the reported fields a delta check compares, the body
@@ -171,6 +203,11 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 			Selector: true,
 		},
 		{
+			Doc:      engine.FuncDoc{Name: "personPlayback", Doc: "A person sees the capture's playback: the session runs in guided or assisted mode, read live from config on every step."},
+			Fn:       func(*engine.Context) (bool, error) { return w.personPlayback(), nil },
+			Selector: true,
+		},
+		{
 			Doc: engine.FuncDoc{Name: "verifierOn", Doc: "The capture's project sets verify.mode prose or deep, so pre-flight is the prose verifier over the grounding reading."},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				mode, err := w.verifierMode(ctx)
@@ -247,38 +284,41 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	// The added and the removed list share one text allowance, so the
 	// playback's worst case stays within the capture's serve budget.
 	listBound := engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: serveview.Default().Cap(serveview.PartText).MaxBytes / 2}}
-	err = registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "guideAdded", Doc: "The sentences the last guide revision added to the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
-		ServeSafe: true,
-		Bound:     listBound,
-		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
-			return guideRevisionList(ctx.Store, "sentences", true)
-		},
-	})
-	if err != nil {
-		return err
-	}
-	err = registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "guideRemoved", Doc: "The sentences the last guide revision removed from the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
-		ServeSafe: true,
-		Bound:     listBound,
-		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
-			return guideRevisionList(ctx.Store, "removed", false)
-		},
-	})
-	if err != nil {
-		return err
+	for _, list := range []struct {
+		name, doc, guideKey string
+		added               bool
+	}{
+		{name: "checksAdded", guideKey: "sentences", added: true, doc: "The sentences the checks' revisions added to the body, quoted one per line: with a person at the playback, all since a playback was last answered; in auto mode, the last guide revision's until a confirm follows it."},
+		{name: "checksRemoved", guideKey: "removed", doc: "The sentences the checks' revisions removed from the body, quoted one per line: with a person at the playback, all since a playback was last answered; in auto mode, the last guide revision's until a confirm follows it."},
+	} {
+		err = registry.RegisterQuery(engine.Query{
+			Doc:       engine.FuncDoc{Name: list.name, Doc: list.doc, Reads: []string{fieldCheckBase, fieldGuideAdded, "body"}},
+			ServeSafe: true,
+			Bound:     listBound,
+			Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+				if !w.personPlayback() {
+					return guideRevisionList(ctx.Store, list.guideKey, list.added)
+				}
+				return checksChangedList(ctx.Store, list.added), nil
+			},
+		})
+		if err != nil {
+			return err
+		}
 	}
 	return registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "writingGuideDelta", Doc: "Runs the writing guide on the lines changed since its judgment last covered the draft, the whole draft as context; findings are drafting input, never a gate.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes", fieldGuideBase}, Writes: []string{"guideFindings", "guideReviewed", fieldGuideBase},
+			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes", fieldGuideBase}, Writes: []string{"guideFindings", "guideReviewed", fieldGuideBase, fieldCheckBase},
 		},
 		Fn: w.runWorkflowWritingGuideDelta,
 	})
 }
 
 func (w *WorkflowSession) runWorkflowWritingGuideDelta(ctx *engine.Context) error {
+	if err := noteCheckBase(ctx.Store); err != nil {
+		return err
+	}
 	base, _ := readGuideBase(ctx.Store)
 	text := draftText(ctx.Store)
 	changed := textdiff.ChangedPassages(base.Text, text)
