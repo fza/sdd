@@ -11,12 +11,14 @@
 package index
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -295,7 +297,8 @@ func (i *Index) RemoveFiles(paths []string) error {
 
 // Query returns the top-N matches for the given query embedding. The
 // nResults parameter is clamped to the collection's current count to
-// avoid chromem-go's "n_results larger than collection" behavior.
+// avoid chromem-go's "n_results larger than collection" behavior. Equal
+// similarities rank by chunk ID, so a repeated query cuts ties alike.
 func (i *Index) Query(ctx context.Context, embedding []float32, nResults int) ([]Hit, error) {
 	if len(embedding) == 0 {
 		return nil, errors.New("query embedding is empty")
@@ -312,10 +315,22 @@ func (i *Index) Query(ctx context.Context, embedding []float32, nResults int) ([
 	if nResults <= 0 {
 		return nil, nil
 	}
-	results, err := collection.QueryEmbedding(ctx, embedding, nResults, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("vector query: %w", err)
+	// chromem-go keeps an arbitrary subset of the documents tied at the cut,
+	// so widen the query until the cut falls between unequal similarities.
+	var results []chromem.Result
+	for queried := min(nResults+1, count); ; queried = min(queried*2, count) {
+		results, err = collection.QueryEmbedding(ctx, embedding, queried, nil, nil)
+		if err != nil {
+			return nil, fmt.Errorf("vector query: %w", err)
+		}
+		if len(results) <= nResults || results[len(results)-1].Similarity != results[nResults-1].Similarity || queried == count {
+			break
+		}
 	}
+	slices.SortStableFunc(results, func(a, b chromem.Result) int {
+		return cmp.Or(cmp.Compare(b.Similarity, a.Similarity), cmp.Compare(a.ID, b.ID))
+	})
+	results = results[:min(nResults, len(results))]
 	hits := make([]Hit, 0, len(results))
 	for _, result := range results {
 		hits = append(hits, hitFromResult(result))
