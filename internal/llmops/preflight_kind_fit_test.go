@@ -42,6 +42,9 @@ func kindFitAnswer(t *testing.T, category, observation string, light bool) strin
 	finding := map[string]any{"observation": observation, "category": category, "severity": "high"}
 	if light {
 		finding["basis"] = []string{}
+	} else {
+		// A pre-flight finding whose quote locates nothing does not block.
+		finding["quote"] = "Waiting instruction lanes now drain"
 	}
 	answer, err := json.Marshal(map[string]any{"findings": []any{finding}})
 	if err != nil {
