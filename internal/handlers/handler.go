@@ -74,6 +74,16 @@ type Puller interface {
 	MergePull(ctx context.Context) (string, error)
 }
 
+// Tracker reads the git state of the paths init commits. Without one, init
+// commits every path it touched.
+type Tracker interface {
+	// Ignored reports whether an ignore rule matches path; a tracked path is
+	// not ignored.
+	Ignored(ctx context.Context, path string) (bool, error)
+	// Uncommitted returns the paths git status reports a change under.
+	Uncommitted(ctx context.Context, paths []string) ([]string, error)
+}
+
 // Handler holds injected dependencies shared across command methods.
 // Each public method corresponds to one command and lives in its own file
 // (handler_new_entry.go, etc.).
@@ -86,6 +96,7 @@ type Handler struct {
 	brancher  Brancher
 	mover     Mover
 	puller    Puller
+	tracker   Tracker
 	repos     *repos.Manager
 	stderr    io.Writer
 	now       func() time.Time
@@ -102,6 +113,7 @@ type Options struct {
 	Brancher  Brancher
 	Mover     Mover
 	Puller    Puller
+	Tracker   Tracker
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
@@ -125,6 +137,7 @@ func New(opts Options) *Handler {
 		brancher:  opts.Brancher,
 		mover:     opts.Mover,
 		puller:    opts.Puller,
+		tracker:   opts.Tracker,
 		repos:     opts.Repos,
 		stderr:    opts.Stderr,
 		now:       opts.Now,

@@ -8,9 +8,11 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,24 +37,98 @@ const commitTimeout = 30 * time.Second
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
-func (CLI) Commit(message string, paths ...string) error {
+func (c CLI) Commit(message string, paths ...string) error {
+	if len(paths) == 0 {
+		return errors.New("git commit: no paths to commit (an empty pathspec would record the whole index)")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
 	defer cancel()
 
-	addArgs := append([]string{"add", "--all", "--"}, paths...)
-	if out, err := runDetached(ctx, addArgs...); err != nil {
-		return fmt.Errorf("git add: %s (%w)", out, err)
+	// git add refuses a path gone from disk and index alike, as git rm leaves
+	// it; the commit pathspec below records that deletion on its own.
+	present := onDisk(paths)
+	if len(present) > 0 {
+		addArgs := append([]string{"add", "--all", "--"}, present...)
+		if out, err := c.RunPastIndexLock(ctx, addArgs...); err != nil {
+			return fmt.Errorf("git add: %s (%w)", out, err)
+		}
 	}
 
 	// Scope the commit to exactly the staged paths with an explicit pathspec.
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
 	commitArgs := append([]string{"commit", "-m", message, "--"}, paths...)
-	if out, err := runDetached(ctx, commitArgs...); err != nil {
+	if out, err := c.RunPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
 	return nil
+}
+
+func onDisk(paths []string) []string {
+	var out []string
+	for _, path := range paths {
+		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+// RunPastIndexLock runs git with args, detached like Commit, and returns its
+// combined output. It retries while another process holds the repository's
+// index lock, which clears when that process finishes; a graph written beside
+// concurrent captures meets it routinely. Retries stop with ctx, so the
+// caller's timeout bounds the wait. Any other failure returns at once.
+func (CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+	delay := 100 * time.Millisecond
+	for {
+		out, err := runDetached(ctx, args...)
+		if err == nil || !strings.Contains(string(out), "index.lock") {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return out, err
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, 2*time.Second)
+	}
+}
+
+// Uncommitted returns the paths git status reports a change under: staged,
+// modified, removed, or untracked and not ignored.
+func (CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		// Only stdout lists changes: git warns on stderr about a path whose
+		// folder does not exist yet.
+		cmd := exec.CommandContext(ctx, "git", "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		status, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
+		}
+		if len(status) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out, nil
+}
+
+// Ignored reports whether an ignore rule matches path. git check-ignore
+// leaves tracked paths out, so a tracked path counts as not ignored.
+func (CLI) Ignored(ctx context.Context, path string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", "check-ignore", "--quiet", "--", path).CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if errExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git check-ignore: %s (%w)", out, err)
 }
 
 // HasCommitMessage reports whether any reachable commit contains text. It is
@@ -101,6 +177,8 @@ func (RemovalCommitter) Commit(message string, paths ...string) error {
 func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// sdd names files, never patterns: a glob character stays part of the name.
+	cmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -128,5 +129,152 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 	}
 	if !slices.Contains(tracked, "unrelated.txt") {
 		t.Errorf("unrelated.txt no longer staged after scoped commit; tracked = %v", tracked)
+	}
+}
+
+// git add refuses a pathspec that matches nothing on disk or in the index, which
+// a tracked file removed with git rm is; the commit still has to record it.
+func TestCommit_RecordsATrackedPathMissingFromDisk(t *testing.T) {
+	for _, unstaged := range []bool{false, true} {
+		name := "deletion staged"
+		if unstaged {
+			name = "deletion unstaged"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := newTestRepo(t)
+			if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("* text=auto\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, dir, "add", ".gitattributes")
+			runGit(t, dir, "commit", "-q", "-m", "add attributes")
+			if unstaged {
+				if err := os.Remove(filepath.Join(dir, ".gitattributes")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				runGit(t, dir, "rm", "-q", ".gitattributes")
+			}
+			if err := os.WriteFile(filepath.Join(dir, "touched.txt"), []byte("touched\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Chdir(dir)
+			if err := (CLI{}).Commit("sdd: init", filepath.Join(dir, ".gitattributes"), "touched.txt"); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+
+			files := commitFiles(t, dir)
+			if !slices.Contains(files, ".gitattributes") || !slices.Contains(files, "touched.txt") {
+				t.Errorf("the commit should record the deletion and the written file; files = %v", files)
+			}
+			if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, ".gitattributes") {
+				t.Errorf("the deleted path should no longer be tracked; tracked = %v", tracked)
+			}
+		})
+	}
+}
+
+// A commit naming only deleted paths stages nothing: a bare `git add --all --`
+// would stage the whole tree.
+func TestCommit_OnlyDeletedPathsStagesNothingElse(t *testing.T) {
+	dir := newTestRepo(t)
+	runGit(t, dir, "rm", "-q", "seed.txt")
+	if err := os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("unrelated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("remove seed", "seed.txt"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, dir); !slices.Equal(files, []string{"seed.txt"}) {
+		t.Errorf("the commit should record only the deletion; files = %v", files)
+	}
+	if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, "unrelated.txt") {
+		t.Errorf("an unrelated untracked file should stay out of the index; tracked = %v", tracked)
+	}
+}
+
+// A path with glob characters names that one file, not every file it matches.
+func TestCommit_TakesPathsLiterally(t *testing.T) {
+	dir := newTestRepo(t)
+	for _, name := range []string{"note*.txt", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("note\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("note", "note*.txt"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, dir); !slices.Equal(files, []string{"note*.txt"}) {
+		t.Errorf("the commit should record only the named file; files = %v", files)
+	}
+	if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, "notes.txt") {
+		t.Errorf("a file the name only matches as a glob should stay out of the index; tracked = %v", tracked)
+	}
+}
+
+// git commit with an empty pathspec records the whole index, so a commit naming
+// no path is refused.
+func TestCommit_RefusesNoPaths(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "staged.txt")
+	head := runGit(t, dir, "rev-parse", "HEAD")
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("sdd: nothing"); err == nil {
+		t.Error("a commit naming no path should be refused")
+	}
+	if runGit(t, dir, "rev-parse", "HEAD") != head {
+		t.Errorf("a pre-staged file should not land in a commit naming no path; files = %v", commitFiles(t, dir))
+	}
+}
+
+// A commit meeting another process's index lock waits for it to clear rather
+// than failing: concurrent captures hold the lock briefly.
+func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "touched.txt"), []byte("touched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		released <- os.Remove(lock)
+	}()
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("touch", "touched.txt"); err != nil {
+		t.Fatalf("a commit should succeed once the index lock clears: %v", err)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if files := commitFiles(t, dir); !slices.Contains(files, "touched.txt") {
+		t.Errorf("the commit should record the touched file, got %v", files)
+	}
+}
+
+// A failure other than the index lock is not retried.
+func TestCommit_FailsAtOnceOnOtherErrors(t *testing.T) {
+	dir := newTestRepo(t)
+	t.Chdir(dir)
+	start := time.Now()
+	if err := (CLI{}).Commit("nothing", "absent.txt"); err == nil {
+		t.Fatal("staging a path that does not exist should fail")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("a failure unrelated to the index lock should return without waiting, took %s", elapsed)
 	}
 }
