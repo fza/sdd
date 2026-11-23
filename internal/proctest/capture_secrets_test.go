@@ -24,6 +24,8 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "guideReview")
 	if !strings.Contains(serve.Instructions, "looks like a credential") {
 		t.Errorf("guideReview should name the credential refusal:\n%s", serve.Instructions)
@@ -32,8 +34,6 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 		t.Errorf("the guide finding should quote the passage before the credential:\n%s", serve.Instructions)
 	}
 	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
-	proctest.RequireStep(t, serve, "playback")
-	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "reviseOrOverride")
 	if !strings.Contains(serve.Instructions, "looks like a credential") {
 		t.Errorf("reviseOrOverride should name the credential refusal:\n%s", serve.Instructions)
