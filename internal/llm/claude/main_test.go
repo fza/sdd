@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 // TestMain lets the test binary stand in for claude when started under that
@@ -13,5 +15,5 @@ func TestMain(m *testing.M) {
 		pwdStandIn()
 		return
 	}
-	os.Exit(m.Run())
+	testsupport.RunWithoutLiveLLMs(m)
 }

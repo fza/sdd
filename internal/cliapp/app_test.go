@@ -1,11 +1,22 @@
 package cliapp_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestAppFixtureKeepsXDGDirsInItsRoot(t *testing.T) {
+	f := newAppFixture(t)
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		if filepath.Dir(os.Getenv(name)) != f.root {
+			t.Errorf("%s should point into the fixture root, got %q", name, os.Getenv(name))
+		}
+	}
+}
 
 func TestCLIHelpAndFlags(t *testing.T) {
 	f := newAppFixture(t)

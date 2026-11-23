@@ -32,6 +32,7 @@ func newAppFixture(t *testing.T) *appFixture {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(f.root, "state"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(f.root, "data"))
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\n")
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\n")
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\n")
