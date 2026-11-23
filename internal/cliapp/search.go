@@ -43,11 +43,15 @@ const searchPrepareBound = 100 * time.Millisecond
 // overrides. Mirrors resolveLLMConfig — same precedence rules, same
 // IsSet check so unset flags don't clobber config defaults.
 func resolveEmbeddingConfig(cmd *cli.Command) (model.EmbeddingConfig, error) {
-	var cfg model.EmbeddingConfig
 	fileCfg, err := loadConfig()
 	if err != nil {
-		return cfg, err
+		return model.EmbeddingConfig{}, err
 	}
+	return embeddingConfigWithFlags(cmd, fileCfg), nil
+}
+
+func embeddingConfigWithFlags(cmd *cli.Command, fileCfg *model.PerRepoConfig) model.EmbeddingConfig {
+	var cfg model.EmbeddingConfig
 	if fileCfg != nil {
 		cfg = fileCfg.Embedding
 	}
@@ -72,7 +76,7 @@ func resolveEmbeddingConfig(cmd *cli.Command) (model.EmbeddingConfig, error) {
 	if cmd.IsSet("embedding-rate-limit-rps") {
 		cfg.RateLimitRPS = cmd.Float("embedding-rate-limit-rps")
 	}
-	return cfg, nil
+	return cfg
 }
 
 // embeddingFlags returns the CLI flag set used by both `sdd index` and
@@ -179,6 +183,10 @@ func buildEmbedder(cmd *cli.Command) (handlers.IndexEmbedder, error) {
 	if err != nil {
 		return handlers.IndexEmbedder{}, err
 	}
+	return configuredEmbedder(cfg)
+}
+
+func configuredEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
 	if cfg.Provider == "" {
 		return handlers.IndexEmbedder{}, nil
 	}

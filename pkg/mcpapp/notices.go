@@ -5,7 +5,8 @@ import "reflect"
 // Notices holds what the host tells the agent beside a result, at most one
 // notice per kind, each kind omitted when empty.
 type Notices struct {
-	Cache string `json:"cache,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user"`
+	Cache  string `json:"cache,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user"`
+	Config string `json:"config,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values"`
 }
 
 // texts lists the notices set, in field order.

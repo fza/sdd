@@ -61,7 +61,7 @@ type toolSet struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
-	outputSchema    bool
+	outputSchema   bool
 	// mcpOutputTokens is Options.MCPOutputTokens.
 	mcpOutputTokens int
 	before          func(context.Context, string) (context.Context, Notices, error)

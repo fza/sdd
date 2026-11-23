@@ -142,6 +142,12 @@ func LoadConfigFrom(path string) (*GlobalConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading global config %s: %w", path, err)
 	}
+	return ParseConfigFile(path, data)
+}
+
+// ParseConfigFile parses the content read from the user-global config file
+// at path.
+func ParseConfigFile(path string, data []byte) (*GlobalConfig, error) {
 	cfg, err := ParseGlobalConfig(data)
 	if err != nil {
 		return nil, fmt.Errorf("parsing global config %s: %w", path, err)

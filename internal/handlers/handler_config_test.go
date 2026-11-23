@@ -99,6 +99,25 @@ func TestConfigSet_RejectsForeignKeys(t *testing.T) {
 	}
 }
 
+// The value may be a secret typed into argv; the rejection names the key only.
+func TestConfigSet_TypeErrorOmitsTheValue(t *testing.T) {
+	h, _, sddDir := newConfigTestHandler(t)
+
+	err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "llm.api_keys", Value: "sk-test-123456"})
+	if err == nil {
+		t.Fatal("a scalar where a map belongs should be rejected")
+	}
+	if strings.Contains(err.Error(), "sk-test") {
+		t.Errorf("the error should not show the value: %v", err)
+	}
+	if !strings.Contains(err.Error(), "llm.api_keys") {
+		t.Errorf("the error should name the key: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(sddDir, "config.local.yaml")); !os.IsNotExist(statErr) {
+		t.Error("rejected write must not create the local file")
+	}
+}
+
 // A file holding a key a newer sdd wrote must stay writable, and keep that
 // key — a whole-document rewrite would drop it, a whole-document probe would
 // refuse the write (20260810-144515-s-tac-8ae).

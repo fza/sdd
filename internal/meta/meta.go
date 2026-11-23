@@ -88,17 +88,7 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 		return nil, err
 	}
 	global, committed, local, _ = model.HonoredVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir))
-	var fileCfg *model.PerRepoConfig
-	if committed != nil || local != nil {
-		fileCfg = model.MergeConfig(committed, local)
-	}
-	if fileCfg == nil {
-		if global.IsZero() {
-			return nil, nil
-		}
-		return &model.PerRepoConfig{BaseConfig: global}, nil
-	}
-	return model.MergeConfig(&model.PerRepoConfig{BaseConfig: global}, fileCfg), nil
+	return model.ConfigLayers{Global: global, Project: committed, Local: local}.Effective(), nil
 }
 
 // ReadConfigLayers returns the two per-repo config layers separately —
@@ -139,6 +129,12 @@ func readConfigFile(path string) (*model.PerRepoConfig, error) {
 		}
 		return nil, err
 	}
+	return ParseConfigFile(path, data)
+}
+
+// ParseConfigFile parses the content read from the per-repo config file at
+// path.
+func ParseConfigFile(path string, data []byte) (*model.PerRepoConfig, error) {
 	cfg, err := model.ParseConfig(data)
 	if err != nil {
 		// The path names which file carries the offense — the parse error

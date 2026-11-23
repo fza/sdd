@@ -61,7 +61,7 @@ var configDefaults = map[string]string{
 // schema declaration order; map-valued keys (api_keys) expand to one entry
 // per map key with per-key provenance. Nil layers are treated as empty.
 func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []ConfigValue {
-	return EffectiveConfigValuesWithWork(global, WorkConfigLayers{}, project, local)
+	return effectiveConfigValues(global, WorkConfigLayers{}, project, local, true)
 }
 
 // WorkConfigLayers are the work repository's config layers in a project_dir
@@ -74,6 +74,10 @@ type WorkConfigLayers struct {
 // repository's layers, whose hooks list between the global and the
 // project's.
 func EffectiveConfigValuesWithWork(global BaseConfig, work WorkConfigLayers, project, local *PerRepoConfig) []ConfigValue {
+	return effectiveConfigValues(global, work, project, local, true)
+}
+
+func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, local *PerRepoConfig, mask bool) []ConfigValue {
 	layers := []struct {
 		cfg    *PerRepoConfig
 		source ConfigValueSource
@@ -95,7 +99,7 @@ func EffectiveConfigValuesWithWork(global BaseConfig, work WorkConfigLayers, pro
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
 		case leafMap:
-			out = append(out, effectiveMapEntries(leaf, layers)...)
+			out = append(out, effectiveMapEntries(leaf, mask, layers)...)
 		case leafConcat:
 			out = append(out, concatenatedEntries(leaf, concatLayers(layers, work))...)
 		default:
@@ -248,8 +252,8 @@ func leafValue(root reflect.Value, index []int) reflect.Value {
 
 // effectiveMapEntries expands a map-valued leaf into per-key entries with
 // per-key provenance — the same key-by-key overlay MergeConfig applies. Only a
-// leaf the field marked secret is masked.
-func effectiveMapEntries(leaf configLeaf, layers []struct {
+// leaf the field marked secret is masked, and only when mask is set.
+func effectiveMapEntries(leaf configLeaf, mask bool, layers []struct {
 	cfg    *PerRepoConfig
 	source ConfigValueSource
 }) []ConfigValue {
@@ -277,7 +281,7 @@ func effectiveMapEntries(leaf configLeaf, layers []struct {
 	out := make([]ConfigValue, 0, len(order))
 	for _, k := range order {
 		value := "••••••"
-		if !leaf.secret {
+		if !leaf.secret || !mask {
 			value = merged[k].value
 		}
 		out = append(out, ConfigValue{
