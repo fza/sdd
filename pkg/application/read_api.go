@@ -24,6 +24,9 @@ type InfoResult struct {
 	Participant string
 	Language    string
 	Search      string
+	// Contribution is the read checkout's contribution ref, empty outside
+	// contribution mode.
+	Contribution string
 }
 
 type ViewRequest struct {

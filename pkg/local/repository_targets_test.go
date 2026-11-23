@@ -129,7 +129,7 @@ func (r *gitRepository) captureApplication(t *testing.T, runner pkgllm.Runner) (
 	targets := r.targets()
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "example"}, DefaultBranch: "main",
-		Graph: graph, Targets: targets, Branches: targets, LLM: runner,
+		Graph: local.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: "main"}, Targets: targets, Branches: targets, LLM: runner,
 	})
 	if err != nil {
 		t.Fatal(err)

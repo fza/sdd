@@ -94,7 +94,7 @@ Local participant: Dana
 Search: vector,text
 ```
 
-`sdd info` shows your participant name, the graph language when the project sets one, and which searches work. `text` alone means keyword search only; `vector,text` means search by meaning works too.
+`sdd info` shows your participant name, the graph language when the project sets one, and which searches work. `text` alone means keyword search only; `vector,text` means search by meaning works too. In [contribution mode](/sdd/reference/configuration/#contribution-mode) it adds `Mode: contribution (<ref>)`.
 
 ## What you are looking at
 

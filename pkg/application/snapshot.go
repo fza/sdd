@@ -26,6 +26,26 @@ type Snapshot struct {
 	graph    *model.Graph
 	finder   *finders.GraphFinder
 	wip      []*model.WIPMarker
+	// contribution is the checkout's contribution ref, empty outside
+	// contribution mode.
+	contribution string
+}
+
+// Contribution is the contribution ref of the checkout the snapshot was read
+// from, empty outside contribution mode.
+func (s *Snapshot) Contribution() string {
+	if s == nil {
+		return ""
+	}
+	return s.contribution
+}
+
+// WithContribution returns the snapshot stamped with its checkout's
+// contribution ref.
+func (s *Snapshot) WithContribution(ref string) *Snapshot {
+	stamped := *s
+	stamped.contribution = ref
+	return &stamped
 }
 
 func (s *Snapshot) Project() ProjectID {

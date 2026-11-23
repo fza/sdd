@@ -313,10 +313,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
+	contribution := ""
 	var dependencies []sdd.RepoID
 	if cfg != nil {
 		participant = cfg.Participant
 		language = cfg.Language
+		contribution = cfg.Contribution
 		dependencies = append(dependencies, cfg.Dependencies...)
 	}
 	locations, err := repos.DefaultLocations()
@@ -332,7 +334,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	project := sessionStoreProject(cfg)
-	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir, Contribution: contribution})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

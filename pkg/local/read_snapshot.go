@@ -94,7 +94,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 	if err != nil {
 		return nil, err
 	}
-	retained := &retainedSnapshot{snapshot: snapshot, files: files}
+	retained := &retainedSnapshot{snapshot: snapshot.WithContribution(s.contribution), files: files}
 	if s.snapshots == nil {
 		s.snapshots = map[string]*retainedSnapshot{}
 	}

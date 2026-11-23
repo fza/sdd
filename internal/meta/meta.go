@@ -48,7 +48,7 @@ func SDDDir(repoRoot string) string {
 // the same PerRepoConfig schema, and carries genuinely machine-specific
 // overrides (API keys, endpoints).
 func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
-	base, err := readConfigFile(filepath.Join(sddDir, "config.yaml"))
+	base, err := readCommittedConfigFile(sddDir)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 // layers for per-value provenance; everything else wants ReadConfig's
 // merged result.
 func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err error) {
-	committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
+	committed, err = readCommittedConfigFile(sddDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -97,6 +97,18 @@ func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err
 		return nil, nil, err
 	}
 	return committed, local, nil
+}
+
+func readCommittedConfigFile(sddDir string) (*model.PerRepoConfig, error) {
+	path := filepath.Join(sddDir, "config.yaml")
+	cfg, err := readConfigFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil && cfg.Contribution != "" {
+		return nil, fmt.Errorf("%s: contribution is machine-local; set it in config.local.yaml instead", path)
+	}
+	return cfg, nil
 }
 
 func readConfigFile(path string) (*model.PerRepoConfig, error) {

@@ -8,10 +8,13 @@ import (
 )
 
 // RenderInfo writes the session-framing header — participant, language
-// (when configured), and search capability. These lines are what skill
-// session-start injections read for framing.
+// (when configured), search capability and contribution mode (when on).
+// These lines are what skill session-start injections read for framing.
 func RenderInfo(w io.Writer, result *query.InfoResult) {
 	writeInfoHeader(w, result.LocalParticipant, result.Language, result.Search)
+	if result.Contribution != "" {
+		fmt.Fprintf(w, "Mode: contribution (%s)\n", result.Contribution)
+	}
 }
 
 // writeInfoHeader emits the canonical session-header lines.

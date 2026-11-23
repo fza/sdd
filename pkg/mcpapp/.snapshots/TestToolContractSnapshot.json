@@ -223,6 +223,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "contribution": {
+          "description": "upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it",
+          "type": "string"
+        },
         "language": {
           "description": "configured graph language; empty = English",
           "type": "string"
