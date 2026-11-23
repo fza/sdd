@@ -65,6 +65,10 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	}
 	project := *h
 	project.committer = h.committerAt(projectRoot)
+	// The tracker reads the git state of the paths the committer commits.
+	if tracker, ok := project.committer.(Tracker); ok && h.tracker != nil {
+		project.tracker = tracker
+	}
 	projectCmd := *cmd
 	projectCmd.RepoRoot = projectRoot
 	projectCmd.StableRepoRoot = ""

@@ -146,12 +146,12 @@ func (c CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, erro
 
 // Uncommitted returns the paths git status reports a change under: staged,
 // modified, removed, or untracked and not ignored.
-func (CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
 	var out []string
 	for _, path := range paths {
 		// Only stdout lists changes: git warns on stderr about a path whose
 		// folder does not exist yet.
-		cmd := exec.CommandContext(ctx, "git", "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		status, err := cmd.Output()
@@ -167,8 +167,8 @@ func (CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
 
 // Ignored reports whether an ignore rule matches path. git check-ignore
 // leaves tracked paths out, so a tracked path counts as not ignored.
-func (CLI) Ignored(ctx context.Context, path string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "check-ignore", "--quiet", "--", path).CombinedOutput()
+func (c CLI) Ignored(ctx context.Context, path string) (bool, error) {
+	out, err := c.command(ctx, "check-ignore", "--quiet", "--", path).CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
