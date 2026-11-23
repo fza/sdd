@@ -470,6 +470,23 @@ type ReadValueResult struct {
 	Value string `json:"value" jsonschema:"the value whole, never cut; a value past one result comes in pages"`
 }
 
+type ReadGitArgs struct {
+	Session string `json:"session,omitempty" jsonschema:"attached session's handle; required. The read runs in that session's project checkout"`
+	Project string `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Op      string `json:"op,omitempty" jsonschema:"file: a file's content at rev; log: the commits from rev (default HEAD), not reachable from from when given, touching path when given; commit: one commit's message and changed files; diff: between from and to, for path when given"`
+	Rev     string `json:"rev,omitempty" jsonschema:"revision a file, log or commit read starts from: a branch, tag or commit hash such as main or HEAD~2"`
+	From    string `json:"from,omitempty" jsonschema:"diff: the older revision; log: commits reachable from it are left out"`
+	To      string `json:"to,omitempty" jsonschema:"diff: the newer revision"`
+	Path    string `json:"path,omitempty" jsonschema:"file: the file to read; log and diff: narrows them to this path. Relative to the checkout root"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"log: at most this many commits; default 20, at most 200"`
+	Page    int    `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
+}
+
+type ReadGitResult struct {
+	ResultNotices
+	Text string `json:"text" jsonschema:"what git returned for the read, never cut; a text past one result comes in pages"`
+}
+
 type ReadAttachmentResult struct {
 	ResultNotices
 	Name       string   `json:"name"`
@@ -690,6 +707,13 @@ func (s *toolSet) register(srv *mcp.Server) error {
 			"filename, or a file staged to that session before any entry carries it, by handle. Never " +
 			"derive storage paths.",
 	}, s.readAttachment)
+
+	addTool(srv, s, &mcp.Tool{
+		Name: "read_git",
+		Description: "Read the project checkout's git history, read-only; session required. op file returns a " +
+			"file at a revision, log the commits of a revision or range, commit one commit's message and changed " +
+			"files, diff the change between two revisions. sdd builds the git command itself: no raw arguments.",
+	}, s.readGit)
 
 	addTool(srv, s, &mcp.Tool{
 		Name: "read_value",
@@ -1441,6 +1465,29 @@ func (s *toolSet) readValue(ctx context.Context, req *mcp.CallToolRequest, args 
 		return nil, ReadValueResult{}, err
 	}
 	return nil, ReadValueResult{Value: pagedText(ctx, ss, "read_value", value)}, nil
+}
+
+func (s *toolSet) readGit(ctx context.Context, req *mcp.CallToolRequest, args ReadGitArgs) (*mcp.CallToolResult, ReadGitResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		text, err := heldPage(ss, "read_git", args.Page)
+		return nil, ReadGitResult{Text: text}, err
+	}
+	project, _, _, err := s.readScope(ctx, req, ss, args.Project)
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	result, err := s.app.ReadGit(ctx, s.requestIdentity(req), project, sdd.GitReadRequest{
+		Op: strings.TrimSpace(args.Op), Rev: args.Rev, From: args.From, To: args.To, Path: args.Path, Limit: args.Limit,
+	})
+	if err != nil {
+		return nil, ReadGitResult{}, err
+	}
+	return nil, ReadGitResult{Text: pagedText(ctx, ss, "read_git", result.Text)}, nil
 }
 
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {

@@ -49,8 +49,8 @@ Session handle (the session ID):
 - Presenting it is the whole authorization to continue that dialogue.
 - Every other tool takes it as a required argument: the work tools
   (start_procedure, next, park, stage_attachment, bind_branch, abandon,
-  sync_repos) and the reads (search, view, show, read_attachment, info,
-  registry).
+  sync_repos) and the reads (search, view, show, read_attachment, read_git,
+  info, registry).
 - A read runs in its session's home project and branch unless it names
   another project.
 - A move or a read may work in a project the home declares as a dependency,

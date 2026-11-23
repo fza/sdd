@@ -167,7 +167,7 @@ func (t VarType) ValidateValue(v any) (any, error) {
 		for i, item := range items {
 			nv, err := VarType{Base: t.Base}.ValidateValue(item)
 			if err != nil {
-				return nil, fmt.Errorf("item %d: %w", i, err)
+				return nil, fmt.Errorf("item %d: %w", i+1, err)
 			}
 			out[i] = nv
 		}
