@@ -489,7 +489,7 @@ func schemaForType(t VarType, desc string) map[string]any {
 			},
 		}
 	default:
-		// text, label, participant, attachment-handle
+		// text, label, participant, attachment-handle, title
 		schema = map[string]any{"type": "string"}
 	}
 	if desc != "" {

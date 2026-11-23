@@ -709,6 +709,12 @@ func newCmd() *cli.Command {
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
 			},
+			&cli.StringFlag{
+				Name: "title",
+				// urfave takes the first backtick pair as the value
+				// placeholder; naming it keeps the title rule's code spans intact.
+				Usage: "Use `TITLE` instead of the generated title; double quotes and trailing punctuation but a question mark are removed, and a first letter that is not a backtick is capitalized. " + model.TitleRule,
+			},
 			&cli.BoolFlag{
 				Name:  "dry-run",
 				Usage: "Run validation and pre-flight only, without writing or committing the entry",
@@ -843,6 +849,11 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			var title *string
+			if cmd.IsSet("title") {
+				value := cmd.String("title")
+				title = &value
+			}
 			ncmd := &command.NewEntryCmd{
 				Type:              typ,
 				Layer:             layer,
@@ -870,6 +881,7 @@ func newCmd() *cli.Command {
 				PreflightVerified: cmd.Bool("preflight-verified"),
 				SkipGrounding:     cmd.Bool("skip-grounding"),
 				Summary:           strings.TrimSpace(cmd.String("summary")),
+				Title:             title,
 				DryRun:            cmd.Bool("dry-run"),
 				PreflightModel:    cmd.String("preflight-model"),
 				OnNewEntry: func(id, summary string) {
@@ -903,7 +915,7 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
+			opts := withTitleSearch(cmd, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
 				SDDDir:   sddDir,
@@ -918,8 +930,7 @@ func newCmd() *cli.Command {
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
-
-			return handler.NewEntry(ctx, ncmd)
+			return handlers.New(opts).NewEntry(ctx, ncmd)
 		})),
 	}
 }
@@ -1118,16 +1129,16 @@ func lintCmd() *cli.Command {
 func summarizeCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "summarize",
-		Usage:     "Generate or regenerate entry summaries",
+		Usage:     "Generate or regenerate entry summaries and titles",
 		ArgsUsage: "[id...]",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "all",
-				Usage: "Fill summaries for every entry that has none (in topological order)",
+				Usage: "Fill what is missing on every entry (in topological order): summary and title, or the title alone beside a stored summary",
 			},
 			&cli.BoolFlag{
 				Name:  "force",
-				Usage: "With --all, regenerate every entry rather than only those missing a summary",
+				Usage: "With --all, regenerate summary and title (or the --only fields) of every entry rather than only what is missing",
 			},
 			&cli.StringFlag{
 				Name:  "provider",
@@ -1146,8 +1157,16 @@ func summarizeCmd() *cli.Command {
 				Usage: "Timeout per summary generation (e.g. 60s, 1m); default llm.timeout",
 			},
 			&cli.StringFlag{
+				Name:  "only",
+				Usage: "Write only these fields: title, summary or title,summary (default); the other keeps what is stored. Limits what --all fills and what --force regenerates; not with --text or --title",
+			},
+			&cli.StringFlag{
 				Name:  "text",
 				Usage: "Write the supplied text as the summary, bypassing the LLM. Use '-' to read from stdin. Single entry only.",
+			},
+			&cli.StringFlag{
+				Name:  "title",
+				Usage: "Write `TITLE` as the title, bypassing the LLM. Single entry only; combinable with --text. " + model.TitleRule,
 			},
 		},
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
@@ -1156,6 +1175,10 @@ func summarizeCmd() *cli.Command {
 			ids := cmd.Args().Slice()
 			if len(ids) == 0 && !cmd.Bool("all") {
 				return fmt.Errorf("usage: sdd summarize <id>... or sdd summarize --all")
+			}
+			// Checked again in the handler; here it comes before stdin is read.
+			if cmd.IsSet("only") && (cmd.IsSet("text") || cmd.IsSet("title")) {
+				return fmt.Errorf("--only cannot be combined with --text or --title")
 			}
 
 			var explicitText *string
@@ -1176,18 +1199,43 @@ func summarizeCmd() *cli.Command {
 				}
 				explicitText = &value
 			}
+			var explicitTitle *string
+			if cmd.IsSet("title") {
+				if cmd.Bool("all") {
+					return fmt.Errorf("--title cannot be combined with --all (single entry only)")
+				}
+				if len(ids) != 1 {
+					return fmt.Errorf("--title requires exactly one entry ID (got %d)", len(ids))
+				}
+				value := cmd.String("title")
+				explicitTitle = &value
+			}
+
+			var only model.DescriptionFields
+			if cmd.IsSet("only") {
+				var err error
+				only, err = model.ParseDescriptionFields(cmd.String("only"))
+				if err != nil {
+					return err
+				}
+			}
 
 			sumCmd := &command.SummarizeCmd{
-				EntryIDs:     ids,
-				Force:        cmd.Bool("force"),
-				Model:        cmd.String("model"),
-				Concurrency:  int(cmd.Int("concurrency")),
-				ExplicitText: explicitText,
+				EntryIDs:      ids,
+				Only:          only,
+				Force:         cmd.Bool("force"),
+				Model:         cmd.String("model"),
+				Concurrency:   int(cmd.Int("concurrency")),
+				ExplicitText:  explicitText,
+				ExplicitTitle: explicitTitle,
 				OnSummarized: func(id, summary string) {
 					fmt.Fprintf(cmd.ErrWriter, "  summarized %s\n", id)
 				},
+				OnTitled: func(id, title string) {
+					fmt.Fprintf(cmd.ErrWriter, "  titled %s\n", id)
+				},
 				OnSkipped: func(id string) {
-					fmt.Fprintf(cmd.ErrWriter, "  skipped %s (already has a summary)\n", id)
+					fmt.Fprintf(cmd.ErrWriter, "  skipped %s (nothing missing)\n", id)
 				},
 			}
 
@@ -1207,7 +1255,7 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
+			opts := withTitleSearch(cmd, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
 				Reader: finders.New(finders.Options{
@@ -1219,7 +1267,11 @@ func summarizeCmd() *cli.Command {
 				Committer: graphGit(dir),
 				Language:  configLanguage(cfg),
 			})
-			return handler.Summarize(ctx, sumCmd)
+			handler := handlers.New(opts)
+			if len(ids) > 0 {
+				return handler.Summarize(ctx, sumCmd)
+			}
+			return fillMissing(ctx, cmd, handler, sumCmd)
 		})),
 	}
 }

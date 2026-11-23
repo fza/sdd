@@ -426,12 +426,12 @@ sdd calls the language model three times when it records an entry:
 
 - The writing check reads the draft and points out unclear text.
 - The pre-flight check compares the entry with the graph.
-- The summary step writes the entry's one-line summary.
+- The summary step writes the entry's title and its one-line summary.
 
 Under [grounding](#grounding), a reading of a graph past `verify.brief_all_below` live entries also makes one call that writes its searches, and the prefilter judge runs on the `llm_prefilter` model.
 
 :::caution[The model must support structured output]
-The writing check and the pre-flight check ask the model for a fixed response format, a JSON schema the provider must enforce. sdd sends the schema through each provider's structured output feature and never falls back to reading free text, so a provider or model without structured output fails the checks. Ollama Cloud ignores the schema and does not work. The summary is plain text and works with any model.
+The writing check, the pre-flight check and the summary step ask the model for a fixed response format, a JSON schema the provider must enforce. sdd sends the schema through each provider's structured output feature and never falls back to reading free text, so a provider or model without structured output fails them. Ollama Cloud ignores the schema and does not work.
 :::
 
 | Provider | Sends requests to | Schema sent as | API key |

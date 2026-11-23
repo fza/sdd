@@ -44,7 +44,7 @@ func (r *ViewResult) ViewSections(repo model.RepoID) []types.ViewSection {
 func listedEntry(e *model.Entry, g *model.Graph) types.ListedEntry {
 	status := g.DerivedStatus(e)
 	return types.ListedEntry{
-		ID: e.ID, ListingTitle: e.FirstSummarySentence(), Type: string(e.Type), Kind: string(e.Kind), Layer: string(e.Layer),
+		ID: e.ID, ListingTitle: e.ListingTitle(), Type: string(e.Type), Kind: string(e.Kind), Layer: string(e.Layer),
 		Status: statusText(status), DerivedStatus: derivedStatus(status, nil), Confidence: e.Confidence, Intent: string(e.Intent),
 		Participants: slices.Clone(e.Participants), Topics: topicLabels(g.EffectiveTopics(e)), Summary: e.Summary,
 		BodyExcerpt: e.ShortContent(200), Canonical: e.Canonical, Brief: model.EntryBrief(e),

@@ -8,11 +8,13 @@ import "time"
 type ShownEntry struct {
 	// ID is the display identity: repo-prefixed for an entry of a connected
 	// repo's graph.
-	ID      string
-	Type    string
-	Kind    string
-	Layer   string
-	Status  string
+	ID     string
+	Type   string
+	Kind   string
+	Layer  string
+	Status string
+	// Title is the entry's optional headline; empty when it has none.
+	Title   string
 	Summary string
 	Body    string
 	// Upstream and Downstream are each chain in preorder: an item is
@@ -94,11 +96,13 @@ type ShownChainItem struct {
 
 // SearchHit is one search match as data.
 type SearchHit struct {
-	ID      string
-	Type    string
-	Kind    string
-	Layer   string
-	Status  string
+	ID     string
+	Type   string
+	Kind   string
+	Layer  string
+	Status string
+	// Title is the entry's optional headline; empty when it has none.
+	Title   string
 	Summary string
 	Score   float32
 

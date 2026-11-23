@@ -38,7 +38,7 @@ func TestOperationsMarkTheDraftAsNew(t *testing.T) {
 			return err
 		}},
 		{name: "summary", run: func(r llm.Runner) error {
-			_, err := llmops.Summarize(t.Context(), r, entry, graph, "")
+			_, err := llmops.Describe(t.Context(), r, entry, graph, "", false, nil)
 			return err
 		}},
 		{name: "writing guide", run: func(r llm.Runner) error {

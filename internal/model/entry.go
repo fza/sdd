@@ -322,6 +322,7 @@ type Entry struct {
 	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate; empty otherwise
 	Verification string    // VerificationSkipped when the user skipped a verifier; empty otherwise
 	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
+	Title        string    // optional headline naming the entry's subject, generated with the summary
 	Summary      string    // LLM-generated summary: this entry + direct relationships
 	Warnings     []Warning // validation issues found during graph construction
 	// UnknownFields holds the frontmatter keys this binary does not read, in
@@ -511,6 +512,7 @@ type frontmatter struct {
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Grounding    string            `yaml:"grounding,omitempty"`
 	Verification string            `yaml:"verification,omitempty"`
+	Title        string            `yaml:"title,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 
 	unknown []UnknownFrontmatterField
@@ -663,6 +665,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Preflight:    fm.Preflight,
 		Grounding:    fm.Grounding,
 		Verification: fm.Verification,
+		Title:        fm.Title,
 		Summary:      fm.Summary,
 		Content:      strings.TrimSpace(body),
 		Time:         idParts.Time,
@@ -899,6 +902,7 @@ func FormatFrontmatter(e *Entry) string {
 		Preflight:    e.Preflight,
 		Grounding:    e.Grounding,
 		Verification: e.Verification,
+		Title:        e.Title,
 		Summary:      e.Summary,
 	}
 
@@ -1016,6 +1020,18 @@ func (e *Entry) TypeLabel() string {
 // LayerLabel returns a display label for the layer.
 func (e *Entry) LayerLabel() string {
 	return string(e.Layer)
+}
+
+// CaptureCommitMessage is the message of the commit that captures e. The
+// subject carries its type, layer and title, or its opening content where it
+// has no title, so the history names what was captured; the Entry trailer
+// carries its ID, so `git log --grep` finds the commit by entry.
+func (e *Entry) CaptureCommitMessage() string {
+	name := e.Title
+	if name == "" {
+		name = e.ShortContent(72)
+	}
+	return fmt.Sprintf("sdd: %s %s %s\n\nEntry: %s", e.TypeLabel(), e.LayerLabel(), name, e.ID)
 }
 
 // ShortContent returns content truncated to maxLen, preferring sentence boundaries.

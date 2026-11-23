@@ -35,7 +35,7 @@ func shownEntry(group ShowGroup) (types.ShownEntry, error) {
 	}
 	shown := types.ShownEntry{
 		ID: id, Type: string(entry.Type), Kind: string(entry.Kind), Layer: string(entry.Layer),
-		Status: statusText(group.PrimaryStatus), Summary: entry.Summary, Body: entry.Content,
+		Status: statusText(group.PrimaryStatus), Title: entry.Title, Summary: entry.Summary, Body: entry.Content,
 		Upstream: shownChain(group.Upstream), Downstream: shownChain(group.Downstream),
 		UpstreamTruncated: truncatedIDs(group.UpstreamTruncated), DownstreamTruncated: truncatedIDs(group.DownstreamTruncated),
 		Confidence: entry.Confidence, Intent: string(entry.Intent), Participants: slices.Clone(entry.Participants),

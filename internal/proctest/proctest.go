@@ -67,6 +67,7 @@ type LLMScript struct {
 	// with, and its one keyword term.
 	GatherQuery string
 	GatherTerm  string
+	Title       string
 	Summary     string
 }
 
@@ -99,7 +100,9 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 	s.prompts[request.Purpose] = append(s.prompts[request.Purpose], request)
 	switch request.Purpose {
 	case llm.PurposeSummarize:
-		return llm.Result{Text: s.Summary, Identity: scriptIdentity}, nil
+		return marshalAnswer(map[string]string{"title": s.Title, "summary": s.Summary})
+	case llm.PurposeTitle:
+		return marshalAnswer(map[string]string{"title": s.Title})
 	case llm.PurposePreflight:
 		if s.DuringPreflight != nil {
 			s.DuringPreflight()
@@ -129,6 +132,11 @@ func locatedFindings(findings []PreflightFinding, prompt string) []PreflightFind
 		}
 	}
 	return out
+}
+
+func marshalAnswer(answer map[string]string) (llm.Result, error) {
+	output, err := json.Marshal(answer)
+	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
 }
 
 func marshalFindings[F any](findings []F) (llm.Result, error) {
@@ -437,7 +445,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := &LLMScript{Summary: "A generated summary."}
+	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events, ContextTokens: cfg.contextTokens,

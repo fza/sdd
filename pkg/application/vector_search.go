@@ -88,6 +88,23 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	return hybridResult(text, vector, limit), nil
 }
 
+// similarTitles returns the titles of the titled entries nearest entry's body,
+// searched without reconciling the index; none without an embedder.
+func (r *ProjectRuntime) similarTitles(ctx context.Context, snapshot *Snapshot, attachments GraphStore, entry *model.Entry) ([]string, error) {
+	if r.options.Embedder == nil || r.options.SearchIndex == nil {
+		return nil, nil
+	}
+	request, ok := query.SimilarTitles(entry)
+	if !ok {
+		return nil, nil
+	}
+	result, err := r.vectorSearch(ctx, snapshot, attachments, request)
+	if err != nil {
+		return nil, fmt.Errorf("searching titles similar to %s: %w", entry.ID, err)
+	}
+	return result.Titles(), nil
+}
+
 // fillForSearch embeds the entries the namespace's store lacks before a
 // search, unless another process is filling it: the search then reads the
 // index as it stands.
@@ -289,7 +306,7 @@ func (r *ProjectRuntime) vectorResult(graph *model.Graph, request query.SearchQu
 func candidateSet(graph *model.Graph, request query.SearchQuery, excludeEmbedded bool) map[string]*model.Entry {
 	out := map[string]*model.Entry{}
 	for _, entry := range graph.Filter(request.Filter) {
-		if !chunking.IncludeEntry(entry, excludeEmbedded) {
+		if !chunking.IncludeEntry(entry, excludeEmbedded) || !request.Admits(entry) {
 			continue
 		}
 		if !request.IncludeSuperseded && graph.DerivedStatus(entry).Kind == model.StatusSupersededBy {

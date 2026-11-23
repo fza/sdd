@@ -92,6 +92,7 @@ type Handler struct {
 	sddDir       string // path to .sdd/ directory; required for commands that write tmp files
 	reader       Reader
 	llmRunner    llm.Runner
+	titleSearch  TitleSearchOpener
 	committer    Committer
 	brancher     Brancher
 	mover        Mover
@@ -130,6 +131,9 @@ type Options struct {
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
 	Language string
+	// TitleSearch shows a title call the titles of the entries nearest the
+	// entry's body; nil leaves them out.
+	TitleSearch TitleSearchOpener
 }
 
 // New constructs a Handler with the given options.
@@ -139,6 +143,7 @@ func New(opts Options) *Handler {
 		sddDir:       opts.SDDDir,
 		reader:       opts.Reader,
 		llmRunner:    opts.LLMRunner,
+		titleSearch:  opts.TitleSearch,
 		committer:    opts.Committer,
 		brancher:     opts.Brancher,
 		mover:        opts.Mover,

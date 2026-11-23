@@ -36,7 +36,7 @@ Use it when you notice something or settle something: "The export drops rows wit
 - The agent plays back the exact entry. You confirm it, ask for changes, or drop it.
 - Once you confirm, a separate model reads the draft as a stranger would and points out what is unclear. A revision is played back to you again.
 - A pre-flight check compares the entry with the graph: under `prose` with everything the reading found, under `deep` through a verifier agent that checks claims at their source. A serious finding stops the write until you revise the entry or override the check. Only you can override.
-- sdd writes the entry with a generated one-line summary and commits it. The agent checks the summary against the entry.
+- sdd writes the entry with a generated title and one-line summary and commits it. The agent checks both against the entry.
 
 A pre-flight answer that was cut short, or a call past `llm.timeout`, judges nothing, and the capture puts it to you:
 

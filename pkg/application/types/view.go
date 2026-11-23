@@ -38,7 +38,8 @@ type ViewSection struct {
 // view shape uses.
 type ListedEntry struct {
 	ID string
-	// ListingTitle is the first summary sentence: what the brief line shows.
+	// ListingTitle is the entry's title, or its first summary sentence: what
+	// the brief line shows.
 	ListingTitle  string
 	Type          string
 	Kind          string

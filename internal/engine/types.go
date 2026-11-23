@@ -49,6 +49,8 @@ const (
 	TypeDeepAnswer        BaseType = "deep-answer"
 	TypeDeepResponse      BaseType = "deep-response"
 	TypeStrain            BaseType = "strain"
+	// TypeTitle is an entry title, checked with model.ParseTitle, stored as given.
+	TypeTitle BaseType = "title"
 	// TypeProse validates exactly like text; the distinct declaration tells
 	// serve-side rendering to treat changes as content diffs rather than
 	// whole-value re-serves (20260826-120330-d-tac-8f8).
@@ -61,7 +63,7 @@ var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
 	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
-	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeStrain, TypeDeepFinding, TypeDeepAnswer, TypeDeepResponse, TypeProse,
+	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeStrain, TypeDeepFinding, TypeDeepAnswer, TypeDeepResponse, TypeProse, TypeTitle,
 }
 
 var baseTypes = func() map[BaseType]bool {
@@ -107,6 +109,7 @@ var baseTypeDesc = map[BaseType]string{
 	TypeDeepAnswer:        "the drafter's answer to one deep finding: its number, accept or contest, and the reason of a contest",
 	TypeDeepResponse:      "the deep verifier's answer to one contested finding: its number, held, conceded, revised or dropped, a note, and the edits it now proposes",
 	TypeStrain:            "a clash between two existing entries the capture found: which two, and whether one contradicts, duplicates or outdates the other",
+	TypeTitle:             "an entry title naming the subject on one-line listings: one line, normalized when it is written",
 	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
 }
 
@@ -182,6 +185,21 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 		s, ok := v.(string)
 		if !ok {
 			return nil, fmt.Errorf("expected text (string)")
+		}
+		return s, nil
+
+	case TypeTitle:
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected title (string)")
+		}
+		// Empty is a title left out, as an omitted optional field is. The
+		// write normalizes; the store keeps the value as given.
+		if s == "" {
+			return s, nil
+		}
+		if _, err := model.ParseTitle(s); err != nil {
+			return nil, err
 		}
 		return s, nil
 

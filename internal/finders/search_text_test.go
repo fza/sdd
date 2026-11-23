@@ -9,8 +9,8 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
-func textEntry(id, summary string) *model.Entry {
-	return &model.Entry{ID: id, Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap, Summary: summary, Content: summary}
+func textEntry(id, title, summary string) *model.Entry {
+	return &model.Entry{ID: id, Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap, Title: title, Summary: summary, Content: summary}
 }
 
 func textSearchIDs(t *testing.T, entries []*model.Entry, q query.SearchQuery) []string {
@@ -28,17 +28,30 @@ func textSearchIDs(t *testing.T, entries []*model.Entry, q query.SearchQuery) []
 	return ids
 }
 
+func TestSearchFinder_TextModeMatchesTheTitle(t *testing.T) {
+	t.Parallel()
+	entries := []*model.Entry{
+		textEntry("20260101-100000-d-tac-inv", "Price cache invalidation on write", "Invalidate the price cache on every write."),
+		textEntry("20260101-100001-s-tac-oth", "Session token expiry", "Tokens expire after a day."),
+	}
+
+	ids := textSearchIDs(t, entries, query.SearchQuery{Terms: []string{"invalidation"}})
+	if !slices.Equal(ids, []string{"20260101-100000-d-tac-inv"}) {
+		t.Errorf("a term only the title holds should find that entry alone, got %v", ids)
+	}
+}
+
 func TestSearchFinder_TextModeWholeWords(t *testing.T) {
 	t.Parallel()
 	entries := []*model.Entry{
-		textEntry("20260101-100000-s-tac-ttl", "Prices are kept with a TTL of one hour."),
-		textEntry("20260101-100001-s-tac-set", "Settle the little dispute first."),
-		textEntry("20260101-100002-s-tac-edg", "(TTL) and ttl."),
-		textEntry("20260101-100003-s-tac-und", "The price_ttl field and the TTLs."),
-		textEntry("20260101-100004-s-tac-uml", "Die Größe zählt."),
-		textEntry("20260101-100005-s-tac-gro", "Die Größenordnung zählt."),
-		textEntry("20260101-100006-s-tac-plu", "Written in C++ mostly."),
-		textEntry("20260101-100007-s-tac-ple", "Written in C++11 mostly."),
+		textEntry("20260101-100000-s-tac-ttl", "", "Prices are kept with a TTL of one hour."),
+		textEntry("20260101-100001-s-tac-set", "", "Settle the little dispute first."),
+		textEntry("20260101-100002-s-tac-edg", "", "(TTL) and ttl."),
+		textEntry("20260101-100003-s-tac-und", "", "The price_ttl field and the TTLs."),
+		textEntry("20260101-100004-s-tac-uml", "", "Die Größe zählt."),
+		textEntry("20260101-100005-s-tac-gro", "", "Die Größenordnung zählt."),
+		textEntry("20260101-100006-s-tac-plu", "", "Written in C++ mostly."),
+		textEntry("20260101-100007-s-tac-ple", "", "Written in C++11 mostly."),
 	}
 	cases := []struct {
 		name       string
