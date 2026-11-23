@@ -294,7 +294,7 @@ In the clones it keeps, sdd passes the drivers with every git call, and `sdd git
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `titles.backfill` | `false` | `true` lets sdd fill the [missing titles](/sdd/guides/browsing-the-graph/) of entries on its own: when a session starts, on a session's calls at most every 15 minutes, with each sync round of `sdd serve`, and after `sdd sync` in a graph clone and `sdd sync --pull`. Each run titles the 10 newest untitled entries with one model call per entry and commits them as `sdd: summarize N entries`. A run that fails is reported to the next session as a notice, also under manual sync, and retried by the next run. `false` makes none of these call a model or commit for titles. A capture still titles its entry, and `sdd summarize` still fills titles on request. |
+| `titles.backfill` | `false` | `true` lets sdd fill the [missing titles](/sdd/guides/browsing-the-graph/) of entries on its own: when a session starts, on a session's calls at most every 15 minutes, with each sync round of `sdd serve`, and after `sdd sync` in a graph clone and `sdd sync --pull`. Each run titles the 10 newest untitled entries with one model call per entry and commits them as `sdd: summarize N entries`. When `sdd serve` stops, a run ends at once and commits the titles it wrote; the next run titles the rest. A run that fails is reported to the next session as a notice, also under manual sync, and retried by the next run. `false` makes none of these call a model or commit for titles. A capture still titles its entry, and `sdd summarize` still fills titles on request. |
 
 ### Cache
 

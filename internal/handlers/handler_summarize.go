@@ -236,9 +236,10 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		})
 	}
 
-	// A failed entry still commits what the others wrote in one batch: a
-	// rerun skips entries already filled, so an uncommitted file would never
-	// be committed.
+	// A failed or cancelled entry still commits what the others wrote in one
+	// batch: a rerun skips entries already filled, so an uncommitted file
+	// would never be committed. Only the local commit outlives ctx, not the
+	// publish.
 	runErr := g.Wait()
 	if h.committer != nil && len(commitPaths) > 0 {
 		msg := fmt.Sprintf("sdd: summarize %d entries", len(commitPaths))
@@ -246,7 +247,10 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
 		slices.Sort(commitPaths)
-		if err := h.commitWritten(ctx, msg, commitPaths); err != nil {
+		if err := h.commitUnderGraphLock(context.WithoutCancel(ctx), msg, commitPaths...); err != nil {
+			return errors.Join(runErr, commitFailure(err, msg, commitPaths))
+		}
+		if err := h.afterGraphCommit(ctx, msg); err != nil {
 			return errors.Join(runErr, err)
 		}
 	}

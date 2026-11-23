@@ -307,6 +307,43 @@ func TestBackfillTitlesWithoutAnLLMRecordsTheFailure(t *testing.T) {
 	}
 }
 
+// A backfill stopped midway commits the titles it wrote, since a rerun skips
+// them, and records no failure: a stop is none.
+func TestBackfillTitlesStoppedMidwayCommitsWhatItWrote(t *testing.T) {
+	f := newBackfillFixture(t)
+	older, newer := writeUntitled(t, f.graphDir, 1), writeUntitled(t, f.graphDir, 2)
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	newerPath := filepath.Join(f.graphDir, "2026", "11", "01-100002-s-tac-b02.md")
+	f.runner.before = func(id string) {
+		if id != older {
+			return
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			data, err := os.ReadFile(newerPath)
+			if err == nil && strings.Contains(string(data), "title: ") {
+				break
+			}
+		}
+		stop()
+	}
+
+	err := f.handler(f.runner).BackfillTitles(ctx, &command.BackfillTitlesCmd{Enabled: true, SDDDir: f.sddDir})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the stopped backfill should report the stop, got %v", err)
+	}
+	if f.title(t, newer) == "" || f.title(t, older) != "" {
+		t.Fatal("setup: the newer entry should be titled before the stop, the older one not")
+	}
+	if len(f.committer.Messages) != 1 || len(f.committer.Paths[0]) != 1 {
+		t.Errorf("the stopped backfill should commit the title it wrote, got commits %q", f.committer.Messages)
+	}
+	if f.record.Current != nil {
+		t.Errorf("a stop should record no failed backfill, got %+v", f.record.Current)
+	}
+}
+
 func TestBackfillTitlesLeavesABlockedSyncRecorded(t *testing.T) {
 	f := newBackfillFixture(t)
 	writeUntitled(t, f.graphDir, 1)
