@@ -300,7 +300,7 @@ type StageAttachmentArgs struct {
 	Session string             `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Name    string             `json:"name" jsonschema:"target filename (plain name, no paths)"`
 	Content string             `json:"content,omitempty" jsonschema:"file content to stage (UTF-8 text)"`
-	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content"`
+	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio)"`
 	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the already-staged file named by name in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole edit. Pass instead of content/path"`
 }
 
@@ -984,6 +984,9 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	}
 	if sources != 1 {
 		return nil, StageAttachmentResult{}, toolError("pass exactly one of content, path, or patches")
+	}
+	if args.Path != "" && !s.local {
+		return nil, StageAttachmentResult{}, toolError("path: this server shares no filesystem with its clients; pass the file as content")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
