@@ -75,3 +75,33 @@ func TestCancellationWithoutPrecedingInteractionServesOnClosedInstance(t *testin
 		t.Fatalf("the closing serve must carry the cancellation and its notice: %+v", serve)
 	}
 }
+
+// A cancellation that closes its instance lists it as ended, cancelled, live
+// and after replay; one that returns it to an interaction lists none.
+func TestCancellationListsTheInstanceAsEndedOnlyWhereItCloses(t *testing.T) {
+	tests := []struct {
+		name        string
+		interaction string
+		closes      bool
+	}{
+		{name: "no preceding interaction", closes: true},
+		{name: "returns to playback", interaction: "playback"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newFixtureEnv(t)
+			ref := env.interruptWriteAfter(t, tt.interaction, false).Intent.Ref
+			if _, err := env.session.Cancel("i_1", ref); err != nil {
+				t.Fatal(err)
+			}
+
+			for name, session := range map[string]*Session{"live": env.session, "replayed": env.replay(t)} {
+				ended := session.EndedInstances()
+				closed := len(ended) == 1 && ended[0].ID == "i_1" && ended[0].Outcome == MutationCancelled
+				if tt.closes != closed || !tt.closes && len(ended) != 0 {
+					t.Errorf("%s: the instance should list as ended, cancelled, exactly where the cancellation closes it, got %+v", name, ended)
+				}
+			}
+		})
+	}
+}

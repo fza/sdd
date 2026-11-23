@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // renderAsWipList writes one line per active WIP marker. Mirrors the
@@ -16,7 +16,7 @@ import (
 // Empty marker sets render a single explanatory line so a focus-block
 // followed by `wip` still produces a visible section even when no work
 // is in flight (otherwise the section header lands above blank space).
-func renderAsWipList(w io.Writer, list model.WipList) {
+func renderAsWipList(w io.Writer, list types.ViewWipList) {
 	if len(list.Markers) == 0 {
 		fmt.Fprintln(w, "No active WIP markers.")
 		return
@@ -31,7 +31,7 @@ func renderAsWipList(w io.Writer, list model.WipList) {
 			branch = fmt.Sprintf("  branch:%s", m.Branch)
 		}
 		fmt.Fprintf(w, "  %s  %-15s%s  %s%s  %s\n",
-			m.ID, m.Participant, excl, m.Entry, branch, m.ShortContent(200))
+			m.ID, m.Participant, excl, m.Entry, branch, m.ContentExcerpt)
 	}
 	writeSectionCut(w, list.Dropped, list.Pull)
 }

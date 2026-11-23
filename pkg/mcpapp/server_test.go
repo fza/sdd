@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bradleyjkemp/cupaloy/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,7 +24,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/query"
-	"github.com/networkteam/sdd/internal/serveview"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
@@ -427,7 +427,7 @@ func connect(t *testing.T, srv *mcpserver.Server, transports ...mcp.Transport) *
 	return connectAs(t, srv, newAgentMemory(), transports...)
 }
 
-// connectAs connects the agent context memory holds, which keeps its texts
+// connectAs connects the agent context memory holds, which keeps its proofs
 // across connections.
 func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transports ...mcp.Transport) *mcp.ClientSession {
 	t.Helper()
@@ -475,6 +475,26 @@ func openSession(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
 		t.Fatalf("start_session should serve the running user-dialogue shell, got %s %s", serve.Procedure, serve.Status)
 	}
 	return serve
+}
+
+// openSessionWhole enters through the door and follows what the opening left
+// waiting past the result bound through the shell's next calls with no
+// report, joining their framing and vocabulary into the opening's.
+func openSessionWhole(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
+	t.Helper()
+	door := openSession(t, cs)
+	instructions := door.Instructions
+	for calls := 0; strings.Contains(instructions, sizeBoundWait); calls++ {
+		if calls == 3 {
+			t.Fatalf("what the opening left waiting should arrive within 3 calls, still waiting:\n%s", instructions)
+		}
+		var serve mcpserver.ServeResult
+		call(t, cs, "next", map[string]any{"session": door.Session, "instance": door.Instance}, &serve)
+		instructions = serve.Instructions
+		door.Framing = strings.TrimPrefix(door.Framing+"\n\n"+serve.Framing, "\n\n")
+		door.Vocabulary += serve.Vocabulary
+	}
+	return door
 }
 
 // call invokes a tool and decodes its structured content into out. Fails the
@@ -712,7 +732,7 @@ Probe entry %02d: the flux capacitor drill needs observing.
 func TestVocabularyBlockForNonEnglishGraphs(t *testing.T) {
 	env := newTestServerConfig(t, nil, "", "", "de")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Vocabulary, "Vokabular") {
 		t.Fatalf("a German graph's first serve should carry the vocabulary table, got %q", door.Vocabulary)
 	}
@@ -765,7 +785,7 @@ func TestToolSurfaceMatchesSpec(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment",
+		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment", "read_value",
 		"registry", "resume_session", "search", "show", "stage_attachment",
 		"start_procedure", "start_session", "view",
 	}
@@ -1132,7 +1152,7 @@ Body with a mismatched index enrollment.
 	}
 
 	env := newTestServer(t, nil, graphDir, "")
-	serve := openSession(t, connect(t, env.srv))
+	serve := openSessionWhole(t, connect(t, env.srv))
 	if !strings.Contains(serve.Framing, "Graph health") {
 		t.Fatalf("opening serve missing graph-health notice:\n%s", serve.Framing)
 	}
@@ -1175,7 +1195,7 @@ Body whose frontmatter will not parse.
 	env := newTestServer(t, nil, graphDir, "")
 	// openSession fails the test internally if the serve does not open — reaching
 	// past it proves the malformed file did not abort the load.
-	serve := openSession(t, connect(t, env.srv))
+	serve := openSessionWhole(t, connect(t, env.srv))
 	if !strings.Contains(serve.Framing, "Graph health") {
 		t.Fatalf("opening serve missing graph-health notice for the unreadable entry:\n%s", serve.Framing)
 	}
@@ -1419,11 +1439,12 @@ func TestEmbeddedCaptureProcedure(t *testing.T) {
 	if serve.Step != "assemble" || serve.Status != "running" {
 		t.Fatalf("expected running at assemble, got %s at %q", serve.Status, serve.Step)
 	}
-	if !strings.Contains(serve.Instructions, "Ground before you draft") {
-		t.Fatalf("expected the embedded assemble unit, got %q", serve.Instructions)
+	assemble := followWaitingLanes(t, cs, session, serve)
+	if !strings.Contains(assemble, "Ground before you draft") {
+		t.Fatalf("expected the embedded assemble unit, got %q", assemble)
 	}
-	if !strings.Contains(serve.Instructions, "testing/fixture") {
-		t.Fatalf("assemble unit should render the injected topic counts, got %q", serve.Instructions)
+	if !strings.Contains(assemble, "testing/fixture") {
+		t.Fatalf("assemble unit should render the injected topic counts, got %q", assemble)
 	}
 
 	// A draft ref'ing an entry never served in full holds the assemble gate —
@@ -1540,8 +1561,10 @@ func TestEmbeddedEvaluateToCaptureHandoff(t *testing.T) {
 	if slices.Contains(cap.Missing, "widenReport") {
 		t.Fatalf("capture should inherit widenReport via the handoff, but it is missing: %v", cap.Missing)
 	}
-	if !strings.Contains(cap.Instructions, "inherited") || !strings.Contains(cap.Instructions, "teardown edge is the only new thing") {
-		t.Errorf("assemble should surface the inherited grounding, got %q", cap.Instructions)
+	// The calls serving lanes past the result bound count apart from the bar.
+	assemble := followWaitingLanes(t, cs, session, cap)
+	if !strings.Contains(assemble, "inherited") || !strings.Contains(assemble, "teardown edge is the only new thing") {
+		t.Errorf("assemble should surface the inherited grounding, got %q", assemble)
 	}
 
 	// Capture #2: draft with NO widenReport — the handoff already satisfied
@@ -1817,20 +1840,17 @@ func TestSessionResumeAcrossServers(t *testing.T) {
 
 // TestResumeProjectsCollectedState covers the honest-surfacing half of the
 // re-entry contract (d-cpt-0tm): a resuming agent sees the param and state
-// values an instance already collected — even when the current step's unit
-// does not render them — while internal trust machinery stays hidden and an
-// oversized value is truncated with an explicit notice rather than dropped.
+// values an instance already collected, even when the current step's unit
+// does not render them, the small ones whole and a large one by name with its
+// size (20261121-233256-d-tac-mm2), while internal trust machinery stays
+// hidden.
 func TestResumeProjectsCollectedState(t *testing.T) {
-	// The production per-value cap derives from the serveview budget.
-	collectedCap := serveview.Default().Cap(serveview.PartStoreValue).MaxBytes
-
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 
-	// An oversized reported value exercises the per-value cap.
 	report := assembleReport()
-	report["body"] = "Oscillation gap detail. " + strings.Repeat("z", collectedCap)
+	report["body"] = "Oscillation gap detail. " + strings.Repeat("z", 4000)
 
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{
@@ -1886,24 +1906,21 @@ func TestResumeProjectsCollectedState(t *testing.T) {
 		t.Fatalf("collected should carry the reported widenReport, got %q", capture.Collected["widenReport"])
 	}
 	// Trust machinery and engine-produced fields never surface as collected.
-	if _, ok := capture.Collected["playbackConfirmation"]; ok {
-		t.Fatalf("collected must not leak the playback confirmation record: %+v", capture.Collected)
-	}
-	if _, ok := capture.Collected["preflightOverride"]; ok {
-		t.Fatalf("collected must not leak the pre-flight override: %+v", capture.Collected)
+	for _, hidden := range []string{"playbackConfirmation", "preflightOverride"} {
+		if _, ok := capture.Collected[hidden]; ok {
+			t.Fatalf("collected must not leak %s: %+v", hidden, capture.Collected)
+		}
+		if _, ok := capture.CollectedLarge[hidden]; ok {
+			t.Fatalf("collected_large must not leak %s: %+v", hidden, capture.CollectedLarge)
+		}
 	}
 
-	// The oversized value is truncated with an explicit notice — near the cap,
-	// never silently carrying the full payload.
-	body := capture.Collected["body"]
-	if !strings.Contains(body, "[collected value truncated at") {
-		t.Fatalf("oversized collected value should carry a truncation notice, got %q", body)
+	// The large value goes by name with its size, none of its text.
+	if _, ok := capture.Collected["body"]; ok {
+		t.Fatalf("a value past the size limit should carry none of its text: %q", capture.Collected["body"])
 	}
-	if len(body) > collectedCap+200 {
-		t.Fatalf("truncated value should sit near the cap, got %d bytes", len(body))
-	}
-	if strings.Contains(body, strings.Repeat("z", collectedCap)) {
-		t.Fatal("truncated value should not carry the full oversized payload")
+	if size := capture.CollectedLarge["body"]; size != utf8.RuneCountInString(report["body"].(string)) {
+		t.Fatalf("a value past the size limit should be named with its size, got %+v", capture.CollectedLarge)
 	}
 
 	// The projection is resume-only: an ordinary next serve carries no collected
@@ -1916,92 +1933,56 @@ func TestResumeProjectsCollectedState(t *testing.T) {
 		"chooser": "verifySummary", "choice": "faithful",
 		"fields": map[string]any{"fidelityNote": "matches"},
 	}}, &serve)
-	if serve.Collected != nil {
-		t.Fatalf("collected must ride the resume path only, not an ordinary next serve: %+v", serve.Collected)
+	if serve.Collected != nil || serve.CollectedLarge != nil {
+		t.Fatalf("collected must ride the resume path only, not an ordinary next serve: %+v %+v", serve.Collected, serve.CollectedLarge)
 	}
 }
 
-// TestResumeCollectedRespectsInstanceBudget pins the aggregate per-instance cap
-// on the collected projection: many near-cap fields must not stack into an
-// oversized resume response (s-tac-jom / s-tac-40d — the ~10K-token host output
-// ceiling). Fields are kept whole in sorted-key order until the budget is
-// spent; anything past it carries an explicit omission notice, never silently
-// vanishing (d-cpt-0tm).
-func TestResumeCollectedRespectsInstanceBudget(t *testing.T) {
-	// The production caps derive from the serveview budget.
-	valueCap := serveview.Default().Cap(serveview.PartStoreValue).MaxBytes
-	instanceCap := serveview.Default().Cap(serveview.PartProduced).MaxBytes
-
+// A collected value read through read_value arrives whole, never cut at a
+// size cap: a value past one result comes in pages that join to it.
+func TestReadValueReturnsACollectedValueWhole(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
 
-	// Four near-cap text fields, each capped to ~valueCap, together exceed the
-	// per-instance budget so at least one must be omitted. captureBranch is left
-	// alone — it drives graph resolution, not payload size.
 	report := assembleReport()
-	big := strings.Repeat("z", valueCap)
-	report["body"] = "body: " + big
-	report["widenReport"] = "widen: " + big
-	report["fidelityNote"] = "fidelity: " + big
-	report["correctedSummary"] = "corrected: " + big
+	body := "Oscillation gap detail. " + strings.Repeat("word ", 9000) + "the end."
+	report["body"] = body
 
 	var serve mcpserver.ServeResult
-	call(t, cs, "start_procedure", map[string]any{
-		"session":   session,
-		"canonical": "capture",
-		"params":    map[string]any{"anchor": fixtureGapID},
-	}, &serve)
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture", "params": map[string]any{"anchor": fixtureGapID}}, &serve)
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": report}, &serve)
 	if serve.Step != "playback" {
 		t.Fatalf("setup: expected playback, got %q", serve.Step)
 	}
-	sessionID := serve.Session
 
-	env2 := newTestServer(t, nil, env.graphDir, env.sessionsDir)
-	cs2 := connect(t, env2.srv)
-
-	var resumed mcpserver.ResumeSessionResult
-	call(t, cs2, "resume_session", map[string]any{"session": sessionID}, &resumed)
-
-	var capture *mcpserver.ServeResult
-	for i := range resumed.Open {
-		if resumed.Open[i].Procedure == "capture" {
-			capture = &resumed.Open[i]
+	var page mcpserver.ReadValueResult
+	call(t, cs, "read_value", map[string]any{"session": session, "instance": serve.Instance, "name": "body"}, &page)
+	var joined strings.Builder
+	for n := 1; ; n++ {
+		if len(page.Value) > int(model.DefaultResultBound) {
+			t.Fatalf("each page of a value should stay within the result bound, page %d took %d characters", n, len(page.Value))
 		}
-	}
-	if capture == nil {
-		t.Fatalf("resume should rehydrate the capture, got %+v", resumed.Open)
-	}
-
-	// Every collected field is still present as a key — nothing disappears
-	// silently — and every large field is either kept whole (truncation notice)
-	// or explicitly omitted (omission notice).
-	total := 0
-	omitted := 0
-	for _, name := range []string{"body", "widenReport", "fidelityNote", "correctedSummary"} {
-		v, ok := capture.Collected[name]
+		text, last, ok := strings.Cut(page.Value, "\n\n(page ")
 		if !ok {
-			t.Fatalf("large field %q vanished from collected: %+v mapKeys", name, capture.Collected)
+			joined.WriteString(page.Value)
+			break
 		}
-		if strings.Contains(v, "[collected value omitted here for size") {
-			omitted++
+		joined.WriteString(text)
+		if strings.Contains(last, "its last)") {
+			break
 		}
+		if n > 10 {
+			t.Fatal("the value should end within 10 pages")
+		}
+		call(t, cs, "read_value", map[string]any{"session": session, "instance": serve.Instance, "name": "body", "page": n + 1}, &page)
 	}
-	for _, v := range capture.Collected {
-		total += len(v)
+	if joined.String() != body {
+		t.Fatalf("the pages should join to the whole value, got %d of %d characters", joined.Len(), len(body))
 	}
-	if omitted == 0 {
-		t.Fatalf("four near-cap fields should force at least one omission, got none: %+v", capture.Collected)
-	}
-	// The kept payload stays under the budget; the small omission-notice strings
-	// for dropped fields are the only overage, well within slack.
-	if total > instanceCap+1000 {
-		t.Fatalf("collected total %d bytes exceeds budget+slack (%d)", total, instanceCap+1000)
-	}
-	// The anchor and the small enum fields are never the ones dropped.
-	if capture.Collected["anchor"] != fixtureGapID {
-		t.Fatalf("anchor must survive the budget, got %q", capture.Collected["anchor"])
+
+	if msg := callExpectError(t, cs, "read_value", map[string]any{"session": session, "instance": serve.Instance, "name": "nothing"}); !strings.Contains(msg, "it holds: ") || !strings.Contains(msg, "body") {
+		t.Fatalf("an unknown value should be refused naming those the move holds, got %q", msg)
 	}
 }
 
@@ -2520,6 +2501,22 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
+// serveSize is what a serve takes of its result: the text question rides in
+// the room model.DefaultResultBound.Serve() leaves under the result bound, as notices do.
+func serveSize(t *testing.T, v any) int {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "question")
+	return jsonSize(t, fields)
+}
+
 // TestServedMemoryIsPerAgentContext pins the served memory under the text
 // question (d-cpt-aen, 20261121-230157-d-tac-ym8): the session ledger keeps
 // the served texts and the questions asked, but only a call answering one
@@ -2554,16 +2551,17 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 		t.Fatalf("the identical unit should point at what the agent holds, got %q", same.Instructions)
 	}
 
-	// A fresh subagent sharing the handle saw no question and answers lost.
+	// A fresh subagent sharing the handle saw no question and answers lost;
+	// caller marks it as a caller the session has not served the framing.
 	subagent := newAgentMemory()
 	csSub := connectAs(t, env.srv, subagent)
 	var fresh mcpserver.ServeResult
-	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
+	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture", "caller": "subagent"}, &fresh)
 	if subagent.answers[0] != "lost" {
 		t.Fatalf("precondition: a fresh subagent answers lost, got %q", subagent.answers[0])
 	}
 	if !strings.Contains(fresh.Framing, "## Working principles") || !strings.Contains(fresh.Instructions, "Existing topics:") {
-		t.Fatalf("a fresh subagent should get the framing and the unit in full, got framing %q", fresh.Framing)
+		t.Fatalf("a fresh subagent marked by caller should get the framing and the unit in full, got framing %q", fresh.Framing)
 	}
 	requireFullReportSchema(t, "capture of a fresh subagent", fresh.ReportSchema)
 	if strings.Contains(fresh.Instructions, "(held: ") {
@@ -2572,7 +2570,7 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 
 	// The subagent reorients: everything serves in full again.
 	var resumed mcpserver.ResumeSessionResult
-	call(t, csSub, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	call(t, csSub, "resume_session", map[string]any{"session": door.Session, "caller": "subagent"}, &resumed)
 	// The three open captures may leave the framing no room: it then waits,
 	// named, rather than stubbed.
 	if resumed.Framing == "" && !strings.Contains(resumed.Instructions, "framing blocks wait") {
@@ -2643,8 +2641,8 @@ func TestCompactionAnswersLost(t *testing.T) {
 	agent.forget = true
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if second.Framing == "" || !strings.Contains(second.Instructions, "Existing topics:") {
-		t.Fatalf("an agent answering lost should get the framing and the unit in full, got %q", second.Instructions)
+	if second.Framing != "" || !strings.Contains(second.Instructions, "Existing topics:") {
+		t.Fatalf("an agent answering lost should get the unit in full and no unchanged framing block, got framing %q and %q", second.Framing, second.Instructions)
 	}
 	requireFullReportSchema(t, "capture after a lost answer", second.ReportSchema)
 }
@@ -2656,7 +2654,7 @@ func TestCompactionAnswersLost(t *testing.T) {
 func TestShellComposedFraming(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Framing, "Local participant:") {
 		t.Fatalf("framing must carry the engine-supplied info block, got %q", door.Framing)
 	}
@@ -2823,7 +2821,7 @@ func runCaptureToCompletion(t *testing.T, cs *mcp.ClientSession, session, label 
 func TestFramingLaneDedupAfterWrite(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	csB := connect(t, env.srv)
-	door := openSession(t, csB)
+	door := openSessionWhole(t, csB)
 	if !strings.Contains(door.Framing, "Local participant:") || !strings.Contains(door.Framing, "Recent graph movement") {
 		t.Fatalf("the door should serve the full framing, got %q", door.Framing)
 	}
@@ -2916,7 +2914,7 @@ Body.
 
 	env := newTestServer(t, nil, graphDir, "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	stable := []string{"Aspirations", "Guiding directives", "## Focus", "## Participants"}
 	for _, want := range stable {
 		if !strings.Contains(door.Framing, want) {
@@ -2972,7 +2970,7 @@ func TestStubsCarryCompactionBreadcrumb(t *testing.T) {
 	if !strings.Contains(second.Instructions, "you hold the step") || !strings.Contains(second.Instructions, breadcrumb) {
 		t.Fatalf("a stubbed per-step reminder must carry the compaction breadcrumb, got %q", second.Instructions)
 	}
-	if stub, _ := second.ReportSchema["served_earlier"].(string); !strings.Contains(stub, breadcrumb) {
+	if stub, _ := second.ReportSchema["held_properties"].(string); !strings.Contains(stub, breadcrumb) {
 		t.Fatalf("a report-schema stub must carry the compaction breadcrumb, got %q", stub)
 	}
 
@@ -3364,8 +3362,8 @@ func TestDoorGatingAndShellLifecycle(t *testing.T) {
 	if serve.Base == nil || serve.Base.Procedure != "user-dialogue" || serve.Base.Instance != shell.Instance {
 		t.Fatalf("a completed move should land on the shell junction, got %+v", serve.Base)
 	}
-	if !strings.Contains(serve.Base.Instructions, "you hold the step") {
-		t.Fatalf("the shell's re-serve should be the one-line reminder, got %q", serve.Base.Instructions)
+	if !strings.Contains(serve.Base.Instructions, "back at user-dialogue, step junction") || strings.Contains(serve.Base.Instructions, "Ending is part of the arc") {
+		t.Fatalf("a completed move should land on the shell short, naming its step, got %q", serve.Base.Instructions)
 	}
 
 	// The shell itself never abandons.

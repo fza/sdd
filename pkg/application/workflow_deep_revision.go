@@ -3,8 +3,6 @@ package application
 import (
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -21,12 +19,11 @@ import (
 
 // Engine-written fields of a revision on the capture's side.
 const (
-	fieldDeepRevising         = "deepRevising"
-	fieldDeepRevisions        = "deepRevisions"
-	fieldDeepRevision         = "deepRevision"
-	fieldDeepRevisionPages    = "deepRevisionPages"
-	fieldDeepRevisionPageFull = "deepRevisionPageFull"
-	fieldDeepReadIDs          = "deepReadIDs"
+	fieldDeepRevising        = "deepRevising"
+	fieldDeepRevisions       = "deepRevisions"
+	fieldDeepRevision        = "deepRevision"
+	fieldDeepRevisionReading = "deepRevisionReading"
+	fieldDeepReadIDs         = "deepReadIDs"
 	// fieldDeepHidden names every entry a verifier reading of the capture
 	// served as one line, for the openings publish labels.
 	fieldDeepHidden = "deepHidden"
@@ -106,13 +103,13 @@ func (w *WorkflowSession) delegateWaits(child engine.Link) (bool, error) {
 	return ok && inst.Status == engine.StatusRunning && inst.Step == verifyWaitStep, nil
 }
 
-// deepRevisionPages renders a revision's reading: first the revised draft,
-// its refs' fit and its changed passages, then the entries read since the
-// verifier last read, which held names.
-func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, number int, held deepHeld) ([]model.DeepReadingPage, error) {
+// deepRevisionReading renders a revision's whole reading: first the revised
+// draft, its refs' fit and its changed passages, then the entries read since
+// the verifier last read, which held names.
+func (w *WorkflowSession) deepRevisionReading(ctx *engine.Context, base string, number int, held deepHeld) (model.DeepReading, error) {
 	refFit, err := deepRefFit(ctx)
 	if err != nil {
-		return nil, err
+		return model.DeepReading{}, err
 	}
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Revision %d of the draft\n\nThe draft changed after your last findings, and you hold the reading the earlier pages served. Judge the changed passages below against that reading and against the draft as a whole, then report **judge** with your whole findings list over this draft document: your earlier findings and the drafter's answers to them are over. Any later page holds the entries read since your reading. If you do not hold the earlier reading, report **reread** first.\n\n", number)
@@ -120,8 +117,8 @@ func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, nu
 	lead.WriteString(refFit)
 	lead.WriteString(preflightRaised(ctx.Store))
 	lead.WriteString("\n## Changed since your last findings\n\n" + revisionPassages(ctx.Store, base))
-	pages, _, err := w.deepReading(ctx, lead.String(), nil, held)
-	return pages, err
+	reading, _, err := w.deepReading(ctx, lead.String(), model.DeepContinued{}, held)
+	return reading, err
 }
 
 // revisionPassages renders the passages of base that changed since the
@@ -145,29 +142,18 @@ func (w *WorkflowSession) sendDeepRevision(ctx *engine.Context) error {
 	return ctx.Store.WriteEngine(fieldDeepRevision, fmt.Sprintf("Revision %d of the draft. Changed since your last findings:\n\n%s", deepRoundCount(number), revisionPassages(ctx.Store, base)))
 }
 
-// loadVerifyRevision loads the revised draft and the revision's reading from
-// the capture into the verify task, serves its page 1, and opens a fresh
-// exchange over the revised draft.
+// loadVerifyRevision loads the revised draft and the revision's whole reading
+// from the capture into the verify task, stands it at page 1, and opens a
+// fresh exchange over the revised draft.
 func (w *WorkflowSession) loadVerifyRevision(ctx *engine.Context) error {
 	parent, err := w.dispatchingStore()
 	if err != nil {
 		return err
 	}
 	base, _ := workflowStoreString(parent, fieldDeepBase)
-	pages := workflowStoreStrings(parent, fieldDeepRevisionPages)
-	if base == "" || len(pages) == 0 {
+	reading, _ := parent.Get(fieldDeepRevisionReading)
+	if base == "" || reading == nil {
 		return errors.New("the dispatching capture holds no revision")
 	}
-	full, err := storeDeep[[]string](parent, fieldDeepRevisionPageFull)
-	if err != nil {
-		return err
-	}
-	writes := map[string]any{fieldVerifyBase: base, fieldVerifyPages: pages, fieldVerifyPageFull: full, fieldVerifyRepair: nil, fieldVerifyResponded: nil}
-	for _, name := range slices.Sorted(maps.Keys(writes)) {
-		err := ctx.Store.WriteEngine(name, writes[name])
-		if err != nil {
-			return err
-		}
-	}
-	return w.showVerifyPage(ctx.Store, 0)
+	return openVerifyReading(ctx.Store, map[string]any{fieldVerifyBase: base, fieldVerifyReading: reading, fieldVerifyRepair: nil, fieldVerifyResponded: nil})
 }

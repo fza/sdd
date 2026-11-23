@@ -159,7 +159,8 @@ type Serve struct {
 	UnitText string
 	// Lanes are the unit's rendered lanes in declaration order (empty
 	// rendered lanes dropped), the blocks a host dedups independently
-	// (d-tac-87o). UnitText is their join.
+	// (d-tac-87o), led by the DraftLane where the step serves one. UnitText
+	// is their join.
 	Lanes []ServeLane
 	// Diagnostics are the stall messages appended to Instructions ("Gate
 	// held" lines), kept separate so shells can recompose around UnitText.
@@ -191,11 +192,16 @@ type Serve struct {
 	Dispatches string
 	// Parked is set when the serve parks the instance for a person.
 	Parked *Parking
+	// Framing is the step's declared framing blocks; nil carries them all.
+	Framing []string
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
 // it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
 type ServeLane = types.ServeLane
+
+// DraftLane is types.DraftLane.
+const DraftLane = types.DraftLane
 
 // evalGuard evaluates a step guard or transition guard against the registry,
 // returning the verdict and the clauses that block it for diagnostics.
@@ -641,6 +647,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		return nil, fmt.Errorf("instance %s: step %q not found", inst.ID, inst.Step)
 	}
 	sv.Step = step.ID
+	sv.Framing = step.Framing
 	if pending := s.PendingMutation(); pending != nil && pending.Instance == inst.ID {
 		// Only retry or cancel can advance here, so the step's unit, schema
 		// and gate are withheld (d-tac-t6u).
@@ -655,11 +662,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	}
 	switch {
 	case len(step.Await) == 0:
-		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
 	case len(step.Collect) > 0:
 		// A gate awaiting a delivery takes only what it collects; one that
 		// collects nothing takes no report.
-		sv.ReportSchema = inst.Spec.collectSchema(step)
+		sv.ReportSchema = inst.Spec.collectSchema(step, inst.Store)
 	}
 	sv.Missing = s.missingFields(inst, step)
 
@@ -686,7 +693,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		draftCap := serveview.Default().Cap(serveview.PartDraft).MaxBytes
 		if block, draftCuts := renderDraft(inst.Spec, step.ServeDelta, prev, cur, fullDraft, draftCap); block != "" {
-			lanes = append(lanes, ServeLane{Name: "draft", Text: block, Authored: true})
+			lanes = append([]ServeLane{{Name: DraftLane, Text: block, Authored: true}}, lanes...)
 			cuts = append(cuts, draftCuts...)
 		}
 		if inst.draftServed == nil {
@@ -762,7 +769,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode, inst.Store)
 		switch {
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
@@ -790,6 +797,43 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 
 	s.appendEvent(inst.ID, EventServed, map[string]any{"step": step.ID})
 	return sv, nil
+}
+
+// narrowToFailing serves a gate that holds the report it just took with a
+// schema of the fields holding it: those still missing and those its failing
+// checks read. A gate held only by checks that read no reportable field keeps
+// the whole schema.
+func (s *Session) narrowToFailing(inst *Instance, sv *Serve) {
+	step := inst.currentStep()
+	props, _ := sv.ReportSchema["properties"].(map[string]any)
+	if step == nil || step.Chooser != ChooserGate || props == nil {
+		return
+	}
+	var fields []string
+	add := func(name string) {
+		if _, ok := props[name]; ok && !slices.Contains(fields, name) {
+			fields = append(fields, name)
+		}
+	}
+	for _, name := range sv.Missing {
+		add(name)
+	}
+	for _, failed := range sv.Failing {
+		if p, ok := s.engine.Registry.Predicate(failed.Name); ok {
+			for _, name := range p.Doc.Reads {
+				add(name)
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	sv.ReportSchema = failingSchema(sv.ReportSchema, fields)
+	for i := range sv.Sizes {
+		if sv.Sizes[i].Part == "schema" {
+			sv.Sizes[i].Bytes = partBytes(sv.ReportSchema)
+		}
+	}
 }
 
 // ComposeInstructions joins a rendered unit (or a shell-substituted
@@ -865,23 +909,32 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unit %s: %w", unitName, err)
 	}
+	tmpls := make([]*template.Template, len(unit.Lanes))
+	for i, lane := range unit.Lanes {
+		tmpls[i], err = template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
+		}
+	}
 	var sizes []PartSize
 	var cuts []truncate.Cut
 	// Store values interpolate into served text uncapped otherwise; the bound
 	// applies only here, on the unit context — inject args render against the
 	// raw store (renderInjectArgs), and the draft lane carries its own bound.
+	// A cut serves its notice only where the lanes read the value.
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
 	injected := make(map[string]bool, len(step.Inject))
 	for _, inj := range step.Inject {
 		injected[inj.EffectiveID()] = true
 	}
+	reads := templateReads(tmpls)
 	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
 		// An inject under a store value's name replaces it with its own bound.
 		if !inst.Store.Has(name) || injected[name] {
 			continue
 		}
 		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)
-		if cut != nil {
+		if cut != nil && reads[name] {
 			cut.Part = "store:" + name
 			cuts = append(cuts, *cut)
 		}
@@ -916,13 +969,9 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	}
 
 	lanes := make([]ServeLane, 0, len(unit.Lanes))
-	for _, lane := range unit.Lanes {
-		tmpl, err := template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
-		}
+	for i, lane := range unit.Lanes {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+		if err := tmpls[i].Execute(&buf, tmplCtx); err != nil {
 			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
 		}
 		if text := strings.TrimSpace(buf.String()); text != "" {

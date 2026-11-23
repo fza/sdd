@@ -50,23 +50,33 @@ type pieceCall struct {
 	answered   int
 	provedFrom int
 	short      bool
-	// missed is set by lost or a wrong answer, which RecordServed logs.
-	missed  bool
+	// reset is set by an answer to open questions crediting none: the held set empties
+	// when the call records what it served.
+	reset bool
+	// carried is set when the call carries an answer.
+	carried bool
 	reread  map[string]bool
 	full    bool
 	issued  map[Piece]bool
 	covered map[string]bool
 	pending []pendingServe
+	// followed is what the deferral this call follows sent, by the step that
+	// sent it, still pointed at should the call leave lanes waiting again.
+	followed map[Piece]string
 	// seq orders the pieces the call serves, so a mark withdraws them.
 	seq int
+	// caller is the mark the call carries (SetCaller).
+	caller string
 }
 
 // pendingServe is a piece the call served in full, not yet recorded: text is
-// what a question about it is made from, empty for an entry; changed marks
-// one that serves once per change of its content.
+// what a question about it is made from, empty for an entry; probe is what a
+// delivered result holds of it; changed marks one that serves once per
+// change of its content.
 type pendingServe struct {
 	piece    Piece
 	text     string
+	probe    string
 	covers   []string
 	changed  bool
 	authored bool
@@ -79,11 +89,14 @@ func (s *Session) nextSeq() int {
 }
 
 // BeginCall starts a call carrying answer, the agent's answers to the
-// questions a response asked (model.RoundAnswered), and the piece names it
-// lists in reread, which serve in full. An answer that answers every
-// question of a round still unanswered makes the texts whose latest copy is
-// at least the oldest of that round's hold for the call; lost, a wrong
-// answer to any question or none holds nothing.
+// questions a response asked (model.RoundCredit), and the piece names it
+// lists in reread, which serve in full. The questions of a round still
+// unanswered that the answer credits make the texts whose latest copy is at
+// least the oldest of the credited questions' hold for the call. None holds
+// nothing; an answer to open questions that credits none, lost to any among
+// them, holds nothing and empties the held set, so only texts served from this
+// call on count as held (20261122-105026-d-tac-wl5). With no question open an
+// answer holds nothing and empties nothing.
 func (s *Session) BeginCall(answer string, reread []string) {
 	s.call = pieceCall{reread: map[string]bool{}}
 	for _, r := range reread {
@@ -92,27 +105,39 @@ func (s *Session) BeginCall(answer string, reread []string) {
 	if strings.TrimSpace(answer) == "" {
 		return
 	}
-	if model.IsLost(answer) {
-		s.call.missed = true
+	s.call.carried = true
+	open := s.openRounds()
+	// With no question open, as after a response that asked none, an answer
+	// disproves nothing; the call still holds nothing by it.
+	if len(open) == 0 {
 		return
 	}
-	for round, asked := range s.openRounds() {
-		if !model.RoundAnswered(asked.questions, answer) {
+	if model.IsLost(answer) {
+		s.call.reset = true
+		return
+	}
+	for round, asked := range open {
+		credited := model.RoundCredit(asked.questions, answer)
+		if len(credited) == 0 {
 			continue
 		}
-		earlier := asked.latest < s.call.provedFrom || asked.latest == s.call.provedFrom && round+1 < s.call.answered
+		proved := asked.latests[credited[0]]
+		for _, i := range credited[1:] {
+			proved = min(proved, asked.latests[i])
+		}
+		earlier := proved < s.call.provedFrom || proved == s.call.provedFrom && round+1 < s.call.answered
 		if s.call.answered == 0 || earlier {
-			s.call.answered, s.call.provedFrom = round+1, asked.latest
+			s.call.answered, s.call.provedFrom = round+1, proved
 		}
 	}
-	s.call.missed = s.call.answered == 0
+	s.call.reset = s.call.answered == 0
 }
 
 // openRound is a round of questions still unanswered: its questions and the
-// oldest latest copy they asked about.
+// latest copy each asked about.
 type openRound struct {
 	questions []model.TextQuestion
-	latest    int
+	latests   []int
 }
 
 // openRounds lists the rounds still unanswered by the index of their first
@@ -125,11 +150,11 @@ func (s *Session) openRounds() map[int]*openRound {
 		}
 		round, ok := rounds[asked.round]
 		if !ok {
-			round = &openRound{latest: asked.latest}
+			round = &openRound{}
 			rounds[asked.round] = round
 		}
 		round.questions = append(round.questions, asked.question)
-		round.latest = min(round.latest, asked.latest)
+		round.latests = append(round.latests, asked.latest)
 	}
 	return rounds
 }
@@ -138,10 +163,18 @@ func (s *Session) openRounds() map[int]*openRound {
 // unanswered.
 func (s *Session) Answered() bool { return s.call.answered > 0 }
 
+// Emptied reports whether the call's answer, lost or wrong, empties the held
+// set, so no piece it serves is held by an answer.
+func (s *Session) Emptied() bool { return s.call.reset }
+
+// QuestionsStand reports whether the call carried an answer while a round
+// of questions is still open, which a call that fails leaves open.
+func (s *Session) QuestionsStand() bool { return s.call.carried && len(s.openRounds()) > 0 }
+
 // Holds reports whether the call in flight holds the piece: received earlier
-// in this call, carried whole by a piece received in it, or held by a right
-// answer. A piece the call lists in reread is never held, nor one it
-// receives in full again.
+// in this call, carried whole by a piece received in it, held by a right
+// answer, or sent by the deferral the call follows. A piece the call lists in
+// reread is never held, nor one it receives in full again.
 func (s *Session) Holds(p Piece) bool { return s.holds(p, true) }
 
 func (s *Session) holds(p Piece, byAnswer bool) bool {
@@ -151,34 +184,39 @@ func (s *Session) holds(p Piece, byAnswer bool) bool {
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
 		return false
 	}
-	return byAnswer && s.heldByAnswer(p)
+	if byAnswer && s.heldByAnswer(p) {
+		return true
+	}
+	_, sent := s.call.followed[p]
+	return sent
 }
 
 func (s *Session) heldByAnswer(p Piece) bool {
 	held, ok := s.texts[p]
-	return ok && s.call.answered > 0 && held.latest >= s.call.provedFrom
+	return ok && s.call.answered > 0 && held.latest >= s.call.provedFrom && held.latest >= s.heldFrom
 }
 
 // ServePiece decides how the call in flight serves p: true for its pointer
 // when the call holds it, false for in full. text is what a later question
-// about it is made from. carried are the entries the piece carries whole,
-// held for the rest of the call. The serve is recorded by RecordServed.
-func (s *Session) ServePiece(p Piece, carried []Piece, text string) bool {
+// about it is made from, probe what a delivered result holds of it. carried
+// are the entries the piece carries whole, held for the rest of the call.
+// The serve is recorded by RecordServed.
+func (s *Session) ServePiece(p Piece, carried []Piece, text, probe string) bool {
 	if s.servedShort(p) {
 		return true
 	}
-	s.issue(p, carried, text, false)
+	s.issue(p, carried, text, probe, false)
 	return false
 }
 
 // ServeAuthored is ServePiece for text the agent or the person wrote, or
 // that embeds their words, such as a draft played back: held as any text,
 // it is never a question's text.
-func (s *Session) ServeAuthored(p Piece, text string) bool {
+func (s *Session) ServeAuthored(p Piece, text, probe string) bool {
 	if s.servedShort(p) {
 		return true
 	}
-	s.issue(p, nil, text, true)
+	s.issue(p, nil, text, probe, true)
 	return false
 }
 
@@ -196,18 +234,18 @@ func (s *Session) servedShort(p Piece) bool {
 // ServeEntry is ServePiece for an entry: a right answer never holds it, so
 // an entry served in an earlier call serves in full again (Holds without the
 // answer). It is no question's text.
-func (s *Session) ServeEntry(p Piece) bool {
+func (s *Session) ServeEntry(p Piece, probe string) bool {
 	if s.holds(p, false) {
 		return true
 	}
-	s.issue(p, nil, "", false)
+	s.issue(p, nil, "", probe, false)
 	return false
 }
 
 // HoldsEntry reports whether the call holds an entry, as ServeEntry reads it.
 func (s *Session) HoldsEntry(p Piece) bool { return s.holds(p, false) }
 
-func (s *Session) issue(p Piece, carried []Piece, text string, authored bool) {
+func (s *Session) issue(p Piece, carried []Piece, text, probe string, authored bool) {
 	covers := make([]string, len(carried))
 	for i, c := range carried {
 		covers[i] = c.key()
@@ -219,7 +257,7 @@ func (s *Session) issue(p Piece, carried []Piece, text string, authored bool) {
 	for _, key := range covers {
 		s.call.covered[key] = true
 	}
-	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, covers: covers, authored: authored, seq: s.nextSeq()})
+	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, probe: probe, covers: covers, authored: authored, seq: s.nextSeq()})
 }
 
 // ServeChanged reports whether the call serves p, a piece that serves once per
@@ -229,18 +267,49 @@ func (s *Session) issue(p Piece, carried []Piece, text string, authored bool) {
 // nothing. The change is recorded by RecordServed. text is what the agent
 // reads of it, which no question's phrase may occur in.
 func (s *Session) ServeChanged(p Piece, text string) bool {
-	last := s.changed[p.Name]
 	if p.Hash == "" {
-		if last != "" {
+		if s.changed[changedKey(s.call.caller, p.Name)] != "" {
 			s.call.pending = append(s.call.pending, pendingServe{piece: p, changed: true, seq: s.nextSeq()})
 		}
 		return false
 	}
-	if last == p.Hash && !s.call.full {
+	if !s.Changed(p) {
 		return false
 	}
 	s.call.pending = append(s.call.pending, pendingServe{piece: p, text: text, changed: true, seq: s.nextSeq()})
 	return true
+}
+
+// Changed reports whether ServeChanged would serve p, recording nothing: its
+// content differs from the last the session served the call's caller under
+// p.Name, or the call serves every piece in full. Content the call served
+// already counts as served.
+func (s *Session) Changed(p Piece) bool {
+	if s.call.full {
+		return !slices.ContainsFunc(s.call.pending, func(sent pendingServe) bool { return sent.changed && sent.piece == p })
+	}
+	last := s.changed[changedKey(s.call.caller, p.Name)]
+	for _, sent := range s.call.pending {
+		if sent.changed && sent.piece.Name == p.Name {
+			last = sent.piece.Hash
+		}
+	}
+	return last != p.Hash
+}
+
+// SetCaller makes the call in flight serve the caller it names: what serves
+// once per change counts per caller, so a caller the session has not served
+// gets every such piece in full. The empty caller is the session's first
+// (20261121-233256-d-tac-mm2).
+func (s *Session) SetCaller(caller string) { s.call.caller = caller }
+
+// changedKey keys the content a caller was served under a piece's name; the
+// first caller's keys are the bare names.
+func changedKey(caller, name string) string {
+	if caller == "" {
+		return name
+	}
+	return caller + "\x00" + name
 }
 
 // PieceMark marks the pieces the call has served so far.
@@ -257,6 +326,34 @@ func (s *Session) DropPiecesSince(mark int) {
 		s.unissue(dropped)
 	}
 	s.call.pending = s.call.pending[:cut]
+}
+
+// KeepDelivered withdraws the pieces served in full after mark that
+// delivered, the text a result carries of them, does not hold: text composed
+// into a part the result left out or left waiting. Empty delivered withdraws
+// every one, as DropPiecesSince does.
+func (s *Session) KeepDelivered(mark int, delivered string) {
+	if delivered == "" {
+		s.DropPiecesSince(mark)
+		return
+	}
+	if mark < 0 || mark > s.call.seq {
+		return
+	}
+	cut := s.pendingSince(mark)
+	kept := s.call.pending[:cut]
+	for _, p := range s.call.pending[cut:] {
+		if p.changed || p.delivered(delivered) {
+			kept = append(kept, p)
+			continue
+		}
+		s.unissue(p)
+	}
+	s.call.pending = kept
+}
+
+func (p pendingServe) delivered(result string) bool {
+	return p.probe != "" && strings.Contains(result, p.probe)
 }
 
 // pendingSince is the index of the first pending piece served at or after
@@ -276,8 +373,14 @@ func (s *Session) unissue(p pendingServe) {
 // RecordServed logs what the call served in full since the last record, each
 // text with its content the first time the session serves it, so a
 // restarted server still makes and checks questions about it, and the
-// question the call's answer answered.
+// question the call's answer answered, or that it emptied the held set.
 func (s *Session) RecordServed() {
+	data := map[string]any{}
+	if s.call.reset {
+		s.call.reset = false
+		s.heldFrom = s.copies + 1
+		data["reset"] = true
+	}
 	var records []any
 	for _, p := range s.call.pending {
 		if p.text == "" && !p.changed {
@@ -289,6 +392,9 @@ func (s *Session) RecordServed() {
 		}
 		if p.changed {
 			record["changed"] = true
+			if s.call.caller != "" {
+				record["caller"] = s.call.caller
+			}
 			if _, known := s.onceTexts[p.piece]; !known && p.text != "" {
 				record["text"] = p.text
 			}
@@ -302,11 +408,6 @@ func (s *Session) RecordServed() {
 		records = append(records, record)
 	}
 	s.call.pending = nil
-	data := map[string]any{}
-	if s.call.missed {
-		s.call.missed = false
-		data["missed"] = true
-	}
 	if len(records) > 0 {
 		data["texts"] = records
 	}
@@ -319,6 +420,9 @@ func (s *Session) RecordServed() {
 	}
 	if len(data) == 0 {
 		return
+	}
+	if _, answered := data["answered"]; (answered || data["reset"] == true) && s.call.caller != "" {
+		data["caller"] = s.call.caller
 	}
 	s.foldOutcome(data)
 	s.appendEvent("", EventTexts, data)
@@ -333,24 +437,26 @@ func (s *Session) foldAnswered(n int) {
 	}
 }
 
-// foldOutcome folds what a call's answer showed: a lost or wrong answer
-// right after a call that served short is a late catch, a compaction the
-// short serve could not see (20261121-230157-d-tac-ym8).
+// foldOutcome folds what a call's answer showed: an answer crediting no
+// question right after a call of the same caller that served short is a late
+// catch, a compaction the short serve could not see
+// (20261121-230157-d-tac-ym8).
 func (s *Session) foldOutcome(data map[string]any) {
-	if data["missed"] == true {
-		if s.lastShort {
+	caller, _ := data["caller"].(string)
+	if data["reset"] == true {
+		if s.lastShort && s.lastShortCaller == caller {
 			s.lateCatches++
 		}
 		s.lastShort = false
 	}
 	if _, answered := intValue(data["answered"]); answered {
-		s.lastShort = data["short"] == true
+		s.lastShort, s.lastShortCaller = data["short"] == true, caller
 	}
 }
 
-// LateCatches counts, in a session log, the lost or wrong answers given right
-// after a call that served short: each a compaction caught one call late,
-// as a right answer to a question asked before it cannot show it.
+// LateCatches counts, in a session log, the answers crediting no question
+// given right after a call that served short: each a compaction caught one
+// call late, as a right answer to a question asked before it cannot show it.
 func LateCatches(events []Event) int {
 	s := &Session{}
 	for _, ev := range events {
@@ -362,8 +468,9 @@ func LateCatches(events []Event) int {
 }
 
 // DropAnswer keeps the call's answer from counting a question answered, for
-// a call that failed: its question stays open for a later call.
-func (s *Session) DropAnswer() { s.call.answered, s.call.missed = 0, false }
+// a call that failed: its question stays open for a later call, and the held
+// set stays as it was.
+func (s *Session) DropAnswer() { s.call.answered, s.call.reset = 0, false }
 
 // Ask ends a response with two questions, one line each: the first about
 // the text held longest by its latest copy, the next oldest where that text
@@ -407,7 +514,7 @@ func (s *Session) Ask() string {
 	}
 	ask := func(p Piece, first *model.TextQuestion) (model.TextQuestion, bool) {
 		held := s.texts[p]
-		if held.authored {
+		if held.latest < s.heldFrom || held.authored {
 			return model.TextQuestion{}, false
 		}
 		q, ok := model.DrawQuestion(held.text, s.random(), func(q model.TextQuestion) bool {
@@ -449,9 +556,12 @@ func (s *Session) Ask() string {
 	return ""
 }
 
-// foldTexts folds a texts event: the texts it served, then the question it
-// answered.
+// foldTexts folds a texts event: the held set it emptied, the texts it
+// served, then the question it answered.
 func (s *Session) foldTexts(data map[string]any) {
+	if data["reset"] == true {
+		s.heldFrom = s.copies + 1
+	}
 	records, _ := data["texts"].([]any)
 	for _, record := range records {
 		fields, _ := record.(map[string]any)
@@ -470,7 +580,8 @@ func (s *Session) foldText(fields map[string]any) {
 		if s.changed == nil {
 			s.changed = map[string]string{}
 		}
-		s.changed[name] = hash
+		caller, _ := fields["caller"].(string)
+		s.changed[changedKey(caller, name)] = hash
 		if text, _ := fields["text"].(string); text != "" {
 			if s.onceTexts == nil {
 				s.onceTexts = map[Piece]string{}
@@ -527,6 +638,96 @@ func intValue(v any) (int, bool) {
 		return int(n), true
 	}
 	return 0, false
+}
+
+// FollowDeferral makes the call in flight follow the instance's deferral, a
+// serve of its step that left lanes waiting past the result bound: the
+// pieces the deferral sent count as held in it, whatever its answer, as the
+// result before carried them, so an agent answering lost still reaches the
+// waiting lanes, by a plain next and by a report alike (Holds). Called before
+// the serve composes, so the entries it carries print as pointers too.
+func (s *Session) FollowDeferral(instance string) {
+	s.call.followed = s.deferred[instance]
+}
+
+// Resent reports whether the deferral the call follows sent a piece named as
+// p at the instance's current step when the call would serve p in full all
+// the same: it rereads p, or p's content changed.
+func (s *Session) Resent(instance string, p Piece) bool {
+	step := s.stepOf(instance)
+	if step == "" || s.Holds(p) {
+		return false
+	}
+	for piece, sentAt := range s.call.followed {
+		if piece.Name == p.Name && sentAt == step {
+			return true
+		}
+	}
+	return false
+}
+
+// EndDeferral ends the instance's deferral. Every serve of the instance
+// settles it, so the one a call follows is always its last serve's.
+func (s *Session) EndDeferral(instance string) {
+	if _, ok := s.deferred[instance]; !ok {
+		return
+	}
+	ended := map[string]any{"ended": true}
+	s.foldDeferral(instance, ended)
+	s.appendEvent(instance, EventDeferred, ended)
+}
+
+// RecordDeferral records that the call's serve of the instance left lanes
+// waiting: every piece the call served in full that delivered, the result,
+// holds, with those of a deferral it follows, serves as a pointer in the call
+// that follows. A piece served in full replaces one of its name sent before
+// at the same step.
+func (s *Session) RecordDeferral(instance, delivered string) {
+	step := s.stepOf(instance)
+	pieces := maps.Clone(s.call.followed)
+	if pieces == nil {
+		pieces = map[Piece]string{}
+	}
+	for _, p := range s.call.pending {
+		if !p.changed && p.delivered(delivered) {
+			maps.DeleteFunc(pieces, func(piece Piece, sentAt string) bool { return piece.Name == p.piece.Name && sentAt == step })
+			pieces[p.piece] = step
+		}
+	}
+	records := make([]any, 0, len(pieces))
+	for p, sentAt := range pieces {
+		records = append(records, map[string]any{"name": p.Name, "hash": p.Hash, "step": sentAt})
+	}
+	data := map[string]any{"sent": records}
+	s.foldDeferral(instance, data)
+	s.appendEvent(instance, EventDeferred, data)
+}
+
+func (s *Session) stepOf(instance string) string {
+	if inst, ok := s.instances[instance]; ok {
+		return inst.Step
+	}
+	return ""
+}
+
+func (s *Session) foldDeferral(instance string, data map[string]any) {
+	if data["ended"] == true {
+		delete(s.deferred, instance)
+		return
+	}
+	pieces := map[Piece]string{}
+	sent, _ := data["sent"].([]any)
+	for _, record := range sent {
+		fields, _ := record.(map[string]any)
+		name, _ := fields["name"].(string)
+		hash, _ := fields["hash"].(string)
+		step, _ := fields["step"].(string)
+		pieces[Piece{Name: name, Hash: hash}] = step
+	}
+	if s.deferred == nil {
+		s.deferred = map[string]map[Piece]string{}
+	}
+	s.deferred[instance] = pieces
 }
 
 func (s *Session) random() model.RandomSource {

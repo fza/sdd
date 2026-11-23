@@ -42,7 +42,7 @@ The declaration attributes:
 
 - `type` — a domain type, or `list<T>` around one; see the closed set below.
 - `optional` — `true` marks the field as not required where it is collected.
-- `desc` — one line, served to the running agent when the field is asked for; write it as the instruction it is.
+- `desc` — one line, served in the step's report schema: the field's shape and its constraint, such as a field it pairs with or what an empty value means. How to fill the field belongs in the step's unit, which the agent reads beside the schema.
 - `default` — state only: applied at start when no channel supplied the field — the one literal a spec carries, written in the type's natural YAML form (`true`, a quoted string, a list).
 
 **How a run's store fills.** Initial values arrive through three channels, and naming them apart matters because one word — "seed" — is casually used for all three. In rank order: a value passed explicitly at start wins (params always arrive this way, and a start may also carry any *declared state field* the caller chooses to set); a dispatching parent's armed seed writes next (state only, see Dispatching below); `default` applies last, only where nothing else supplied the field. Everything after start is collected by steps.
@@ -64,6 +64,7 @@ An agent chooser (`chooser: agent`) or user chooser (`chooser: user`) declares `
 - `collect` — the state fields reportable here; a `?` suffix marks one optional (quote the marker: `"anchor?"`), and required ones hold the step until reported.
 - `inject` — a list of `{fn: <query name>, args?, maxBytes?, maxItems?}` calls: each result is served into the step's instructions under its function's name. Size is the engine's job — an inject without a declared cap is bounded by the engine's defaults; `maxBytes`/`maxItems` are overrides.
 - `render` — the name of an extra `## unit:` section from the body, served with the step (typically presenting one collected field's content).
+- `framing` — the session framing blocks a serve of this step carries: `info` (participant, language, search, branch), `health`, or the id of a lane the session shell declares, such as `principles` or `recentMovement`. Left out, the step carries every block. Declare `[info]` on a step that only waits, launches or confirms, where the shell's lanes add nothing; a name the session does not frame fails the serve.
 
 A run ends by transitioning to {{ .EndTargets }}.
 

@@ -23,7 +23,11 @@ const (
 	appBody    = "The command renders this entry through the configured graph directory."
 )
 
-type appFixture struct{ root string }
+type appFixture struct {
+	root string
+	// client is the name the serve's MCP client reports; cli-test when empty.
+	client string
+}
 
 func newAppFixture(t *testing.T) *appFixture {
 	t.Helper()
@@ -92,6 +96,12 @@ func assertContainsOutput(t *testing.T, stream, output string, expected ...strin
 
 func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
+	f.serveArgs(t, nil, check)
+}
+
+// serveArgs is serve with extra serve flags.
+func (f *appFixture) serveArgs(t *testing.T, flags []string, check func(*mcp.ClientSession)) {
+	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -100,7 +110,7 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	done := make(chan struct{})
 	var runErr error
 	go func() {
-		runErr = command.Run(ctx, []string{"sdd", "serve", "--transport", "stdio"})
+		runErr = command.Run(ctx, append([]string{"sdd", "serve", "--transport", "stdio"}, flags...))
 		close(done)
 	}()
 	defer func() {
@@ -120,7 +130,11 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 		}
 	}()
 
-	client, err := mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	name := f.client
+	if name == "" {
+		name = "cli-test"
+	}
+	client, err := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
 	if err != nil {
 		t.Fatalf("initialize CLI MCP: %v", err)
 	}

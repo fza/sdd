@@ -427,7 +427,7 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	f.relevance = calibratedLedger(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	held := func(id, _ string) bool { return id == gatherAlpha }
-	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (served in full above)"
+	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (served in full above or in the result before)"
 
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Held: held})
 	if err != nil {

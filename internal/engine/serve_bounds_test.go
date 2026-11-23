@@ -208,3 +208,87 @@ func TestRegistrationDefaultCapAppliesWhenSpecIsSilent(t *testing.T) {
 		t.Errorf("data lane = %dB, want the registration default applied", len(data))
 	}
 }
+
+func TestStoreValueCutServesOnlyWhereTheLanesReadIt(t *testing.T) {
+	long := longLines(100) // ~4100 bytes, over the 2000-byte store-value default
+	for _, tc := range []struct {
+		name, lane string
+		cut        bool
+	}{
+		{"field", "{{.note}}", true},
+		{"condition", "{{if .note}}A note is held.{{end}}", false},
+		{"comparison", `{{if eq .note "x"}}A note is held.{{end}}`, false},
+		{"else condition", "{{if .other}}x{{else if .note}}A note is held.{{end}}", false},
+		{"with condition", "{{with .note}}A note is held.{{end}}", false},
+		{"condition and field", "{{if .note}}{{.note}}{{end}}", true},
+		{"condition and other field", "{{if .note}}{{.other}}{{end}}", false},
+		{"condition variable", "{{if $n := .note}}{{$n}}{{end}}", true},
+		{"with dot", "{{with .note}}{{.}}{{end}}", true},
+		{"with dot argument", `{{with .note}}{{printf "%s" .}}{{end}}`, true},
+		{"variable", "{{$n := .note}}{{$n}}", true},
+		{"index", `{{index . "note"}}`, true},
+		{"root variable", "{{with .other}}{{$.note}}{{end}}", true},
+		{"range", "{{range $i, $c := .other}}{{$.note}}{{end}}", true},
+		{"template argument", `{{define "n"}}{{.}}{{end}}{{template "n" .note}}`, true},
+		{"defined template", `{{define "n"}}{{.note}}{{end}}{{template "n" .}}`, true},
+		{"not read", "Authored text only.", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := mustParseLanes(t, laneMachine, "## unit: draft\n\n### lane: note\n\n"+tc.lane+"\n")
+			eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+			sv, err := eng.NewSession("s_store", "tester", nopSink{}).Start(spec, map[string]any{"note": long}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cut := len(sv.Cuts) == 1 && sv.Cuts[0].Part == "store:note"; cut != tc.cut || len(sv.Cuts) > 1 {
+				t.Errorf("Serve.Cuts = %+v, want the store:note cut %v", sv.Cuts, tc.cut)
+			}
+		})
+	}
+}
+
+// TestQuerySeesItsEffectiveCap pins the cap a query reads off its context:
+// the spec's declaration over the registration default, on a step inject and
+// on a shell's framing inject alike, so a query cutting at whole units sizes
+// its cut from the bound the engine would apply.
+func TestQuerySeesItsEffectiveCap(t *testing.T) {
+	cases := []struct {
+		name   string
+		inject string
+		want   int
+	}{
+		{name: "registration default", inject: "          - {fn: capQuery}", want: 300},
+		{name: "spec declaration", inject: "          - {fn: capQuery, maxBytes: 700}", want: 700},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := engine.NewRegistry()
+			var seen []int
+			if err := reg.RegisterQuery(engine.Query{
+				Doc:   engine.FuncDoc{Name: "capQuery", Doc: "test cap view"},
+				Bound: engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: 300}},
+				Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+					seen = append(seen, ctx.Cap.MaxBytes)
+					return "ok", nil
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			spec, err := engine.LoadSpec(laneEntry(t, injectMachine(tc.inject), "## unit: draft\n\n{{.capQuery}}\n"), reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := engine.New(reg, engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_cap", "tester", nopSink{})
+			sv, err := session.Start(spec, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := session.Inject(sv.Instance, spec.Steps[0].Inject[0]); err != nil {
+				t.Fatal(err)
+			}
+			if len(seen) != 2 || seen[0] != tc.want || seen[1] != tc.want {
+				t.Errorf("the step inject and the framing inject must both see the effective cap, saw %v", seen)
+			}
+		})
+	}
+}

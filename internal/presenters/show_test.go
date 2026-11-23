@@ -25,8 +25,14 @@ func renderShow(t *testing.T, g *model.Graph, ids []string, opts ...showOpt) str
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries, err := result.ShownEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
-	presenters.RenderShow(&buf, result, cfg.render)
+	if err := presenters.RenderShow(&buf, entries, cfg.render); err != nil {
+		t.Fatal(err)
+	}
 	return buf.String()
 }
 
@@ -329,8 +335,14 @@ func TestRenderShowStyled_ColorDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries, err := result.ShownEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
-	presenters.RenderShowStyled(&buf, result, presenters.ShowOptions{Width: 80})
+	if err := presenters.RenderShowStyled(&buf, entries, presenters.ShowOptions{Width: 80}); err != nil {
+		t.Fatal(err)
+	}
 	out := buf.String()
 
 	for _, want := range []string{

@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
+	"github.com/networkteam/sdd/internal/query"
 )
 
 // Format contract (d-tac-3yi, refined during implementation dialogue):
@@ -149,8 +150,18 @@ func TestEntryLine_SupersededDecision(t *testing.T) {
 }
 
 func renderEntryLine(e *model.Entry, g *model.Graph) string {
+	return renderAsList(g, model.FlatList{Entries: []*model.Entry{e}})
+}
+
+func renderScoredEntryLine(e *model.Entry, g *model.Graph, score float64) string {
+	return renderAsList(g, model.FlatList{Entries: []*model.Entry{e}, Scores: []float64{score}})
+}
+
+// renderAsList renders the entries as the one as-list section of a view.
+func renderAsList(g *model.Graph, flat model.FlatList) string {
+	result := &query.ViewResult{Graph: g, Sections: []query.SectionResult{{Render: "as-list", Data: flat}}}
 	var buf bytes.Buffer
-	presenters.EntryLine(&buf, e, g)
+	presenters.RenderView(&buf, result.ViewSections(""), nil)
 	return buf.String()
 }
 
@@ -165,9 +176,7 @@ func TestEntryLineWithScore(t *testing.T) {
 		withSummary("Add background sync awareness"))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineWithScore(&buf, e, g, 4.572)
-	got := buf.String()
+	got := renderScoredEntryLine(e, g, 4.572)
 	want := "  20260416-151058-d-tac-n6y tactical plan decision [confidence: medium] (Christopher, Claude) {status: active} {score: 4.572} Add background sync awareness\n"
 	if got != want {
 		t.Errorf("EntryLineWithScore mismatch:\n  got:  %q\n  want: %q", got, want)
@@ -183,9 +192,7 @@ func TestEntryLineWithScore_Zero(t *testing.T) {
 		withSummary("zero score entry"))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineWithScore(&buf, e, g, 0)
-	got := buf.String()
+	got := renderScoredEntryLine(e, g, 0)
 	want := "  20260101-100000-d-tac-zer tactical directive decision (Christopher) {status: active} {score: 0.000} zero score entry\n"
 	if got != want {
 		t.Errorf("EntryLineWithScore zero mismatch:\n  got:  %q\n  want: %q", got, want)

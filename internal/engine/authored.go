@@ -1,6 +1,10 @@
 package engine
 
-import "strings"
+import (
+	"maps"
+	"slices"
+	"strings"
+)
 
 // authoredFields names, per event, the fields that carry what the agent or
 // the person wrote: reports, chooser answers with the person's words, park
@@ -70,4 +74,17 @@ func (s *Session) inAuthored(phrase string) bool {
 		}
 	}
 	return false
+}
+
+// AuthoredTexts folds what the agent and the person wrote into a session
+// log, carried into a session that links it.
+func AuthoredTexts(events []Event) []string {
+	s := &Session{}
+	for _, ev := range events {
+		s.noteAuthored(ev.Event, ev.Data)
+		if ev.Event == EventLinked {
+			s.foldLinked(ev.Data)
+		}
+	}
+	return slices.Sorted(maps.Keys(s.authored))
 }

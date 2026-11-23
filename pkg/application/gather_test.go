@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/relevance"
 	"github.com/networkteam/sdd/internal/segment"
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -302,11 +301,11 @@ func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pointer := gatherBeta + " — The beta entry is about beta matters. (served in full above)"
+	pointer := gatherBeta + " — The beta entry is about beta matters. (served in full above or in the result before)"
 	if !strings.Contains(result.Text, pointer) {
 		t.Errorf("a held entry should print as id, brief and pointer:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, presenters.GatherWayBack) {
+	if !strings.Contains(result.Text, "show with its id") {
 		t.Errorf("the serve should name the way back:\n%s", result.Text)
 	}
 	if strings.Contains(result.Text, gatherAlpha+" — The alpha entry is about alpha matters. (served in full") {

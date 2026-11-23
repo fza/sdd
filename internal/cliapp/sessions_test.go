@@ -85,7 +85,7 @@ func TestSessionsShowsCompactionsCaughtLate(t *testing.T) {
 	shortThenLost := []engine.Event{
 		{Event: engine.EventQuestion, Data: map[string]any{"name": "lane x", "kind": "words-after", "phrase": "a b c", "answer": "d e"}},
 		{Event: engine.EventTexts, Data: map[string]any{"answered": 0, "short": true}},
-		{Event: engine.EventTexts, Data: map[string]any{"missed": true}},
+		{Event: engine.EventTexts, Data: map[string]any{"reset": true}},
 	}
 	writeCaptureSessionIn(t, f, "s_caught", "playback", time.Time{}, "", shortThenLost...)
 	writeCaptureSession(t, f, "s_clean", "playback", time.Time{})

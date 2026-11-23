@@ -30,6 +30,7 @@ func TestCLIHelpAndFlags(t *testing.T) {
 	}{
 		{name: "root help", args: []string{"--help"}, stdout: []string{"Signal-Dialogue-Decision graph tool", "--graph-dir", "show", "serve"}},
 		{name: "command help", args: []string{"show", "--help"}, stdout: []string{"Show entry with upstream and downstream summary chains", "--with-summary"}},
+		{name: "serve help", args: []string{"serve", "--help"}, stdout: []string{"--output-schema", "For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it."}},
 		{name: "configured version", args: []string{"--version"}, stdout: []string{"sdd version " + appVersion + "\n"}},
 		{name: "short verbose flag is not version", args: []string{"-v", "info"}, stdout: []string{"Local participant: Local Author"}},
 		{name: "unknown flag reports usage on error stream", args: []string{"--does-not-exist"}, stdout: []string{"USAGE:"}, stderr: []string{"Incorrect Usage:", "does-not-exist"}, errText: "flag provided but not defined", exitCode: 1},

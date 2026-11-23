@@ -47,14 +47,15 @@ func TestCaptureDeep_AHeldContestReachesTheUserAfterAnAccept(t *testing.T) {
 	proctest.RequireStep(t, x.pickUpFindings(t), "deepProposal")
 	serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if text := serve.Instructions; !strings.Contains(text, "- f1, contested, and the verifier holds it") {
+	if text := serve.Instructions; !strings.Contains(text, "]: contested, and the verifier holds it\n  the drafter: the title names the subject\n  the verifier: the body still names none\n") {
 		t.Fatalf("deepUser should carry the held point:\n%s", text)
 	}
 }
 
-// An open point reaches the user with the draft's position and the verifier's,
-// and the agent puts the choice in plain words, never in sdd's names for it.
-func TestCaptureDeep_AnOpenPointGoesToTheUserWithBothPositions(t *testing.T) {
+// An open point reaches the user by its label, the finding served in full
+// once at deepAnswer, and the agent puts the choice in plain words, never in
+// sdd's names for it.
+func TestCaptureDeep_AnOpenPointGoesToTheUserByItsLabel(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-owner-positions", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{map[string]any{
@@ -67,12 +68,15 @@ func TestCaptureDeep_AnOpenPointGoesToTheUserWithBothPositions(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepUser")
 	text := serve.Instructions
 	for _, want := range []string{
-		"- f1, only the user can settle it\n  draft: body says \"observes something\"\n  verifier: whether this gap is in scope is the owner's call\n",
+		"- f1 [medium, aspiration]: only the user can settle it\n",
 		"ask in plain words whether the draft stands as it is, what to change, or whether to drop the capture.",
 		"Never show the user finding labels, option ids or step names.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("deepUser should carry %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "the owner's call") {
+		t.Errorf("deepUser should name the open point by its label, not repeat the finding served in full:\n%s", text)
 	}
 }

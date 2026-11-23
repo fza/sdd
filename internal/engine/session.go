@@ -67,6 +67,13 @@ const (
 	EventTexts EventType = "texts"
 	// EventQuestion records the question a response ended with (Session.Ask).
 	EventQuestion EventType = "question"
+	// EventLinked records the earlier session a session links and the texts
+	// it carries from it (Session.Link).
+	EventLinked EventType = "linked"
+	// EventDeferred records that a serve of an instance left parts waiting
+	// past the result bound, with the pieces it sent, or, with ended set, that
+	// the deferral is settled (Session.EndDeferral).
+	EventDeferred EventType = "deferred"
 	// EventReoriented records that the consumer asked for the session's
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
@@ -275,34 +282,43 @@ type Session struct {
 	counter   int
 	instances map[string]*Instance
 	order     []string
+	// ended holds instance IDs in the order they ended (noteEnded).
+	ended []string
 	// reads folds the session's read events into the deepest depth each entry
 	// was served at — what the refsInspected gate evaluates. Session-level by
 	// design: a parent's inspections count for children dispatched in the same
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
 	// texts folds the texts events: each text served in full with its latest
-	// copy, numbered by copies. questions and asked fold the question
-	// events. call is the tool call in flight; rnd draws questions.
+	// copy, numbered by copies; a text counts as held while its latest copy
+	// is at least heldFrom. questions and asked fold the question events.
+	// call is the tool call in flight; rnd draws questions.
 	texts     map[Piece]*heldText
 	copies    int
+	heldFrom  int
 	questions []askedQuestion
 	asked     map[string]bool
 	// authored folds what the agent and the person wrote into the session
 	// (noteAuthored), lower case and single-spaced, which no question's
 	// phrase may occur in.
 	authored map[string]bool
-	// lastShort is set while the session's last answering call served a
-	// piece short; lateCatches counts the lost or wrong answers right after
-	// one (LateCatches).
-	lastShort   bool
-	lateCatches int
+	// lastShort is set while the session's last answering call, of
+	// lastShortCaller, served a piece short; lateCatches counts the lost or
+	// wrong answers right after one (LateCatches).
+	lastShort       bool
+	lastShortCaller string
+	lateCatches     int
 	// changed folds the content hash each piece that serves once per change
-	// last served under its name.
+	// last served under its name, per caller (changedKey).
 	changed map[string]string
 	// onceTexts folds the text of each content those pieces served.
 	onceTexts map[Piece]string
-	call      pieceCall
-	rnd       model.RandomSource
+	// deferred folds the deferral events: per instance whose serve left parts
+	// waiting, the pieces it sent, each by the step that sent it
+	// (FollowDeferral).
+	deferred map[string]map[Piece]string
+	call     pieceCall
+	rnd      model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -606,6 +622,7 @@ func (s *Session) Park(instanceID, note string) error {
 // call sites that can surface them; here the event is built centrally.
 func (s *Session) appendEvent(instance string, typ EventType, data map[string]any) uint64 {
 	s.noteAuthored(typ, data)
+	s.noteEnded(instance, typ, data)
 	if s.sinkErr != nil {
 		return 0
 	}
@@ -631,6 +648,36 @@ func (s *Session) Instances() []*Instance {
 		out = append(out, s.instances[id])
 	}
 	return out
+}
+
+// EndedInstances returns the session's ended instances in the order they
+// ended.
+func (s *Session) EndedInstances() []*Instance {
+	out := make([]*Instance, 0, len(s.ended))
+	for _, id := range s.ended {
+		if inst, ok := s.instances[id]; ok {
+			out = append(out, inst)
+		}
+	}
+	return out
+}
+
+// noteEnded records the instance an event ends, live and on replay alike: a
+// completion, an abandonment, or a cancellation with no interaction to
+// return to.
+func (s *Session) noteEnded(instance string, typ EventType, data map[string]any) {
+	switch typ {
+	case EventCompleted, EventAbandoned:
+	case EventMutationOutcome:
+		outcome, _ := data["outcome"].(string)
+		returnStep, _ := data["return_step"].(string)
+		if outcome != MutationCancelled || returnStep != "" {
+			return
+		}
+	default:
+		return
+	}
+	s.ended = append(s.ended, instance)
 }
 
 // Instance returns a session instance by ID.
@@ -855,10 +902,18 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 		inst.interactionStep = inst.Step
 	}
 
+	at := inst.Step
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Status == StatusRunning && inst.Step == at {
+		s.narrowToFailing(inst, sv)
+	}
+	return sv, nil
 }
 
 // Answer resolves the pending chooser at the instance's current step: the
@@ -1163,6 +1218,7 @@ func (s *Session) fold(events []Event, resolve SpecResolver) error {
 
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	s.noteAuthored(ev.Event, ev.Data)
+	s.noteEnded(ev.Instance, ev.Event, ev.Data)
 	switch ev.Event {
 	case EventSessionMeta:
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
@@ -1405,6 +1461,12 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 
 	case EventQuestion:
 		s.foldQuestion(ev.Data)
+
+	case EventLinked:
+		s.foldLinked(ev.Data)
+
+	case EventDeferred:
+		s.foldDeferral(ev.Instance, ev.Data)
 
 	case EventParked:
 		return s.replayParked(ev)

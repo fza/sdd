@@ -45,6 +45,9 @@ type WorkflowOpenRequest struct {
 	ClientVersion string
 	Shell         string
 	Label         string
+	// Link names an earlier session whose served texts the agent still
+	// holds; the new session carries them (20261122-105026-d-tac-wl5).
+	Link SessionID
 }
 
 // WorkflowResumeRequest names the session to load by its ID and the client
@@ -162,6 +165,9 @@ type WorkflowServe struct {
 	Dispatches []*WorkflowDispatch
 	// Parked is set when an autonomous session parked the move for a person.
 	Parked *WorkflowParked
+	// Framing names the framing blocks the served step carries, for
+	// FramingBlocksFor; nil carries them all.
+	Framing []string
 }
 
 // WorkflowParked is where an autonomous session parked a move: the step, the
@@ -212,7 +218,17 @@ type WorkflowResumeResult struct {
 	Open             []WorkflowServe
 	PendingOperation *WorkflowPendingOperation
 	Cancellation     *WorkflowCancellation
-	Instructions     string
+	// LastEnded is the move that ended most recently; nil while none has.
+	LastEnded    *WorkflowEndedMove
+	Instructions string
+}
+
+// WorkflowEndedMove is an ended move and the outcome it ended with:
+// completed, abandoned or cancelled.
+type WorkflowEndedMove struct {
+	Instance  string
+	Procedure string
+	Outcome   string
 }
 
 type WorkflowAbandonResult struct {
@@ -258,6 +274,8 @@ type WorkflowSession struct {
 	// parked is the framing block naming the project's parked moves, set on
 	// a guided session's opening (parkedBlock).
 	parked string
+	// linkNotice says the link the session opened with went unused (LinkNotice).
+	linkNotice string
 	// laneFull collects the entries the framing lane in render serves in full;
 	// framingFull keeps them per block of the last Framing call. framing is
 	// set while the lanes render.
@@ -293,6 +311,10 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	link, err := a.resolveLink(ctx, identity, request.Link)
+	if err != nil {
+		return nil, nil, err
+	}
 	id := newWorkflowSessionID(time.Now())
 	now := a.now().UTC().Round(0)
 	metadata := SessionMetadata{
@@ -313,6 +335,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 		return nil, nil, err
 	}
 	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}))
+	link.apply(w)
 	if !w.Autonomous() {
 		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id); err != nil {
 			return nil, nil, err
@@ -759,7 +782,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			}
 			return result, nil
 		}
-		result.Base, err = w.ServeShell(ctx, identity)
+		result.Base, err = w.landShell(ctx, identity)
 		if err != nil {
 			return result, fmt.Errorf("serving session shell after advancing %s: %w", request.Instance, err)
 		}
@@ -779,33 +802,112 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 	return w.publicServe(serve)
 }
 
-func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity) (WorkflowResumeResult, error) {
-	result, _, err := w.ServeAllWithin(ctx, identity, nil)
-	return result, err
+// landShell is the session shell's serve as a move's end lands on it: the
+// base step named with its goal, chooser and the moves to start next, its
+// text left out (20261121-233256-d-tac-mm2); resume_session serves it in
+// full, and so does a call whose answer emptied the held set.
+func (w *WorkflowSession) landShell(ctx context.Context, identity RequestIdentity) (*WorkflowServe, error) {
+	serve, err := w.ServeShell(ctx, identity)
+	if err != nil || serve == nil || w.session.Emptied() {
+		return serve, err
+	}
+	graph, err := w.graphs.Current()
+	if err != nil {
+		return nil, err
+	}
+	landing := fmt.Sprintf("The move ended; the dialogue is back at %s, step %s. Its instructions stand as served earlier; resume_session sends them in full.", serve.Procedure, serve.Step)
+	if moves := graph.MoveCanonicals(); len(moves) > 0 {
+		landing += " Moves to start next: " + strings.Join(moves, ", ") + "."
+	}
+	serve.InstructionLanes = nil
+	serve.Instructions = serve.ComposeInstructions(landing)
+	return serve, nil
 }
 
-// ServeAllWithin is ServeAll keeping only the instances keep takes, asked in
-// order as each renders; it returns the others apart. An instance left out
-// withdraws the pieces it served, so a later instance serves them in full
-// rather than as a pointer to text the agent never got. A nil keep takes
-// every instance.
-func (w *WorkflowSession) ServeAllWithin(ctx context.Context, identity RequestIdentity, keep func(WorkflowServe) bool) (WorkflowResumeResult, []WorkflowServe, error) {
+func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity) (WorkflowResumeResult, error) {
 	w.setOperation(ctx, identity)
-	return w.resumeWithin(keep)
+	return w.resumeResult()
+}
+
+// ServeAllWithin is ServeAll handing each running instance's serve to deliver
+// as it renders, the session shell last, and leaving Open empty. deliver
+// returns the text the caller's result carries of the serve, empty for one
+// it leaves out; head is the resume without its moves. What the serve issued
+// that this text does not carry is withdrawn before the next instance
+// renders, so no later move points at text the agent never got.
+func (w *WorkflowSession) ServeAllWithin(ctx context.Context, identity RequestIdentity, deliver func(head WorkflowResumeResult, serve WorkflowServe) (string, error)) (WorkflowResumeResult, error) {
+	w.setOperation(ctx, identity)
+	result, err := w.resumeHead()
+	if err != nil {
+		return WorkflowResumeResult{}, err
+	}
+	var moves, shell []*engine.Instance
+	for _, inst := range w.session.Instances() {
+		if w.IsShell(inst.ID) {
+			shell = append(shell, inst)
+		} else {
+			moves = append(moves, inst)
+		}
+	}
+	for _, inst := range append(moves, shell...) {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		mark := w.session.PieceMark()
+		ws, err := w.resumeServe(inst)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		delivered, err := deliver(result, *ws)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		w.session.KeepDelivered(mark, delivered)
+	}
+	return result, nil
 }
 
 func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
-	result, _, err := w.resumeWithin(nil)
-	return result, err
+	result, err := w.resumeHead()
+	if err != nil {
+		return WorkflowResumeResult{}, err
+	}
+	for _, inst := range w.session.Instances() {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		ws, err := w.resumeServe(inst)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		result.Open = append(result.Open, *ws)
+	}
+	return result, nil
 }
 
-func (w *WorkflowSession) resumeWithin(keep func(WorkflowServe) bool) (WorkflowResumeResult, []WorkflowServe, error) {
-	var omitted []WorkflowServe
+func (w *WorkflowSession) resumeServe(inst *engine.Instance) (*WorkflowServe, error) {
+	serve, err := w.session.Serve(inst.ID)
+	if err != nil {
+		return nil, err
+	}
+	// The collected projection is the honest-surfacing half of the
+	// re-entry contract: a resuming agent sees the values this instance
+	// already holds. It rides the resume path alone — publicServe stays
+	// state-free so door, next, and base-junction serves are unchanged.
+	ws, err := w.publicServe(serve)
+	if err != nil {
+		return nil, err
+	}
+	ws.Collected = inst.Store.Collected()
+	return ws, nil
+}
+
+func (w *WorkflowSession) resumeHead() (WorkflowResumeResult, error) {
 	cancelled, err := w.session.Cancellation()
 	if err != nil {
-		return WorkflowResumeResult{}, nil, err
+		return WorkflowResumeResult{}, err
 	}
-	result := WorkflowResumeResult{Session: w.ID(), Participant: w.session.Participant, Label: w.session.Label, Branch: w.branch, PendingOperation: w.pendingOperation(), Cancellation: workflowCancellation(cancelled)}
+	result := WorkflowResumeResult{Session: w.ID(), Participant: w.session.Participant, Label: w.session.Label, Branch: w.branch, PendingOperation: w.pendingOperation(), Cancellation: workflowCancellation(cancelled), LastEnded: w.lastEndedMove()}
 	// The notice rides the instance it belongs to; the resume carries it
 	// only when that instance no longer runs (d-tac-t6u).
 	if cancelled != nil {
@@ -813,32 +915,18 @@ func (w *WorkflowSession) resumeWithin(keep func(WorkflowServe) bool) (WorkflowR
 			result.Instructions = engine.CancellationNotice(cancelled)
 		}
 	}
-	for _, inst := range w.session.Instances() {
-		if inst.Status != engine.StatusRunning {
-			continue
-		}
-		mark := w.session.PieceMark()
-		serve, err := w.session.Serve(inst.ID)
-		if err != nil {
-			return WorkflowResumeResult{}, nil, err
-		}
-		// The collected projection is the honest-surfacing half of the
-		// re-entry contract: a resuming agent sees the values this instance
-		// already holds. It rides the resume path alone — publicServe stays
-		// state-free so door, next, and base-junction serves are unchanged.
-		ws, err := w.publicServe(serve)
-		if err != nil {
-			return WorkflowResumeResult{}, nil, err
-		}
-		ws.Collected = inst.Store.Collected()
-		if keep != nil && !keep(*ws) {
-			w.session.DropPiecesSince(mark)
-			omitted = append(omitted, *ws)
-			continue
-		}
-		result.Open = append(result.Open, *ws)
+	return result, nil
+}
+
+// lastEndedMove needs no shell filter: an ended shell finishes the session,
+// which no longer resumes.
+func (w *WorkflowSession) lastEndedMove() *WorkflowEndedMove {
+	ended := w.session.EndedInstances()
+	if len(ended) == 0 {
+		return nil
 	}
-	return result, omitted, nil
+	inst := ended[len(ended)-1]
+	return &WorkflowEndedMove{Instance: inst.ID, Procedure: inst.Spec.Canonical, Outcome: inst.Outcome}
 }
 
 func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity, instance, reason string) (WorkflowAbandonResult, error) {
@@ -864,7 +952,7 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
-	base, err := w.ServeShell(ctx, identity)
+	base, err := w.landShell(ctx, identity)
 	if err != nil {
 		return result, fmt.Errorf("serving session shell after abandoning %s: %w", instance, err)
 	}
@@ -1082,10 +1170,82 @@ func (w *WorkflowSession) LogRead(ctx context.Context, identity RequestIdentity,
 // directives (I6, A1). A shell with no declared lanes yields the info block
 // alone; there is no Go-constant fallback.
 func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity) ([]string, error) {
-	w.setOperation(ctx, identity)
-	info, err := w.readInfo()
+	blocks, err := w.FramingBlocks(ctx, identity)
 	if err != nil {
 		return nil, err
+	}
+	texts := make([]string, len(blocks))
+	for i, block := range blocks {
+		texts[i] = block.Text
+	}
+	return texts, nil
+}
+
+// FramingBlocks is Framing with each block named, stable across calls: info,
+// each shell lane's inject id (or its function), parked and health.
+func (w *WorkflowSession) FramingBlocks(ctx context.Context, identity RequestIdentity) ([]types.ServeLane, error) {
+	return w.FramingBlocksFor(ctx, identity, nil)
+}
+
+// FramingBlocksFor is FramingBlocks limited to the blocks a step declares
+// (WorkflowServe.Framing); nil declares them all. A declared name that is
+// neither info, health nor a lane the session shell frames is an error. The
+// parked notice is no block a step declares: it serves whenever it is set.
+func (w *WorkflowSession) FramingBlocksFor(ctx context.Context, identity RequestIdentity, declared []string) ([]types.ServeLane, error) {
+	w.setOperation(ctx, identity)
+	if err := w.checkFramingNames(declared); err != nil {
+		return nil, err
+	}
+	wants := func(name string) bool { return declared == nil || slices.Contains(declared, name) }
+	var blocks []types.ServeLane
+	if wants("info") {
+		info, err := w.infoBlock()
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, types.ServeLane{Name: "info", Text: info})
+	}
+	lanes, err := w.framingLanes(wants)
+	if err != nil {
+		return nil, err
+	}
+	blocks = append(blocks, lanes...)
+	if w.parked != "" {
+		blocks = append(blocks, types.ServeLane{Name: "parked", Text: w.parked})
+	}
+	if wants("health") {
+		health, err := w.graphHealthBlock()
+		if err != nil {
+			return nil, err
+		}
+		if health != "" {
+			blocks = append(blocks, types.ServeLane{Name: "health", Text: health})
+		}
+	}
+	return blocks, nil
+}
+
+func (w *WorkflowSession) checkFramingNames(declared []string) error {
+	known := []string{"info", "health"}
+	if inst, ok := w.session.Instance(w.shell); ok && w.shell != "" {
+		for _, call := range inst.Spec.Framing {
+			known = append(known, call.EffectiveID())
+		}
+	}
+	for _, name := range declared {
+		if !slices.Contains(known, name) {
+			return fmt.Errorf("step framing names %q, which this session does not frame (%s)", name, strings.Join(known, ", "))
+		}
+	}
+	return nil
+}
+
+// infoBlock renders the engine-supplied framing block: participant, language,
+// search modes, base and branch binding.
+func (w *WorkflowSession) infoBlock() (string, error) {
+	info, err := w.readInfo()
+	if err != nil {
+		return "", err
 	}
 	var infoBlock strings.Builder
 	fmt.Fprintf(&infoBlock, "Local participant: %s\n", info.Participant)
@@ -1098,28 +1258,13 @@ func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity)
 	}
 	base, err := w.baseLine()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	infoBlock.WriteString(base)
 	if w.branch != "" {
 		fmt.Fprintf(&infoBlock, "\nBranch binding: %s", w.branch)
 	}
-	lanes, err := w.framingLanes()
-	if err != nil {
-		return nil, err
-	}
-	blocks := append([]string{infoBlock.String()}, lanes...)
-	if w.parked != "" {
-		blocks = append(blocks, w.parked)
-	}
-	health, err := w.graphHealthBlock()
-	if err != nil {
-		return nil, err
-	}
-	if health != "" {
-		blocks = append(blocks, health)
-	}
-	return blocks, nil
+	return infoBlock.String(), nil
 }
 
 // baseLine names the session's base branch and where it came from, re-derived
@@ -1190,7 +1335,7 @@ func (w *WorkflowSession) graphHealthBlock() (string, error) {
 // engine's inject query mechanism, one block per lane (empty results omitted).
 // A lane whose query returns a non-string fails loud — a framing lane must
 // render to text, never be silently dropped.
-func (w *WorkflowSession) framingLanes() ([]string, error) {
+func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.ServeLane, error) {
 	if w.shell == "" {
 		return nil, nil
 	}
@@ -1198,11 +1343,14 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 	if !ok {
 		return nil, nil
 	}
-	var lanes []string
+	var lanes []types.ServeLane
 	w.framingFull = map[string][]string{}
 	w.framing = true
 	defer func() { w.laneFull, w.framing = nil, false }()
 	for _, call := range inst.Spec.Framing {
+		if !wants(call.EffectiveID()) {
+			continue
+		}
 		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
@@ -1216,7 +1364,7 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 			text += "\n" + framingCutNotice(*cut)
 		}
 		if text = strings.TrimSpace(text); text != "" {
-			lanes = append(lanes, text)
+			lanes = append(lanes, types.ServeLane{Name: call.EffectiveID(), Text: text})
 			if cut == nil && len(w.laneFull) > 0 {
 				w.framingFull[text] = w.laneFull
 			}
@@ -1615,6 +1763,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		ReportSchema: serve.ReportSchema, Produced: serve.Produced, Diagnostics: append([]string(nil), serve.Diagnostics...),
 		InstructionLanes: append([]types.ServeLane(nil), serve.Lanes...),
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
+		Framing:          slices.Clone(serve.Framing),
 	}
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
 		result.PendingOperation = pending
@@ -1643,7 +1792,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		result.Execution = ExecutionForkPreferred
 	}
 	if ok && w.cutRepeats && inst.Spec.Canonical == verifyProcedure && serve.Step == verifyReadStep {
-		full, err := verifyPageFullIDs(inst.Store)
+		full, err := w.verifyPageFullIDs(inst.Store)
 		if err != nil {
 			return nil, err
 		}

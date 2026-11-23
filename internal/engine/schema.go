@@ -23,31 +23,36 @@ const refIDSchemaPattern = `^([^\s:/]+(/[^\s:/]+)+:)?` + entryIDSchemaCore + `$`
 // described properties (required unless marked optional), and every other
 // declared state field is accepted too — reports may batch fields for later
 // steps, and the cascade rule makes the one-shot full draft as fast as
-// today. The same desc that feeds instruction text feeds the schema.
-func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
+// today. Left out are the fields a report never fills: one only a delivery
+// fills, one a single chooser option collects, which that answer carries,
+// and a procedure-spec field while the draft in store is no procedure. The
+// same desc that feeds instruction text feeds the schema.
+func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 	properties := make(map[string]any)
 	var required []string
+	procedure := draftIsProcedure(store)
 
-	addField := func(name string) {
+	addField := func(name string) bool {
 		decl, ok := s.State[name]
-		if !ok {
-			return // load validation rejects undeclared collect names
+		if !ok || (decl.Type.Base == TypeProcedureSpec && !procedure) {
+			return false // load validation rejects undeclared collect names
 		}
 		properties[name] = schemaForState(decl)
+		return true
 	}
 
 	if step != nil {
 		for _, cf := range step.Collect {
-			addField(cf.Name)
-			if !cf.Optional {
+			if addField(cf.Name) && !cf.Optional {
 				required = append(required, cf.Name)
 			}
 		}
 	}
 	for name := range s.State {
-		if _, ok := properties[name]; !ok {
-			addField(name)
+		if _, ok := properties[name]; ok || s.DeliveryOnly(name) || s.singleOptionField(name) {
+			continue
 		}
+		addField(name)
 	}
 	sort.Strings(required)
 
@@ -63,8 +68,8 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 }
 
 // collectSchema is ReportSchemaForStep cut to the fields the step collects.
-func (s *Spec) collectSchema(step *Step) map[string]any {
-	schema := s.ReportSchemaForStep(step)
+func (s *Spec) collectSchema(step *Step, store *Store) map[string]any {
+	schema := s.ReportSchemaForStep(step, store)
 	properties, _ := schema["properties"].(map[string]any)
 	for name := range properties {
 		if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == name }) {
@@ -72,6 +77,32 @@ func (s *Spec) collectSchema(step *Step) map[string]any {
 		}
 	}
 	return schema
+}
+
+// failingSchema is a report schema cut to the named fields, required where
+// the whole requires them. It leaves other properties open: every field the
+// whole names stays reportable.
+func failingSchema(schema map[string]any, fields []string) map[string]any {
+	props, _ := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]string)
+	kept := make(map[string]any, len(fields))
+	var keptRequired []string
+	for _, name := range fields {
+		kept[name] = props[name]
+		if slices.Contains(required, name) {
+			keptRequired = append(keptRequired, name)
+		}
+	}
+	sort.Strings(keptRequired)
+	out := map[string]any{
+		"type":        "object",
+		"properties":  kept,
+		"description": "only the fields holding this step; every field the step took before stays reportable",
+	}
+	if len(keptRequired) > 0 {
+		out["required"] = keptRequired
+	}
+	return out
 }
 
 // AnswerSchemaForStep generates the JSON Schema for a chooser step's answer:
@@ -83,11 +114,13 @@ func (s *Spec) collectSchema(step *Step) map[string]any {
 // each option enforces its own required set at answer time, so the envelope
 // marks none of them required. In an autonomous session a delegable user
 // chooser takes the agent's reason in place of the user's words, and an
-// unattended one only its answer.
-func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[string]any {
+// unattended one only its answer. A procedure-spec field shows only while the
+// draft in store is a procedure.
+func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *Store) map[string]any {
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
 	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode == model.DialogueAuto
+	procedure := draftIsProcedure(store)
 	for _, o := range step.Options {
 		if unattended && o.Choice != step.Unattended.Answer {
 			continue
@@ -97,7 +130,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 			if _, seen := fieldProps[cf.Name]; seen {
 				continue
 			}
-			if decl, ok := s.State[cf.Name]; ok {
+			if decl, ok := s.State[cf.Name]; ok && (decl.Type.Base != TypeProcedureSpec || procedure) {
 				fieldProps[cf.Name] = schemaForState(decl)
 			}
 		}
@@ -107,7 +140,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 		"chooser": map[string]any{
 			"type":        "string",
 			"const":       step.ID,
-			"description": "the pending chooser's step id — copy it verbatim from pending_chooser.chooser",
+			"description": "the pending chooser's step id",
 		},
 		"choice": map[string]any{
 			"type":        "string",
@@ -123,11 +156,11 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAuto:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's own message verbatim, never yours, when the user gave one — otherwise omit it and give reason",
+			"description": "the user's own message verbatim, never yours; else give reason",
 		}
 		properties["reason"] = map[string]any{
 			"type":        "string",
-			"description": "one line on why you chose this option yourself — give exactly one of reason and userWords",
+			"description": "your one-line reason; give exactly one of reason and userWords",
 		}
 	case step.Chooser == ChooserUser:
 		properties["userWords"] = map[string]any{
@@ -141,7 +174,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 			"type":                 "object",
 			"properties":           fieldProps,
 			"additionalProperties": false,
-			"description":          "state fields the chosen option collects — nested here, not at the top level",
+			"description":          "the chosen option's fields, nested here, never at the top level",
 		}
 	}
 
@@ -253,6 +286,7 @@ func procedureSpecSchema() map[string]any {
 			"deliver":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"await":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"awaitAny": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"framing":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
@@ -344,8 +378,8 @@ func schemaForType(t VarType, desc string) map[string]any {
 		schema = map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text to replace — must match exactly once in the target as it stands when this pair applies"},
-				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "matches the target exactly once, as it stands when this pair applies"},
+				"new": map[string]any{"type": "string", "description": "empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
@@ -486,8 +520,8 @@ func deepEditsSchema() map[string]any {
 		"items": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text of the base draft document, matching it exactly once"},
-				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "matches the base draft document exactly once"},
+				"new": map[string]any{"type": "string", "description": "empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
@@ -507,16 +541,16 @@ func deepFindingSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "what is wrong, in words, reasoning first"},
+			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "in words, reasoning first"},
 			"axis":     map[string]any{"type": "string", "enum": enumOf(model.DeepAxes())},
 			"severity": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
-			"owner":    map[string]any{"type": "boolean", "description": "true when only the user can settle it; such a finding carries no edits"},
+			"owner":    map[string]any{"type": "boolean", "description": "only the user can settle it; then no edits"},
 			"pointers": map[string]any{
 				"type": "array",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"field": map[string]any{"type": "string", "description": "the draft field the finding judges"},
+						"field": map[string]any{"type": "string", "description": "the draft field judged"},
 						"quote": map[string]any{"type": "string", "description": "exact draft words"},
 						"id":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
 					},
@@ -551,7 +585,7 @@ func deepAnswerSchema() map[string]any {
 		"properties": map[string]any{
 			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
 			"verdict": map[string]any{"type": "string", "enum": []any{"accept", "contest"}},
-			"reason":  map[string]any{"type": "string", "description": "why the finding does not hold; required on a contest"},
+			"reason":  map[string]any{"type": "string", "description": "required on a contest"},
 		},
 		"required":             []string{"target", "verdict"},
 		"additionalProperties": false,

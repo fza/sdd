@@ -26,10 +26,6 @@ const DeepRounds = 3
 // before a fresh one starts; each opens DeepRounds deliveries of its own.
 const DeepRevisions = 3
 
-// DeepPageChars bounds what one page of the deep verifier's reading costs in
-// the result that serves it (ServedChars).
-const DeepPageChars = 50000
-
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
 
 // DeepAxes lists the closed set of axes a deep finding names.
@@ -232,6 +228,22 @@ func (r DeepResponse) Validate() error {
 // DeepFindingID is the number sdd gives the finding at index i.
 func DeepFindingID(i int) string { return "f" + strconv.Itoa(i+1) }
 
+// DeepFindingLabel names a finding by its number, severity and axis, the way
+// every listing after the one serving it in full refers to it.
+func DeepFindingLabel(id string, finding DeepFinding) string {
+	return fmt.Sprintf("%s [%s, %s]", id, finding.Severity, finding.Axis)
+}
+
+// DeepSettledLine renders a settled finding as one line: its label, how it
+// was settled and the note, if any, with its line breaks folded.
+func DeepSettledLine(id string, finding DeepFinding, settled, note string) string {
+	line := "- " + DeepFindingLabel(id, finding) + " " + settled
+	if note = strings.Join(strings.Fields(note), " "); note != "" {
+		line += ": " + note
+	}
+	return line + "\n"
+}
+
 // DeepOpenFindings counts the findings the verifier still stands by: every
 // finding whose latest response neither concedes nor drops it.
 func DeepOpenFindings(findings []DeepFinding, responses []DeepResponse) int {
@@ -258,7 +270,9 @@ type DeepChange struct {
 }
 
 // DeepHunk is one applied edit of the proposal, labelled by its finding. Old
-// and New are the whole lines the edit touches, before and after.
+// and New are the changed span before and after, with up to
+// DeepHunkContextWords words of its lines around it; an ellipsis marks a line
+// that goes on.
 type DeepHunk struct {
 	ID      string
 	Finding string
@@ -362,11 +376,10 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 	}
 	hunks := make([]DeepHunk, 0, len(spans))
 	for i, span := range spans {
-		lineStart := strings.LastIndex(base[:span.start], "\n") + 1
-		lineEnd := span.end + strings.IndexByte(base[span.end:]+"\n", '\n')
+		before, after := deepHunkContext(base, span.start, span.end)
 		hunks = append(hunks, DeepHunk{
 			ID: "h" + strconv.Itoa(i+1), Finding: span.finding, Outcome: span.outcome,
-			Line: strings.Count(base[:span.start], "\n") + 1, Old: base[lineStart:lineEnd], New: base[lineStart:span.start] + span.edit.New + base[span.end:lineEnd],
+			Line: strings.Count(base[:span.start], "\n") + 1, Old: before + span.edit.Old + after, New: before + span.edit.New + after,
 		})
 	}
 	proposal, _ := applyDeepSpans(base, spans)
@@ -445,6 +458,44 @@ func MergeDeepBody(base string, changes []DeepChange, edits []DeepEdit) (string,
 		}
 	}
 	return body, nil
+}
+
+// DeepHunkContextWords is how many words of its lines a hunk carries on each
+// side of the changed span.
+const DeepHunkContextWords = 3
+
+// deepHunkContext is the text of base a hunk carries around the span
+// start..end: up to DeepHunkContextWords words on each side, never past the
+// span's lines, with an ellipsis where a line goes on.
+func deepHunkContext(base string, start, end int) (string, string) {
+	lineStart := strings.LastIndex(base[:start], "\n") + 1
+	lineEnd := end + strings.IndexByte(base[end:]+"\n", '\n')
+	from := start
+	for words := 0; words < DeepHunkContextWords && from > lineStart; words++ {
+		for from > lineStart && base[from-1] == ' ' {
+			from--
+		}
+		for from > lineStart && base[from-1] != ' ' {
+			from--
+		}
+	}
+	to := end
+	for words := 0; words < DeepHunkContextWords && to < lineEnd; words++ {
+		for to < lineEnd && base[to] == ' ' {
+			to++
+		}
+		for to < lineEnd && base[to] != ' ' {
+			to++
+		}
+	}
+	before, after := base[from:start], base[end:to]
+	if from > lineStart {
+		before = "…" + before
+	}
+	if to < lineEnd {
+		after += "…"
+	}
+	return before, after
 }
 
 // deepEditSpans places every edit over base, sorted by position: each old
@@ -698,8 +749,8 @@ func WeighDeep(draft DeepDraft, found func(path string) bool) DeepWeighing {
 
 // DeepReadingBlock is one entry's block of the deep verifier's reading.
 type DeepReadingBlock struct {
-	ID   string
-	Text string
+	ID   string `json:"id"`
+	Text string `json:"text"`
 }
 
 // DeepReadingPage is one page of the deep verifier's reading with the entries
@@ -709,16 +760,46 @@ type DeepReadingPage struct {
 	FullIDs []string
 }
 
+// DeepContinued is text that may run past one page of the reading: its first
+// page opens with Intro, each later page with Continued.
+type DeepContinued struct {
+	Intro     string `json:"intro,omitempty"`
+	Continued string `json:"continued,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
+// DeepReading is the deep verifier's whole reading, kept whole so that each
+// page is cut for the host it is served to (20261122-103723-d-tac-npg): Lead
+// (the draft and what pre-flight raised), Rules, and the blocks of First (the
+// declared targets and the entries read in full), then those of Rest (the
+// briefs).
+type DeepReading struct {
+	Lead  string             `json:"lead"`
+	Rules DeepContinued      `json:"rules"`
+	First []DeepReadingBlock `json:"first,omitempty"`
+	Rest  []DeepReadingBlock `json:"rest,omitempty"`
+}
+
+// Pages pages the reading for a result within bound (DeepReadingPages).
+func (r DeepReading) Pages(bound ResultBound) []DeepReadingPage {
+	var rules []DeepReadingPage
+	if r.Rules.Text != "" {
+		rules = DeepContinuedPages(r.Rules.Intro, r.Rules.Continued, r.Rules.Text, bound)
+	}
+	return DeepReadingPages(r.Lead, rules, r.First, r.Rest, bound)
+}
+
 // DeepReadingPages pages the deep verifier's reading: the first page
 // opens with lead (the draft and what pre-flight raised), the pages of rules
 // follow it, and the blocks of first (the declared targets and the entries
 // read in full), then those of rest (the briefs), fill the room the pages
 // before them leave, in order: page 1 takes blocks until one does not fit,
 // the rules' last page takes the blocks after it. A page holds whole blocks
-// of at most DeepPageChars; a block larger than a page runs on across pages
+// of at most bound.DeepPage; a block larger than a page runs on across pages
 // of its own, never cut, and its last page names it. The blocks of first are
 // served in full, those of rest as briefs.
-func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepReadingBlock) []DeepReadingPage {
+func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepReadingBlock, bound ResultBound) []DeepReadingPage {
+	pageChars := bound.DeepPage()
 	pages := []DeepReadingPage{{Text: lead}}
 	placeRules := func() {
 		pages = append(pages, rules...)
@@ -726,12 +807,12 @@ func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepRe
 	}
 	fits := func(block DeepReadingBlock) bool {
 		current := pages[len(pages)-1].Text
-		return current == "" || ServedChars(current+"\n\n"+block.Text) <= DeepPageChars
+		return current == "" || ServedChars(current+"\n\n"+block.Text) <= pageChars
 	}
 	add := func(block DeepReadingBlock, full bool) {
-		if ServedChars(block.Text) > DeepPageChars {
+		if ServedChars(block.Text) > pageChars {
 			placeRules()
-			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text)...)
+			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text, bound)...)
 		} else {
 			if !fits(block) {
 				placeRules()
@@ -801,11 +882,11 @@ func ParseDeepDraftDocument(doc string) (DeepDraftDocument, error) {
 
 // DeepContinuedPages pages text that may run past one page of the reading:
 // the first page opens with intro, each later page with continued, and no
-// page exceeds DeepPageChars. The text breaks at a paragraph where it can,
+// page exceeds bound.DeepPage. The text breaks at a paragraph where it can,
 // else at a line, else between runes, so the pages joined without their
 // openings are the text again.
-func DeepContinuedPages(intro, continued, text string) []DeepReadingPage {
-	chunks := SplitServed(text, DeepPageChars-max(ServedChars(intro), ServedChars(continued)))
+func DeepContinuedPages(intro, continued, text string, bound ResultBound) []DeepReadingPage {
+	chunks := SplitServed(text, bound.DeepPage()-max(ServedChars(intro), ServedChars(continued)))
 	pages := make([]DeepReadingPage, len(chunks))
 	for i, chunk := range chunks {
 		opening := continued

@@ -15,10 +15,6 @@ cancellation:
     project: test
     source: base
 framing: |
-  Local participant: Tester
-  Search: text
-  Base branch: main (configured default)
-
   ## Working principles
 
   ### The way of thinking
@@ -39,20 +35,17 @@ framing: |
 
   **When work stops resolving, step up.** Corrections accumulate, something stays unclear, progress grinds — the instinct is to push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
 
-  ## Recent graph movement
+  ## Recent graph movement, newest 5
 
     20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high finding open: it reads the draft and its grounding reading page by page, checks the draft with its own tools, and returns findings with exact edits over the draft.
     20260921-120000-s-tac-op1 tactical gap signal Test capture entry summary.
     20260828-160000-s-prc-rfk process fact signal The reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source naming why it points at its target — with each kind's direction, when it applies over a sharper or weaker neighbor, and the calibration that keeps related a floor rather than a default and a terminal done never "addressed".
-    20260818-120000-s-prc-dsc process fact signal The tests that settle an entry's kind when two compete, sorted by the drafter's situation rather than by pair: what was noticed sorts by what is owed and what changed, a commitment by how it ends, a person by frame, structure by the strip test — each test stated once, with the guards that keep it honest.
-    20260818-110500-s-prc-ann process fact signal The annotation kind adds no proposition of its own — it lays topic labels over entries already written so a thread becomes findable in one pull: membership binary and indistinguishable from tagging at capture, the references as the member set, labels the payload — reused before minted, near-permanent once minted — an empty body a correct shape, and open indefinitely its resting state.
-    20260818-110400-s-prc-asp process fact signal The aspiration kind records a decision on a perpetual direction the work is pulled toward — binding no single piece of work, judged as degree of alignment rather than pass or fail, argued into being between the people involved rather than derived from the record, one pull among several held in tension — and never completed, only retired by an evolved successor or an entry carrying why it stopped holding.
-  (cut for size: kept 2071 of 3761 bytes — pull the rest: rank(by(date)):n(10):brief:as-list:name("Recent graph movement"))
+  (+30 more: call view with layout `skip(3):n(30):rank(by(date)):brief:as-list`)
 
   Graph health: 3 warning(s), 0 unreadable entry/entries.
-  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical in the graph
-  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical in the graph
-  20260921-120000-s-tac-op1: participant "Tester" does not match any actor canonical in the graph
+  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical or alias in the graph
+  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical or alias in the graph
+  20260921-120000-s-tac-op1: participant "Tester" does not match any actor canonical or alias in the graph
 goal: put the choice to the user and relay their answer verbatim
 instance: i_2
 instructions: |
@@ -90,11 +83,11 @@ report_schema:
       type: string
     chooser:
       const: playback
-      description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+      description: the pending chooser's step id
       type: string
     fields:
       additionalProperties: false
-      description: state fields the chosen option collects — nested here, not at the top level
+      description: the chosen option's fields, nested here, never at the top level
       properties:
         body:
           description: entry description; self-describing first sentence

@@ -43,8 +43,12 @@ type ViewRequest struct {
 }
 
 type ViewResult struct {
-	Project  ProjectRef
+	Project ProjectRef
+	// Sections is ViewSections rendered as text.
 	Sections string
+	// ViewSections are the layout's sections as data, the local graph's
+	// first, then each queried dependency's, tagged with its repo.
+	ViewSections []ViewSection
 	// MatchedCount is the total primary units the layout produced across the
 	// local graph and any queried dependency repos. Zero means the pipeline
 	// matched nothing — surfaces distinguish an empty result from a failure
@@ -59,6 +63,12 @@ type ViewResult struct {
 	// bodies in full, entry rows as summary lines.
 	FullIDs    []string
 	SummaryIDs []string
+	// local counts the local graph's sections, the ones the no-repeat rule
+	// covers.
+	local int
+	// bodiesOnly marks a view whose every section serves as-bodies: its
+	// budget already cut it at whole bodies.
+	bodiesOnly bool
 }
 
 type ShowRequest struct {
@@ -79,8 +89,10 @@ type ShowRequest struct {
 }
 
 type ShowResult struct {
-	Project    ProjectRef
+	Project ProjectRef
+	// Entries is Items rendered as text.
 	Entries    string
+	Items      []ShownEntry
 	FullIDs    []string
 	SummaryIDs []string
 }
@@ -109,8 +121,12 @@ type SearchRequest struct {
 type SearchResult struct {
 	Coverage []SearchCoverage
 	Notice   string
-	Project  ProjectRef
+	// Notices are the notices Notice joins, each on its own.
+	Notices []string
+	Project ProjectRef
+	// Results is Hits rendered as text, Notices following.
 	Results  string
+	Hits     []SearchHit
 	EntryIDs []string
 }
 

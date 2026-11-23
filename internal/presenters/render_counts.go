@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // renderAsCounts writes one row per aggregated topic: the entry count, the
@@ -19,7 +19,7 @@ import (
 //
 // An empty result (no entry carried an effective topic) renders a single
 // `(no topics)` line so the section isn't silently blank.
-func renderAsCounts(w io.Writer, counts model.Counts) {
+func renderAsCounts(w io.Writer, counts types.ViewCounts) {
 	if len(counts.Rows) == 0 {
 		fmt.Fprintln(w, "  (no topics)")
 		return

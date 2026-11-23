@@ -52,14 +52,13 @@ func TestDraftServe_TheDraftLaneIsAuthored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := len(sv.Lanes) - 1
-	if last < 1 || !strings.HasPrefix(sv.Lanes[last].Text, "Draft as it stands") {
-		t.Fatalf("the serve should end with the draft as it stands, got %+v", sv.Lanes)
+	if len(sv.Lanes) < 2 || sv.Lanes[0].Name != engine.DraftLane {
+		t.Fatalf("the serve should lead with the draft lane, got %+v", sv.Lanes)
 	}
-	if !sv.Lanes[last].Authored {
+	if !sv.Lanes[0].Authored {
 		t.Error("the draft lane should be marked authored")
 	}
-	for _, lane := range sv.Lanes[:last] {
+	for _, lane := range sv.Lanes[1:] {
 		if lane.Authored {
 			t.Errorf("the step's own lanes should stay askable, got %s marked authored", lane.Name)
 		}
@@ -69,6 +68,25 @@ func TestDraftServe_TheDraftLaneIsAuthored(t *testing.T) {
 // TestDraftServe_Rounds drives the full arc: bounded first round, item-level
 // list delta, scalar whole-when-changed, prose content diff, an explicit
 // nothing-changed round, and the rehydrate serve whole.
+// The draft lane leads the serve, ahead of the step's own guidance.
+func TestDraftServe_TheDraftLeads(t *testing.T) {
+	spec, err := engine.ParseSpec(draftServeEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_leads", "tester", &recordingSink{})
+	sv, err := sess.Start(spec, map[string]any{"body": longBody()}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sv.Lanes) < 2 || sv.Lanes[0].Name != engine.DraftLane {
+		t.Fatalf("the draft lane should lead, got %+v", sv.Lanes)
+	}
+	if !strings.HasPrefix(sv.UnitText, "Draft as it stands") || !strings.HasSuffix(sv.UnitText, "Draft guidance.") {
+		t.Errorf("the unit text should open with the draft, then the guidance, got %q", sv.UnitText)
+	}
+}
+
 func TestDraftServe_Rounds(t *testing.T) {
 	spec, err := engine.ParseSpec(draftServeEntry(t))
 	if err != nil {

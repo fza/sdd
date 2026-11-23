@@ -13,12 +13,35 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	test "github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// Every response that starts, resumes or advances a session carries two
-// questions in its question field, no question repeats within the session,
-// and no result carries a mark placed for the check or a field of a proof.
+// lastKey returns the last key of a JSON object as its text carries it.
+func lastKey(t *testing.T, text string) string {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(text))
+	if _, err := dec.Token(); err != nil {
+		t.Fatal(err)
+	}
+	var last string
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		last, _ = key.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return last
+}
+
+// Every response that starts, resumes or advances a session ends with two
+// questions, no question repeats within the session, and no result carries a
+// mark placed for the check or a field of the anchor proof.
 func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
@@ -27,6 +50,9 @@ func TestTextQuestionEndsEveryAdvancingResponse(t *testing.T) {
 	check := func(tool string, res *mcp.CallToolResult) {
 		t.Helper()
 		text := contentText(res)
+		if lastKey(t, text) != "question" {
+			t.Fatalf("%s: the response should end with its question, got %.300s", tool, text)
+		}
 		var fields struct {
 			Question string `json:"question"`
 		}
@@ -95,8 +121,9 @@ func TestTextQuestionAnswerIsRequired(t *testing.T) {
 	}
 }
 
-// A right answer serves the repeated step text, report schema and framing
-// short; a wrong answer or lost serves them in full.
+// A right answer serves the repeated step text and report schema short; a
+// wrong answer or lost serves them in full. The framing goes to the caller
+// once per change whatever the answer (20261121-233256-d-tac-mm2).
 func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -138,8 +165,11 @@ func TestTextQuestionAnswerDecidesShortOrFull(t *testing.T) {
 				return
 			}
 			requireFullReportSchema(t, "capture after "+tc.name, second.ReportSchema)
-			if !strings.Contains(second.Instructions, "Existing topics:") || !strings.Contains(second.Framing, "## Working principles") {
-				t.Fatalf("%s should serve the step text and framing in full, got %.400q", tc.name, second.Instructions)
+			if !strings.Contains(second.Instructions, "Existing topics:") {
+				t.Fatalf("%s should serve the step text in full, got %.400q", tc.name, second.Instructions)
+			}
+			if strings.Contains(second.Framing, "## Working principles") {
+				t.Fatalf("%s should not serve the unchanged framing again, got %.400q", tc.name, second.Framing)
 			}
 		})
 	}
@@ -197,7 +227,7 @@ func TestTextQuestionAsksNothingTheAgentWrote(t *testing.T) {
 	}
 	for _, line := range agent.asked {
 		for _, q := range test.Questions(line) {
-			if q.Name == "lane draft" || q.Name == "lane exchange" || q.Name == "lane parked" {
+			if q.Name == "lane "+types.DraftLane || q.Name == "lane exchange" || q.Name == "lane parked" {
 				t.Errorf("no question should ask about a lane the agent wrote, got %q", line)
 			}
 			for _, text := range written {
