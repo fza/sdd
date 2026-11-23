@@ -6,6 +6,9 @@ package query
 // the caller is outside an sdd repo: global settings and defaults only.
 type EffectiveConfigQuery struct {
 	SDDDir string
+	// WorkSDDDir is the work repository's .sdd/ in a project_dir layout,
+	// whose layers contribute hooks.
+	WorkSDDDir string
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string

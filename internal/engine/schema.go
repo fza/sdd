@@ -286,6 +286,7 @@ func procedureSpecSchema() map[string]any {
 			"deliver":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"await":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"awaitAny": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"findings": map[string]any{"type": "string"},
 			"framing":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		"required":             []string{"id"},

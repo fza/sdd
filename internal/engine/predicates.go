@@ -416,6 +416,35 @@ func registerBuiltinPredicates(r *Registry) {
 
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
+			Name: "noHighStepFindings",
+			Doc:  "The current step's findings channel holds no high-severity finding.",
+		},
+		Fn:          noHighStepFindings,
+		FailMessage: "the step's findings channel holds high findings",
+		FailDetail:  highStepFindingsDetail,
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name: "noHookFindings",
+			Doc:  "The configured hooks joined no finding into the current step's findings channel when it was last left.",
+		},
+		Fn:          noHookFindings,
+		FailMessage: "the hooks joined findings into the step's findings channel",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "hookFindingsWeighed",
+			Doc:   "The agent weighed the current step's hook findings on the draft as it stands (recorded by recordHookReview).",
+			Reads: []string{fieldHookFindingsWeighed},
+		},
+		Fn:          hookFindingsWeighed,
+		FailMessage: "the hooks' findings have not been weighed",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
 			Name:  "guideReviewed",
 			Doc:   "The agent has judged the current guide findings (recorded by recordGuideReview).",
 			Reads: []string{fieldGuideReviewed},
@@ -472,6 +501,15 @@ func registerBuiltinCommands(r *Registry) {
 		Fn: func(ctx *Context) error {
 			return ctx.Store.WriteEngine(fieldGuideReviewed, true)
 		},
+	})
+
+	mustRegisterCommand(r, Command{
+		Doc: FuncDoc{
+			Name:   "recordHookReview",
+			Doc:    "Records the hooks' findings of the channel the reviewing step renders as weighed on the draft as it stands; the step they joined then passes them through instead of re-serving the review.",
+			Writes: []string{fieldHookFindingsWeighed},
+		},
+		Fn: recordHookReview,
 	})
 
 	mustRegisterCommand(r, Command{

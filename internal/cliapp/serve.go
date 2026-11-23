@@ -22,6 +22,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -451,6 +452,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
+	layout, err := resolveProject()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	workRoot := filepath.Dir(sddDir)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
@@ -460,6 +465,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Grounding: groundingPolicy(cfg), Verifier: verifierPolicy(cfg), ContextTokens: cfg.LLM.ContextTokens,
 		Checkout: os.DirFS(workRoot), Commits: git.CLI{Dir: workRoot}, Git: localadapter.GitHistory{Dir: workRoot},
+		Hooks: hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err

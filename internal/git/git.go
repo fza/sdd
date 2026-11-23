@@ -361,6 +361,37 @@ func RepoRootFor(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// TrackedFiles is the production hooks.Tracker.
+type TrackedFiles struct{}
+
+// Tracked returns the files under paths, relative to root, that the
+// repository at root tracks, the paths matched whatever their case, as a
+// case-insensitive file system opens them. The repository is the one at
+// root, whatever GIT_DIR the process inherited. A root in no repository git
+// can read is an error: there is no saying what it tracks.
+func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) ([]string, error) {
+	env := pathEnv()
+	args := []string{"-C", root, "ls-files", "-z", "--"}
+	for _, path := range paths {
+		args = append(args, ":(icase)"+path)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing the files git tracks under %s: %w: %s", root, err, strings.TrimSpace(stderr.String()))
+	}
+	var files []string
+	for _, file := range strings.Split(string(out), "\x00") {
+		if file != "" {
+			files = append(files, file)
+		}
+	}
+	return files, nil
+}
+
 // Repositories reaches repositories by path rather than through one adapter's
 // Dir: a work repository's init sets its project up in a repository beside it.
 // It is the production handlers.ProjectRepositories.

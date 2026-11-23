@@ -97,6 +97,31 @@ func TestRecordedInvocationReplay(t *testing.T) {
 	}
 }
 
+// recordingPoints records the events hooks are fired at.
+type recordingPoints struct{ events []string }
+
+func (r *recordingPoints) Fire(point HookPoint) ([]query.Finding, error) {
+	r.events = append(r.events, point.Event)
+	return nil, nil
+}
+
+// A cancellation rolls the instance back to where the interaction began, a
+// step it already arrived at, so it raises no hook event.
+func TestCancellationRaisesNoHookEvent(t *testing.T) {
+	env := newFixtureEnv(t)
+	failure := env.interruptWriteAfter(t, "playback", false)
+	resumed := env.replay(t)
+	hooks := &recordingPoints{}
+	resumed.hooks = hooks
+	cancelled, err := resumed.Cancel("i_1", failure.Intent.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Step != "playback" || len(hooks.events) != 0 {
+		t.Fatalf("cancelling should return to playback without hook events, at %s fired %v", cancelled.Step, hooks.events)
+	}
+}
+
 func TestCancellationReturnsWithoutReexecuting(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

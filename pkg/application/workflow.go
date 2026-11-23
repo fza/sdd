@@ -147,6 +147,9 @@ type WorkflowServe struct {
 	Execution        string
 	Produced         map[string]any
 	Diagnostics      []string
+	// Notices are what the person should hear that holds nothing, such as a
+	// configured hook that never runs; Instructions carries them last.
+	Notices []string
 	// InstructionLanes are the unit's rendered lanes in order — what the MCP
 	// layer dedups independently; Instructions is their join plus diagnostics.
 	InstructionLanes []types.ServeLane
@@ -183,7 +186,17 @@ type WorkflowParked struct {
 // subset) with this serve's diagnostics — the engine's one composition rule
 // applied host-side.
 func (s *WorkflowServe) ComposeInstructions(unitText string) string {
-	return engine.ComposeInstructions(unitText, s.Diagnostics)
+	return appendNotices(engine.ComposeInstructions(unitText, s.Diagnostics), s.Notices)
+}
+
+func appendNotices(text string, notices []string) string {
+	if len(notices) == 0 {
+		return text
+	}
+	if text != "" {
+		text += "\n\n"
+	}
+	return text + "Notice:\n- " + strings.Join(notices, "\n- ")
 }
 
 type WorkflowInstanceSummary struct {
@@ -261,6 +274,7 @@ type WorkflowSession struct {
 	session  *engine.Session
 	graphs   *workflowGraphs
 	sink     *workflowSink
+	hooks    *workflowHooks
 	shell    string
 	staged   map[string]string
 	// instanceProjects holds the recorded per-instance targets; an instance
@@ -334,7 +348,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}))
+	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(w.hooks))
 	link.apply(w)
 	if !w.Autonomous() {
 		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id); err != nil {
@@ -425,7 +439,7 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
-	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink, engine.WithCourier(&workflowCourier{workflow: w}))
+	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink, engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(w.hooks))
 	if err != nil {
 		return nil, fmt.Errorf("replaying session %s: %w", stored.Metadata.ID, err)
 	}
@@ -517,6 +531,7 @@ func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity,
 	}
 	w.graphs = &workflowGraphs{workflow: w}
 	w.sink = &workflowSink{workflow: w}
+	w.hooks = &workflowHooks{workflow: w}
 	registry, err := w.buildRegistry()
 	if err != nil {
 		return nil, err
@@ -1764,7 +1779,9 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		InstructionLanes: append([]types.ServeLane(nil), serve.Lanes...),
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
 		Framing:          slices.Clone(serve.Framing),
+		Notices:          w.hooks.takeNotices(),
 	}
+	result.Instructions = appendNotices(result.Instructions, result.Notices)
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
 		result.PendingOperation = pending
 	}

@@ -29,6 +29,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `events`, `recheck` | Project | The team's choice. sdd ignores them in the local file and in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 | `contribution` | Local | sdd refuses it in `.sdd/config.yaml` and ignores it in the user-global file. |
+| `hooks` | Any file | The lists of all files run together; those that came with the repository only once [allowed](#allowing-a-projects-hooks). See [hooks](#hooks). |
 
 :::caution[Keep API keys out of the project file]
 `.sdd/config.yaml` is committed and shared. sdd reads `api_keys` from any file and does not stop you, so put keys in the user-global or the local file. `sdd config set` writes only to those two.
@@ -56,8 +57,8 @@ project_dir: /home/ada/src/app-sdd   # this machine's checkout of the project; a
 
 ```text
 app/                         # only work commits
-  .sdd/config.yaml           # project_dir, skill_scope, supported_agents
-  .sdd/config.local.yaml     # optional: project_dir for this machine
+  .sdd/config.yaml           # project_dir, skill_scope, supported_agents, hooks
+  .sdd/config.local.yaml     # optional: project_dir and hooks for this machine
   .claude/skills/            # sdd init installs and commits these here
   .mcp.json
   src/
@@ -69,7 +70,7 @@ app-sdd/                     # only sdd: commits
   .sdd/graph/
 ```
 
-- The project holds every setting, the graph, `meta.json`, sessions and stats. The work repository's `.sdd/config.yaml` may set only `project_dir`, `skill_scope` and `supported_agents`, and its `.sdd/config.local.yaml` only `project_dir`. sdd refuses any other key there and names the file and the key.
+- The project holds every setting, the graph, `meta.json`, sessions and stats. The work repository's `.sdd/config.yaml` may set only `project_dir`, `skill_scope`, `supported_agents` and [`hooks`](#hooks), and its `.sdd/config.local.yaml` only `project_dir` and `hooks`. sdd refuses any other key there and names the file and the key.
 - `project_dir` must name an initialised project that sets no `project_dir` of its own, in either of its files.
 - `sdd config set --local project_dir <path>` writes the work repository's own `.sdd/config.local.yaml`. In a repository holding its own project it is refused: point a repository with `sdd init --project-dir`.
 - Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
@@ -666,13 +667,97 @@ It never deletes a version any checkout read within `cache.retention`, and it sk
 | `--output-schema` | Off | For debugging and for programs that read the replies as data, not through a model: lists each tool's reply schema. Agents don't need it. |
 | `--mcp-output-tokens` | `MAX_MCP_OUTPUT_TOKENS`, else none | Claude Code's MCP output limit in tokens, which lowers the [size of a result](/sdd/guides/working-with-coding-agents/#compaction) served to Claude Code. |
 
+## Hooks
+
+A hook is a script sdd runs at an event of a running procedure, such as a prose linter on a capture draft. It reads the event as JSON on stdin and may answer with findings, which join the step's own.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `event` | Required | The event, below. |
+| `command` | Required | A file in the layer's hooks folder. Escape a space in its name with a backslash. |
+| `args` | None | Arguments passed as they stand, without a shell. |
+| `timeout` | `600` | Seconds before sdd stops the hook and its child processes and fails the call. |
+| `findings` | `false` | The hook may answer with findings. Only an event with a findings channel accepts it. |
+
+### Where hooks live
+
+Every config file may declare `hooks`: the user-global file, and both `.sdd/config.yaml` and `.sdd/config.local.yaml` of the project. In a project whose graph lives in a [repository of its own](#a-graph-in-a-repository-of-its-own), the work repository's two files declare hooks as well. sdd runs the hooks of every file together.
+
+`command` names a file in the declaring layer's hooks folder:
+
+| Declared in | Hooks folder |
+| --- | --- |
+| User-global config | `~/.config/sdd/hooks/` |
+| `.sdd/config.yaml` | `.sdd/hooks/`, committed with the project |
+| `.sdd/config.local.yaml` | `.sdd/hooks/local/`, which `sdd init` adds to `.gitignore` |
+
+sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has, and a hook in the local file runs only a script from `local/`, never the repository's, which a pull could change. For these two rules sdd compares the folders themselves, so a link or another spelling of `local` changes nothing.
+
+### Allowing a project's hooks
+
+Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. Hooks in the user-global file are your own and run without it.
+
+A hook in the local file is your own only when git says the repository tracks neither `.sdd/config.local.yaml` nor anything under `.sdd/hooks/local/`, in any spelling of the names, and none of `.sdd`, `.sdd/hooks` and `.sdd/hooks/local` is a link. Otherwise it waits for an allow too: when the repository tracks the file, for example after a forced `git add`; when a folder on the way is a link, past which git does not look; and when git cannot answer, as in an unpacked archive or a copied folder with no `.git`, in a repository git refuses as unsafe, or without git. The step sdd serves says which applies. `sdd hooks allow` needs git, so outside a repository such hooks do not run; declare them in the user-global file instead.
+
+```bash
+sdd hooks allow   # review the repository's .sdd/hooks first
+```
+
+- `sdd hooks allow` allows, per repository, the hooks of `.sdd/config.yaml` and those of a local file that waits for an allow. It names a hook sdd refuses to run, such as one whose script is missing, as refused.
+- It records a hash over those hook declarations and over every file the repository tracks in `.sdd/hooks/`, by content and mode, a link by the text git stores for it: scripts, files they source or import, files their arguments name, interpreters kept there. sdd follows no link.
+- Any change to them, a new tracked file included, skips those hooks again until you allow them again. Files the repository does not track do not count, since no clone or pull brings them: a hook may write into its folder, but sdd ignores what it writes there. Code a hook loads from outside `.sdd/hooks/` is not covered.
+- sdd checks the hash again right before each hook runs. A change in the milliseconds between that check and the hook reading its files still runs.
+- In a project whose graph lives in a repository of its own, it allows both repositories' hooks.
+- The record lives in `~/.local/state/sdd/hooks/allowed.json`, keyed by the repository's `repo_id`, or by its path when it sets none. sdd writes it readable only by you. An unreadable record allows nothing, the step sdd serves says so, and `sdd hooks allow` rewrites it. Any other problem checking the hooks skips them with a notice as well; it fails no call.
+
+### Events
+
+| Event | Fires | Accepts findings |
+| --- | --- | --- |
+| `capture.assemble` | The draft is complete, before any paid call | Yes |
+| `capture.guide` | The writing guide is done | Yes |
+| `capture.preflight` | Pre-flight is done | Yes |
+| `entry.written` | A capture wrote its entry | No |
+
+Every step of every procedure raises `<procedure>.<step>` when it is done, also named `<procedure>.<step>.done`, and `<procedure>.<step>.start` when the procedure arrives at it. `*` stands for any procedure or step: `*.*` matches every step being done, `*.*.start` every arrival. Only the events in the table are supported; the others follow the procedures' steps and may change with them.
+
+A hook naming an event no procedure raises never runs, and the next step sdd serves says so. A hook sdd cannot run, such as one whose script is missing or not executable, fails only the calls raising an event it matches.
+
+A failing `.start` hook holds its step: sdd runs it again on every call, and the step's work, such as the pre-flight call, waits until it passes.
+
+### Running a hook
+
+Hooks on one event run at once. A hook sees only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `USER` and `LOGNAME` of sdd's environment, so API keys and tokens in sdd's environment do not reach it. An allowed hook still runs with your rights and can read your files, sdd's config with its API keys and `~/.netrc` included. A hook fails the call when it exits nonzero, outlives its timeout, writes more than 1 MiB to stdout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own. Medium and low findings go to your agent to weigh: after `capture.assemble` in a review of their own, after `capture.guide` with the writing guide's findings, and after `capture.preflight` among pre-flight's findings.
+
+The payload carries `event`, `time`, `project`, `branch`, `session`, `procedure`, `instance`, `step` and `phase` (`start` or `done`, or `round` on a step that declares rounds, which no shipped step does yet); `transition`, the step the procedure moves to, when a step is done; `findings`, the step's findings so far, on a step with a findings channel; `draft` during a capture, with `type`, `kind`, `layer`, `refs`, `topics`, `body`, `attachments`, `body_hash`, `supersedes` and `closes` (entry ID lists); and `entry`, the written entry's ID, on `entry.written`. A finding has `severity` (`high`, `medium` or `low`), `category` and `observation`.
+
+A Vale check on every capture draft:
+
+```yaml
+# .sdd/config.yaml
+hooks:
+  - event: capture.assemble
+    command: vale.sh
+    findings: true
+    timeout: 60
+```
+
+```sh
+#!/bin/sh
+# .sdd/hooks/vale.sh
+set -e
+jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
+  jq '{findings: [.[][] | {category: .Check, observation: .Message,
+    severity: (if .Severity == "error" then "high" elif .Severity == "warning" then "medium" else "low" end)}]}'
+```
+
 ## Environment variables
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations, graph snapshots and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs, the relevance ledger, the logs of verifier rounds and the record of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs, the hook allow record, the relevance ledger, the logs of verifier rounds and the record of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. A cache dir sdd cannot write costs one warning and no failure. `off` reads every entry file, for sandboxes and read-only homes. |
 | `SDD_TIMING` | Off | Any true value prints one line on stderr per ended phase of a command, `timing: <phase> <duration>ms at <offset>ms`. Same as `--timing`. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |

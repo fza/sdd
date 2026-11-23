@@ -55,6 +55,9 @@ type Context struct {
 	// Arrived lists the fields the current await gate holds a delivery for
 	// that it has not consumed yet.
 	Arrived []string
+	// Round raises the step's round event with fields added to its payload;
+	// set only for a command declaring Rounds.
+	Round func(fields map[string]any) error
 	// Commit writes engine fields holding an effect the running operation
 	// committed outside the session and logs them at once, so a later failure
 	// of the same command keeps them; set only for a command recording a
@@ -64,6 +67,9 @@ type Context struct {
 	// committed, so its retry continues past the effect instead of repeating
 	// it. The store already holds these fields.
 	Committed map[string]any
+	// hooksJoined is whether the hooks joined findings into the current
+	// step's channel when it was last left.
+	hooksJoined bool
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
@@ -140,6 +146,12 @@ type Command struct {
 	// and see the write — post-write freshness driven by the command's own
 	// declaration, replacing the shell's hand-maintained refresh calls.
 	MutatesGraph bool
+	// Announces names the hook event raised once the command's outcome is
+	// committed, such as `entry.written` after a publish.
+	Announces string
+	// Rounds lets the command raise `<procedure>.<step>.round` through
+	// Context.Round once per round of its work.
+	Rounds bool
 }
 
 // Registry is the closed set of Go functions a procedure spec may name. All

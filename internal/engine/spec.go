@@ -243,6 +243,10 @@ type Step struct {
 	// gate once its delegate ended without delivering: the report ends the
 	// instance's live forks with it as their reason, so DelegateEnded applies.
 	DelegateGone string
+	// Findings names the engine-written field, in pre-flight's finding
+	// format, that is this gate's findings channel: findings the hooks on
+	// the step being done report join it.
+	Findings string
 	// Framing names the session framing blocks a serve of this step carries,
 	// by block name; nil carries them all.
 	Framing []string
@@ -356,6 +360,7 @@ type stepYAML struct {
 	AwaitAny      []string         `yaml:"awaitAny"`
 	DelegateEnded string           `yaml:"delegateEnded"`
 	DelegateGone  string           `yaml:"delegateGone"`
+	Findings      string           `yaml:"findings"`
 	Framing       *[]string        `yaml:"framing"`
 }
 
@@ -573,6 +578,9 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
 			}
 		}
+		if _, declared := spec.State[step.Findings]; declared {
+			addProblem("%s: findings names %q, which is declared state; a findings channel is engine-written", prefix, step.Findings)
+		}
 		for _, o := range step.Options {
 			if !IsEndTarget(o.To) && spec.StepByID[o.To] == nil {
 				addProblem("%s: option %q target %q is not a step or end(...)", prefix, o.Choice, o.To)
@@ -731,6 +739,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Unattended:    sy.Unattended,
 		Deliver:       sy.Deliver,
 		Await:         sy.Await,
+		Findings:      sy.Findings,
 		DelegateEnded: sy.DelegateEnded,
 		DelegateGone:  sy.DelegateGone,
 	}
@@ -767,6 +776,12 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		case !slices.ContainsFunc(sy.Options, func(o optionYAML) bool { return o.Choice == u.Answer }):
 			addProblem("%s: unattended answer %q is not an option", prefix, u.Answer)
 		}
+	}
+	if sy.Findings != "" && step.Chooser != ChooserGate {
+		addProblem("%s: findings applies only to a gate", prefix)
+	}
+	if sy.Findings != "" && !isValidFuncName(sy.Findings) {
+		addProblem("%s: findings names %q, not a field name (identifiers only)", prefix, sy.Findings)
 	}
 	if sy.Framing != nil {
 		if len(*sy.Framing) == 0 {

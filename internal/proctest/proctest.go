@@ -203,6 +203,7 @@ type config struct {
 	relevance     sdd.RelevanceStore
 	prefilter     sdd.Prefilter
 	events        sdd.EventStore
+	hooks         sdd.HookCommands
 }
 
 // Option configures NewWorld.
@@ -448,7 +449,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events, ContextTokens: cfg.contextTokens,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events, ContextTokens: cfg.contextTokens, Hooks: cfg.hooks,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
