@@ -390,7 +390,7 @@ type ReadGitArgs struct {
 	To      string `json:"to,omitempty" jsonschema:"diff: the newer revision"`
 	Path    string `json:"path,omitempty" jsonschema:"file: the file to read; log and diff: narrows them to this path. Relative to the checkout root"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"log: at most this many commits; default 20, at most 200"`
-	Offset  int64  `json:"offset,omitempty" jsonschema:"byte position to continue from: next_offset of the previous page, with the same other arguments"`
+	Offset  int64  `json:"offset,omitempty" jsonschema:"byte position to continue from: next_offset of the previous page, with the same other arguments; each page reads git again, so name a branch that may move by its commit hash"`
 }
 
 type ReadGitResult struct {

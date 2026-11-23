@@ -1101,7 +1101,7 @@
           "type": "integer"
         },
         "offset": {
-          "description": "byte position to continue from: next_offset of the previous page, with the same other arguments",
+          "description": "byte position to continue from: next_offset of the previous page, with the same other arguments; each page reads git again, so name a branch that may move by its commit hash",
           "type": "integer"
         },
         "op": {
