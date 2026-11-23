@@ -82,16 +82,16 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	paths = append(paths, segments...)
 	added = append(added, segments...)
 	if len(added) > 0 {
-		addArgs := append([]string{"-C", f.Checkout, "add", "--all", "--"}, added...)
-		if out, err := (git.CLI{}).RunPastIndexLock(ctx, addArgs...); err != nil {
+		addArgs := append([]string{"add", "--all", "--"}, added...)
+		if out, err := (git.CLI{Dir: f.Checkout}).RunPastIndexLock(ctx, addArgs...); err != nil {
 			return fmt.Errorf("git finalizer add: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
 	if len(removed) > 0 {
 		// A removal may already be staged by an attempt whose commit failed;
 		// --ignore-unmatch keeps the retry from failing on the missing path.
-		rmArgs := append([]string{"-C", f.Checkout, "rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
-		if out, err := (git.CLI{}).RunPastIndexLock(ctx, rmArgs...); err != nil {
+		rmArgs := append([]string{"rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
+		if out, err := (git.CLI{Dir: f.Checkout}).RunPastIndexLock(ctx, rmArgs...); err != nil {
 			return fmt.Errorf("git finalizer rm: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -99,8 +99,8 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if message == "" {
 		message = "sdd: apply " + mutation.BatchID
 	}
-	commitArgs := append([]string{"-C", f.Checkout, "commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
-	if out, err := (git.CLI{}).RunPastIndexLock(ctx, commitArgs...); err != nil {
+	commitArgs := append([]string{"commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
+	if out, err := (git.CLI{Dir: f.Checkout}).RunPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git finalizer commit: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil

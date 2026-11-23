@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new release of the SDD CLI: survey changes against the graph, propose the version bump, draft curated notes, and ship after explicit user confirmation. Invoke when the user wants to create a release or bump the version.
+description: 'Cut a new release of the SDD CLI: survey changes against the graph, propose the version bump, draft curated notes, and ship after explicit user confirmation. Invoke when the user wants to create a release or bump the version.'
 ---
 
 # Release the SDD CLI
@@ -26,7 +26,7 @@ The git log is the authoritative scope of the release. Commit subjects in this p
 sdd show <id1> <id2> <id3> --up 0 --down 0
 ```
 
-Full bodies plus the envelope's immediate closes/refs context, no chain traversal, which is the right level for highlight prose. You see what plan closed what without walking the whole upstream history. Skip housekeeping commits (`sdd: refresh installed skills`, `sdd: signal/decision/wip` graph entries, pure refactors with no user-visible effect).
+Full bodies plus the envelope's immediate closes/refs context, no chain traversal, which is the right level for highlight prose. You see what plan closed what without walking the whole upstream history. Skip housekeeping commits (`sdd: refresh sdd setup` and the older `sdd: refresh installed skills`, `sdd: signal/decision/wip` graph entries, pure refactors with no user-visible effect).
 
 ### 2. Propose the version bump
 

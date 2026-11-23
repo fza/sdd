@@ -1,0 +1,262 @@
+package meta_test
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/meta"
+)
+
+func writeConfig(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, ".sdd", name)
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(path, []byte(content), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveProject(t *testing.T) {
+	cases := []struct {
+		name      string
+		work      map[string]string
+		project   map[string]string
+		wantRoot  string
+		wantError string
+	}{
+		{
+			name:     "a project of its own resolves to itself",
+			work:     map[string]string{"config.yaml": "graph_dir: .sdd/graph\nrepo_id: example.test/work\n"},
+			wantRoot: "work",
+		},
+		{
+			name:     "project_dir resolves against the work root",
+			work:     map[string]string{"config.yaml": "project_dir: ../project\nskill_scope: project\nsupported_agents: [claude]\n"},
+			project:  map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
+			wantRoot: "project",
+		},
+		{
+			name:     "the local file moves the project",
+			work:     map[string]string{"config.yaml": "project_dir: ../missing\n", "config.local.yaml": "project_dir: ../project\n"},
+			project:  map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
+			wantRoot: "project",
+		},
+		{
+			name:      "a project setting beside the pointer",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\nlanguage: de\n"},
+			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
+			wantError: "sets language",
+		},
+		{
+			name:      "an agent key in the local file",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\n", "config.local.yaml": "supported_agents: [codex]\n"},
+			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
+			wantError: "sets supported_agents",
+		},
+		{
+			name:      "a project that only has a local file",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
+			project:   map[string]string{"config.local.yaml": "participant: Ada\n"},
+			wantError: "clone the project there",
+		},
+		{
+			name:      "a project pointing on",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
+			project:   map[string]string{"config.yaml": "project_dir: ../work\n"},
+			wantError: "itself sets project_dir",
+		},
+		{
+			name:      "an absolute project_dir in the committed file",
+			work:      map[string]string{"config.yaml": "project_dir: /srv/project\n"},
+			wantError: "an absolute project_dir belongs in",
+		},
+		{
+			name:      "a project pointing on through its local file",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
+			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n", "config.local.yaml": "project_dir: ../elsewhere\n"},
+			wantError: "itself sets project_dir",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			work := filepath.Join(root, "work")
+			for name, content := range tc.work {
+				writeConfig(t, work, name, content)
+			}
+			for name, content := range tc.project {
+				writeConfig(t, filepath.Join(root, "project"), name, content)
+			}
+
+			project, err := meta.ResolveProject(work)
+
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("the pointer should be refused with the reason: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !meta.SameDir(project.Root, filepath.Join(root, tc.wantRoot)) {
+				t.Errorf("the project root should be the %s folder, got %s", tc.wantRoot, project.Root)
+			}
+			if project.WorkRoot != work {
+				t.Errorf("the work root should stay where .sdd/ was found, got %s", project.WorkRoot)
+			}
+			if project.Pointed() != (tc.wantRoot != "work") {
+				t.Error("Pointed should report whether the project lives elsewhere")
+			}
+		})
+	}
+}
+
+// init records project_dir against the real folders, so a work root reached
+// through a symlink resolves it from where the work root really lies.
+func TestResolveProjectFromASymlinkedWorkRoot(t *testing.T) {
+	realDir := filepath.Join(t.TempDir(), "real")
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../project\n")
+	writeConfig(t, filepath.Join(realDir, "project"), "config.yaml", "graph_dir: .sdd/graph\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err := os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := meta.ResolveProject(link)
+
+	if err != nil {
+		t.Fatalf("the project beside the real work root should resolve: %v", err)
+	}
+	if !meta.SameDir(project.Root, filepath.Join(realDir, "project")) {
+		t.Errorf("the project should be found beside the real work root, got %s", project.Root)
+	}
+}
+
+func TestResolveProjectReportsAMissingProject(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	writeConfig(t, work, "config.yaml", "project_dir: ../nowhere\n")
+
+	_, err := meta.ResolveProject(work)
+
+	if !errors.Is(err, meta.ErrNotAProject) {
+		t.Errorf("a missing project should be reported as not an sdd project: %v", err)
+	}
+}
+
+// The real folder a symlinked work root resolves project_dir from is where
+// the project was looked for, so the refusal names it.
+func TestResolveProjectNamesTheRealFolderOfAMissingProject(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../nowhere\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err = os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = meta.ResolveProject(link)
+
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(realDir, "nowhere")) {
+		t.Errorf("the refusal should name the folder it looked in: %v", err)
+	}
+}
+
+func TestWithinDir(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "outer")
+	err := os.Mkdir(root, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	err = os.Symlink(root, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCase := filepath.Join(filepath.Dir(root), "OUTER")
+	_, err = os.Stat(otherCase)
+	caseInsensitive := err == nil
+	cases := []struct {
+		name          string
+		path          string
+		within        bool
+		needsCaseFold bool
+	}{
+		{name: "the folder itself", path: root, within: true},
+		{name: "a folder below, not yet created", path: filepath.Join(root, "a", "b"), within: true},
+		{name: "a folder below, through a symlink", path: filepath.Join(link, "a"), within: true},
+		{name: "a folder below, spelled in other case", path: filepath.Join(otherCase, "a"), within: true, needsCaseFold: true},
+		{name: "a sibling sharing the name's prefix", path: root + "-sdd", within: false},
+		{name: "the parent folder", path: filepath.Dir(root), within: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.needsCaseFold && !caseInsensitive {
+				t.Skip("the temporary filesystem tells names apart by case")
+			}
+			got := meta.WithinDir(root, tc.path)
+			if got != tc.within {
+				t.Error("the path should be judged by where it really lies")
+			}
+		})
+	}
+}
+
+// A .sdd/ above the repository holding the start folder belongs to another
+// project.
+func TestDiscoverRootStopsAtTheRepositoryRoot(t *testing.T) {
+	cases := []struct {
+		name    string
+		gitFile bool
+	}{
+		{name: "repository root"},
+		{name: "linked worktree or submodule root", gitFile: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outer := t.TempDir()
+			err := os.Mkdir(filepath.Join(outer, ".sdd"), 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(outer, "repo")
+			start := filepath.Join(repo, "sub")
+			err = os.MkdirAll(start, 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.gitFile {
+				err = os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
+			} else {
+				err = os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if root := meta.DiscoverRoot(start); root != "" {
+				t.Errorf("discovery should stop at the repository root, found %s", root)
+			}
+
+			err = os.Mkdir(filepath.Join(repo, ".sdd"), 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if root := meta.DiscoverRoot(start); root != repo {
+				t.Errorf("discovery should find the repository's own .sdd/, found %q", root)
+			}
+		})
+	}
+}

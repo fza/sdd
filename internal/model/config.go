@@ -167,6 +167,12 @@ type PerRepoConfig struct {
 	// Recheck names who runs the recheck work; only the committed
 	// .sdd/config.yaml sets it.
 	Recheck RecheckConfig `yaml:"recheck,omitempty"`
+	// ProjectDir points a work repository at the sdd project that holds its
+	// graph, kept in a repository of its own: the folder holding that
+	// project's .sdd/, relative to the folder holding this .sdd/ or absolute.
+	// A repository setting it carries no project settings of its own; see
+	// PointerKeys and LocalPointerKeys.
+	ProjectDir string `yaml:"project_dir,omitempty"`
 }
 
 // DefaultLLMTimeoutFor is the llm.timeout in effect for provider when none
@@ -176,6 +182,32 @@ func DefaultLLMTimeoutFor(provider string) string {
 		return DefaultClaudeCLITimeout
 	}
 	return DefaultLLMTimeout
+}
+
+// PointerKeys are the keys a committed config may set beside project_dir:
+// what concerns the agents working in the repository, not the graph.
+var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
+
+// LocalPointerKeys are the keys a machine-local config may set beside
+// project_dir: only where this machine keeps the project's checkout.
+var LocalPointerKeys = []string{"project_dir"}
+
+// TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
+// Empty input yields none.
+func TopLevelKeys(data []byte) ([]string, error) {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if len(node.Content) == 0 || node.Content[0].Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	mapping := node.Content[0]
+	keys := make([]string, 0, len(mapping.Content)/2)
+	for i := 0; i < len(mapping.Content); i += 2 {
+		keys = append(keys, mapping.Content[i].Value)
+	}
+	return keys, nil
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -242,7 +274,7 @@ type EmbeddingConfig struct {
 	// Provider names the embedder transport: "openai" (OpenAI-compatible
 	// /v1/embeddings) or "ollama" (/api/embeddings). Empty disables vector
 	// search — the CLI falls back to text-mode-only.
-	Provider string `yaml:"provider,omitempty"`
+	Provider EmbeddingProvider `yaml:"provider,omitempty"`
 	// Model is the provider-specific embedding model identifier
 	// (e.g. "text-embedding-3-small", "nomic-embed-text").
 	Model string `yaml:"model,omitempty"`
@@ -302,6 +334,13 @@ type EmbeddingConfig struct {
 	// stays empty for query-only models (Qwen3, BGE) and untemplated
 	// models (OpenAI).
 	DocumentTemplate string `yaml:"document_template,omitempty"`
+}
+
+// EmbeddingProvider names the embedder transport.
+type EmbeddingProvider string
+
+func (EmbeddingProvider) AllowedValues() []string {
+	return []string{"openai", "ollama"}
 }
 
 // LLMConfig holds settings for LLM provider selection, model choice, and
@@ -580,6 +619,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
+	if overlay.ProjectDir != "" {
+		out.ProjectDir = overlay.ProjectDir
+	}
 	return &out
 }
 
@@ -759,34 +801,11 @@ func FormatConfig(cfg PerRepoConfig) string {
 	} else {
 		languageBlock += "# language: de\n"
 	}
-	skillScopeBlock := "# Skill installation scope — where `sdd init` extracts the agent skill\n" +
-		"# bundle. `user` installs into the user-global directory (e.g.\n" +
-		"# ~/.claude/skills/); `project` installs into the repo-local\n" +
-		"# .claude/skills/ tree. Recorded on first run so subsequent runs (and\n" +
-		"# clones) reinstall to the same place without re-prompting.\n"
-	if cfg.SkillScope != "" {
-		skillScopeBlock += "skill_scope: " + string(cfg.SkillScope) + "\n"
-	} else {
-		skillScopeBlock += "# skill_scope: project\n"
-	}
-	supportedAgentsBlock := "# Agent targets `sdd init` renders skills for. Each listed agent gets its\n" +
-		"# own rendered, committed skill dir (claude → .claude/skills/, codex →\n" +
-		"# .agents/skills/). Chosen via multi-select on first run; every contributor\n" +
-		"# on the repo renders the same set.\n"
-	if len(cfg.SupportedAgents) > 0 {
-		names := make([]string, len(cfg.SupportedAgents))
-		for i, a := range cfg.SupportedAgents {
-			names[i] = string(a)
-		}
-		supportedAgentsBlock += "supported_agents: [" + strings.Join(names, ", ") + "]\n"
-	} else {
-		supportedAgentsBlock += "# supported_agents: [claude]\n"
-	}
 	return "# SDD configuration\n" +
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
 		"\n" +
 		"# Graph directory relative to repository root.\n" +
-		"graph_dir: " + graphDir + "\n" +
+		"graph_dir: " + yamlScalar(graphDir) + "\n" +
 		"\n" +
 		defaultBranchBlock +
 		"\n" +
@@ -794,9 +813,9 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"\n" +
 		languageBlock +
 		"\n" +
-		skillScopeBlock +
+		skillScopeBlock(cfg) +
 		"\n" +
-		supportedAgentsBlock +
+		supportedAgentsBlock(cfg) +
 		"\n" +
 		"# LLM provider settings (defaults shown — override here or in config.local.yaml).\n" +
 		"# llm:\n" +
@@ -876,4 +895,58 @@ func parsePositiveDuration(raw, fallback string) time.Duration {
 	}
 	d, _ := time.ParseDuration(fallback)
 	return d
+}
+
+// FormatPointerConfig returns the config of a work repository whose graph
+// lives in the sdd project at cfg.ProjectDir: the pointer and the agent keys,
+// nothing about the graph.
+func FormatPointerConfig(cfg PerRepoConfig) string {
+	return "# SDD configuration\n" +
+		"# See https://github.com/networkteam/sdd for documentation.\n" +
+		"\n" +
+		"# The sdd project holding this repository's graph: the folder holding its\n" +
+		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
+		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
+		"project_dir: " + yamlScalar(cfg.ProjectDir) + "\n" +
+		"\n" +
+		skillScopeBlock(cfg) +
+		"\n" +
+		supportedAgentsBlock(cfg)
+}
+
+func skillScopeBlock(cfg PerRepoConfig) string {
+	block := "# Skill installation scope — where `sdd init` extracts the agent skill\n" +
+		"# bundle. `user` installs into the user-global directory (e.g.\n" +
+		"# ~/.claude/skills/); `project` installs into the repo-local\n" +
+		"# .claude/skills/ tree. Recorded on first run so subsequent runs (and\n" +
+		"# clones) reinstall to the same place without re-prompting.\n"
+	if cfg.SkillScope != "" {
+		return block + "skill_scope: " + string(cfg.SkillScope) + "\n"
+	}
+	return block + "# skill_scope: project\n"
+}
+
+func supportedAgentsBlock(cfg PerRepoConfig) string {
+	block := "# Agent targets `sdd init` renders skills for. Each listed agent gets its\n" +
+		"# own rendered, committed skill dir (claude → .claude/skills/, codex →\n" +
+		"# .agents/skills/). Chosen via multi-select on first run; every contributor\n" +
+		"# on the repo renders the same set.\n"
+	if len(cfg.SupportedAgents) == 0 {
+		return block + "# supported_agents: [claude]\n"
+	}
+	names := make([]string, len(cfg.SupportedAgents))
+	for i, a := range cfg.SupportedAgents {
+		names[i] = string(a)
+	}
+	return block + "supported_agents: [" + strings.Join(names, ", ") + "]\n"
+}
+
+// yamlScalar renders s as a YAML scalar that reads back as s, quoted only
+// where YAML needs it.
+func yamlScalar(s string) string {
+	out, err := yaml.Marshal(s)
+	if err != nil {
+		return strconv.Quote(s)
+	}
+	return strings.TrimSuffix(string(out), "\n")
 }

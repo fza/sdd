@@ -47,6 +47,9 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if !model.KnownYAMLKey(cmd.Key, typ) {
 			return nil, fmt.Errorf("%q is not a valid %s config key", cmd.Key, layer)
 		}
+		if err := model.ConfigValueRefusal(typ, strings.Split(cmd.Key, "."), cmd.Value); err != nil {
+			return nil, err
+		}
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}

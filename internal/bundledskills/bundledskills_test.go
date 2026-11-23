@@ -9,8 +9,8 @@ import (
 )
 
 // TestLoadShipsOnlyTheEngineSkill pins the v0.18.0 bundle shape (d-tac-ip1):
-// one skill, `sdd`, opening the engine flow, with the locale vocabulary as its
-// only reference until that moves into the graph (d-cpt-xob).
+// one skill, `sdd`, opening the engine flow. The skill names no reference, so
+// none ships with it; the locale vocabulary is engine data (d-cpt-xob).
 func TestLoadShipsOnlyTheEngineSkill(t *testing.T) {
 	for _, target := range []model.AgentTarget{model.AgentClaude, model.AgentCodex} {
 		b, err := bundledskills.Load(target)
@@ -24,7 +24,7 @@ func TestLoadShipsOnlyTheEngineSkill(t *testing.T) {
 			}
 			paths = append(paths, e.RelPath)
 		}
-		want := []string{"SKILL.md", "references/vocabulary-de.md"}
+		want := []string{"SKILL.md"}
 		if len(paths) != len(want) {
 			t.Fatalf("%s: bundle paths = %v, want %v", target, paths, want)
 		}
@@ -36,22 +36,22 @@ func TestLoadShipsOnlyTheEngineSkill(t *testing.T) {
 	}
 }
 
-func TestReadReference_VocabularyDE(t *testing.T) {
-	body, err := bundledskills.ReadReference("sdd", "references/vocabulary-de.md")
+func TestVocabulary_German(t *testing.T) {
+	body, err := bundledskills.Vocabulary("de")
 	if err != nil {
-		t.Fatalf("ReadReference: %v", err)
+		t.Fatalf("Vocabulary: %v", err)
 	}
-	if bytes.HasPrefix(body, []byte("---")) {
-		t.Errorf("frontmatter not stripped:\n%s", body)
+	if !bytes.HasPrefix(body, []byte("# SDD Vokabular")) {
+		t.Errorf("vocabulary must open with its heading, no frontmatter:\n%.80s", body)
 	}
-	if !bytes.Contains(body, []byte("Vokabular")) || !bytes.Contains(body, []byte("Entscheidung")) {
+	if !bytes.Contains(body, []byte("Entscheidung")) {
 		t.Errorf("German vocabulary missing expected terms:\n%s", body)
 	}
 }
 
-func TestReadReference_Missing(t *testing.T) {
-	if _, err := bundledskills.ReadReference("sdd", "references/ref-kinds.md"); err == nil {
-		t.Fatal("expected an error for a reference the bundle no longer ships")
+func TestVocabulary_MissingLocale(t *testing.T) {
+	if _, err := bundledskills.Vocabulary("fr"); err == nil {
+		t.Fatal("expected an error for a locale the bundle does not ship")
 	}
 }
 

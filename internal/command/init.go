@@ -21,9 +21,24 @@ type InitCmd struct {
 	// Empty falls back to RepoRoot for non-Git callers and tests.
 	StableRepoRoot string
 
-	// GraphDir is the graph directory path relative to RepoRoot. Empty
-	// defaults to model.DefaultGraphDir (".sdd/graph").
+	// GraphDir is the graph directory path relative to RepoRoot, or to the
+	// project init sets up at ProjectDir. Empty defaults to
+	// model.DefaultGraphDir (".sdd/graph").
 	GraphDir string
+
+	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
+	// in the sdd project at this path (relative to RepoRoot or absolute):
+	// init writes only the pointer config and the agent surfaces in RepoRoot.
+	// A path holding no sdd project is first set up as one, in a repository
+	// of its own, configured by GraphDir and Language; beside an existing
+	// project those two are refused.
+	ProjectDir string
+
+	// SetUpProject allows init to set up a missing project at ProjectDir. Only
+	// a path the caller typed qualifies: a recorded project_dir names a shared
+	// project to clone, never one to create. It also lets ProjectDir rewrite the
+	// committed pointer.
+	SetUpProject bool
 
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
 	// captures on fresh initialization or when upgrading an older config.
@@ -49,7 +64,7 @@ type InitCmd struct {
 	VerifierRunner model.VerifierRunner
 
 	// Language is the graph authoring language (locale code) to record in
-	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
+	// .sdd/config.yaml on fresh init, the project's under ProjectDir. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.
 	// Only applied on fresh init; existing config.yaml is never rewritten.
 	Language string
@@ -186,6 +201,10 @@ type InitCmd struct {
 	// add-if-missing merge). Does not fire when an existing sdd entry is
 	// left untouched.
 	OnMCPRegistered func(target model.AgentTarget, path string)
+
+	// OnUnchanged fires once, after a run that wrote, removed and committed
+	// nothing, neither in RepoRoot nor in a project it set up.
+	OnUnchanged func()
 }
 
 // AgentPruneResult reports the outcome of a prune pass over one agent's

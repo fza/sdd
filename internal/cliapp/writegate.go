@@ -8,6 +8,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
@@ -28,8 +29,16 @@ var errSchemaIncompatible = errors.New("graph schema incompatible with this bina
 // development isn't blocked by a released graph's pins.
 func withWriteGate(action cli.ActionFunc) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		sddDir, err := resolveSDDDir()
+		sddDir, err := optionalSDDDir()
+		// A typed --project-dir sets up the project a recorded pointer names,
+		// so no graph exists yet to gate.
+		if errors.Is(err, meta.ErrNotAProject) && cmd.Name == "init" && cmd.IsSet("project-dir") {
+			return action(ctx, cmd)
+		}
 		if err != nil {
+			return err
+		}
+		if sddDir == "" {
 			// No .sdd/ — the inner action will fail naturally with the
 			// same message. Don't second-guess discovery here.
 			return action(ctx, cmd)

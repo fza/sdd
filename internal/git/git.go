@@ -22,15 +22,45 @@ import (
 	"time"
 )
 
-// CLI is the exec-based adapter: a zero-value struct whose methods shell out
-// to the git binary. One value satisfies the consumer-defined git interfaces
+// CLI is the exec-based adapter: a struct whose methods shell out to the git
+// binary. One value satisfies the consumer-defined git interfaces
 // (handlers.Committer/Brancher/Mover/Puller, finders.GitSyncer, repos.Git);
 // the one exception is the staged-deletion commit variant, which shares the
 // Commit method name and therefore lives on its own type (RemovalCommitter).
 type CLI struct {
-	// Dir is the directory the commands that read a repository run in;
-	// empty means the process's working directory.
+	// Dir is the repository the ambient operations run in. Empty means the
+	// process working directory. A graph kept in its own checkout, beside the
+	// project rather than inside it, needs entry commits to reach that
+	// checkout while the process runs in the project: the working directory
+	// alone cannot express both.
 	Dir string
+}
+
+// at prefixes args with -C Dir so the operation targets this adapter's
+// repository. Methods taking an explicit directory (Clone, PullFFOnly) address
+// their target through arguments and never route through here.
+func (c CLI) at(args ...string) []string {
+	if c.Dir == "" {
+		return args
+	}
+	return append([]string{"-C", c.Dir}, args...)
+}
+
+// env is the environment for a git command addressed through at: nil, the
+// process's own, without Dir; with Dir, the process's own without the
+// variables that would pin the command to another repository (pathEnv).
+func (c CLI) env() []string {
+	if c.Dir == "" {
+		return nil
+	}
+	return pathEnv()
+}
+
+// command builds a git command for this adapter's repository.
+func (c CLI) command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
+	cmd.Env = c.env()
+	return cmd
 }
 
 // commitTimeout caps the detached auto-commit. A signing or credential helper
@@ -56,7 +86,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	paths = slices.Concat(paths, segments)
 	// git add refuses a path gone from disk and index alike, as git rm leaves
 	// it; the commit pathspec below records that deletion on its own.
-	present := onDisk(paths)
+	present := c.onDisk(paths)
 	if len(present) > 0 {
 		addArgs := append([]string{"add", "--all", "--"}, present...)
 		if out, err := c.RunPastIndexLock(ctx, addArgs...); err != nil {
@@ -75,10 +105,16 @@ func (c CLI) Commit(message string, paths ...string) error {
 	return nil
 }
 
-func onDisk(paths []string) []string {
+// onDisk keeps the paths present on disk; a relative path is git's, relative
+// to Dir.
+func (c CLI) onDisk(paths []string) []string {
 	var out []string
 	for _, path := range paths {
-		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		onDisk := path
+		if c.Dir != "" && !filepath.IsAbs(path) {
+			onDisk = filepath.Join(c.Dir, path)
+		}
+		if _, err := os.Lstat(onDisk); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		out = append(out, path)
@@ -86,15 +122,16 @@ func onDisk(paths []string) []string {
 	return out
 }
 
-// RunPastIndexLock runs git with args, detached like Commit, and returns its
-// combined output. It retries while another process holds the repository's
-// index lock, which clears when that process finishes; a graph written beside
-// concurrent captures meets it routinely. Retries stop with ctx, so the
-// caller's timeout bounds the wait. Any other failure returns at once.
-func (CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+// RunPastIndexLock runs git with args in Dir, detached like Commit, and
+// returns its combined output. It retries while another process holds the
+// repository's index lock, which clears when that process finishes; a graph
+// written beside concurrent captures meets it routinely. Retries stop with
+// ctx, so the caller's timeout bounds the wait. Any other failure returns at
+// once.
+func (c CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
 	delay := 100 * time.Millisecond
 	for {
-		out, err := runDetached(ctx, args...)
+		out, err := runDetached(ctx, c.env(), c.at(args...)...)
 		if err == nil || !strings.Contains(string(out), "index.lock") {
 			return out, err
 		}
@@ -144,8 +181,8 @@ func (CLI) Ignored(ctx context.Context, path string) (bool, error) {
 // HasCommitMessage reports whether any reachable commit contains text. It is
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
-func (CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1").CombinedOutput()
+func (c CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
+	out, err := c.command(ctx, "log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1").CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git log: %s (%w)", out, err)
 	}
@@ -156,32 +193,37 @@ func (CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
 // removed from disk: it stages the deletions (`git rm --cached`, falling back
 // to `git add`) before committing. Used by FinishWIP, where the marker file
 // is gone by the time the commit runs.
-type RemovalCommitter struct{}
+type RemovalCommitter struct {
+	// Dir is the repository the removal commit runs in, with the same meaning
+	// as CLI.Dir.
+	Dir string
+}
 
 // Commit stages the deletion of the given paths and commits, scoped to those
 // paths so an unrelated staged index isn't swept into the removal commit.
-func (RemovalCommitter) Commit(message string, paths ...string) error {
+func (r RemovalCommitter) Commit(message string, paths ...string) error {
+	ctx := context.Background()
+	repo := CLI(r)
 	for _, p := range paths {
-		rm := exec.Command("git", "rm", "--cached", "-f", p)
+		rm := repo.command(ctx, "rm", "--cached", "-f", p)
 		if out, err := rm.CombinedOutput(); err != nil {
-			add := exec.Command("git", "add", p)
+			add := repo.command(ctx, "add", p)
 			if out2, err2 := add.CombinedOutput(); err2 != nil {
 				return fmt.Errorf("git stage: %s (%v); fallback %s (%w)", out, err, out2, err2)
 			}
 		}
 	}
-	segments, err := CLI{}.PendingSegments(context.Background())
+	segments, err := repo.PendingSegments(ctx)
 	if err != nil {
 		return err
 	}
 	if len(segments) > 0 {
-		add := exec.Command("git", append([]string{"add", "--all", "--"}, segments...)...)
+		add := repo.command(ctx, append([]string{"add", "--all", "--"}, segments...)...)
 		if out, err := add.CombinedOutput(); err != nil {
 			return fmt.Errorf("git add shared segments: %s (%w)", out, err)
 		}
 	}
-	commitArgs := append(append([]string{"commit", "-m", message, "--"}, paths...), segments...)
-	commit := exec.Command("git", commitArgs...)
+	commit := repo.command(ctx, append(append([]string{"commit", "-m", message, "--"}, paths...), segments...)...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
@@ -194,12 +236,11 @@ func (RemovalCommitter) Commit(message string, paths ...string) error {
 // signing or credential prompt has no TTY to read from, so it fails immediately
 // instead of suspending the backgrounded process on SIGTTIN. The context
 // timeout is a backstop for any other blocking helper.
-func runDetached(ctx context.Context, args ...string) ([]byte, error) {
+func runDetached(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	env := os.Environ()
-	if len(args) > 1 && args[0] == "-C" {
-		env = pathEnv()
+	if env == nil {
+		env = os.Environ()
 	}
 	// sdd names files, never patterns: a glob character stays part of the name.
 	cmd.Env = append(env, "GIT_LITERAL_PATHSPECS=1")
@@ -213,11 +254,11 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 // Move renames a path in the working tree and the git index as one operation
 // via `git mv`, so the rename is recorded atomically with the working-tree
 // change. Production handlers.Mover.
-func (CLI) Move(src, dst string) error {
+func (c CLI) Move(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
-	if out, err := exec.Command("git", "mv", src, dst).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "mv", src, dst).CombinedOutput(); err != nil {
 		return fmt.Errorf("git mv %s %s: %s (%w)", src, dst, out, err)
 	}
 	return nil
@@ -225,21 +266,21 @@ func (CLI) Move(src, dst string) error {
 
 // Checkout switches to branch, creating it first when create is set.
 // Production handlers.Brancher.
-func (CLI) Checkout(branch string, create bool) error {
+func (c CLI) Checkout(branch string, create bool) error {
 	args := []string{"checkout"}
 	if create {
 		args = append(args, "-b")
 	}
 	args = append(args, branch)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout: %s (%w)", out, err)
 	}
 	return nil
 }
 
 // BranchMerged reports whether branch is merged into the current HEAD.
-func (CLI) BranchMerged(branch string) bool {
-	out, err := exec.Command("git", "branch", "--merged").Output()
+func (c CLI) BranchMerged(branch string) bool {
+	out, err := c.command(context.Background(), "branch", "--merged").Output()
 	if err != nil {
 		return false
 	}
@@ -255,12 +296,12 @@ func (CLI) BranchMerged(branch string) bool {
 }
 
 // DeleteBranch removes branch (-d, or -D when force is set).
-func (CLI) DeleteBranch(branch string, force bool) error {
+func (c CLI) DeleteBranch(branch string, force bool) error {
 	flag := "-d"
 	if force {
 		flag = "-D"
 	}
-	if out, err := exec.Command("git", "branch", flag, branch).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "branch", flag, branch).CombinedOutput(); err != nil {
 		return fmt.Errorf("git branch %s: %s (%w)", flag, out, err)
 	}
 	return nil
@@ -268,8 +309,8 @@ func (CLI) DeleteBranch(branch string, force bool) error {
 
 // IsClean reports whether the working tree has no uncommitted changes.
 // Production handlers.Puller.
-func (CLI) IsClean(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "status", "--porcelain").Output()
+func (c CLI) IsClean(ctx context.Context) (bool, error) {
+	out, err := c.command(ctx, "status", "--porcelain").Output()
 	if err != nil {
 		return false, fmt.Errorf("git status --porcelain: %w", err)
 	}
@@ -279,8 +320,8 @@ func (CLI) IsClean(ctx context.Context) (bool, error) {
 // MergePull runs a merge-only pull. --no-rebase forces a merge pull
 // regardless of the user's pull.rebase config, so background sync never
 // rewrites the shared graph's history.
-func (CLI) MergePull(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "pull", "--no-rebase").CombinedOutput()
+func (c CLI) MergePull(ctx context.Context) (string, error) {
+	out, err := c.command(ctx, "pull", "--no-rebase").CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {
@@ -301,6 +342,71 @@ func RepoRoot() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RepoRootFor returns the repository root containing path, which need not be
+// the process working directory. An empty string means path is not inside a
+// repository, which a caller reads as "nothing to commit here".
+//
+// A path that does not exist yet resolves through its nearest existing
+// ancestor, so a graph directory about to be created still names the
+// repository it will live in.
+func RepoRootFor(path string) string {
+	dir := existingAncestor(path)
+	if dir == "" {
+		return ""
+	}
+	out, err := (CLI{Dir: dir}).command(context.Background(), "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Repositories reaches repositories by path rather than through one adapter's
+// Dir: a work repository's init sets its project up in a repository beside it.
+// It is the production handlers.ProjectRepositories.
+type Repositories struct{}
+
+func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
+
+func (Repositories) Init(dir string) error {
+	cmd := exec.Command("git", "init", "--quiet", dir)
+	cmd.Env = pathEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (Repositories) CurrentBranch(dir string) (string, error) {
+	return currentBranch(CommandAt(context.Background(), dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
+
+func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
+
+// existingAncestor returns path, or the closest ancestor that exists on disk;
+// for a file, the folder holding it, so a graph_dir naming a file lies in the
+// repository its folder does.
+func existingAncestor(path string) string {
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	for {
+		if info, err := os.Stat(dir); err == nil {
+			if !info.IsDir() {
+				return filepath.Dir(dir)
+			}
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 // UserName reads git config user.name, returning an empty string when git is
 // unavailable or the setting isn't configured. Best-effort — used only as a
 // pre-filled default for the sdd init participant prompt.
@@ -314,8 +420,13 @@ func UserName() string {
 
 // RemoteURL returns the repo's origin remote URL, or "" when no remote is
 // configured — the local-only case for repo_id derivation.
-func RemoteURL(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
+func RemoteURL(repoRoot string) string { return remoteURL(repoRoot, nil) }
+
+// remoteURL is RemoteURL run with env; nil inherits the process environment.
+func remoteURL(repoRoot string, env []string) string {
+	cmd := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin")
+	cmd.Env = env
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}

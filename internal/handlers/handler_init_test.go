@@ -443,6 +443,82 @@ func TestInit_RepeatIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestInit_UpgradePrunesTheVocabularyReference covers an upgrade over installs
+// that ship the German vocabulary reference beside a current SKILL.md, stamped
+// at the top level for Claude and under metadata: for Codex: init keeps both
+// renders current and prunes the vocabulary reference the bundle no longer
+// ships.
+func TestInit_UpgradePrunesTheVocabularyReference(t *testing.T) {
+	tmp := t.TempDir()
+	h := initExistingWithAgents(t, tmp, model.AgentClaude, model.AgentCodex)
+
+	bundle, err := bundledskills.Load(model.AgentClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded := bundle.Entries[0]
+	if embedded.RelPath != "SKILL.md" {
+		t.Fatalf("expected the bundle to open with SKILL.md, got %s", embedded.RelPath)
+	}
+	hash := model.ComputeSkillHash(embedded.Content)
+	topLevel := strings.Replace(string(embedded.Content), "\n---\n", "\nsdd-content-hash: "+hash+"\nsdd-version: v0.2.0\n---\n", 1)
+	claudeSkill := filepath.Join(tmp, ".claude/skills/sdd/SKILL.md")
+	if err := os.WriteFile(claudeSkill, []byte(topLevel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vocabularies := []string{
+		filepath.Join(tmp, ".claude/skills/sdd/references/vocabulary-de.md"),
+		filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md"),
+	}
+	for _, p := range vocabularies {
+		writeStampedOrphan(t, p, "# SDD Vokabular\n")
+	}
+
+	var installed []command.SkillInstallResult
+	var pruned []command.AgentPruneResult
+	if err := h.Init(context.Background(), &command.InitCmd{
+		RepoRoot:             tmp,
+		BinaryVersion:        "v0.2.0",
+		Scope:                model.ScopeProject,
+		OnSkillsInstalled:    func(r command.SkillInstallResult) { installed = append(installed, r) },
+		OnSkillOrphansPruned: func(r command.AgentPruneResult) { pruned = append(pruned, r) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	codexSkill := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
+	var refreshed, current, modified []string
+	for _, r := range installed {
+		refreshed = append(refreshed, r.Refreshed...)
+		current = append(current, r.Current...)
+		modified = append(modified, r.SkippedModified...)
+		modified = append(modified, r.Overwritten...)
+	}
+	if len(refreshed) != 0 {
+		t.Errorf("no file should be refreshed, got %v", refreshed)
+	}
+	if len(modified) != 0 {
+		t.Errorf("no file should be treated as modified, got %v", modified)
+	}
+	for _, skill := range []string{claudeSkill, codexSkill} {
+		if !slices.Contains(current, skill) {
+			t.Errorf("%s should stay current, got current=%v", skill, current)
+		}
+	}
+	if got := string(readFile(t, claudeSkill)); got != topLevel {
+		t.Errorf("the Claude SKILL.md should keep its top-level stamps, got:\n%.400s", got)
+	}
+
+	for _, p := range vocabularies {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("unedited vocabulary reference %s should be pruned, stat err = %v", p, err)
+		}
+	}
+	if len(pruned) != 2 {
+		t.Errorf("expected one orphan-prune callback per agent, got %+v", pruned)
+	}
+}
+
 // TestInit_PostUpgradeRefreshesDriftedPristine simulates a bundle content
 // change across binary versions: an installed file carries a stored hash
 // that matches its own content (user hasn't edited) but differs from the
@@ -1036,6 +1112,8 @@ func TestInit_PrunePreservesModifiedSkill(t *testing.T) {
 	// from the stored stamp, so it classifies as Modified.
 	modified := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
 	appendToFile(t, modified, "\n<!-- local edit, must survive prune -->\n")
+	pristine := filepath.Join(tmp, ".agents/skills/sdd/references/topic.md")
+	writeStampedOrphan(t, pristine, "A reference sdd wrote and nobody edited.\n")
 
 	var pruned []command.AgentPruneResult
 	if err := h.Init(context.Background(), &command.InitCmd{
@@ -1052,7 +1130,7 @@ func TestInit_PrunePreservesModifiedSkill(t *testing.T) {
 		t.Errorf("modified file must be preserved without --force: %v", err)
 	}
 	// A pristine sibling in the same render is gone.
-	if _, err := os.Stat(filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(pristine); !os.IsNotExist(err) {
 		t.Errorf("pristine codex reference should be pruned, stat err = %v", err)
 	}
 	// The parent dir survives because it still holds the modified file.

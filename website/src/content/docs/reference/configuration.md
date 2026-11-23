@@ -37,6 +37,59 @@ sdd skips a key it does not know, including a key in a file where it does not be
 
 sdd also reads past a known key whose value it does not apply: a per-person key in the project file, such as `dialogue.mode`, or a value outside a setting's fixed set, such as `verify.mode light`. Every command then warns `ignoring config setting` with the key, the file and the reason, the value of the layer below applies, or the default, and `sdd config` lists these settings at the end.
 
+### A graph in a repository of its own
+
+The graph can live in an sdd project of its own, beside the repository where the work happens. The work repository's history then carries only the work, and every `sdd:` commit lands in the project's repository. Point the work repository at the project with `project_dir`:
+
+```yaml
+# work repository: .sdd/config.yaml, committed
+project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root: its real folder, symlinks resolved
+skill_scope: project
+supported_agents: [claude]
+```
+
+```yaml
+# work repository: .sdd/config.local.yaml, gitignored
+project_dir: /home/ada/src/app-sdd   # this machine's checkout of the project; absolute paths only here
+```
+
+```text
+app/                         # only work commits
+  .sdd/config.yaml           # project_dir, skill_scope, supported_agents
+  .sdd/config.local.yaml     # optional: project_dir for this machine
+  .claude/skills/            # sdd init installs and commits these here
+  .mcp.json
+  src/
+
+app-sdd/                     # only sdd: commits
+  .sdd/config.yaml           # graph_dir, repo_id, default_branch, language, dependencies, ...
+  .sdd/config.local.yaml     # participant and other personal settings
+  .sdd/meta.json
+  .sdd/graph/
+```
+
+- The project holds every setting, the graph, `meta.json`, sessions and stats. The work repository's `.sdd/config.yaml` may set only `project_dir`, `skill_scope` and `supported_agents`, and its `.sdd/config.local.yaml` only `project_dir`. sdd refuses any other key there and names the file and the key.
+- `project_dir` must name an initialised project that sets no `project_dir` of its own, in either of its files.
+- `sdd config set --local project_dir <path>` writes the work repository's own `.sdd/config.local.yaml`. In a repository holding its own project it is refused: point a repository with `sdd init --project-dir`.
+- Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
+- The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
+- A `graph_dir` leading into another repository, a repository nested in the project included, is refused. Make that graph a project of its own and point at it with `project_dir`. A `graph_dir` leading out of the project into no repository is refused too, by `sdd init` as by every later command, and so is a `project_dir` naming a folder inside the work repository, a folder containing it, a folder inside another repository rather than at its root, or a project in no repository.
+
+`sdd init --project-dir` writes the pointer and sets up a missing project:
+
+```bash
+sdd init --project-dir ../app-sdd                  # missing project: set up there, then point here
+sdd init --project-dir ../app-sdd --language de    # the new project's settings; asked on a terminal otherwise
+sdd init                                           # repeat in the work repository: follows the recorded project_dir
+```
+
+- A folder outside any repository is created when missing and gets its own repository through `git init`. A folder that is a repository root, such as an empty clone, is used as is.
+- An absolute `--project-dir` is recorded relative to the repository, between the real folders. One outside the repository's parent folder is refused: pass it relative, or set the absolute path as `project_dir` in `.sdd/config.local.yaml`.
+- The project folder must not lie inside the work repository or inside another repository, and must not contain the work repository.
+- `--graph-dir` and `--language` configure the new project. Beside an existing project they are refused: run `sdd init` with them in the project.
+- Only a typed `--project-dir` sets a project up. A recorded `project_dir` naming a missing folder is refused with advice to clone the project there, so a teammate's clone never grows a second, empty graph.
+- `--bump` is refused in a work repository. Run it in the project.
+
 ## The sdd config command
 
 | Command | What it does |
@@ -50,7 +103,7 @@ sdd also reads past a known key whose value it does not apply: a per-person key 
 
 - Keys are dotted paths, such as `llm.api_keys.openai`.
 - `set` refuses a key that does not belong in the target file, such as `graph_dir` without `--local`.
-- `set` refuses a value sdd would ignore or refuse when it reads the file: one outside a setting's fixed set, such as `dialogue.mode x`, or a `verify` value the layers do not allow together, such as a local `verify.mode` below the shared one. The refusal names the allowed values, and the file stays unchanged.
+- `set` refuses an empty value, since `unset` removes a key, and a value sdd would ignore or refuse when it reads the file: one outside a setting's fixed set, such as `embedding.provider voyage`, `skill_scope machine` or `dialogue.mode x`, or a `verify` value the layers do not allow together, such as a local `verify.mode` below the shared one. The refusal names the allowed values, and the file stays unchanged.
 - `set` writes `8`, `0.5`, `true` and `false` as numbers and booleans, and everything else as text. Edit list values, such as `supported_agents`, in the file.
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
@@ -69,7 +122,8 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path. |
+| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path inside the repository. |
+| `project_dir` | None | Set only in a work repository: the sdd project holding its graph. See [a graph in a repository of its own](#a-graph-in-a-repository-of-its-own). |
 | `default_branch` | The branch checked out during `sdd init` | A session that names no branch works on the branch checked out in the project directory, and on this branch when none is checked out. `sdd serve` does not start without it. |
 | `repo_id` | Derived from the `origin` remote | The project's identity, such as `github.com/acme/platform`. Other graphs reference an entry here as `<repo_id>:<entry-id>`. Empty for a repository without a remote. Do not change it by hand. |
 | `language` | English | Language of the entry text, as a locale code such as `en`, `de` or `de-DE`. Translated SDD vocabulary ships for `de`. |

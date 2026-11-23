@@ -34,13 +34,34 @@ import (
 // commands (h.InstallSkills and h.WriteSchemaMeta), keeping each side
 // effect in its own handler method.
 func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
+	changed := false
+	err := h.initRepo(ctx, cmd, &changed)
+	if err != nil {
+		return err
+	}
+	if !changed && cmd.OnUnchanged != nil {
+		cmd.OnUnchanged()
+	}
+	return nil
+}
+
+// initRepo runs Init in cmd.RepoRoot, setting *changed when it writes, removes
+// or commits anything there or in a project it initialises.
+func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	log := slogutils.FromContext(ctx)
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if cmd.ProjectDir != "" {
+		return h.initPointer(ctx, cmd, changed)
+	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
+	}
+	err := gitignoreLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
 	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
@@ -228,32 +249,8 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		// retries the drop rather than orphaning files under a config that
 		// already claims they're gone.
 		if persistAgents {
-			// Prune only under project scope, where renders are per-project and
-			// committed. Under user scope the skill dirs are shared across every
-			// project on the machine, so a per-project drop must not delete a
-			// render another project relies on — the recorded list still updates
-			// below, leaving the shared render in place.
-			if effectiveScope == model.ScopeProject {
-				if dropped := agentsDiff(recordedAgents, effectiveAgents); len(dropped) > 0 {
-					if err := h.pruneAgentSkills(ctx, dropped, effectiveScope, cmd, &touched); err != nil {
-						return err
-					}
-				}
-			}
-
-			existing, readErr := os.ReadFile(configPath)
-			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-				return fmt.Errorf("reading %s: %w", configPath, readErr)
-			}
-			updated, err := model.SetYAMLSequence(existing, "supported_agents", agentTargetsToStrings(effectiveAgents))
-			if err != nil {
-				return fmt.Errorf("updating %s: %w", configPath, err)
-			}
-			if !bytes.Equal(existing, updated) {
-				if err := os.WriteFile(configPath, updated, 0o644); err != nil {
-					return fmt.Errorf("writing %s: %w", configPath, err)
-				}
-				touched = append(touched, configPath)
+			if err := h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, &touched); err != nil {
+				return err
 			}
 		}
 	}
@@ -293,7 +290,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// it is (merging is deliberately out of scope) and the callback reports
 	// it as skippable. init is the post-clone / post-update contract, which
 	// makes it the migration surface.
-	if err := h.migrateLegacyIndexes(cmd, sddDir, configPath); err != nil {
+	if err := h.migrateLegacyIndexes(cmd, sddDir, configPath, changed); err != nil {
 		return err
 	}
 	// Scaffold the AGENTS.md / CLAUDE.md instruction bridge when a non-Claude
@@ -310,7 +307,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	}
 
 	// The personal settings init resolved land in .sdd/config.local.yaml.
-	if err := writeLocalSettings(sddDir, cmd); err != nil {
+	if err := writeLocalSettings(sddDir, cmd, changed); err != nil {
 		return err
 	}
 
@@ -370,58 +367,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	// Install (or refresh) the embedded skill bundle. Track every written
-	// file for the eventual commit.
-	for _, target := range effectiveAgents {
-		err = h.InstallSkills(ctx, &command.InstallSkillsCmd{
-			Target:          target,
-			Scope:           effectiveScope,
-			RepoRoot:        cmd.RepoRoot,
-			UserHome:        cmd.UserHome,
-			BinaryVersion:   cmd.BinaryVersion,
-			Force:           cmd.Force,
-			PromptOverwrite: cmd.PromptOverwrite,
-			OnInstalled: func(r command.SkillInstallResult) {
-				touched = append(touched, r.Installed...)
-				touched = append(touched, r.Refreshed...)
-				touched = append(touched, r.Overwritten...)
-				if cmd.OnSkillsInstalled != nil {
-					cmd.OnSkillsInstalled(r)
-				}
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("installing skills for %s: %w", target, err)
-		}
-	}
-
-	// Sweep out what the bundle stopped shipping, after the install pass so
-	// this run's own writes are on disk and stamped (s-tac-zaz).
-	if err := h.pruneSkillOrphans(ctx, effectiveAgents, effectiveScope, cmd, &touched); err != nil {
-		return err
-	}
-
-	// Register the SDD MCP server per agent so engine mode works out of the
-	// box (d-tac-wfl). Project scope only for now: the registration files
-	// live in the repo tree; user-scope registration (home-dir config) is a
-	// separate path, deferred. User scope still installs skills above — it
-	// just skips this step.
-	if effectiveScope == model.ScopeProject {
-		if err := h.registerMCPServers(effectiveAgents, cmd, &touched); err != nil {
-			return err
-		}
-	}
-
-	// Commit anything touched. Skill files installed under the user-global
-	// scope (outside the repo) are filtered out — they aren't part of the
-	// repo's git tree.
-	if h.committer != nil {
-		if err := h.commitInit(ctx, record, leftover, touched, initCommitMessage(sddExisted)); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, record, leftover, initCommitMessage(sddExisted), changed)
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -594,8 +540,9 @@ func (h *Handler) registerMCPServers(agents []model.AgentTarget, cmd *command.In
 // symmetric with install's overwrite protection: only files sdd produced and
 // the user hasn't modified (Current or Pristine) are removed, while
 // user-modified files are preserved and reported, deleted only under --force.
-// Non-sdd files sharing the directory aren't bundle entries, so SkillStatus
-// never classifies them and they're left untouched. Skill subdirectories left
+// Files sdd wrote that the bundle no longer carries go the same way. Non-sdd
+// files sharing the directory carry no stamp, so SkillStatus never classifies
+// them and they're left untouched. Skill subdirectories left
 // empty by the removals, and the now-empty parent skills dir, are cleaned up.
 // Removed paths are appended to touched so the commit records the deletions.
 func (h *Handler) pruneAgentSkills(ctx context.Context, dropped []model.AgentTarget, scope model.Scope, cmd *command.InitCmd, touched *[]string) error {
@@ -621,6 +568,7 @@ func (h *Handler) pruneAgentSkills(ctx context.Context, dropped []model.AgentTar
 				modified: e.Status == model.SkillStatusModified,
 			})
 		}
+		files = append(files, orphanPrunables(status.Orphans, cmd.BinaryVersion)...)
 
 		result, err := removePrunable(files, target, status.InstallDir, cmd.Force, touched)
 		if err != nil {
@@ -692,21 +640,7 @@ func (h *Handler) pruneSkillOrphans(ctx context.Context, targets []model.AgentTa
 			return fmt.Errorf("classifying %s skills for orphan prune: %w", target, err)
 		}
 
-		var files []prunable
-		for _, o := range status.Orphans {
-			// A file stamped by a later sdd is not an orphan, it is the
-			// future: an older binary running here must not delete what a
-			// newer one installed just because its own bundle lacks it.
-			if model.SkillStampIsAhead(o.Installed.StoredVersion, cmd.BinaryVersion) {
-				continue
-			}
-			files = append(files, prunable{
-				absPath:  o.AbsPath,
-				skill:    o.Skill,
-				modified: o.Class == model.SkillOrphanModified,
-			})
-		}
-
+		files := orphanPrunables(status.Orphans, cmd.BinaryVersion)
 		result, err := removePrunable(files, target, status.InstallDir, cmd.Force, touched)
 		if err != nil {
 			return err
@@ -716,6 +650,26 @@ func (h *Handler) pruneSkillOrphans(ctx context.Context, targets []model.AgentTa
 		}
 	}
 	return nil
+}
+
+// orphanPrunables turns installed files the bundle no longer carries into
+// prune candidates.
+func orphanPrunables(orphans []query.SkillOrphanEntry, binaryVersion string) []prunable {
+	var files []prunable
+	for _, o := range orphans {
+		// A file stamped by a later sdd is not an orphan, it is the
+		// future: an older binary running here must not delete what a
+		// newer one installed just because its own bundle lacks it.
+		if model.SkillStampIsAhead(o.Installed.StoredVersion, binaryVersion) {
+			continue
+		}
+		files = append(files, prunable{
+			absPath:  o.AbsPath,
+			skill:    o.Skill,
+			modified: o.Class == model.SkillOrphanModified,
+		})
+	}
+	return files
 }
 
 // pruneEmptyDirs removes dir and its empty subdirectories bottom-up. A dir
@@ -837,9 +791,19 @@ func filterRepoPaths(repoRoot string, paths []string) []string {
 
 func initCommitMessage(sddExisted bool) string {
 	if sddExisted {
-		return "sdd: refresh installed skills and metadata"
+		return "sdd: refresh sdd setup"
 	}
 	return "sdd: init .sdd/ metadata directory"
+}
+
+// gitignoreLine refuses an entry that would read as more than the one path it
+// names: graph_dir comes from a shared config, and a line break, a leading !
+// or # in it would add, negate or hide rules.
+func gitignoreLine(entry string) error {
+	if strings.ContainsAny(entry, "\r\n") || strings.HasPrefix(entry, "!") || strings.HasPrefix(entry, "#") {
+		return fmt.Errorf("refusing .gitignore entry %q: it reads as more than one path", entry)
+	}
+	return nil
 }
 
 // ensureGitignoreEntries appends entries to .gitignore that are not already
@@ -862,6 +826,10 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 
 	var toAdd []string
 	for _, e := range entries {
+		err := gitignoreLine(e)
+		if err != nil {
+			return false, err
+		}
 		if !existing[e] {
 			toAdd = append(toAdd, e)
 		}
@@ -971,7 +939,7 @@ func cleanOldGraphDirGitignore(graphDir string) error {
 // its root path) and each connected repo's clone-cache .index (keyed by its
 // repo_id). Skipped silently when the handler has no connected-repos
 // manager (tests, minimal wiring) — there is no cache root to migrate into.
-func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath string) error {
+func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath string, changed *bool) error {
 	if h.repos == nil {
 		return nil
 	}
@@ -994,6 +962,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		if err != nil {
 			return fmt.Errorf("migrating local index into the machine-global store: %w", err)
 		}
+		*changed = *changed || moved
 		if target != "" && cmd.OnIndexMigrated != nil {
 			cmd.OnIndexMigrated(legacyLocal, target, moved)
 		}
@@ -1016,6 +985,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		if err != nil {
 			return fmt.Errorf("migrating cache index for %s: %w", r.RepoID, err)
 		}
+		*changed = *changed || moved
 		if target != "" && cmd.OnIndexMigrated != nil {
 			cmd.OnIndexMigrated(legacy, target, moved)
 		}
@@ -1024,8 +994,9 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 }
 
 // writeLocalSettings writes each personal setting init resolved into the
-// machine-local config, keeping the other keys of the file in place.
-func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
+// machine-local config, keeping the other keys of the file in place, and sets
+// changed when it writes one.
+func writeLocalSettings(sddDir string, cmd *command.InitCmd, changed *bool) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
 		{"dialogue.mode", string(cmd.DialogueMode)},
@@ -1050,6 +1021,7 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 		if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", configLocalPath, err)
 		}
+		*changed = true
 		// Not committed: config.local.yaml is gitignored, so staging it would
 		// fail the commit.
 		if setting.key == "participant" && cmd.OnParticipantWritten != nil {

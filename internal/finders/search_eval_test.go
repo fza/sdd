@@ -91,7 +91,7 @@ func loadEvalPairs(t *testing.T) []evalPair {
 
 func evalEmbedder(t *testing.T) handlers.IndexEmbedder {
 	t.Helper()
-	provider := os.Getenv("SDD_EVAL_PROVIDER")
+	provider := model.EmbeddingProvider(os.Getenv("SDD_EVAL_PROVIDER"))
 	if provider == "" {
 		t.Skip("SDD_EVAL_PROVIDER not set (use openai or ollama)")
 	}

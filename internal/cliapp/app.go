@@ -1,8 +1,10 @@
 package cliapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -136,6 +138,10 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newReadFinderFor(cfg)
+}
+
+func newReadFinderFor(cfg *model.PerRepoConfig) (*finders.Finder, error) {
 	if cfg == nil {
 		cfg = &model.PerRepoConfig{}
 	}
@@ -189,8 +195,11 @@ func loadConfig() (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	sddDir, err := resolveSDDDir()
+	sddDir, err := optionalSDDDir()
 	if err != nil {
+		return nil, err
+	}
+	if sddDir == "" {
 		// Outside an sdd repo the global settings still apply (they are
 		// the user's, not a repo's).
 		if global.IsZero() {
@@ -872,7 +881,7 @@ func newCmd() *cli.Command {
 					ProcedureRegistry: registry,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
@@ -965,8 +974,8 @@ func rewriteCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
-				Mover:     git.CLI{},
+				Committer: graphGit(dir),
+				Mover:     graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		})),
@@ -1001,7 +1010,7 @@ func lintCmd() *cli.Command {
 					Stderr:    cmd.ErrWriter,
 					GraphDir:  dir,
 					Reader:    reader,
-					Committer: git.CLI{},
+					Committer: graphGit(dir),
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1166,13 +1175,15 @@ func summarizeCmd() *cli.Command {
 					Repos:           reg,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
 		})),
 	}
 }
+
+var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
 
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
@@ -1185,21 +1196,15 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return dir, nil
 	}
 
-	// Auto-discover from .sdd/config.yaml.
-	cwd, err := os.Getwd()
+	project, err := resolveProject()
 	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
+		return "", err
 	}
-	repoRoot := meta.DiscoverRoot(cwd)
-	if repoRoot == "" {
-		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
-	}
-	sddDir := meta.SDDDir(repoRoot)
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(project.SDDDir())
 	if err != nil {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
-	return meta.ResolveGraphDir(repoRoot, cfg), nil
+	return meta.ResolveGraphDir(project.Root, cfg), nil
 }
 
 // resolveParticipantsFlag is the shared fallback rule for capture commands.
@@ -1237,18 +1242,77 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 	return cfg.Participant, nil
 }
 
-// resolveSDDDir discovers the .sdd/ directory by walking up from cwd.
-// Errors if not found.
+// graphGit is the git adapter for graph writes and graph history: it runs in
+// the repository holding graphDir, which is the project's. A work repository
+// pointing at its project with project_dir runs the process elsewhere, so the
+// working directory alone cannot name it.
+//
+// Operations on the work itself (branches for a WIP marker, the skill and
+// config commits of sdd init) keep the process working directory.
+func graphGit(graphDir string) git.CLI {
+	return git.CLI{Dir: git.RepoRootFor(graphDir)}
+}
+
+// optionalSDDDir is resolveSDDDir for commands that also run outside any
+// project: only the absence of a .sdd/ yields "", a broken pointer still fails.
+func optionalSDDDir() (string, error) {
+	sddDir, err := resolveSDDDir()
+	if errors.Is(err, errNoProject) {
+		return "", nil
+	}
+	return sddDir, err
+}
+
+// resolveSDDDir returns the .sdd/ directory of the project governing the
+// working directory: its own, or the one its project_dir points at.
 func resolveSDDDir() (string, error) {
+	project, err := resolveProject()
+	if err != nil {
+		return "", err
+	}
+	return project.SDDDir(), nil
+}
+
+func resolveProject() (meta.Project, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
+		return meta.Project{}, fmt.Errorf("getting working directory: %w", err)
 	}
-	repoRoot := meta.DiscoverRoot(cwd)
-	if repoRoot == "" {
-		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
+	workRoot := meta.DiscoverRoot(cwd)
+	if workRoot == "" {
+		return meta.Project{}, errNoProject
 	}
-	return meta.SDDDir(repoRoot), nil
+	project, err := meta.ResolveProject(workRoot)
+	if err != nil {
+		return meta.Project{}, err
+	}
+	err = requireGraphInsideRepository(project)
+	if err != nil {
+		return meta.Project{}, err
+	}
+	return project, nil
+}
+
+// requireGraphInsideRepository refuses a project placed where its work
+// repository cannot point at it, and a graph_dir leading out of the project's
+// repository.
+func requireGraphInsideRepository(project meta.Project) error {
+	cfg, err := meta.ReadConfig(project.SDDDir())
+	if err != nil {
+		return err
+	}
+	if project.Pointed() {
+		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, git.RepoRootFor)
+		if err != nil {
+			return err
+		}
+		err = meta.RequireProjectRepository(subject, project.Root, git.RepoRootFor)
+		if err != nil {
+			return err
+		}
+	}
+	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), git.RepoRootFor)
 }
 
 // promptGraphDir runs an interactive prompt for the graph directory. Empty
@@ -1398,6 +1462,10 @@ func initCmd() *cli.Command {
 				Usage: "Graph directory relative to repo root (prompted interactively on fresh init)",
 			},
 			&cli.StringFlag{
+				Name:  "project-dir",
+				Usage: "Root of the sdd project holding this repository's graph, kept in a repository of its own and set up there when it holds none yet; this repository then carries only the pointer and the agent skills",
+			},
+			&cli.StringFlag{
 				Name:  "participant",
 				Usage: "Canonical author name recorded in .sdd/config.local.yaml (prompted interactively with git user.name as default when unset)",
 			},
@@ -1466,11 +1534,41 @@ func initCmd() *cli.Command {
 			if sddExists {
 				recordedScope = readRecordedSkillScope(sddDir)
 			}
+			recordedFiles, err := meta.ReadConfig(sddDir)
+			if err != nil {
+				return fmt.Errorf("reading existing configuration before init: %w", err)
+			}
+			projectDir := strings.TrimSpace(cmd.String("project-dir"))
+			if projectDir == "" && recordedFiles != nil {
+				projectDir = recordedFiles.ProjectDir
+			}
+			pointer := projectDir != ""
+			// The participant is a setting of the project holding the graph,
+			// which a pointing repository is not.
+			projectSDDDir := sddDir
+			// A pointer at a folder holding no sdd project sets that project
+			// up first, asking what a fresh init asks.
+			projectMissing := false
+			var projectRoot string
+			if pointer {
+				projectRoot = projectDir
+				if !filepath.IsAbs(projectRoot) {
+					projectRoot = filepath.Join(repoRoot, projectRoot)
+				}
+				projectRoot = filepath.Clean(projectRoot)
+				projectSDDDir = meta.SDDDir(projectRoot)
+				projectFiles, err := meta.ReadConfig(projectSDDDir)
+				if err != nil {
+					return fmt.Errorf("reading the project's configuration before init: %w", err)
+				}
+				projectMissing = projectFiles == nil && cmd.IsSet("project-dir")
+			}
+			freshGraph := !pointer && !sddExists || projectMissing
 			var existingMerged *model.PerRepoConfig
-			if sddExists {
+			if sddExists || pointer {
 				// Overlay-aware: a participant configured globally counts
 				// as configured, so init does not demand a per-repo one.
-				existingMerged, err = resolveConfigAt(sddDir)
+				existingMerged, err = resolveConfigAt(projectSDDDir)
 				if err != nil {
 					return fmt.Errorf("resolving existing configuration before init: %w", err)
 				}
@@ -1485,19 +1583,6 @@ func initCmd() *cli.Command {
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
-			remoteURL := git.RemoteURL(repoRoot)
-			defaultBranch := ""
-			if existingMerged != nil {
-				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
-			}
-			if defaultBranch == "" {
-				var branchErr error
-				defaultBranch, branchErr = git.CurrentBranch(repoRoot)
-				if branchErr != nil {
-					return branchErr
-				}
-			}
-
 			// Aggregated non-interactive error (AC 5): a single message
 			// names every missing piece and the exact flag to fix it,
 			// rather than failing the run on the first one. Runs only
@@ -1505,7 +1590,7 @@ func initCmd() *cli.Command {
 			// to the per-piece prompts below.
 			if !cliout.IsTerminalReader(cmd.Reader) {
 				var missing []string
-				if !sddExists && languageFlag == "" {
+				if freshGraph && languageFlag == "" {
 					missing = append(missing, "--language LOCALE   (e.g. --language en — graph authoring language)")
 				}
 				if !scopeExplicit && recordedScope == "" {
@@ -1515,36 +1600,63 @@ func initCmd() *cli.Command {
 					missing = append(missing, "--participant NAME   (canonical author name)")
 				}
 				if len(missing) > 0 {
+					purpose := "to run non-interactively"
+					if projectMissing {
+						purpose = "to set up the project in " + projectRoot + " non-interactively"
+					}
 					return fmt.Errorf(
-						"sdd init needs values for the following flags to run non-interactively:\n  %s",
-						strings.Join(missing, "\n  "),
+						"sdd init needs values for the following flags %s:\n  %s",
+						purpose, strings.Join(missing, "\n  "),
 					)
 				}
 			}
 
 			graphDir := cmd.String("graph-dir")
-			if graphDir == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
+			if graphDir == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
 				prompted, err := promptGraphDir(cmd, model.DefaultGraphDir)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
 				graphDir = prompted
 			}
-			if graphDir == "" {
-				graphDir = model.DefaultGraphDir
-			}
-
 			// Resolve graph language: explicit flag wins; otherwise prompt
 			// only on fresh init with stdin interactive. The default is
 			// `en` (English); choosing it still writes the key so future
 			// readers of the file don't have to infer default vs. unset.
 			language := languageFlag
-			if language == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
+			if language == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
 				prompted, err := promptLanguage(cmd, "en")
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
 				language = prompted
+			}
+
+			var remoteURL, defaultBranch string
+			if !pointer {
+				if graphDir == "" {
+					graphDir = model.DefaultGraphDir
+				}
+
+				absGraphDir := meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})
+				graphRepoRoot := git.RepoRootFor(absGraphDir)
+				if graphRepoRoot == "" {
+					return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", absGraphDir)
+				}
+				if graphRepoRoot != repoRoot {
+					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
+				}
+				remoteURL = git.RemoteURL(repoRoot)
+				if existingMerged != nil {
+					defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
+				}
+				if defaultBranch == "" {
+					var branchErr error
+					defaultBranch, branchErr = git.CurrentBranch(repoRoot)
+					if branchErr != nil {
+						return branchErr
+					}
+				}
 			}
 
 			// Run the scope selector when no value has been recorded and the
@@ -1652,10 +1764,20 @@ func initCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			// Held until the run shows whether it changed anything: a run that
+			// changed nothing prints one line in its place unless --verbose.
+			// Flushed before a prompt or a stderr line, which keeps the order.
+			var report bytes.Buffer
+			unchanged := false
+			// A kept user-edited skill differs from the bundle, so such a run
+			// is not up to date.
+			preserved := false
 			icmd := &command.InitCmd{
 				RepoRoot:       repoRoot,
 				StableRepoRoot: stableRepoRoot,
 				GraphDir:       graphDir,
+				ProjectDir:     projectDir,
+				SetUpProject:   cmd.IsSet("project-dir"),
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
 				DialogueMode:   dialogueMode,
@@ -1672,41 +1794,50 @@ func initCmd() *cli.Command {
 				Bump:           cmd.Bool("bump"),
 				OnMinimumVersionBumped: func(previous, current string) {
 					if previous == "" {
-						fmt.Fprintf(cmd.Writer, "  minimum_version: → %s\n", current)
+						fmt.Fprintf(&report, "  minimum_version: → %s\n", current)
 					} else {
-						fmt.Fprintf(cmd.Writer, "  minimum_version: %s → %s\n", previous, current)
+						fmt.Fprintf(&report, "  minimum_version: %s → %s\n", previous, current)
 					}
 				},
 				OnMinimumVersionUnchanged: func(current string) {
-					fmt.Fprintf(cmd.Writer, "  minimum_version: %s (unchanged)\n", current)
+					fmt.Fprintf(&report, "  minimum_version: %s (unchanged)\n", current)
 				},
 				PromptOverwrite: func(path string) (bool, error) {
 					if !cliout.IsTerminalReader(cmd.Reader) {
 						return false, nil
 					}
+					_, err := report.WriteTo(cmd.Writer)
+					if err != nil {
+						return false, err
+					}
 					return promptOverwriteModified(cmd, path)
 				},
+				OnUnchanged: func() {
+					unchanged = true
+				},
 				OnCreated: func(sddDir, absGraphDir string) {
-					fmt.Fprintf(cmd.Writer, "created %s\n", sddDir)
-					fmt.Fprintf(cmd.Writer, "  graph: %s\n", absGraphDir)
+					fmt.Fprintf(&report, "created %s\n", sddDir)
+					fmt.Fprintf(&report, "  graph: %s\n", absGraphDir)
 				},
 				OnMigrated: func(count int) {
+					_, _ = report.WriteTo(cmd.Writer)
 					fmt.Fprintf(cmd.ErrWriter, "  migrated %d file(s) from .sdd-tmp/\n", count)
 				},
 				OnGitignoreUpdated: func(path string) {
+					_, _ = report.WriteTo(cmd.Writer)
 					fmt.Fprintf(cmd.ErrWriter, "  updated %s\n", path)
 				},
 				OnMetaWritten: func(path string) {
-					fmt.Fprintf(cmd.Writer, "  meta: %s\n", path)
+					fmt.Fprintf(&report, "  meta: %s\n", path)
 				},
 				OnParticipantWritten: func(path, name string) {
-					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
+					fmt.Fprintf(&report, "  participant: %s → %s\n", name, path)
 				},
 				OnLocalSettingWritten: func(path, key, value string) {
 					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID model.RepoID) {
-					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)
+					fmt.Fprintf(&report, "  repo_id: %s\n", repoID)
 				},
 				OnSkillsInstalled: func(result command.SkillInstallResult) {
 					// result.InstallDir reflects the scope the handler
@@ -1714,32 +1845,38 @@ func initCmd() *cli.Command {
 					// rather than the flag default — so it stays
 					// authoritative even when the CLI's local `scope`
 					// variable is just the fallback.
-					presenters.RenderInitSkills(cmd.Writer, result.InstallDir, result)
+					preserved = preserved || len(result.SkippedModified) > 0
+					presenters.RenderInitSkills(&report, result.InstallDir, result)
 				},
 				OnBridgeScaffolded: func(paths []string) {
 					for _, p := range paths {
-						fmt.Fprintf(cmd.Writer, "  bridge: %s\n", p)
+						fmt.Fprintf(&report, "  bridge: %s\n", p)
 					}
 				},
 				OnMCPRegistered: func(target model.AgentTarget, path string) {
-					fmt.Fprintf(cmd.Writer, "  mcp (%s): %s\n", target, path)
+					fmt.Fprintf(&report, "  mcp (%s): %s\n", target, path)
 				},
 				OnAgentSkillsPruned: func(result command.AgentPruneResult) {
-					presenters.RenderInitPrune(cmd.Writer, result)
+					presenters.RenderInitPrune(&report, result)
 				},
 				OnSkillOrphansPruned: func(result command.AgentPruneResult) {
-					presenters.RenderInitOrphans(cmd.Writer, result)
+					preserved = preserved || len(result.KeptModified) > 0
+					presenters.RenderInitOrphans(&report, result)
 				},
 				OnIndexMigrated: func(legacyDir, storeDir string, moved bool) {
 					if moved {
-						fmt.Fprintf(cmd.Writer, "  index migrated: %s → %s\n", legacyDir, storeDir)
+						fmt.Fprintf(&report, "  index migrated: %s → %s\n", legacyDir, storeDir)
 						return
 					}
-					fmt.Fprintf(cmd.Writer, "  index store already exists at %s — the legacy copy at %s is unused and can be removed\n", storeDir, legacyDir)
+					fmt.Fprintf(&report, "  index store already exists at %s — the legacy copy at %s is unused and can be removed\n", storeDir, legacyDir)
 				},
 			}
 
 			reader, err := newReadFinder()
+			// The project this run sets up does not resolve yet.
+			if errors.Is(err, meta.ErrNotAProject) && projectMissing {
+				reader, err = newReadFinderFor(existingMerged)
+			}
 			if err != nil {
 				return err
 			}
@@ -1748,16 +1885,29 @@ func initCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				Reader:    reader,
-				Committer: git.CLI{},
-				Tracker:   git.CLI{},
-				Repos:     mgr,
+				Stderr:              cmd.ErrWriter,
+				Reader:              reader,
+				Committer:           git.CLI{},
+				Tracker:             git.CLI{},
+				Repos:               mgr,
+				ProjectRepositories: git.Repositories{},
+				CommitterAt:         func(dir string) handlers.Committer { return git.CLI{Dir: dir} },
 			})
-			if err := handler.Init(ctx, icmd); err != nil {
-				return err
+			initErr := handler.Init(ctx, icmd)
+			upToDate := unchanged && !preserved
+			if !upToDate || cmd.Bool("verbose") {
+				_, err = report.WriteTo(cmd.Writer)
+				if err != nil {
+					return errors.Join(initErr, err)
+				}
 			}
-			notifyUnconnectedDependencies(cmd.ErrWriter, sddDir)
+			if initErr != nil {
+				return initErr
+			}
+			if upToDate {
+				fmt.Fprintln(cmd.Writer, "sdd: everything up to date, nothing changed")
+			}
+			notifyUnconnectedDependencies(cmd.ErrWriter, projectSDDDir)
 			return nil
 		}),
 	}
@@ -1863,7 +2013,7 @@ func wipStartCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Brancher:  git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
@@ -1919,7 +2069,7 @@ func wipDoneCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.RemovalCommitter{},
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
 				Brancher:  git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)
