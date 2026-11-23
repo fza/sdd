@@ -70,7 +70,7 @@ func (h *Handler) commitInit(ctx context.Context, record uncommittedRecord, left
 	if err != nil {
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}
-	return record.clear()
+	return errors.Join(h.afterGraphCommit(ctx, message), record.clear())
 }
 
 // uncommittedRecord lists, relative to a repository root, the paths an init

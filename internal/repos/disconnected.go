@@ -17,27 +17,30 @@ import (
 
 // disconnectedDirName holds one file per repository `sdd repo remove`
 // dropped while this machine connected it, beside the clones it vouches for.
-// The dot keeps it out of the clone walk.
 const disconnectedDirName = ".disconnected"
 
-// disconnection names the config file and cache root a record was written
-// under: a process reading another repos list, such as a temporary config,
-// finds no record that holds for it.
+// disconnection names the config file and roots a record was written under:
+// a process reading another repos list, such as a temporary config, finds no
+// record that holds for it.
 type disconnection struct {
 	ConfigPath string `json:"config_path"`
+	DataRoot   string `json:"data_root"`
 	CacheRoot  string `json:"cache_root"`
 }
 
 func (r *Registry) disconnection() (disconnection, error) {
-	configPath, err := resolvePath(r.loc.ConfigPath)
-	if err != nil {
-		return disconnection{}, err
+	var record disconnection
+	for _, field := range []struct {
+		path string
+		into *string
+	}{{r.loc.ConfigPath, &record.ConfigPath}, {r.loc.DataRoot, &record.DataRoot}, {r.loc.CacheRoot, &record.CacheRoot}} {
+		resolved, err := resolvePath(field.path)
+		if err != nil {
+			return disconnection{}, err
+		}
+		*field.into = resolved
 	}
-	cacheRoot, err := resolvePath(r.loc.CacheRoot)
-	if err != nil {
-		return disconnection{}, err
-	}
-	return disconnection{ConfigPath: configPath, CacheRoot: cacheRoot}, nil
+	return record, nil
 }
 
 // resolvePath returns path absolute with its symlinks resolved, as far as it
@@ -54,12 +57,9 @@ func resolvePath(path string) (string, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("resolving %s: %w", path, err)
 	}
-	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
-	if errors.Is(err, fs.ErrNotExist) {
-		return abs, nil
-	}
+	dir, err := resolvePath(filepath.Dir(abs))
 	if err != nil {
-		return "", fmt.Errorf("resolving %s: %w", path, err)
+		return "", err
 	}
 	return filepath.Join(dir, filepath.Base(abs)), nil
 }
@@ -80,22 +80,22 @@ func entryName(repoID model.RepoID) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func disconnectedPath(cacheRoot string, repoID model.RepoID) (string, error) {
+func disconnectedPath(dataRoot string, repoID model.RepoID) (string, error) {
 	err := model.ValidateRepoID(repoID)
 	if err != nil {
 		return "", err
 	}
-	if cacheRoot == "" {
-		return "", errors.New("no cache root for the connected-repo clones")
+	if dataRoot == "" {
+		return "", errors.New("no data root for the sdd-owned clones")
 	}
-	return filepath.Join(cacheRoot, disconnectedDirName, entryName(repoID)), nil
+	return filepath.Join(dataRoot, "repos", disconnectedDirName, entryName(repoID)), nil
 }
 
 // Disconnected reports whether `sdd repo remove` dropped repoID on this
 // machine since it was last connected, under this registry's config file and
-// cache root. An empty record holds nothing.
+// roots. An empty record holds nothing.
 func (r *Registry) Disconnected(repoID model.RepoID) (bool, error) {
-	path, err := disconnectedPath(r.loc.CacheRoot, repoID)
+	path, err := disconnectedPath(r.loc.DataRoot, repoID)
 	if err != nil {
 		return false, err
 	}
@@ -112,7 +112,7 @@ func (r *Registry) Disconnected(repoID model.RepoID) (bool, error) {
 	var recorded disconnection
 	err = json.Unmarshal(data, &recorded)
 	if err != nil {
-		return false, fmt.Errorf("reading the disconnection record %s: %w", path, err)
+		return false, fmt.Errorf("reading the disconnection record %s: %w; delete it to keep the clone of %s", path, err, repoID)
 	}
 	own, err := r.disconnection()
 	if err != nil {
@@ -124,7 +124,7 @@ func (r *Registry) Disconnected(repoID model.RepoID) (bool, error) {
 // MarkDisconnected records that repoID was dropped, which lets cache pruning
 // remove its clone once the user-global repos list no longer names it.
 func (m *Manager) MarkDisconnected(repoID model.RepoID) error {
-	path, err := disconnectedPath(m.reg.loc.CacheRoot, repoID)
+	path, err := disconnectedPath(m.reg.loc.DataRoot, repoID)
 	if err != nil {
 		return err
 	}
@@ -149,11 +149,11 @@ func (m *Manager) MarkDisconnected(repoID model.RepoID) error {
 
 // ClearDisconnected drops the record MarkDisconnected left for repoID.
 func (m *Manager) ClearDisconnected(repoID model.RepoID) error {
-	return clearDisconnected(m.reg.loc.CacheRoot, repoID)
+	return clearDisconnected(m.reg.loc.DataRoot, repoID)
 }
 
-func clearDisconnected(cacheRoot string, repoID model.RepoID) error {
-	path, err := disconnectedPath(cacheRoot, repoID)
+func clearDisconnected(dataRoot string, repoID model.RepoID) error {
+	path, err := disconnectedPath(dataRoot, repoID)
 	if err != nil {
 		return err
 	}

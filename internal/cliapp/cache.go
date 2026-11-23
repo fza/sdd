@@ -18,6 +18,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/syncstate"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -37,19 +38,21 @@ func cacheCmd(gitleaks *secrets.GitHub) *cli.Command {
 command or by a running sdd serve. It removes the ended sessions of every
 project after sessions.retention (default ` + model.DefaultSessionRetention + `); replaced index data
 after index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores,
-graph snapshots, embedder calibrations and the session folder and staged
-attachments of an unused project after cache.retention (default ` + model.DefaultCacheRetention + `);
+graph snapshots, embedder calibrations, git gate records and the session folder
+and staged attachments of an unused project after cache.retention (default ` + model.DefaultCacheRetention + `);
 graph snapshots of vanished folders and clones sdd repo remove
 dropped that the repos list no longer names at once; and crash leftovers a
-day old. All three keys live in the user-global config. While
-secrets.rules_update is daily (the default), the background pass also fetches
-the rule file of gitleaks' newest release for credential scans; a failed fetch
-fails the run after its other work, and a run by hand fetches nothing. Open
-sessions, unreadable session logs and the versions any checkout read within
-cache.retention always stay. One run at a time per machine: a run started by
-hand while another runs fails. A failed background run is reported once, by
-the next command or MCP tool result, and sdd info shows the last run. sdd
-index gc removes more on request.`,
+day old. An sdd-owned clone stays while a sync holds it, while it holds
+unpushed commits, and while git reached its remote within cache.retention;
+listed clones get git gc --auto. All three keys live in the user-global
+config. While secrets.rules_update is daily (the default), the background
+pass also fetches the rule file of gitleaks' newest release for credential
+scans; a failed fetch fails the run after its other work, and a run by hand
+fetches nothing. Open sessions, unreadable session logs and the versions any
+checkout read within cache.retention always stay. One run at a time per
+machine: a run started by hand while another runs fails. A failed background
+run is reported once, by the next command or MCP tool result, and sdd info
+shows the last run. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,
@@ -71,12 +74,17 @@ index gc removes more on request.`,
 					}
 					return err
 				}
+				gate, err := commandGate()
+				if err != nil {
+					return err
+				}
 				var secretRules handlers.SecretRulesUpdater
 				if gitleaks != nil {
 					secretRules = secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil)
 				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
+					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 					SecretRules: secretRules,
 				})

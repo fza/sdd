@@ -28,7 +28,7 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 	var project, local *model.PerRepoConfig
 	if q.SDDDir != "" {
 		var err error
-		project, local, err = meta.ReadConfigLayers(q.SDDDir)
+		project, local, err = meta.ReadLayers(q.SDDDir, q.LocalLayerFile)
 		if err != nil {
 			return nil, err
 		}
@@ -79,7 +79,7 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		perRepo := reflect.TypeFor[model.PerRepoConfig]()
 		layers = append(layers,
 			layer{path: filepath.Join(q.SDDDir, "config.yaml"), typ: perRepo, source: model.ConfigSourceProject},
-			layer{path: filepath.Join(q.SDDDir, "config.local.yaml"), typ: perRepo, source: model.ConfigSourceLocal},
+			layer{path: meta.LocalLayerOf(q.SDDDir, q.LocalLayerFile), typ: perRepo, source: model.ConfigSourceLocal},
 		)
 	}
 

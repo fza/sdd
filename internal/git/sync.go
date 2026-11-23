@@ -2,7 +2,11 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -45,9 +49,20 @@ func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// Fetch runs `git fetch` with no args.
+// Fetch runs `git fetch` with no args, detached from the terminal and bounded
+// like Push, so a stalled remote or a credential prompt cannot hold the sync
+// lock.
 func (c CLI) Fetch(ctx context.Context) error {
-	out, err := c.command(ctx, "fetch").CombinedOutput()
+	if c.graphClone() {
+		return c.fetchClone(ctx)
+	}
+	env, err := admittedEnv(ctx, "fetch")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	out, err := runDetachedEnv(ctx, env, c.at("fetch")...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -58,26 +73,51 @@ func (c CLI) Fetch(ctx context.Context) error {
 	return nil
 }
 
-// CountCommits counts commits in rangeSpec whose messages match grepPattern.
-func (c CLI) CountCommits(ctx context.Context, rangeSpec, grepPattern string) (int, error) {
-	// -E enables ERE so patterns like ^sdd: match. --pretty=format:%H gives
-	// one hash per commit; an empty output (no matches) yields zero lines.
-	cmd := c.command(ctx, "log", "--grep="+grepPattern, "-E", "--pretty=format:%H", rangeSpec)
-	out, err := cmd.Output()
+// CurrentBranch is the branch HEAD has checked out, empty on a detached HEAD.
+func (c CLI) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := c.command(ctx, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("git symbolic-ref HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// CountCommits counts commits in rangeSpec whose subject matches
+// subjectPattern; an empty pattern counts every commit.
+func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error) {
+	if subjectPattern == "" {
+		out, err := c.command(ctx, "rev-list", "--count", rangeSpec).Output()
+		if err != nil {
+			return 0, fmt.Errorf("git rev-list --count %s: %w", rangeSpec, err)
+		}
+		return strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	pattern, err := regexp.Compile(subjectPattern)
+	if err != nil {
+		return 0, fmt.Errorf("compiling subject pattern: %w", err)
+	}
+	out, err := c.command(ctx, "log", "--format=%s", rangeSpec).Output()
 	if err != nil {
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
-	return model.CountGraphCommits(string(out)), nil
+	return model.CountMatchingSubjects(string(out), pattern), nil
 }
 
 // MergeTreePredict simulates a three-way merge in memory and returns the
 // paths that would conflict.
 func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error) {
+	if c.graphClone() {
+		return c.predictCloneMerge(ctx, ourRef, theirRef)
+	}
 	// --no-messages suppresses the trailing informational/conflict-message
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38
 	// compatibility — the explicit flag was added in 2.40).
-	cmd := c.command(ctx, "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)
+	cmd := c.command(ctx, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)
 	out, err := cmd.Output()
 	if err != nil {
 		// Exit 1 is the documented conflict signal; parse stdout for paths.
@@ -87,4 +127,46 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 		return nil, fmt.Errorf("git merge-tree: %w", err)
 	}
 	return model.ParseMergeTreeConflicts(string(out)), nil
+}
+
+// CommonDir returns the repository's common git directory, the one every
+// worktree of it shares.
+func (c CLI) CommonDir(ctx context.Context) (string, error) {
+	out, err := c.command(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// HoldsUnpushed reports whether a local branch holds a commit no
+// remote-tracking branch reaches.
+func (c CLI) HoldsUnpushed(ctx context.Context) (bool, error) {
+	out, err := c.command(ctx, "rev-list", "--count", "--branches", "--not", "--remotes").Output()
+	if err != nil {
+		return false, fmt.Errorf("git rev-list --branches --not --remotes: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}
+
+// RevParse returns the commit ref names.
+func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := c.command(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Contains reports whether commit is reachable from HEAD. A commit the
+// repository does not know is not contained.
+func (c CLI) Contains(ctx context.Context, commit string) (bool, error) {
+	err := c.command(ctx, "merge-base", "--is-ancestor", commit, "HEAD").Run()
+	if err == nil {
+		return true, nil
+	}
+	if code := errExitCode(err); code == 1 || code == 128 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s HEAD: %w", commit, err)
 }

@@ -7,10 +7,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -20,10 +22,15 @@ import (
 type servedProject struct {
 	access   *localRuntimeAccess
 	cfg      *model.PerRepoConfig
+	layout   meta.Project
 	sessions sdd.SessionStore
 	blobs    sdd.StagedBlobStore
 	layers   model.ConfigLayers
 	clients  *servedClients
+	graphDir string
+	// entries is how many entries graphDir held when this resolution was
+	// built, the count a later move of the graph must reach.
+	entries int
 }
 
 // fileStamp is what serve compares to tell a config file changed, appeared,
@@ -87,15 +94,24 @@ type servedProjectKey struct{}
 // reads the config files, small enough for the call path, and a change,
 // appearance or removal rebuilds the served project before the call is
 // answered. A build that fails refuses every call until one succeeds: serve
-// never keeps the old config silently.
+// never keeps the old config silently. A config naming another graph folder
+// refuses every call until that folder holds the graph and the one served
+// before holds none of it, and only then is the project rebuilt on it.
 type configWatch struct {
 	watched []string
 	build   func(previous *servedProject, reads []configRead) (*servedProject, error)
+	// locate returns the graph folder the config names now; nil keeps the
+	// served one.
+	locate func() (string, error)
+	// guards run before every call once the config is followed, and refuse
+	// the call while their state lasts.
+	guards []func(context.Context, *servedProject) error
 
 	mu      sync.Mutex
 	current *servedProject
 	stamps  []fileStamp
 	broken  error
+	moved   *model.GraphRelocation
 	// notices holds one notice per rebuild that changed a key, oldest first.
 	// told counts how many of them a session was handed; a session this
 	// serve did not open was open across every one.
@@ -120,7 +136,7 @@ func newConfigWatch(watched []string, build func(previous *servedProject, reads 
 func (w *configWatch) admit(ctx context.Context, session string) (context.Context, string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	err := w.follow()
+	err := w.follow(ctx)
 	if err != nil {
 		return ctx, "", err
 	}
@@ -135,27 +151,96 @@ func (w *configWatch) admit(ctx context.Context, session string) (context.Contex
 	return call, notice, nil
 }
 
-func (w *configWatch) follow() error {
+// runtime follows the config for one sync tick.
+func (w *configWatch) runtime(ctx context.Context) (*sdd.ProjectRuntime, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	err := w.follow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return w.current.access.runtime, nil
+}
+
+func (w *configWatch) follow(ctx context.Context) error {
 	reads := readConfigFiles(w.watched)
 	stamps := stampFiles(reads)
 	// A broken build retries on every call, so a transient failure clears
 	// without another edit.
-	if w.broken == nil && slices.Equal(stamps, w.stamps) {
-		return nil
-	}
+	changed := w.broken != nil || !slices.Equal(stamps, w.stamps)
 	w.stamps = stamps
-	next, err := w.build(w.current, reads)
-	if err != nil {
-		w.broken = err
-		return err
+	if changed && w.locate != nil {
+		dir, err := w.locate()
+		if err != nil {
+			w.broken = err
+			return err
+		}
+		w.track(dir)
 	}
-	w.broken = nil
-	notice := model.FormatConfigNotice(model.ConfigChanges(w.current.layers, next.layers))
-	if notice != "" {
-		w.notices = append(w.notices, notice)
+	if w.moved != nil {
+		to := graphFolderEntries(w.moved.To)
+		err := w.moved.Unsettled(to, graphFolderEntries(w.moved.From))
+		if err != nil {
+			return err
+		}
+		w.moved = nil
+		changed = changed || filepath.Clean(to.Dir) != filepath.Clean(w.current.graphDir)
 	}
-	w.current = next
+	if changed {
+		next, err := w.build(w.current, reads)
+		if err != nil {
+			w.broken = err
+			return err
+		}
+		w.broken = nil
+		notice := model.FormatConfigNotice(model.ConfigChanges(w.current.layers, next.layers))
+		if notice != "" {
+			w.notices = append(w.notices, notice)
+		}
+		w.current = next
+	}
+	for _, guard := range w.guards {
+		err := guard(ctx, w.current)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// track records the graph folder the config names now against the one
+// served.
+func (w *configWatch) track(dir string) {
+	served := filepath.Clean(w.current.graphDir)
+	switch {
+	case filepath.Clean(dir) == served:
+		w.moved = nil
+	case w.moved == nil:
+		w.moved = &model.GraphRelocation{From: w.current.graphDir, To: dir, Entries: w.current.entries}
+	default:
+		w.moved.To = dir
+	}
+}
+
+// graphFolderEntries lists the entry files under dir.
+func graphFolderEntries(dir string) model.GraphFolder {
+	folder := model.GraphFolder{Dir: dir}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return folder
+	}
+	folder.Exists = true
+	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr == nil && !entry.IsDir() && model.EntryShaped(rel) {
+			folder.Entries = append(folder.Entries, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return folder
 }
 
 // tell records session as told every notice so far.

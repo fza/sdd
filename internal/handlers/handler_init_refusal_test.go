@@ -44,7 +44,9 @@ func TestInit_RefusesAGraphDirReadingAsMoreThanOneIgnoreRule(t *testing.T) {
 
 type recordingProjectRepositories struct{ inits []string }
 
-func (r *recordingProjectRepositories) RootOf(string) string { return "" }
+func (r *recordingProjectRepositories) RootOf(string) (string, error) { return "", nil }
+
+func (r *recordingProjectRepositories) StableRoot(dir string) (string, error) { return dir, nil }
 
 func (r *recordingProjectRepositories) Init(dir string) error {
 	r.inits = append(r.inits, dir)

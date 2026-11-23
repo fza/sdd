@@ -183,18 +183,18 @@ func (f *Finder) repoIndexLint(result *query.LintResult) {
 	if err != nil {
 		return
 	}
-	// Lint carries no context; the walk only reads cached configs.
+	// Lint carries no context; the walk only reads committed configs.
 	closure, err := f.DependencyClosure(context.Background(), query.DependencyClosureQuery{})
 	if err != nil {
 		return
 	}
 	fingerprint := emb.Fingerprint()
 	for _, repoID := range closure {
-		cache, connected, err := f.repos.Cache(repoID)
-		if err != nil || !connected || !cache.Cloned() {
+		clone, connected, err := f.repos.Clone(repoID)
+		if err != nil || !connected || !clone.Cloned() {
 			continue
 		}
-		manifest, err := index.LoadManifest(index.StoreDir(f.repos.CacheRoot(), index.RepoKey(repoID, cache.Dir), fingerprint))
+		manifest, err := index.LoadManifest(index.StoreDir(f.repos.CacheRoot(), index.RepoKey(repoID, clone.Dir), fingerprint))
 		if err != nil || len(manifest.Entries) == 0 {
 			continue
 		}

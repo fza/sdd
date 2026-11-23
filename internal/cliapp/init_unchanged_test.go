@@ -69,7 +69,7 @@ func TestInitSetUpKeepsItsReportInOrder(t *testing.T) {
 	out := runInit(t, repo, "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada")
 
 	created := strings.Index(out, "created ")
-	ignore := strings.Index(out, "  updated "+filepath.Join(repo, ".gitignore"))
+	ignore := strings.Index(out, "  updated "+filepath.Join(repo, ".sdd", ".gitignore"))
 	skills := strings.Index(out, "skills: ")
 	if created < 0 || ignore < created || skills < ignore || strings.Contains(out, nothingChanged) {
 		t.Errorf("a set-up should report what it wrote in the order it wrote it, got:\n%s", out)

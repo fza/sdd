@@ -41,7 +41,6 @@ var configDefaults = map[string]string{
 	"llm.model":            DefaultLLMModel,
 	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
 	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
-	"sync.cooldown":        DefaultSyncCooldown,
 	"dialogue.mode":        string(DialogueGuided),
 	"verify.mode":          string(DefaultVerifyMode),
 	"verify.skip":          string(VerifierSkipFailure),
@@ -49,6 +48,19 @@ var configDefaults = map[string]string{
 	"verify.prefilter":     strconv.FormatBool(DefaultGroundingPrefilter),
 	"verify.claude.model":  DefaultVerifierClaude.Model,
 	"verify.claude.effort": DefaultVerifierClaude.Effort,
+
+	"sync.default.fetch_cooldown":                   DefaultGitFetchCooldown.String(),
+	"sync.default.push_cooldown":                    DefaultGitPushCooldown.String(),
+	"sync.default.retries":                          strconv.Itoa(DefaultGitRetries),
+	"sync.default.concurrency":                      strconv.Itoa(DefaultGitConcurrency),
+	"sync.default.ssh.per_hour":                     strconv.Itoa(DefaultGitSSHPerHour),
+	"sync.default.https.per_hour":                   strconv.Itoa(DefaultGitHTTPSPerHour),
+	"sync.default.https.per_hour_unauthenticated":   strconv.Itoa(DefaultGitHTTPSUnauthenticatedPerHour),
+	"sync.default.ssh.per_minute":                   strconv.Itoa(DefaultGitLimits().SSHPerMinute),
+	"sync.default.https.per_minute":                 strconv.Itoa(DefaultGitLimits().HTTPSPerMinute),
+	"sync.default.https.per_minute_unauthenticated": strconv.Itoa(DefaultGitLimits().HTTPSUnauthenticatedPerMinute),
+	"sync.default.lease_pause":                      DefaultGitLeasePause.String(),
+	"sync.default.read_wait":                        DefaultGitReadWait.String(),
 
 	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
 
@@ -99,6 +111,9 @@ func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, lo
 
 	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
+		if _, retired := RetiredConfigKeys[leaf.path]; retired {
+			continue
+		}
 		switch leaf.kind {
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, mask, layers)...)

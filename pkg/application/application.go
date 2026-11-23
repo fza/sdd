@@ -75,6 +75,8 @@ type Application struct {
 	processes     RoundProcesses
 	readLocalFile func(path string) ([]byte, error)
 	secretRules   func() (SecretRules, error)
+	background    background
+	refreshes     refreshes
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -137,6 +139,10 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 		if err != nil {
 			return InfoResult{}, fmt.Errorf("reading the secret rules in use: %w", err)
 		}
+	}
+	result.SyncBlocked, err = runtime.syncBlocked(ctx, branch)
+	if err != nil {
+		return InfoResult{}, fmt.Errorf("reading the blocked sync: %w", err)
 	}
 	return result, nil
 }
@@ -784,7 +790,8 @@ func (a *Application) dependency(ctx context.Context, identity RequestIdentity, 
 }
 
 // selectedDependencies resolves a read's repo selection against runtime's
-// dependency closure, walked only when the read selects any.
+// dependency closure, walked only when the read selects any, and renews the
+// lease of each repo it selects.
 func (a *Application) selectedDependencies(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, named []RepoID, all bool) ([]RepoID, *horizon, error) {
 	if !all && len(named) == 0 {
 		return nil, nil, nil
@@ -801,7 +808,15 @@ func (a *Application) selectedDependencies(ctx context.Context, identity Request
 	if errors.Is(err, model.ErrNotInClosure) {
 		return nil, nil, dependencyUnavailable()
 	}
-	return selected, reach, err
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, repoID := range selected {
+		if member, err := reach.member(repoID); err == nil {
+			a.demand(ctx, member, "")
+		}
+	}
+	return selected, reach, nil
 }
 
 func dependencyUnavailable() error {

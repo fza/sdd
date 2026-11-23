@@ -11,7 +11,7 @@ sdd reads its settings from three YAML files and merges them. `sdd config` shows
 | --- | --- | --- |
 | User-global | `~/.config/sdd/config.yaml`, or `$XDG_CONFIG_HOME/sdd/config.yaml` when that variable is set | You, in every project on this machine |
 | Project | `.sdd/config.yaml` | Everyone on the project. Committed to git. |
-| Local | `.sdd/config.local.yaml` | You, in this checkout only. `sdd init` adds it to `.gitignore`. |
+| Local | `.sdd/config.local.yaml` | You, in this checkout only. `sdd init` lists it in `.sdd/.gitignore`. |
 
 A later row overrides an earlier one: local wins over project, project wins over user-global, and user-global wins over the built-in default. A file sets only the keys it names and inherits the rest. Maps merge entry by entry, so `llm.api_keys.openai` in the local file keeps `llm.api_keys.anthropic` from the user-global file. A list replaces the whole list below it. Command-line flags such as `--model` or `--embedding-provider` override every file for that one command.
 
@@ -19,7 +19,10 @@ A later row overrides an earlier one: local wins over project, project wins over
 
 | Keys | Belong in | Notes |
 | --- | --- | --- |
-| `participant`, `llm.*`, `embedding.*`, `sync.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
+| `participant`, `llm.*`, `embedding.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
+| `sync.default.*`, `sync.hosts.*` | User-global | The [git limits](#sync-and-sessions) hold for every project on the machine. In a project file sdd ignores them with a warning naming the file and the key, and `sdd config set --local` refuses them. |
+| `connected.*` | Any file | Whether you capture into connected graphs. See [connected repositories](#connected-repositories). |
+| `inbound.*` | Project | Whether the graph accepts captures from other graphs. sdd reads it from the committed `.sdd/config.yaml` only, drops it from a local file, and `sdd config set` refuses it. |
 | `sessions.retention` | User-global | One daily pass collects the sessions of every project on the machine. sdd ignores it in the project files with a warning, and `sdd config set --local` refuses it. |
 | `dialogue.mode` | User-global or local | Set per person. sdd ignores it in the project file. |
 | `llm_prefilter.*` | User-global | Any file works, as for `llm.*`. |
@@ -93,6 +96,32 @@ sdd init                                           # repeat in the work reposito
 - Only a typed `--project-dir` sets a project up. A recorded `project_dir` naming a missing folder is refused with advice to clone the project there, so a teammate's clone never grows a second, empty graph.
 - `--bump` is refused in a work repository. Run it in the project.
 
+### A graph repository sdd clones
+
+With `graph_repo`, the graph lives in a repository of its own on a remote, and sdd keeps the only checkout of it. You keep no checkout of the graph by hand:
+
+```yaml
+# code repository: .sdd/config.yaml, committed
+graph_repo: github.com/acme/app-sdd   # repo ID: host/path, no scheme, user or .git
+graph_dir: .sdd/GRAPH-ELSEWHERE.md    # guard against sdd versions without graph_repo
+skill_scope: project
+supported_agents: [claude]
+```
+
+```bash
+sdd init --graph-repo git@github.com:acme/app-sdd.git
+```
+
+- A fresh `sdd init` in a terminal asks where the graph should live: in this repository, in a repository of its own on a remote (`graph_repo`), or in a local folder without a remote (`project_dir`). It never asks again once the answer is recorded.
+- `sdd init --graph-repo <address>` derives the repo ID from the address and clones the graph repository. The repository must exist on the remote, empty or set up. sdd sets up `.sdd/` there when it is empty, and pushes. Only after the push succeeds does it commit the pointer config, the guard file, the skills and the MCP registration in the code repository.
+- The clone lives under `~/.local/share/sdd/repos/<repo_id>/`, or `$XDG_DATA_HOME/sdd/repos/<repo_id>/` when that variable is set. `sdd repo path <repo_id>` prints the folder. The clone holds every commit but fetches file contents only for `.sdd/` and a `graph_dir` outside it. A connected repository with the same `repo_id` shares it.
+- The clone belongs to sdd. Before every sync round and every push, sdd restores the tracked files, removes untracked ones and drops commits it did not write, so a hand edit there is lost. The file `SDD_MANAGED__EDITS_ARE_DISCARDED.md` at the clone's root says so.
+- The local layer is the code repository's `.sdd/config.local.yaml`. It may set any key, and `sdd config set --local` writes there, never into the clone.
+- `graph_repo` wins over a `project_dir` beside it, and sdd ignores the `graph_dir` beside it. An sdd version without `graph_repo` reads that `graph_dir` as the graph folder and finds a file, so every capture fails with `not a directory` and writes nothing.
+- A graph repository whose own config sets `graph_repo` is an error: sdd names the key and the file, and works on neither.
+- A graph repository set up through `--graph-repo` or `--project-dir` gets `graph_dir: graph`. A recorded `graph_dir` is always kept.
+- The clone [syncs on its own](#sync). When the upstream branch was force-pushed, the clone follows it and never force-pushes back. Entries the new upstream lacks are set aside under `.git/sdd-set-aside/` in the clone. One whose references all resolve and that passes pre-flight's mechanical checks returns on its own; for the rest, the sync notice names how to capture each again or discard it.
+
 ## The sdd config command
 
 | Command | What it does |
@@ -102,6 +131,7 @@ sdd init                                           # repeat in the work reposito
 | `sdd config get <prefix>` | Lists the values under a prefix, such as `llm`. Without an argument, lists all values. |
 | `sdd config set <key> <value>` | Writes the key to the user-global file and creates the file if needed. Works outside a project. |
 | `sdd config set --local <key> <value>` | Writes the key to `.sdd/config.local.yaml`. Works only inside an sdd project. |
+| `sdd config set [--local] --repo <repo_id> connected.write <value>` | Writes `connected.repos.<repo_id>.write`, keeping a `repo_id` with dots as one key. |
 | `sdd config unset [--local] <key>` | Removes the key from the user-global file, or with `--local` from the local file. |
 
 - Keys are dotted paths, such as `llm.api_keys.openai`.
@@ -126,8 +156,9 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path inside the repository. |
+| `graph_dir` | `.sdd/graph`, or `graph` in a graph repository `sdd init` sets up through `--graph-repo` or `--project-dir` | Directory of the entry files, relative to the repository root, or an absolute path inside the repository. |
 | `project_dir` | None | Set only in a work repository: the sdd project holding its graph. See [a graph in a repository of its own](#a-graph-in-a-repository-of-its-own). |
+| `graph_repo` | None | Set only in a code repository: the `repo_id` of the repository holding its graph, which sdd clones and syncs. See [a graph repository sdd clones](#a-graph-repository-sdd-clones). |
 | `default_branch` | The branch checked out during `sdd init` | A session that names no branch works on the branch checked out in the project directory, and on this branch when none is checked out. `sdd serve` does not start without it. |
 | `repo_id` | Derived from the `origin` remote | The project's identity, such as `github.com/acme/platform`. Other graphs reference an entry here as `<repo_id>:<entry-id>`. Empty for a repository without a remote. Do not change it by hand. |
 | `language` | English | Language of the entry text, as a locale code such as `en`, `de` or `de-DE`. Translated SDD vocabulary ships for `de`. |
@@ -393,10 +424,83 @@ Every write adds a file `<time>-<random>.jsonl` and never changes one, so files 
 
 ### Sync and sessions
 
+Every git fetch and push sdd starts, from any sdd process on the machine, passes one gate that holds it to the git limits below. They hold per remote host and live in the user-global file only. A remote that is a local path or a `file://` URL is never limited.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `sync.cooldown` | `15m` | Every sdd command except `sdd init` runs `git fetch` in the background at most once per this interval, and reports when your branch is behind or ahead of its upstream. An invalid value counts as `15m`. |
+| `sync.default.fetch_cooldown` | `5m` | Least time between two fetches from one remote. A value below `1m` is ignored. sdd lengthens it when the remotes on one host would otherwise exceed the hourly limit. A clone where none exists yet is not held by it, unless that clone failed itself: it then waits for the retry or the cooldown like a fetch. |
+| `sync.default.push_cooldown` | `30s` | Least time between two pushes to one remote. A value below `10s` is ignored. |
+| `sync.default.retries` | `2` | Retries of a fetch or push whose transport failed, within its cooldown. A refused login, a rate limit, a rejected push or a merge conflict is never retried. |
+| `sync.default.concurrency` | `2` | Git network operations that run at the same time against one host. |
+| `sync.default.lease_pause` | `10m` | How long a clone's [lease](#leases) holds after the last call that renewed it. A value below `1m` is ignored. |
+| `sync.default.read_wait` | `15s` | How long a call waits for the sync round its lease start runs. A value below `1s` is ignored. |
+| `sync.default.ssh.per_hour` | `600` | SSH operations per hour against one host. |
+| `sync.default.https.per_hour` | `600` | HTTPS operations per hour against one host, with credentials. |
+| `sync.default.https.per_hour_unauthenticated` | `60` | HTTPS operations per hour against one host, without credentials. |
+| `sync.default.ssh.per_minute` | A tenth of `ssh.per_hour` | SSH operations per minute against one host. Once reached, every operation waits for the next minute. |
+| `sync.default.https.per_minute` | A tenth of `https.per_hour` | The same for HTTPS with credentials. |
+| `sync.default.https.per_minute_unauthenticated` | A tenth of `https.per_hour_unauthenticated` | The same for HTTPS without credentials. |
+| `sync.hosts.<host>.<limit>` | The `sync.default` value | Any limit above for one remote host, such as `sync.hosts.github.com.https.per_hour`. |
 | `sessions.retention` | `14d` | The daily `sdd cache prune` deletes the logs and staged attachments of sessions, in every project, that ended longer ago than this. Open sessions and logs sdd cannot read stay. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value fails the prune run. |
+
+`sdd config set` refuses a value below its minimum; read from a file, such a value is ignored with a warning. A git limit in a project file is ignored with a warning naming the file and the key.
+
+`sync.cooldown` no longer exists. sdd reads past it in any file without a warning, and `sdd config` does not list it. `sdd config set` refuses it: `git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config`.
+
+#### Leases
+
+The clones sdd keeps under `~/.local/share/sdd/repos/`, those of connected repositories and the project's own `graph_repo` clone, fetch automatically only while a lease holds. A graph inside the code repository has no lease and never syncs automatically. Every `sdd serve` on the machine shares one lease per clone. A lease starts or renews:
+
+- for the home project's graph, on `start_session`, `start_procedure`, `resume_session` and a read naming no repository;
+- for a project, on every procedure call working in it: `start_procedure`, `next`, `park` and `abandon`;
+- for a repository a call names: `search` or `view` with `repos` or `all_repos`; `search`, `show`, `view`, `read_attachment` or `info` with `project`; a capture ref `<repo-id>:<entry-id>`; a capture into a dependency.
+
+`registry` reads no repository and renews nothing. A lease ends `lease_pause` after its last renewal.
+
+While a lease holds, the timer of `sdd serve` fetches the clone once per effective fetch cooldown, described under [git credits](#git-credits). Without a lease it fetches nothing. Commits waiting in a clone are pushed whether a lease holds or not.
+
+When a call starts a lease and the clone's effective fetch cooldown has passed, one sync round runs at once and the call waits for it at most `read_wait`. Past that, the call reads the clone as it stands and its sync notice says the refresh still runs and when the clone last fetched; the round finishes in the background. A lease starting inside the cooldown reads the clone as it stands and fetches nothing. The CLI commands that read connected repositories, `sdd show`, `sdd view`, `sdd search`, `sdd export` and `sdd new` with a ref into one, start or renew the leases of the repositories they read the same way and print the same warning. A command ends only once its rounds have finished.
+
+#### Git credits
+
+sdd counts every git network operation it starts in a bucket per host: SSH, HTTPS with credentials, or HTTPS without. Automatic fetches may use 90 percent of each bucket's hourly limit; the rest is kept for pushes and for syncs you command. The clones sdd keeps under `~/.local/share/sdd/repos/` share the fetches: the fetch cooldown of each repository is at least one hour times the number of those clones in its bucket, divided by 90 percent of the bucket's hourly limit. Repositories you work in yourself and removed clones do not count. With the defaults this lengthens the cooldown from 46 clones on, or from 5 over HTTPS without login. An HTTPS repository whose login sdd does not know yet counts in both HTTPS buckets and takes the longer cooldown.
+
+Once a clone may fetch again, each span of one cooldown that passes without a fetch earns its host and protocol one credit. The credit expires one hour after its span began. A credit lets one operation run inside its cooldown:
+
+- The push of commits sdd just wrote, such as a capture into a connected repository right after its last push.
+- A sync you command with `sdd repo sync` or the `sync_repos` tool, its fetch or its push.
+
+Other reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly and per-minute limits and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
+
+#### Sync
+
+How sdd syncs a graph depends on where the graph lives.
+
+A graph inside the code repository syncs only when you ask. A capture stays a local commit, and sdd never merges into your branch unasked. `sdd sync` fetches as far as the git limits admit, then prints where the branch stands:
+
+```text
+sync: fast-forward available, 3 commits behind
+sync: merge is clean, 2 remote / 1 local
+sync: merge would conflict in .sdd/graph/2026/11/15-091200-d-tac-abc.md, 2 remote / 1 local
+sync: local ahead by 1, consider push
+sync: fetch skipped, next allowed at 14:05
+```
+
+Without an upstream, `sdd sync` fails with the status line as its error. `sdd sync --pull` merges the upstream branch, never rebases, and commits the merge as `sdd: merge <upstream>`. Every other command except `sdd init` and `sdd cache` runs the same fetch in the background and reports when your branch is behind or ahead of its upstream.
+
+A [`graph_repo` clone](#a-graph-repository-sdd-clones) syncs on its own:
+
+- `sdd new`, `sdd summarize`, `sdd wip start`, `sdd wip done`, `sdd lint fix`, `sdd rewrite`, `sdd init` and `sdd repo add` push their commit before they return, and so does every capture through `sdd serve`. A failed push fails the command and keeps the commit.
+- A sync round fetches, merges the upstream branch and pushes what waits. A rejected push merges the upstream branch and pushes once more. The timer of `sdd serve` runs a round while the clone's [lease](#leases) holds and its fetch is due.
+- `sdd sync` runs a round at once, also while sync is paused.
+
+A round that cannot finish leaves a record for the branch. Every tool result of your agent's `sdd serve` then carries a sync notice. The first session to see it gets the steps to fix it, and `sdd info` shows the record with the same steps. A merge conflict pauses automatic sync until you merge by hand; other blocks are retried each round.
+
+#### Merge drivers
+
+`sdd init` routes the entry files to the merge driver `sdd git-merge entry` in `<graph_dir>/.gitattributes`, and every command that touches the graph's git writes the driver into `.git/config`. When only one side of a merge changed an entry's `title` or `summary`, that side wins. Changed on both sides, the value whose UTF-8 bytes sort first wins, so every clone gets the same result in either merge direction. The body and the other keys merge as text. Without the driver in `.git/config`, or without `sdd` on `PATH`, git merges the file as text with conflict markers.
+
+In the clones it keeps, sdd passes the drivers with every git call, and `sdd git-merge config` merges `.sdd/config.yaml` key by key: `dependencies` as a set, and a value changed on both sides takes the upstream value, with a warning. An upstream deletion of an entry wins over a local `title` or `summary` change. git calls both drivers; you never run them yourself.
 
 ### Cache
 
@@ -404,7 +508,7 @@ Both keys accept days, such as `90d`, or a duration, such as `2160h`. `sdd confi
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot or an embedding calibration nothing used for longer than this, and the session folder and staged attachments of a project unused that long. Also how long a checkout's record keeps the index versions it reads. |
+| `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot, an embedding calibration, a git gate record or a dropped repository's clone nothing used for longer than this, and the session folder and staged attachments of a project unused that long. Also how long a checkout's record keeps the index versions it reads. |
 | `index.replaced_retention` | `14d` | `sdd cache prune` deletes an index version replaced longer ago than this, versions of an older index format unused that long, and the index store of an embedding setup another one replaced. |
 
 ### Credential scan
@@ -429,7 +533,47 @@ repos:
     clone_url: git@github.com:acme/platform.git
 ```
 
-sdd keeps a clone of each connected repository under `~/.cache/sdd/<repo_id>`. A read that needs it pulls the clone at most once every 15 minutes. This interval is fixed.
+sdd keeps a clone of each connected repository under `~/.local/share/sdd/repos/<repo_id>`, the same kind of clone as a [`graph_repo` clone](#a-graph-repository-sdd-clones). A read that needs it starts or renews the clone's [lease](#leases), which runs the clone's sync round once its effective fetch cooldown has passed. The [connected repositories guide](/sdd/guides/connected-repositories/#a-connected-graph-is-what-was-pushed) describes the round.
+
+#### Captures into connected graphs
+
+A capture into another graph needs the consent of both sides. Both settings are off by default.
+
+| Key | File | Default | Meaning |
+| --- | --- | --- | --- |
+| `connected.write` | Any file | `false` | Whether you capture into connected graphs. |
+| `connected.repos.<repo_id>.write` | Any file | `connected.write` | The same for one repository. It wins over `connected.write` after the layers merge. |
+| `inbound.accept` | Project | `false` | Whether this graph accepts captures from other graphs. |
+| `inbound.repos.<repo_id>.accept` | Project | `inbound.accept` | The same for captures from one repository. |
+
+```yaml
+# writing side: user-global, .sdd/config.yaml or .sdd/config.local.yaml
+connected:
+  write: false
+  repos:
+    github.com/acme/platform:
+      write: true
+```
+
+```yaml
+# receiving side: the graph's committed .sdd/config.yaml only
+inbound:
+  accept: false
+  repos:
+    github.com/acme/app:
+      accept: true
+```
+
+```bash
+sdd config set --repo github.com/acme/platform connected.write true
+```
+
+sdd checks both settings when a procedure that publishes into another graph starts, before the dialogue, and reads `inbound.accept` again on the fresh clone before it writes. The capture writes through the sdd-owned clone and pushes from there. A refusal names the closed side and how to open it:
+
+```text
+capture into a connected graph refused: connected.write does not allow writing into github.com/acme/platform; set it with `sdd config set --repo github.com/acme/platform connected.write true`
+capture into a connected graph refused: github.com/acme/platform does not accept captures from github.com/acme/app; its committed .sdd/config.yaml needs inbound.accept or inbound.repos.github.com/acme/app.accept set to true
+```
 
 ## Language model providers
 
@@ -660,14 +804,17 @@ sdd runs `sdd cache prune` in the background at most once a day. Any command exc
 
 - after `sessions.retention`: ended sessions of every project, with their staged attachments, in the state folder and in the `.sdd/sessions` of every checkout sdd opened the project from
 - after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
-- after `cache.retention`: unused index stores, graph snapshots and calibrations
+- after `cache.retention`: unused index stores, graph snapshots and calibrations, and the git gate's record of a remote no lease, fetch or push touched within that time and with no next allowed time ahead
 - after `cache.retention`: the session folder of a project no session-store write and no `sdd serve` start used, once no session log is left in it, and its staged attachments once no session on the machine owns them, a session open in a checkout the project was opened from included. They stay while no checkout of the project is on record, or a recorded one has been missing for less than `cache.retention` since a run first found it missing, as on an unmounted volume. A checkout missing longer, as a removed worktree, drops out of the record.
-- at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped under the same config file that `repos` no longer names
+- at once: graph snapshots of directories that no longer exist
+- the clone of a repository `sdd repo remove` dropped under the same config file that `repos` no longer names, under `~/.local/share/sdd/repos/` or where an earlier sdd kept it under `~/.cache/sdd`, unless a sync holds it, it holds commits no remote-tracking branch reaches, or a fetch or push reached its remote within `cache.retention`; a kept clone is logged with its reason
 - a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
 - a dropped clone holding another clone, or the path of a repository `repos` names, stays, with a warning
+- a clone missing from `repos` alone stays, `graph_repo` clones included, and so does every clone of a repository `repos` names
+- every clone of a repository `repos` names gets `git gc --auto`, which packs it by git's own thresholds; a clone a sync holds waits for the next run
 - with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
 - with `XDG_STATE_HOME` set while `XDG_CACHE_HOME` or `XDG_DATA_HOME` is not, or the reverse, a run sweeps no session or project state and fails; `XDG_CONFIG_HOME` plays no part
-- leftovers of killed processes older than a day
+- leftovers of killed processes older than a day: git trace files, unfinished clones, and the folders of an older clone layout that hold only lock files
 
 It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
 
@@ -771,8 +918,9 @@ jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
-| `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations, graph snapshots and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs, project use stamps, the hook allow record, the relevance ledger, the logs of verifier rounds and the record and log of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations and graph snapshots live under `$XDG_CACHE_HOME/sdd`. |
+| `XDG_DATA_HOME` | `~/.local/share` | The clones sdd keeps of connected repositories and of `graph_repo` graphs live under `$XDG_DATA_HOME/sdd/repos`. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs, project use stamps, the hook allow record, the relevance ledger, the logs of verifier rounds and the record and log of the last `sdd cache prune` and the git gate's record of each remote live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. A cache dir sdd cannot write costs one warning and no failure. `off` reads every entry file, for sandboxes and read-only homes. |
 | `SDD_TIMING` | Off | Any true value prints one line on stderr per ended phase of a command, `timing: <phase> <duration>ms at <offset>ms`. Same as `--timing`. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |

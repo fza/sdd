@@ -36,9 +36,29 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 	if err != nil {
 		return err
 	}
+	if cmd.Key == "inbound" || strings.HasPrefix(cmd.Key, "inbound.") {
+		return fmt.Errorf("%s is set only in the committed .sdd/config.yaml of the graph receiving captures, never in the %s config", cmd.Key, cmd.Target)
+	}
+	if reason, retired := model.RetiredConfigKeys[cmd.Key]; retired {
+		return fmt.Errorf("%s is no longer used: %s", cmd.Key, reason)
+	}
+	segments := strings.Split(cmd.Key, ".")
+	hostsPath, inHosts, err := model.SyncHostsKeyPath(cmd.Key)
+	if err != nil {
+		return err
+	}
+	if inHosts {
+		segments = hostsPath
+	}
+	if cmd.Repo != "" {
+		segments, err = model.RepoOverrideKey(cmd.Key, model.RepoID(cmd.Repo))
+		if err != nil {
+			return err
+		}
+	}
 
 	return file.patch(func(existing []byte) ([]byte, error) {
-		patched, err := model.SetYAMLField(existing, cmd.Key, model.ParseConfigScalar(cmd.Value))
+		patched, err := model.SetYAMLFieldAt(existing, segments, model.ParseConfigScalar(cmd.Value))
 		if err != nil {
 			return nil, fmt.Errorf("setting %s: %w", cmd.Key, err)
 		}
@@ -65,7 +85,11 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if err := model.UnmarshalYAML(patched, &settings); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
-		for _, ignored := range model.IgnoredSettings(settings, source) {
+		ignoredSettings := model.IgnoredSettings(settings, source)
+		if source == model.ConfigSourceGlobal {
+			ignoredSettings = append(ignoredSettings, model.IgnoredGitLimits(settings.Sync)...)
+		}
+		for _, ignored := range ignoredSettings {
 			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {
 				return nil, fmt.Errorf("%s is not valid for the %s config: %s", cmd.Key, layer, ignored.Reason)
 			}

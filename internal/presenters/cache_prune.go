@@ -26,8 +26,8 @@ func CachePruneLine(s model.CachePruneStatus) string {
 // CachePruneRemoved names what a run removed, and the unreadable session logs
 // it kept.
 func CachePruneRemoved(c model.CachePruneCounts) string {
-	text := fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers, %d sessions, %d unused projects",
-		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers, c.Sessions, c.Projects)
+	text := fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers, %d sessions, %d unused projects, %d gate records",
+		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers, c.Sessions, c.Projects, c.GateRecords)
 	if c.Unreadable > 0 {
 		text += fmt.Sprintf("; kept %d unreadable session logs", c.Unreadable)
 	}

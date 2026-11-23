@@ -253,6 +253,9 @@ type WorkflowAbandonResult struct {
 	Discarded   []WorkflowInstanceSummary
 	HeldMarkers []string
 	Base        *WorkflowServe
+	// SyncNotice is the blocked-sync banner on a teardown by handle, which
+	// releases the session's ownership of the fix.
+	SyncNotice string
 }
 
 type WorkflowParkResult struct {
@@ -348,6 +351,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	a.demand(ctx, runtime, created.Metadata.Branch)
 	w, err := a.newWorkflow(ctx, identity, info.Project.ID, sessionBindingFrom(created), created.Metadata.Branch)
 	if err != nil {
 		return nil, nil, err
@@ -429,6 +433,29 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
 	return a.replayWorkflow(ctx, identity, runtime, stored)
+}
+
+// SyncNotice returns the blocked-sync notice a response in this session
+// carries, empty while sync of its branch's graph repository proceeds and
+// no refresh a call stopped waiting for still runs.
+func (w *WorkflowSession) SyncNotice(ctx context.Context, identity RequestIdentity) string {
+	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
+	if err != nil {
+		return ""
+	}
+	var notice string
+	if w.Finished() {
+		notice = runtime.releaseSyncOwner(ctx, w.branch, string(w.ID()))
+	} else {
+		notice = runtime.syncNotice(ctx, w.branch, string(w.ID()))
+	}
+	notices := make([]string, 0, 2)
+	for _, line := range []string{notice, w.app.refreshes.notice(w.app.now())} {
+		if line != "" {
+			notices = append(notices, line)
+		}
+	}
+	return strings.Join(notices, "\n")
 }
 
 func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, stored StoredSession) (*WorkflowSession, error) {
@@ -585,6 +612,7 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 		return nil
 	}
 	w.setOperation(ctx, identity)
+	w.demandProject("")
 	w.session.Reorient()
 	return w.session.SinkErr()
 }
@@ -671,15 +699,16 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	if err != nil {
 		return nil, err
 	}
+	target := project
+	if target == "" {
+		target = w.instanceProject(parent)
+	}
+	w.demandProject(target)
 	// A move that publishes an entry into another project, named or derived
 	// from its parent, is refused at its start when it may not write there,
 	// or when this client cannot run the verifier that project checks with,
 	// not after the dialogue it costs.
-	target := project
-	if derived := w.instanceProject(parent); target == "" && derived != w.project {
-		target = derived
-	}
-	if target != "" && publishesEntry(spec) {
+	if (project != "" || target != w.project) && publishesEntry(spec) {
 		err = w.authorizeTarget(target, AccessWrite)
 		if err != nil {
 			return nil, err
@@ -718,6 +747,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		return nil, w.finishedError()
 	}
 	w.setOperation(ctx, identity)
+	w.demandProject(w.instanceProject(request.Instance))
 	w.graphs.Invalidate()
 	if err := w.setLabel(request.Label); err != nil {
 		return nil, err
@@ -982,6 +1012,7 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if instance == w.shell {
 		return WorkflowAbandonResult{}, fmt.Errorf("the session shell concludes through its own junction")
 	}
+	w.demandProject(w.instanceProject(instance))
 	if err := w.session.RefuseUnattendedAbandon(instance); err != nil {
 		return WorkflowAbandonResult{}, codedRefusal(err)
 	}
@@ -1016,6 +1047,7 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 	if instance == w.shell {
 		return WorkflowParkResult{}, fmt.Errorf("park is for moves; the session shell is the junction they park back to")
 	}
+	w.demandProject(w.instanceProject(instance))
 	inst, ok := w.session.Instance(instance)
 	if !ok {
 		return WorkflowParkResult{}, fmt.Errorf("instance %q not found in session", instance)
@@ -1628,6 +1660,7 @@ func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity,
 	if err := a.blobs.DeleteStaged(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: request.SessionID}); err != nil {
 		return result, w, fmt.Errorf("session %s ended; freeing its staged files: %w", request.SessionID, err)
 	}
+	result.SyncNotice = runtime.releaseSyncOwner(ctx, w.branch, string(request.SessionID))
 	return result, w, nil
 }
 

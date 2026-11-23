@@ -1,0 +1,229 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/meta"
+	"github.com/networkteam/sdd/internal/model"
+)
+
+// initGraphRepo sets up a code repository whose graph lives in the graph
+// repository cmd.GraphRepo: the graph is cloned
+// into sdd's own clone, set up or refreshed there and pushed; the code
+// repository receives graph_repo, the stock guard and the agent surfaces in
+// one commit.
+func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
+	if cmd.Bump {
+		return fmt.Errorf("--bump raises the graph repository's minimum_version; run it where %s is checked out", cmd.GraphRepo)
+	}
+	if h.graphClones == nil || h.projectRepos == nil || h.committerAt == nil || h.cloneRound == nil {
+		return errors.New("graph_repo needs sdd's graph clones, their sync round and a git adapter")
+	}
+	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
+	configPath := filepath.Join(sddDir, "config.yaml")
+	existing, err := os.ReadFile(configPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+	configExisted := err == nil
+	if configExisted {
+		recorded, parseErr := model.ParseConfig(existing)
+		if parseErr != nil {
+			return fmt.Errorf("parsing %s: %w", configPath, parseErr)
+		}
+		if recorded.GraphRepo == "" && recorded.ProjectDir == "" {
+			return fmt.Errorf("%s configures a project of its own; reduce it to the pointer keys before pointing it at %s", configPath, cmd.GraphRepo)
+		}
+	}
+	scope, persistScope, err := resolveSkillScope(configExisted, configPath, cmd.Scope, cmd.ScopeExplicit)
+	if err != nil {
+		return err
+	}
+	agents, recordedAgents, persistAgents, err := resolveSupportedAgents(configExisted, configPath, cmd.Targets)
+	if err != nil {
+		return err
+	}
+
+	cloned := false
+	err = h.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: cmd.GraphRepo, CodeOrigin: cmd.RemoteURL, OnCloned: func(string) { cloned = true }})
+	if err != nil {
+		return err
+	}
+	cloneDir, err := h.graphClones.Dir(cmd.GraphRepo)
+	if err != nil {
+		return err
+	}
+	projectCfg, _, err := meta.ReadConfigLayers(meta.SDDDir(cloneDir))
+	if err != nil {
+		return err
+	}
+	if projectCfg != nil && !cloned {
+		err = h.syncGraphClone(ctx, cmd.GraphRepo, cloneDir)
+		if err != nil {
+			return err
+		}
+		projectCfg, _, err = meta.ReadConfigLayers(meta.SDDDir(cloneDir))
+		if err != nil {
+			return err
+		}
+	}
+	if projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != "") {
+		return fmt.Errorf("--graph-dir and --language configure the graph repository %s, which is set up already", cmd.GraphRepo)
+	}
+	if projectCfg == nil {
+		graphDir := cmd.GraphDir
+		if graphDir == "" {
+			graphDir = model.DefaultGraphDirFor(true)
+		}
+		err = h.graphClones.Widen(ctx, cmd.GraphRepo, graphDir)
+		if err != nil {
+			return err
+		}
+	}
+	_, httpsURL, err := model.GraphRemoteURLs(cmd.GraphRepo)
+	if err != nil {
+		return err
+	}
+	branch := ""
+	if projectCfg == nil || projectCfg.DefaultBranch == "" {
+		branch, err = h.projectRepos.CurrentBranch(cloneDir)
+		if err != nil {
+			return err
+		}
+	}
+	localLayer := meta.LocalLayerOf(sddDir, cmd.LocalLayerFile)
+	err = os.MkdirAll(filepath.Dir(localLayer), 0o755)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(localLayer), err)
+	}
+	err = h.runProjectInit(ctx, cmd, cloneDir, func(projectCmd *command.InitCmd) {
+		projectCmd.LocalLayerFile = localLayer
+		projectCmd.RemoteURL = httpsURL
+		projectCmd.GraphOnly = true
+		projectCmd.DefaultBranch = branch
+		if projectCfg == nil {
+			if projectCmd.GraphDir == "" {
+				projectCmd.GraphDir = model.DefaultGraphDirFor(true)
+			}
+			projectCmd.Scope = scope
+			projectCmd.ScopeExplicit = true
+			projectCmd.Targets = agents
+			return
+		}
+		projectCmd.GraphDir = projectCfg.GraphDir
+		projectCmd.Scope = ""
+		projectCmd.ScopeExplicit = false
+		projectCmd.Targets = nil
+	}, changed)
+	if err != nil {
+		return err
+	}
+	err = h.graphClones.Publish(ctx, cmd.GraphRepo)
+	if err != nil {
+		return err
+	}
+
+	var record uncommittedRecord
+	var leftover []string
+	if h.committer != nil {
+		record, leftover, err = h.trustedRecord(ctx, cmd.RepoRoot)
+		if err != nil {
+			return err
+		}
+	}
+
+	var touched []string
+	if !configExisted {
+		err = os.MkdirAll(sddDir, 0o755)
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", sddDir, err)
+		}
+		pointer := model.PerRepoConfig{GraphRepo: cmd.GraphRepo, SkillScope: scope, SupportedAgents: agents}
+		err = os.WriteFile(configPath, []byte(model.FormatGraphRepoPointerConfig(pointer)), 0o644)
+		if err != nil {
+			return fmt.Errorf("writing %s: %w", configPath, err)
+		}
+		touched = append(touched, configPath)
+		if cmd.OnCreated != nil {
+			cmd.OnCreated(sddDir, cloneDir)
+		}
+	} else {
+		updated := existing
+		settings := []struct{ key, value string }{{"graph_repo", string(cmd.GraphRepo)}, {"graph_dir", model.GraphElsewhereFile}}
+		if persistScope {
+			settings = append(settings, struct{ key, value string }{"skill_scope", string(scope)})
+		}
+		recorded, _ := model.ParseConfig(existing)
+		current := map[string]string{"graph_repo": string(recorded.GraphRepo), "graph_dir": recorded.GraphDir, "skill_scope": string(recorded.SkillScope)}
+		for _, setting := range settings {
+			if current[setting.key] == setting.value {
+				continue
+			}
+			updated, err = model.SetYAMLField(updated, setting.key, setting.value)
+			if err != nil {
+				return fmt.Errorf("updating %s: %w", configPath, err)
+			}
+		}
+		if !bytes.Equal(existing, updated) {
+			err = os.WriteFile(configPath, updated, 0o644)
+			if err != nil {
+				return fmt.Errorf("writing %s: %w", configPath, err)
+			}
+			touched = append(touched, configPath)
+		}
+		if persistAgents {
+			err = h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, agents, scope, &touched)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	err = keepIgnoreFiles(cmd, "", []string{model.DefaultGraphDir}, &touched)
+	if err != nil {
+		return err
+	}
+	guardPath := filepath.Join(cmd.RepoRoot, filepath.FromSlash(model.GraphElsewhereFile))
+	guard := model.GraphElsewhereText(cmd.GraphRepo)
+	current, err := os.ReadFile(guardPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", guardPath, err)
+	}
+	if string(current) != guard {
+		err = os.WriteFile(guardPath, []byte(guard), 0o644)
+		if err != nil {
+			return fmt.Errorf("writing %s: %w", guardPath, err)
+		}
+		touched = append(touched, guardPath)
+	}
+	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, record, leftover, initCommitMessage(configExisted), changed)
+}
+
+// syncGraphClone runs the sync round of the clone of repoID at dir, which
+// existed before this init, so the refresh builds on the remote's state. A
+// fetch the gate defers leaves the clone as its last fetch, minutes before,
+// left it.
+func (h *Handler) syncGraphClone(ctx context.Context, repoID model.RepoID, dir string) error {
+	var mu sync.Mutex
+	var blocks []model.SyncBlocked
+	roundCtx := WithSyncReport(ctx, func(block model.SyncBlocked) {
+		mu.Lock()
+		defer mu.Unlock()
+		blocks = append(blocks, block)
+	})
+	err := h.cloneRound.SyncClone(roundCtx, dir, &command.SyncRoundCmd{Explicit: true})
+	if err != nil {
+		return fmt.Errorf("syncing the clone of %s: %w", repoID, err)
+	}
+	if len(blocks) > 0 {
+		return fmt.Errorf("syncing the clone of %s: %s", repoID, blocks[0].Reason())
+	}
+	return nil
+}

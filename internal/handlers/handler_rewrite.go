@@ -171,8 +171,8 @@ func (h *Handler) RewriteEntry(ctx context.Context, cmd *command.RewriteEntryCmd
 		if msg == "" {
 			msg = fmt.Sprintf("sdd: rewrite %s → %s (%s %s)", resolvedID, newID, cmd.NewType, cmd.NewKind)
 		}
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+		if err := h.commitGraphOrFail(ctx, msg, commitPaths...); err != nil {
+			return err
 		}
 	}
 

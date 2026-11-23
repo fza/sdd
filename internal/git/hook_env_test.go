@@ -71,9 +71,6 @@ func TestPathAddressedCallsReachTheRepositoryAtThePathFromAHook(t *testing.T) {
 			if err := os.MkdirAll(graphDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			cache := filepath.Join(t.TempDir(), "cache")
-			gitIn(t, t.TempDir(), "clone", "-q", graphRepo, cache)
-			gitIn(t, graphRepo, "commit", "-q", "--allow-empty", "-m", "ahead of the cache")
 			graphHead := gitIn(t, graphRepo, "rev-parse", "HEAD")
 			hookHead := gitIn(t, hookRepo, "rev-parse", "HEAD")
 			outside := t.TempDir()
@@ -86,7 +83,6 @@ func TestPathAddressedCallsReachTheRepositoryAtThePathFromAHook(t *testing.T) {
 			ctx := t.Context()
 			head, headErr := git.CLI{}.HeadRevision(ctx, graphDir)
 			outsideInWorkTree := git.CLI{}.InWorkTree(ctx, outside)
-			pullErr := git.CLI{}.PullFFOnly(ctx, cache)
 			authority, authorityErr := git.StableRepoRoot(graphDir)
 			sourceErr := git.AuthorizeInTreeSessionSource(ctx, graphRepo, graphAuthority,
 				filepath.Join(graphRepo, ".sdd", "sessions"), filepath.Join(graphRepo, ".sdd", "staged-blobs"))
@@ -97,12 +93,6 @@ func TestPathAddressedCallsReachTheRepositoryAtThePathFromAHook(t *testing.T) {
 			}
 			if outsideInWorkTree {
 				t.Errorf("InWorkTree should report a directory outside any repository as outside one")
-			}
-			if pullErr != nil {
-				t.Errorf("PullFFOnly should pull the checkout at the path: %v", pullErr)
-			}
-			if cacheHead := gitIn(t, cache, "rev-parse", "HEAD"); cacheHead != graphHead {
-				t.Errorf("the cache at the path should reach %q, HEAD is %q", graphHead, cacheHead)
 			}
 			if authorityErr != nil || authority != graphAuthority {
 				t.Errorf("StableRepoRoot should name the repository at the path: got %q (%v), want %q", authority, authorityErr, graphAuthority)

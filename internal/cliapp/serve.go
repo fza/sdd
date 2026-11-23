@@ -17,12 +17,15 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
 
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
@@ -73,7 +76,8 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				},
 			},
 		),
-		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+			ctx = handlers.WithoutSyncReport(ctx)
 			watched, err := servedConfigFiles()
 			if err != nil {
 				return err
@@ -84,6 +88,8 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			if err != nil {
 				return err
 			}
+			watch.locate = func() (string, error) { return resolveGraphDir(cmd) }
+			watch.guards = append(watch.guards, (&strayGuard{}).check)
 			transport := cmd.String("transport")
 			// Only a stdio client shares this filesystem; an HTTP client must
 			// never stage a file of the server's by naming its path.
@@ -95,19 +101,30 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			if err != nil {
 				return err
 			}
+
+			timerCtx, stopTimer := context.WithCancel(ctx)
+			timerDone := make(chan struct{})
+			go func() {
+				defer close(timerDone)
+				err := sdd.RunSyncTimerOf(timerCtx, watch.runtime)
+				if err != nil {
+					slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: timer: %v", err))
+				}
+			}()
+			// A round in flight finishes before serve returns, so no merge
+			// outlives the process that held the sync lock.
+			defer func() {
+				stopTimer()
+				<-timerDone
+			}()
 			var cacheNotice func(context.Context) string
 			if launchCachePrune != nil {
-				timerCtx, stopTimer := context.WithCancel(ctx)
-				defer stopTimer()
 				go runCachePruneTimer(timerCtx, launchCachePrune)
 				cacheNotice = serveCacheNotice
 			}
-
-			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
+			return runMCPServerWith(ctx, cmd, mcpserver.Options{
 				Application:     application,
 				LocalIdentity:   identity,
-				LocalClient:     transport == "stdio",
-				Version:         cmd.Root().Version,
 				OutputSchema:    cmd.Bool("output-schema"),
 				MCPOutputTokens: cmd.Int("mcp-output-tokens"),
 				BeforeCall: func(ctx context.Context, session string) (context.Context, mcpserver.Notices, error) {
@@ -119,25 +136,38 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 					return call, notices, err
 				},
 			})
-			if err != nil {
-				return err
-			}
+		})),
+	}
+}
 
-			switch transport {
-			case "stdio":
-				return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
-			case "http":
-				token := cmd.String("auth-token")
-				if token == "" {
-					return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
-				}
-				addr := cmd.String("addr")
-				fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
-				return runLocalHTTP(ctx, addr, token, srv)
-			default:
-				return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
-			}
-		}),
+func runMCPServer(ctx context.Context, cmd *cli.Command, application *sdd.Application, identity sdd.RequestIdentity) error {
+	return runMCPServerWith(ctx, cmd, mcpserver.Options{Application: application, LocalIdentity: identity})
+}
+
+// runMCPServerWith serves options over the command's transport.
+func runMCPServerWith(ctx context.Context, cmd *cli.Command, options mcpserver.Options) error {
+	transport := cmd.String("transport")
+	options.SearchSyncMode = sdd.SearchSyncAll
+	options.LocalClient = transport == "stdio"
+	options.Version = cmd.Root().Version
+	srv, err := mcpserver.New(options)
+	if err != nil {
+		return err
+	}
+
+	switch transport {
+	case "stdio":
+		return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
+	case "http":
+		token := cmd.String("auth-token")
+		if token == "" {
+			return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
+		}
+		addr := cmd.String("addr")
+		fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
+		return runLocalHTTP(ctx, addr, token, srv)
+	default:
+		return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
 	}
 }
 
@@ -223,57 +253,81 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 }
 
 // localRuntimeAccess serves one repository and every connected repo its
-// dependency closure reaches. A dependency resolves to one runtime built on
-// demand from its cache, both as a member of a horizon and as a project a
-// move may work in: its own declared dependencies, its own index namespace,
-// no write authority until the ephemeral clone of d-cpt-n8z exists
-// (d-cpt-yjc). ListProjects names the home alone, so a session still opens
-// there without choosing.
+// dependency closure reaches. A dependency resolves to one runtime over its
+// sdd-owned clone, both as a member of a horizon and as a project a move may
+// work in, reads and captures alike: its own declared dependencies, its own
+// index namespace, write authority only where both connected-write gates
+// allow it. ListProjects names the home alone, so a session still opens there
+// without choosing.
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
 	dialogue     sdd.Dialogue
 	runtime      *sdd.ProjectRuntime
-	dependencies *cachedDependencies
+	dependencies *connectedDependencies
 }
 
-// cachedDependencies builds a connected repo's runtime from its cache on
-// first use and keeps it; a repo that is not connected or not cached is
-// unavailable until it is. closure walks the served project's declarations
-// over the same caches.
-type cachedDependencies struct {
+// connectedDependencies builds a connected repo's runtime from its
+// sdd-owned clone on first use, making the clone when this machine holds
+// none, and keeps it; a repo that is not connected, or whose first clone the
+// git gate defers, is unavailable until it is. closure walks the served
+// project's declarations over the same clones.
+type connectedDependencies struct {
 	registry *repos.Registry
+	manager  *repos.Manager
 	closure  *finders.Finder
-	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+	rounds   connectedRounds
+	build    func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+	// writer and connected decide a capture into a dependency with the
+	// dependency's committed inbound.accept.
+	writer    sdd.RepoID
+	connected model.ConnectedConfig
 
 	mu       sync.Mutex
 	runtimes map[sdd.RepoID]*sdd.ProjectRuntime
 }
 
-func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {
 		return nil, dependencyUnavailable()
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if runtime := d.runtimes[repoID]; runtime != nil {
-		return runtime, nil
+		dir, err := d.registry.CloneDir(repoID)
+		if err != nil {
+			return nil, err
+		}
+		if repos.IsCloned(dir) {
+			return runtime, nil
+		}
+		delete(d.runtimes, repoID)
 	}
-	cache, connected, err := d.registry.Cache(repoID)
+	global, err := d.registry.Load()
 	if err != nil {
 		return nil, err
 	}
-	if !connected || !cache.Cloned() {
+	repo, connected := global.Connected(repoID)
+	if !connected {
 		return nil, dependencyUnavailable()
 	}
-	cfg, err := cache.Config()
+	dir, _, err := d.manager.Ensure(ctx, repo)
+	var deferred *gitgate.DeferredError
+	if errors.As(err, &deferred) {
+		message := fmt.Sprintf("dependency %s has no clone on this machine yet; run `sdd repo sync %s`", repoID, repoID)
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: message, Cause: err}
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := repos.Clone{RepoID: repoID, Dir: dir}.Config()
 	if errors.Is(err, meta.ErrNotAnSDDProject) {
 		cfg, err = &model.PerRepoConfig{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := d.build(cache, cfg)
+	runtime, err := d.build(repoID, dir, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +341,7 @@ func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, er
 // resolveMember resolves a project this process serves beyond its home: a
 // member of the served project's closure (20261026-194528-d-cpt-gcq), never a
 // repo merely connected on this machine.
-func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+func (d *connectedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {
 		return nil, dependencyUnavailable()
 	}
@@ -298,7 +352,67 @@ func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoI
 	if !slices.Contains(closure, repoID) {
 		return nil, dependencyUnavailable()
 	}
-	return d.resolve(repoID)
+	return d.resolve(ctx, repoID)
+}
+
+// resolveWritable resolves a closure member a capture writes into: refused
+// unless the writer's connected.write and the member's committed
+// inbound.accept both allow the pair. The member's round runs first while
+// due, so the gate reads inbound.accept as fresh as the git gate admits; a
+// failed round leaves the clone as it stands (20261027-150208-d-tac-bg4).
+func (d *connectedDependencies) resolveWritable(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	runtime, err := d.resolveMember(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+	err = d.rounds.refresh(ctx, repoID)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: refreshing %s before a capture: %v", repoID, err))
+	}
+	dir, err := d.registry.CloneDir(repoID)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := repos.Clone{RepoID: repoID, Dir: dir}.Config()
+	if err != nil {
+		return nil, err
+	}
+	err = model.ConnectedWriteRefusal(d.writer, d.connected, repoID, cfg.Inbound)
+	if err != nil {
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorWriteDenied, Message: err.Error(), Cause: err}
+	}
+	return runtime, nil
+}
+
+// connectedRounds runs the sync rounds of the connected repos the served
+// project reaches.
+type connectedRounds struct {
+	handler *handlers.Handler
+}
+
+func (c connectedRounds) SyncRepos(ctx context.Context, request sdd.SyncReposRequest) ([]sdd.RepoSyncOutcome, error) {
+	var outcomes []sdd.RepoSyncOutcome
+	cmd := &command.RepoSyncCmd{Due: request.Due, OnOutcome: func(outcome model.RepoSyncOutcome) {
+		outcomes = append(outcomes, sdd.RepoSyncOutcome{Repo: sdd.RepoID(outcome.RepoID), State: sdd.RepoSyncState(outcome.State), Next: outcome.Next, Reason: outcome.Reason})
+	}}
+	for _, repo := range request.Repos {
+		cmd.RepoIDs = append(cmd.RepoIDs, model.RepoID(repo))
+	}
+	err := c.handler.RepoSync(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return outcomes, nil
+}
+
+func (c connectedRounds) refresh(ctx context.Context, repoID sdd.RepoID) error {
+	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{
+		RepoIDs: []model.RepoID{model.RepoID(repoID)},
+		OnPending: func(repoID model.RepoID, fetched time.Time) {
+			slogutils.FromContext(ctx).Warn("sync: refresh still running; reading the clone as it stands", "repo", repoID, "fetched", fetched)
+		},
+	})
+	return err
 }
 
 func dependencyUnavailable() error {
@@ -328,11 +442,14 @@ func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.P
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
 
-func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
+func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, access sdd.Access) (*sdd.ProjectRuntime, error) {
 	if project == a.project {
 		return a.runtime, nil
 	}
 	// Locally a dependency's project ID is its repo ID.
+	if access == sdd.AccessWrite {
+		return a.dependencies.resolveWritable(ctx, sdd.RepoID(project))
+	}
 	return a.dependencies.resolveMember(ctx, sdd.RepoID(project))
 }
 
@@ -340,8 +457,8 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 	return sdd.OwnerOnly(ctx, request)
 }
 
-func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
-	return a.dependencies.resolve(dependency)
+func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	return a.dependencies.resolve(ctx, dependency)
 }
 
 // localApplication builds the application over the project the working
@@ -405,14 +522,14 @@ func servedConfigFiles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sddDir, err := resolveSDDDir()
+	project, err := resolveProject()
 	if err != nil {
 		return nil, err
 	}
 	paths := make([]string, servedConfigCount)
 	paths[globalConfigFile] = loc.ConfigPath
-	paths[committedConfigFile] = filepath.Join(sddDir, "config.yaml")
-	paths[localConfigFile] = filepath.Join(sddDir, "config.local.yaml")
+	paths[committedConfigFile] = filepath.Join(project.SDDDir(), "config.yaml")
+	paths[localConfigFile] = project.LocalLayerFile()
 	return paths, nil
 }
 
@@ -570,13 +687,27 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		embeddings = localEmbedder
 		runeCap = localEmbedder.MaxRunes
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
+	layout, err := resolveProject()
+	if err != nil {
+		return nil, err
+	}
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, filepath.Dir(sddDir), locations.ConfigPath, layout.LocalLayerFile(), locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
+	_, manager, err := defaultRepos()
+	if err != nil {
+		return nil, err
+	}
+	round, err := cloneRound()
+	if err != nil {
+		return nil, err
+	}
+	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
+	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
 	events, err := projectEventStore(sddDir, graphDir, cfg)
 	if err != nil {
 		return nil, err
@@ -589,15 +720,12 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
-	layout, err := resolveProject()
-	if err != nil {
-		return nil, err
-	}
 	workRoot := filepath.Dir(sddDir)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
-		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
+		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
+		Connected: rounds,
+		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM: runner, Events: events, Relevance: verdicts, Prefilter: prefilter,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Grounding: groundingPolicy(cfg), Verifier: verifierPolicy(cfg), ContextTokens: cfg.LLM.ContextTokens,
@@ -619,36 +747,53 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
-		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-			// The cache as a project of its own: its committed config supplies
-			// the graph layout, the language, and the dependencies its horizon
-			// is composed from.
-			graphDir, err := cache.GraphDir()
-			if err != nil {
-				return nil, err
-			}
-			memberGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(cache.RepoID), GraphDir: graphDir})
-			if err != nil {
-				return nil, err
-			}
-			// Connected stores are keyed by the connected repo's ID (the existing
-			// connected-repository storage contract) and exclude embedded entries,
-			// so binary-shipped base facts embed once per machine in the base
-			// store, not once per connected repo.
-			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir)).WithCheckout(graphDir)
-			// A connected repository's checkout and commits back the files and
-			// commits a deep verifier cites there.
-			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
-				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), RuneCap: memberRuneCap, LLM: runner,
-				ExcludeEmbeddedFromIndex: true,
-				Verifier:                 verifierPolicy(dependencyCfg),
-				Checkout:                 os.DirFS(cache.Dir), Commits: git.CLI{Dir: cache.Dir}, Git: localadapter.GitHistory{Dir: cache.Dir},
-			})
-		}},
+		dependencies: &connectedDependencies{registry: registry, manager: manager, closure: closure, rounds: rounds,
+			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
+			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, memberEmbedder, memberRuneCap, cacheRoot)
+			}},
 	}
-	return &servedProject{access: access, cfg: cfg, sessions: sessions, blobs: blobs, layers: layers, clients: clients}, nil
+	return &servedProject{
+		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs, layers: layers, clients: clients,
+		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries),
+	}, nil
+}
+
+// cloneRuntime serves a dependency from its sdd-owned clone at dir: its own
+// config, default branch, graph and write targets. Connected stores are keyed
+// by the dependency's repo ID and exclude embedded entries, so binary-shipped
+// base facts embed once per machine in the base store.
+func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
+	project := sdd.ProjectID(repoID)
+	defaultBranch := cfg.DefaultBranch
+	if defaultBranch == "" {
+		branch, err := git.CurrentBranch(dir)
+		if err != nil {
+			return nil, err
+		}
+		defaultBranch = branch
+	}
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
+	if err != nil {
+		return nil, err
+	}
+	cloneGraphDir := meta.ResolveGraphDir(dir, cfg)
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: cloneGraphDir})
+	if err != nil {
+		return nil, err
+	}
+	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir)).WithCheckout(cloneGraphDir)
+	return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+		Project: sdd.ProjectRef{ID: project, DisplayName: string(repoID)}, DefaultBranch: defaultBranch, Language: cfg.Language,
+		Dependencies: cfg.Dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: defaultBranch},
+		Targets: targets, Sync: targets, Branches: targets, Base: targets,
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), RuneCap: runeCap, LLM: runner,
+		ExcludeEmbeddedFromIndex: true,
+		// A connected repository's checkout and commits back the files and
+		// commits a deep verifier cites there.
+		Verifier: verifierPolicy(cfg),
+		Checkout: os.DirFS(dir), Commits: git.CLI{Dir: dir}, Git: localadapter.GitHistory{Dir: dir},
+	})
 }
 
 // servedClients are the LLM runner and the embedders a served project calls.

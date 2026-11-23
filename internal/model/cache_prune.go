@@ -125,8 +125,10 @@ type CachePruneCounts struct {
 	Clones    int
 	// Records are embedder calibrations.
 	Records int
+	// GateRecords are git gate records of remotes unused for the retention.
+	GateRecords int
 	// Leftovers are what killed writers left: index staging dirs, orphan
-	// rows and retired stores.
+	// rows, retired stores, git traces and clone staging dirs.
 	Leftovers int
 	// Sessions are ended sessions removed with their staged attachments.
 	Sessions int

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -147,7 +146,7 @@ func TestConfigSetJudgesThePrefilterProvider(t *testing.T) {
 			}
 			globalPath := filepath.Join(dir, "global.yaml")
 			reg := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-			h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{})})
+			h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, nil)})
 			path := globalPath
 			if tc.target == "local" {
 				path = filepath.Join(sddDir, "config.local.yaml")
@@ -190,7 +189,7 @@ func TestConfigSetRefusesAPrefilterJudgeAsTheLLMProvider(t *testing.T) {
 			dir := t.TempDir()
 			globalPath := filepath.Join(dir, "global.yaml")
 			reg := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-			h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, git.CLI{})})
+			h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, nil)})
 
 			err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "global", Key: "llm.provider", Value: tc.value})
 			written, _ := os.ReadFile(globalPath)

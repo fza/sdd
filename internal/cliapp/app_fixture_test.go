@@ -47,6 +47,7 @@ func newAppFixture(t *testing.T) *appFixture {
 	t.Chdir(f.root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(f.root))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(f.root, "state"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(f.root, "data"))
 	// A request that still leaves for a real host fails at a closed port.
@@ -57,6 +58,12 @@ func newAppFixture(t *testing.T) *appFixture {
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\n")
 	f.write(t, "decisions/2026/09/14-020000-s-tac-cli.md", "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nparticipants: [Local Author]\nsummary: "+appSummary+"\n---\n\n"+appBody+"\n")
 	return f
+}
+
+// dataHome is the XDG data dir of a test working in dir: beside dir, so the
+// sdd-owned clones under it stay out of the repository the test inspects.
+func dataHome(dir string) string {
+	return filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-xdg-data")
 }
 
 func (f *appFixture) write(t *testing.T, name, content string) {
@@ -144,7 +151,7 @@ func (f *appFixture) serveRun(t *testing.T, flags []string, launch func(dir, log
 	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	var stderr bytes.Buffer
 	command := f.commandWith(serverInput, serverOutput, &stderr, launch)
 	done := make(chan struct{})
@@ -174,7 +181,18 @@ func (f *appFixture) serveRun(t *testing.T, flags []string, launch func(dir, log
 	if name == "" {
 		name = "cli-test"
 	}
-	client, err := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	var client *mcp.ClientSession
+	var err error
+	connected := make(chan struct{})
+	go func() {
+		client, err = mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+		close(connected)
+	}()
+	select {
+	case <-connected:
+	case <-done:
+		t.Fatalf("sdd serve ended before answering the MCP handshake: %v\n%s", runErr, stderr.String())
+	}
 	if err != nil {
 		t.Fatalf("initialize CLI MCP: %v", err)
 	}

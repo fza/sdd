@@ -21,24 +21,62 @@ var ErrNotAProject = errors.New("not an sdd project")
 type Project struct {
 	Root     string
 	WorkRoot string
+	// GraphRepo is the graph repository WorkRoot's config names; Root is then
+	// its sdd-owned clone.
+	GraphRepo model.RepoID
 }
 
 func (p Project) SDDDir() string { return SDDDir(p.Root) }
 
 func (p Project) Pointed() bool { return p.Root != p.WorkRoot }
 
-// ResolveProject follows workRoot's project_dir, when its config sets one, to
-// the project holding the graph. A pointing repository carries only the
-// pointer keys, and the project it names must be one that does not point on.
-func ResolveProject(workRoot string) (Project, error) {
+// LocalLayerFile is the file of the project's machine-local config layer,
+// the one `sdd config set --local` writes: for a project reached through
+// graph_repo, WorkRoot's config.local.yaml, since the upkeep of sdd's clone
+// removes any local file there; the one under SDDDir for every other
+// project.
+func (p Project) LocalLayerFile() string {
+	if p.GraphRepo != "" {
+		return LocalLayerFile(SDDDir(p.WorkRoot))
+	}
+	return LocalLayerFile(p.SDDDir())
+}
+
+// ReadConfig is ReadConfig over the project's .sdd/ and its machine-local
+// layer (LocalLayerFile).
+func (p Project) ReadConfig() (*model.PerRepoConfig, error) {
+	return ReadConfigWithLocal(p.SDDDir(), p.LocalLayerFile())
+}
+
+// ReadConfigLayers is ReadConfigLayers over the project's .sdd/ and its
+// machine-local layer (LocalLayerFile).
+func (p Project) ReadConfigLayers() (committed, local *model.PerRepoConfig, err error) {
+	return ReadLayers(p.SDDDir(), p.LocalLayerFile())
+}
+
+// ResolveConfig is ResolveConfig over the project's .sdd/ and its
+// machine-local layer (LocalLayerFile).
+func (p Project) ResolveConfig(global model.BaseConfig) (*model.PerRepoConfig, error) {
+	return ResolveConfigWithLocal(global, p.SDDDir(), p.LocalLayerFile())
+}
+
+// ResolveProject follows workRoot's graph_repo, when its config sets one, to
+// the sdd-owned clone graphClone names, else its project_dir to the project
+// holding the graph. A pointing repository carries only the pointer keys, and
+// the project_dir it names must be one that does not point on.
+func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	sddDir := SDDDir(workRoot)
 	committedPath := filepath.Join(sddDir, "config.yaml")
-	localPath := filepath.Join(sddDir, "config.local.yaml")
+	localPath := LocalLayerFile(sddDir)
 	committed, local, err := ReadConfigLayers(sddDir)
 	if err != nil {
 		return Project{}, err
 	}
-	projectDir := model.MergeConfig(committed, local).ProjectDir
+	pointers := model.MergeConfig(committed, local)
+	if pointers.GraphRepo != "" {
+		return resolveGraphRepo(workRoot, pointers.GraphRepo, committedPath, graphClone)
+	}
+	projectDir := pointers.ProjectDir
 	if projectDir == "" {
 		return Project{Root: workRoot, WorkRoot: workRoot}, nil
 	}
@@ -73,6 +111,58 @@ func ResolveProject(workRoot string) (Project, error) {
 	return Project{Root: root, WorkRoot: workRoot}, nil
 }
 
+// ResolveSwitchedProject resolves workRoot as the graph_repo project repoID
+// names when its config points at a graph already, through graph_repo or
+// project_dir: `sdd init --graph-repo` switches such a repository, whose
+// machine-local layer holds the settings of a graph_repo project before its
+// committed config names one. Any other workRoot resolves as ResolveProject
+// resolves it.
+func ResolveSwitchedProject(workRoot string, repoID model.RepoID, graphClone func(model.RepoID) (string, error)) (Project, error) {
+	sddDir := SDDDir(workRoot)
+	committed, local, err := ReadConfigLayers(sddDir)
+	if err != nil {
+		return Project{}, err
+	}
+	pointers := model.MergeConfig(committed, local)
+	if pointers.GraphRepo == "" && pointers.ProjectDir == "" {
+		return ResolveProject(workRoot, graphClone)
+	}
+	return resolveGraphRepo(workRoot, repoID, filepath.Join(sddDir, "config.yaml"), graphClone)
+}
+
+func resolveGraphRepo(workRoot string, repoID model.RepoID, committedPath string, graphClone func(model.RepoID) (string, error)) (Project, error) {
+	err := model.ValidateRepoID(repoID)
+	if err != nil {
+		return Project{}, fmt.Errorf("graph_repo in %s: %w", SDDDir(workRoot), err)
+	}
+	err = requireOnlyKeys(committedPath, model.GraphRepoPointerKeys)
+	if err != nil {
+		return Project{}, err
+	}
+	if graphClone == nil {
+		return Project{}, fmt.Errorf("graph_repo in %s: no place for graph clones configured", SDDDir(workRoot))
+	}
+	root, err := graphClone(repoID)
+	if err != nil {
+		return Project{}, fmt.Errorf("graph_repo in %s: %w", SDDDir(workRoot), err)
+	}
+	return Project{Root: root, WorkRoot: workRoot, GraphRepo: repoID}, nil
+}
+
+// RefuseNestedGraphRepo refuses a graph repository whose own committed config
+// names a graph repository: project.Root then holds no graph to work on.
+func RefuseNestedGraphRepo(project Project) error {
+	if project.GraphRepo == "" {
+		return nil
+	}
+	path := filepath.Join(SDDDir(project.Root), "config.yaml")
+	cfg, err := readConfigFile(path)
+	if err != nil || cfg == nil || cfg.GraphRepo == "" {
+		return err
+	}
+	return fmt.Errorf("graph repository %s sets graph_repo %s in %s; a graph repository holds its graph itself: remove the key there, or name %s as graph_repo", project.GraphRepo, cfg.GraphRepo, path, cfg.GraphRepo)
+}
+
 func requireOnlyKeys(path string, allowed []string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -94,7 +184,7 @@ func requireOnlyKeys(path string, allowed []string) error {
 	if len(misplaced) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s sets %s, but a repository with project_dir may set only %s; move the rest into the project's own .sdd/ config", path, strings.Join(misplaced, ", "), strings.Join(allowed, ", "))
+	return fmt.Errorf("%s sets %s, but a repository with %s may set only %s; move the rest into the project's own .sdd/ config", path, strings.Join(misplaced, ", "), allowed[0], strings.Join(allowed, ", "))
 }
 
 // ResolvedPath resolves symlinks in path, through its nearest existing

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
 func TestShutdownClosesLiveSessionsAndRejectsNewOnes(t *testing.T) {
@@ -93,7 +94,7 @@ func TestShutdownContextBoundsInFlightSessionDrain(t *testing.T) {
 }
 
 func newLifecycleTestServer() *Server {
-	server := &Server{}
+	server := &Server{app: &sdd.Application{}}
 	server.mcp = mcp.NewServer(&mcp.Implementation{Name: "lifecycle-test", Version: "test"}, nil)
 	server.mcp.AddReceivingMiddleware(server.refuseWhileClosing)
 	return server

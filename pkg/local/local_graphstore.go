@@ -15,6 +15,8 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+	"github.com/networkteam/sdd/internal/meta"
+	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -43,6 +45,7 @@ type FilesystemGraphStore struct {
 	latest         *retainedSnapshot
 	publicationGit *GitFinalizer
 	contribution   string
+	held           *heldGraphLock
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
 	// file under the runtime directory, which every store over this graph
@@ -68,8 +71,8 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 	if err := os.MkdirAll(options.GraphDir, 0o755); err != nil {
 		return nil, fmt.Errorf("sdd: creating filesystem graph directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(options.GraphDir, ".sdd-runtime"), 0o755); err != nil {
-		return nil, fmt.Errorf("sdd: creating graph runtime directory: %w", err)
+	if _, err := meta.EnsureRuntimeDir(options.GraphDir); err != nil {
+		return nil, fmt.Errorf("sdd: %w", err)
 	}
 	return &FilesystemGraphStore{
 		project:        options.Project,
@@ -120,19 +123,7 @@ func (s *FilesystemGraphStore) ReadAttachmentPage(_ context.Context, entryID, fi
 
 func (s *FilesystemGraphStore) lock() (*flock.Flock, error) { return lockGraph(s.dir) }
 
-// lockGraph serializes every writer of one graph directory, the store and the
-// Git finalizer alike.
-func lockGraph(dir string) (*flock.Flock, error) {
-	runtimeDir := filepath.Join(dir, ".sdd-runtime")
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		return nil, err
-	}
-	lock := flock.New(filepath.Join(runtimeDir, "graph.lock"))
-	if err := lock.Lock(); err != nil {
-		return nil, err
-	}
-	return lock, nil
-}
+func lockGraph(dir string) (*flock.Flock, error) { return syncstate.LockGraph(dir) }
 
 func graphDirectoryRevision(dir string) (string, error) {
 	var files []string

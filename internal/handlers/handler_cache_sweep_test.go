@@ -2,15 +2,19 @@ package handlers_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 // recordingStateSweep records the retentions a pass sweeps the state folder
@@ -32,7 +36,7 @@ func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
 	f := newPruneFixture(t, "sessions:\n  retention: 1d\ncache:\n  retention: 30d\n")
 	state := &recordingStateSweep{swept: model.CachePruneCounts{Sessions: 2, Projects: 1, Unreadable: 1, Bytes: 10}}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state, OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(),
 	})
 	var counts model.CachePruneCounts
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
@@ -72,7 +76,7 @@ func TestCacheHandlerPruneRefusesTheStateSweepUnderMixedXDG(t *testing.T) {
 	f.loc.MixedStateXDG = "XDG_CACHE_HOME, XDG_DATA_HOME set, XDG_STATE_HOME not"
 	state := &recordingStateSweep{}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state, OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(),
 	})
 	err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true})
 	if err == nil || !strings.Contains(err.Error(), "XDG_STATE_HOME") {
@@ -97,7 +101,7 @@ func TestCacheHandlerPruneSweepsTheStateFolderWithOnlyTheConfigHomeSet(t *testin
 	f.loc.MixedXDG = "XDG_CONFIG_HOME set, XDG_CACHE_HOME, XDG_STATE_HOME not"
 	state := &recordingStateSweep{}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state, OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(),
 	})
 	// The clone pass keeps its own refusal under these mixed roots.
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil && strings.Contains(err.Error(), "state folder") {
@@ -105,5 +109,72 @@ func TestCacheHandlerPruneSweepsTheStateFolderWithOnlyTheConfigHomeSet(t *testin
 	}
 	if !state.called {
 		t.Error("the state folder should be swept when only XDG_CONFIG_HOME is set")
+	}
+}
+
+// The run removes crash leftovers older than a day and records unused for
+// cache.retention.
+func TestCacheHandlerPruneSweepsLeftoversAndRecords(t *testing.T) {
+	f := newPruneFixture(t, "")
+	now := time.Now()
+	dayOld := now.Add(-model.CacheLeftoverAge - time.Hour)
+	unused := now.Add(-pruneRetention - time.Hour)
+	write := func(path string, at time.Time) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	oldTrace := write(filepath.Join(f.loc.StateRoot, "traces", "1.json"), dayOld)
+	liveTrace := write(filepath.Join(f.loc.StateRoot, "traces", "2.json"), now)
+	staging := filepath.Join(f.loc.DataRoot, "repos", ".adding-1")
+	write(filepath.Join(staging, "clone", "HEAD"), dayOld)
+	if err := os.Chtimes(filepath.Join(staging, "clone"), dayOld, dayOld); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(staging, dayOld, dayOld); err != nil {
+		t.Fatal(err)
+	}
+	oldCalibration := write(filepath.Join(f.loc.CacheRoot, "calibration", "calibration-0001.json"), unused)
+	usedCalibration := write(filepath.Join(f.loc.CacheRoot, "calibration", "calibration-0002.json"), now)
+	stale, err := gitgate.TargetFromURL("git@github.com:acme/stale.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := gitgate.TargetFromURL("git@github.com:acme/fresh.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordFetch(t, f.loc, stale, unused)
+	recordFetch(t, f.loc, fresh, now.Add(-time.Hour))
+
+	var counts model.CachePruneCounts
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
+		t.Fatal(err)
+	}
+	for path, wantKept := range map[string]bool{oldTrace: false, liveTrace: true, staging: false, oldCalibration: false, usedCalibration: true} {
+		if kept := exists(t, path); kept != wantKept {
+			t.Errorf("%s kept should be %v", path, wantKept)
+		}
+	}
+	gate := f.gate()
+	for target, wantKept := range map[gitgate.Target]bool{stale: false, fresh: true} {
+		last, err := gate.LastAttempt(t.Context(), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kept := !last.IsZero(); kept != wantKept {
+			t.Errorf("the gate record of %s kept should be %v", target.Repo, wantKept)
+		}
+	}
+	if counts.Leftovers != 2 || counts.Records != 2 || counts.GateRecords != 1 {
+		t.Errorf("the run should count two leftovers, two calibrations and one gate record, got %+v", counts)
 	}
 }

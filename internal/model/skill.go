@@ -439,6 +439,14 @@ func RenderSkillFile(entry SkillBundleEntry, target AgentTarget, version, conten
 	return buf.Bytes(), nil
 }
 
+// SkillFileBody returns the body of a skill file (frontmatter stripped). Bundle
+// sources carry no install stamps, so this is usually the whole content; the
+// strip keeps it correct if a fragment ever grows frontmatter.
+func SkillFileBody(content []byte) []byte {
+	_, body := splitFrontmatter(content)
+	return body
+}
+
 // SkillInstallDir returns the absolute directory where skills install for a
 // given agent target and scope.
 //

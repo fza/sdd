@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/networkteam/sdd/internal/meta"
 )
 
 // configFile is one config document on disk. Every config write in sdd goes
@@ -29,7 +31,7 @@ func (h *Handler) localConfigFile() (configFile, error) {
 	if h.sddDir == "" {
 		return configFile{}, fmt.Errorf("not inside an sdd repo — `--local` needs .sdd/ (run `sdd init` first)")
 	}
-	return configFile{path: filepath.Join(h.sddDir, "config.local.yaml"), perm: 0o600}, nil
+	return configFile{path: meta.LocalLayerOf(h.sddDir, h.localLayerFile), perm: 0o600}, nil
 }
 
 func (h *Handler) globalConfigFile() (configFile, error) {

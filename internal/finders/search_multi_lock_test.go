@@ -37,11 +37,11 @@ func writeMemberEntry(t *testing.T, dir, id, body string) {
 // text, as the local index is, instead of waiting out the writer.
 func TestMultiSearchReadsAHeldMemberIndexByText(t *testing.T) {
 	const repoID = "example.com/team/other"
-	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir()}
+	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
 	localDir := t.TempDir()
 	writeMemberEntry(t, localDir, "20260601-120000-s-tac-loc", "A local gap about pipelines.")
-	cacheDir, err := reg.CacheDir(repoID)
+	cacheDir, err := reg.CloneDir(repoID)
 	if err != nil {
 		t.Fatal(err)
 	}

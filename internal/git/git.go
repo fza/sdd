@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // CLI is the exec-based adapter: a struct whose methods shell out to the git
@@ -46,6 +48,12 @@ func (c CLI) at(args ...string) []string {
 	return append([]string{"-C", c.Dir}, args...)
 }
 
+// detachedTimeout caps a detached auto-commit or push. A signing or
+// credential helper blocking on input would otherwise hang indefinitely when
+// sdd runs as a long-lived server; the timeout is a backstop on top of the
+// TTY detach in runDetached. See d-tac-zhp.
+const detachedTimeout = 30 * time.Second
+
 // env is the environment for a git command addressed through at: nil, the
 // process's own, without Dir; with Dir, the process's own without the
 // variables that would pin the command to another repository (pathEnv).
@@ -56,19 +64,6 @@ func (c CLI) env() []string {
 	return pathEnv()
 }
 
-// command builds a git command for this adapter's repository.
-func (c CLI) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
-	cmd.Env = c.env()
-	return cmd
-}
-
-// commitTimeout caps the detached auto-commit. A signing or credential helper
-// blocking on input would otherwise hang indefinitely when sdd runs as a
-// long-lived server; the timeout is a backstop on top of the TTY detach in
-// runDetached. See d-tac-zhp.
-const commitTimeout = 30 * time.Second
-
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
@@ -76,7 +71,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	if len(paths) == 0 {
 		return errors.New("git commit: no paths to commit (an empty pathspec would record the whole index)")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
 	segments, err := c.PendingSegments(ctx)
@@ -101,7 +96,60 @@ func (c CLI) Commit(message string, paths ...string) error {
 	if out, err := c.RunPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
+	return c.RecordGraphCloneCommit(ctx)
+}
 
+// Uncommitted returns the paths git status reports a change under: staged,
+// modified, removed, or untracked and not ignored.
+func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		// Only stdout lists changes: git warns on stderr about a path whose
+		// folder does not exist yet.
+		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		status, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
+		}
+		if len(status) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out, nil
+}
+
+// Push publishes HEAD to the branch the current branch tracks, detached like
+// Commit. The explicit refspec keeps a configured push refspec or mirror
+// setting from publishing other branches the push rule never counted.
+// Production handlers.Pusher.
+func (c CLI) Push(ctx context.Context) error {
+	if c.graphClone() {
+		return c.pushClone(ctx)
+	}
+	env, err := admittedEnv(ctx, "push")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	branch, err := c.output(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return fmt.Errorf("resolving the current branch: %w", err)
+	}
+	remote, err := c.output(ctx, "config", "branch."+branch+".remote")
+	if err != nil {
+		return fmt.Errorf("resolving the remote of %s: %w", branch, err)
+	}
+	merge, err := c.output(ctx, "config", "branch."+branch+".merge")
+	if err != nil {
+		return fmt.Errorf("resolving the upstream branch of %s: %w", branch, err)
+	}
+	out, err := runDetachedEnv(ctx, env, c.at("push", remote, "HEAD:"+merge)...)
+	if err != nil {
+		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
 	return nil
 }
 
@@ -129,9 +177,10 @@ func (c CLI) onDisk(paths []string) []string {
 // ctx, so the caller's timeout bounds the wait. Any other failure returns at
 // once.
 func (c CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+	env := c.localEnv(ctx)
 	delay := 100 * time.Millisecond
 	for {
-		out, err := runDetached(ctx, c.env(), c.at(args...)...)
+		out, err := runDetachedEnv(ctx, env, c.at(args...)...)
 		if err == nil || !strings.Contains(string(out), "index.lock") {
 			return out, err
 		}
@@ -142,27 +191,6 @@ func (c CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, erro
 		}
 		delay = min(2*delay, 2*time.Second)
 	}
-}
-
-// Uncommitted returns the paths git status reports a change under: staged,
-// modified, removed, or untracked and not ignored.
-func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
-	var out []string
-	for _, path := range paths {
-		// Only stdout lists changes: git warns on stderr about a path whose
-		// folder does not exist yet.
-		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		status, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
-		}
-		if len(status) > 0 {
-			out = append(out, path)
-		}
-	}
-	return out, nil
 }
 
 // Ignored reports whether an ignore rule matches path. git check-ignore
@@ -176,6 +204,46 @@ func (c CLI) Ignored(ctx context.Context, path string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("git check-ignore: %s (%w)", out, err)
+}
+
+func (c CLI) output(ctx context.Context, args ...string) (string, error) {
+	out, err := c.command(ctx, args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Merge merges ref into the current branch, committing a merge with message
+// when the histories diverged. A failed merge is aborted so the working tree
+// stays as it was. Production handlers.GraphPuller.
+func (c CLI) Merge(ctx context.Context, ref, message string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("git merge %s: %w", ref, err)
+	}
+	// A merge killed halfway leaves a partly checked-out tree and a stale
+	// index.lock, so once started it outlives the caller's cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
+	defer cancel()
+	if c.graphClone() {
+		return c.mergeClone(ctx, ref, message)
+	}
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	out, err := runDetached(ctx, c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
+	if err == nil {
+		return nil
+	}
+	mergeErr := fmt.Errorf("git merge %s: %s (%w)", ref, strings.TrimSpace(string(out)), err)
+	abortOut, abortErr := c.command(context.Background(), "merge", "--abort").CombinedOutput()
+	if abortErr != nil && strings.Contains(string(abortOut), "MERGE_HEAD missing") {
+		return mergeErr
+	}
+	if abortErr != nil {
+		return errors.Join(mergeErr, fmt.Errorf("git merge --abort: %s (%w)", strings.TrimSpace(string(abortOut)), abortErr))
+	}
+	return mergeErr
 }
 
 // HasCommitMessage reports whether any reachable commit contains text. It is
@@ -202,8 +270,8 @@ type RemovalCommitter struct {
 // Commit stages the deletion of the given paths and commits, scoped to those
 // paths so an unrelated staged index isn't swept into the removal commit.
 func (r RemovalCommitter) Commit(message string, paths ...string) error {
-	ctx := context.Background()
 	repo := CLI(r)
+	ctx := context.Background()
 	for _, p := range paths {
 		rm := repo.command(ctx, "rm", "--cached", "-f", p)
 		if out, err := rm.CombinedOutput(); err != nil {
@@ -227,7 +295,12 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-	return nil
+	return CLI(r).RecordGraphCloneCommit(context.Background())
+}
+
+// EnsureMergeDriver sets up the entry merge driver in the repository at Dir.
+func (r RemovalCommitter) EnsureMergeDriver(ctx context.Context) error {
+	return CLI(r).EnsureMergeDriver(ctx)
 }
 
 // runDetached runs a git subprocess detached from any controlling terminal
@@ -236,7 +309,13 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 // signing or credential prompt has no TTY to read from, so it fails immediately
 // instead of suspending the backgrounded process on SIGTTIN. The context
 // timeout is a backstop for any other blocking helper.
-func runDetached(ctx context.Context, env []string, args ...string) ([]byte, error) {
+func runDetached(ctx context.Context, args ...string) ([]byte, error) {
+	return runDetachedEnv(ctx, nil, args...)
+}
+
+// runDetachedEnv is runDetached with env; nil inherits the process
+// environment.
+func runDetachedEnv(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if env == nil {
@@ -246,7 +325,7 @@ func runDetached(ctx context.Context, env []string, args ...string) ([]byte, err
 	cmd.Env = append(env, "GIT_LITERAL_PATHSPECS=1")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)
+		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], detachedTimeout)
 	}
 	return out, err
 }
@@ -317,17 +396,63 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 	return strings.TrimSpace(string(out)) == "", nil
 }
 
-// MergePull runs a merge-only pull. --no-rebase forces a merge pull
-// regardless of the user's pull.rebase config, so background sync never
-// rewrites the shared graph's history.
+// MergePull fetches and merges the branch's upstream, never rebasing, so sync
+// never rewrites the shared graph's history. A merge commit carries
+// model.GraphMergeMessage, which git pull cannot set;
+// a conflict stays in the working tree for the user to resolve.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
-	out, err := c.command(ctx, "pull", "--no-rebase").CombinedOutput()
+	if c.graphClone() {
+		return c.pullClone(ctx)
+	}
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	if err := c.Fetch(ctx); err != nil {
+		return "", err
+	}
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return "", err
+	}
+	if upstream == "" {
+		return "", errors.New("the current branch has no upstream to merge")
+	}
+	out, err := c.command(ctx, "merge", "--no-edit", "-m", model.GraphMergeMessage(upstream), upstream).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {
-			return "", fmt.Errorf("git pull --no-rebase: %w", err)
+			return "", fmt.Errorf("git merge %s: %w", upstream, err)
 		}
-		return "", fmt.Errorf("git pull --no-rebase: %s", msg)
+		return "", fmt.Errorf("git merge %s: %s", upstream, msg)
+	}
+	return msg, nil
+}
+
+// MergeFetched merges the branch's upstream as last fetched, reaching no
+// remote: the merge of MergePull without its fetch. Production
+// handlers.Puller.
+func (c CLI) MergeFetched(ctx context.Context) (string, error) {
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return "", err
+	}
+	if upstream == "" {
+		return "", errors.New("the current branch has no upstream to merge")
+	}
+	if c.graphClone() {
+		err = c.mergeClone(ctx, upstream, model.GraphMergeMessage(upstream))
+		if err != nil {
+			return "", err
+		}
+		return "merged " + upstream, nil
+	}
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	out, err := c.command(ctx, "merge", "--no-edit", upstream).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err != nil {
+		return "", fmt.Errorf("git merge %s: %s (%w)", upstream, msg, err)
 	}
 	return msg, nil
 }
@@ -397,7 +522,27 @@ func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) (
 // It is the production handlers.ProjectRepositories.
 type Repositories struct{}
 
-func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
+// RootOf is RepoRootFor that fails loud: only git's own "not a git
+// repository" answer means no repository, so a setup never runs `git init`
+// inside a repository git could not read.
+func (Repositories) RootOf(dir string) (string, error) {
+	ancestor := existingAncestor(dir)
+	if ancestor == "" {
+		return "", nil
+	}
+	probe := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel")
+	probe.Env = append(pathEnv(), "LC_ALL=C")
+	var stderr strings.Builder
+	probe.Stderr = &stderr
+	out, err := probe.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	if strings.Contains(stderr.String(), "not a git repository") {
+		return "", nil
+	}
+	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(stderr.String()), err)
+}
 
 func (Repositories) Init(dir string) error {
 	cmd := exec.Command("git", "init", "--quiet", dir)
@@ -414,6 +559,29 @@ func (Repositories) CurrentBranch(dir string) (string, error) {
 }
 
 func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
+
+func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
+
+// ErrGraphRepoMissing reports a graph directory that does not exist or lies
+// in no git repository.
+var ErrGraphRepoMissing = errors.New("graph directory is not in a git repository")
+
+// GraphRepoRoot returns the root of the repository holding the existing graph
+// directory graphDir. Unlike RepoRootFor it never falls back to an ancestor,
+// so sync cannot act on a repository that does not hold the graph.
+func GraphRepoRoot(graphDir string) (string, error) {
+	info, err := os.Stat(graphDir)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
+	}
+	probe := exec.Command("git", "-C", graphDir, "rev-parse", "--show-toplevel")
+	probe.Env = pathEnv()
+	out, err := probe.Output()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
 
 // existingAncestor returns path, or the closest ancestor that exists on disk;
 // for a file, the folder holding it, so a graph_dir naming a file lies in the

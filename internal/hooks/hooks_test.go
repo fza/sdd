@@ -627,7 +627,7 @@ func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 	for _, file := range []string{"project.sh", "local/project-local.sh"} {
 		script(t, filepath.Join(project, ".sdd", "hooks", file), "true")
 	}
-	resolved, err := meta.ResolveProject(work)
+	resolved, err := meta.ResolveProject(work, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

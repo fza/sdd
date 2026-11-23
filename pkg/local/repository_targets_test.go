@@ -3,11 +3,13 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -136,9 +138,132 @@ func TestRepositoryTargetsReloadConfiguration(t *testing.T) {
 	}
 }
 
+// A publication keeps the graph lock until its commit, so no other process's
+// clone upkeep removes the entry file in between.
+func TestRepositoryTargetsHoldTheGraphLockFromPublicationToCommit(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	acquired, err := repo.targets().Acquire(t.Context(), sdd.MutationTarget{Project: "example", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = acquired.Release() }()
+	key := sdd.PublicationKey{Session: "session", Sequence: 1, Discriminator: "new-entry"}
+	batch := captureBatch(t, key, "20260914-020000-s-tac-cap", "Summary.")
+	publication, err := acquired.Graph.(sdd.PublicationStore).PublishEntry(t.Context(), key, batch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := flock.New(filepath.Join(repo.root, ".sdd", "graph", ".sdd-runtime", "graph.lock"))
+	taken, err := lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken {
+		_ = lock.Unlock()
+		t.Fatal("the graph lock should stay held between the publication and its commit")
+	}
+
+	err = acquired.Finalizers[0].Finalize(t.Context(), sdd.AppliedMutation{Project: "example", BatchID: key.String(), Revision: publication.Revision, Batch: batch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taken, err = lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("the commit should release the graph lock")
+	}
+	_ = lock.Unlock()
+}
+
+// A publication whose commit never runs leaves the graph lock with the
+// release of its target.
+func TestRepositoryTargetsReleaseAPublicationsGraphLock(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	acquired, err := repo.targets().Acquire(t.Context(), sdd.MutationTarget{Project: "example", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := sdd.PublicationKey{Session: "session", Sequence: 1, Discriminator: "new-entry"}
+	_, err = acquired.Graph.(sdd.PublicationStore).PublishEntry(t.Context(), key, captureBatch(t, key, "20260914-020000-s-tac-cap", "Summary."), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = acquired.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := flock.New(filepath.Join(repo.root, ".sdd", "graph", ".sdd-runtime", "graph.lock"))
+	taken, err := lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("releasing the target should release the publication's graph lock")
+	}
+	_ = lock.Unlock()
+}
+
+// A graph_repo project's machine-local layer lives in the code repository,
+// outside the checkout the targets open.
+func TestRepositoryTargetsReadTheGivenLocalLayer(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: committed\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	localLayer := filepath.Join(t.TempDir(), "config.local.yaml")
+	if err := os.WriteFile(localLayer, []byte("repo_id: example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := local.NewRepositoryTargetsAt(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), localLayer, t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := targets.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{Branch: "main"})
+	if err != nil {
+		t.Fatalf("the targets should resolve the project through the given local layer: %v", err)
+	}
+	if err := read.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The upstream signature keeps working and places the gate's state under the
+// XDG locations.
+func TestRepositoryTargetsUpstreamSignature(t *testing.T) {
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, t.TempDir())
+	}
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+
+	targets, err := local.NewRepositoryTargets("example", repo.root, filepath.Join(repo.root, "global-config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := targets.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{Branch: "main"})
+	if err != nil {
+		t.Fatalf("the targets should resolve the project: %v", err)
+	}
+	if err := read.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	r.t.Helper()
-	targets, err := local.NewRepositoryTargets("example", r.root, filepath.Join(r.root, "global-config.yaml"))
+	if r.state == "" {
+		r.state = r.t.TempDir()
+	}
+	targets, err := local.NewRepositoryTargetsAt(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
 	if err != nil {
 		r.t.Fatal(err)
 	}

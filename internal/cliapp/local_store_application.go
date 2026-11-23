@@ -52,7 +52,11 @@ func buildLocalStoreApplication(ctx context.Context, cmd *cli.Command) (*sdd.App
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
+	localLayer, err := localLayerFile()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	targets, err := localadapter.NewRepositoryTargetsAt(ctx, project, filepath.Dir(sddDir), locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

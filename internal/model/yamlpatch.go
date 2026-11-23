@@ -29,7 +29,21 @@ import (
 // settings are flat config, so the simpler dotted-path form covers the
 // need without the extra dependency.
 func SetYAMLField(existing []byte, path string, value any) ([]byte, error) {
-	return patchYAML(existing, path, func(target *yaml.Node) error {
+	segments, err := splitYAMLPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return SetYAMLFieldAt(existing, segments, value)
+}
+
+// SetYAMLFieldAt is SetYAMLField for a path given as segments, so a segment
+// may itself hold dots, as a repository id does.
+func SetYAMLFieldAt(existing []byte, segments []string, value any) ([]byte, error) {
+	path := strings.Join(segments, ".")
+	if slices.Contains(segments, "") || len(segments) == 0 {
+		return nil, fmt.Errorf("invalid path %q: empty segment", path)
+	}
+	return patchYAMLAt(existing, segments, func(target *yaml.Node) error {
 		if target.Kind != yaml.ScalarNode {
 			return fmt.Errorf("target at %q is a %s, not a scalar", path, kindName(target.Kind))
 		}
@@ -124,6 +138,10 @@ func patchYAML(existing []byte, path string, mutate func(target *yaml.Node) erro
 	if err != nil {
 		return nil, err
 	}
+	return patchYAMLAt(existing, segments, mutate)
+}
+
+func patchYAMLAt(existing []byte, segments []string, mutate func(target *yaml.Node) error) ([]byte, error) {
 	root, err := parseYAMLRoot(existing)
 	if err != nil {
 		return nil, err

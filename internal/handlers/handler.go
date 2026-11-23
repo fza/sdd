@@ -9,8 +9,10 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -46,6 +48,18 @@ type Committer interface {
 	Commit(message string, paths ...string) error
 }
 
+// FileMerger three-way merges other into current against base, writing the
+// result into current and reporting whether conflict markers were left.
+type FileMerger interface {
+	MergeFile(ctx context.Context, current, base, other string, markerSize int) (conflicted bool, err error)
+}
+
+// MergeDriverInstaller writes the entry merge driver into a repository's
+// local config when it has none.
+type MergeDriverInstaller interface {
+	EnsureMergeDriver(ctx context.Context) error
+}
+
 // Brancher performs git branch operations. Injected so tests can fake
 // checkout/branch deletion without touching real git.
 type Brancher interface {
@@ -69,9 +83,13 @@ type Puller interface {
 	// IsClean reports whether the working tree has no uncommitted changes
 	// (a `git status --porcelain` with empty output).
 	IsClean(ctx context.Context) (bool, error)
-	// MergePull runs a merge-only pull (`git pull --no-rebase`) and returns
+	// MergePull fetches and merges upstream, never rebasing, and returns
 	// git's combined output. A non-nil error means the pull failed.
 	MergePull(ctx context.Context) (string, error)
+	// MergeFetched merges the upstream as last fetched, reaching no remote,
+	// and returns git's combined output.
+	MergeFetched(ctx context.Context) (string, error)
+	UpstreamLocator
 }
 
 // Tracker reads the git state of the paths init commits. Without one, init
@@ -88,45 +106,112 @@ type Tracker interface {
 // Each public method corresponds to one command and lives in its own file
 // (handler_new_entry.go, etc.).
 type Handler struct {
-	graphDir     string
-	sddDir       string // path to .sdd/ directory; required for commands that write tmp files
-	reader       Reader
-	llmRunner    llm.Runner
-	titleSearch  TitleSearchOpener
-	committer    Committer
-	brancher     Brancher
-	mover        Mover
-	puller       Puller
-	tracker      Tracker
-	repos        *repos.Manager
-	projectRepos ProjectRepositories
-	committerAt  func(dir string) Committer
-	stderr       io.Writer
-	now          func() time.Time
-	language     string
+	graphDir string
+	sddDir   string // path to .sdd/ directory; required for commands that write tmp files
+	// localLayerFile is the machine-local config layer file; empty resolves
+	// it under sddDir.
+	localLayerFile string
+	reader         Reader
+	llmRunner      llm.Runner
+	titleSearch    TitleSearchOpener
+	committer      Committer
+	brancher       Brancher
+	mover          Mover
+	puller         Puller
+	tracker        Tracker
+	pusher         Pusher
+	graphPuller    GraphPuller
+	fetcher        GraphFetcher
+	gate           *gitgate.Gate
+	syncLock       SyncLock
+	syncRecord     SyncRecord
+	syncMode       model.SyncMode
+	graphClone     GraphCloneKeeper
+	setAsideJudge  SetAsideJudge
+	repos          *repos.Manager
+	cloneRound     CloneRound
+	graphClones    *repos.GraphClones
+	projectRepos   ProjectRepositories
+	committerAt    func(dir string) Committer
+	moverAt        func(dir string) GraphMover
+	strays         StrayFinder
+	sessionStores  func(sddDir string, repoID model.RepoID) (map[string]string, error)
+	indexCacheRoot string
+	fileMerger     FileMerger
+	mergeDriverAt  func(dir string) MergeDriverInstaller
+	stderr         io.Writer
+	now            func() time.Time
+	language       string
+	// background tracks rounds a read stopped waiting for (waitFor).
+	background *sync.WaitGroup
 }
 
 // Options configures a new Handler. Zero-valued fields get sensible defaults.
 type Options struct {
-	GraphDir  string
-	SDDDir    string // path to .sdd/ directory; required for commands that write tmp files
-	Reader    Reader
-	LLMRunner llm.Runner
-	Committer Committer
-	Brancher  Brancher
-	Mover     Mover
-	Puller    Puller
-	Tracker   Tracker
-	// Repos owns the connected-repos side effects (clone, pull, config
-	// writes). Nil means no connected-repos support — repo commands fail
-	// loud, and cross-repo cache freshening is skipped.
+	GraphDir string
+	SDDDir   string // path to .sdd/ directory; required for commands that write tmp files
+	// LocalLayerFile is the machine-local config layer file, the code
+	// repository's for a graph_repo project (meta.Project.LocalLayerFile);
+	// empty resolves it under SDDDir.
+	LocalLayerFile string
+	Reader         Reader
+	LLMRunner      llm.Runner
+	Committer      Committer
+	Brancher       Brancher
+	Mover          Mover
+	Puller         Puller
+	Tracker        Tracker
+	Pusher         Pusher
+	GraphPuller    GraphPuller
+	// GraphFetcher, SyncLock and SyncRecord serve automatic sync rounds; a
+	// round without a GraphFetcher reports the graph repository missing.
+	GraphFetcher GraphFetcher
+	// Gate admits every git network operation the handler starts; nil
+	// refuses them.
+	Gate       *gitgate.Gate
+	SyncLock   SyncLock
+	SyncRecord SyncRecord
+	// SyncMode decides whether a graph commit is pushed before the command
+	// returns; empty means manual. Only an sdd-owned graph clone syncs
+	// automatically (syncstate.Mode).
+	SyncMode model.SyncMode
+	// GraphClone, when set, is the sdd-owned clone the graph lives in: every
+	// sync path keeps it first, and a pull merges every upstream commit.
+	GraphClone GraphCloneKeeper
+	// SetAsideJudge decides which entries an upstream force push set aside
+	// return on their own. Nil leaves every one to an agent.
+	SetAsideJudge SetAsideJudge
+	// Repos owns the connected-repos side effects (the sdd-owned clones,
+	// config writes). Nil means no connected-repos support — repo commands
+	// fail loud, and cross-repo freshening is skipped.
 	Repos *repos.Manager
+	// CloneRound runs the sync round of a connected repo's clone; nil fails
+	// every refresh of a cloned repo loud.
+	CloneRound CloneRound
+	// GraphClones owns the sdd-owned graph clones. Nil refuses graph_repo.
+	GraphClones *repos.GraphClones
 	// ProjectRepositories and CommitterAt let a work repository's init set up
-	// its missing project in a repository of its own. Nil refuses that setup.
+	// and refresh its project in a repository of its own. Nil refuses both.
 	ProjectRepositories ProjectRepositories
 	CommitterAt         func(dir string) Committer
 	Stderr              io.Writer
 	Now                 func() time.Time
+	// GraphMoverAt is the git work of a graph move in the repository at dir;
+	// nil refuses the move.
+	GraphMoverAt func(dir string) GraphMover
+	// Strays lists the entries former graph locations hold.
+	Strays StrayFinder
+	// SessionStoreDirs names the machine-global session and staging stores
+	// of the project at sddDir, which a move carries to the new layout.
+	SessionStoreDirs func(sddDir string, repoID model.RepoID) (map[string]string, error)
+	// IndexCacheRoot is the cache root holding the machine-global search index
+	// stores, whose new repo key a move links to the store; empty links none.
+	IndexCacheRoot string
+	// FileMerger merges the rest of an entry file for MergeEntry.
+	FileMerger FileMerger
+	// MergeDriverAt sets up the entry merge driver in the repository at dir
+	// for init. Nil skips the setup.
+	MergeDriverAt func(dir string) MergeDriverInstaller
 	// Language is the graph's configured authoring language locale code
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
@@ -139,22 +224,41 @@ type Options struct {
 // New constructs a Handler with the given options.
 func New(opts Options) *Handler {
 	h := &Handler{
-		graphDir:     opts.GraphDir,
-		sddDir:       opts.SDDDir,
-		reader:       opts.Reader,
-		llmRunner:    opts.LLMRunner,
-		titleSearch:  opts.TitleSearch,
-		committer:    opts.Committer,
-		brancher:     opts.Brancher,
-		mover:        opts.Mover,
-		puller:       opts.Puller,
-		tracker:      opts.Tracker,
-		repos:        opts.Repos,
-		projectRepos: opts.ProjectRepositories,
-		committerAt:  opts.CommitterAt,
-		stderr:       opts.Stderr,
-		now:          opts.Now,
-		language:     opts.Language,
+		graphDir:       opts.GraphDir,
+		sddDir:         opts.SDDDir,
+		localLayerFile: opts.LocalLayerFile,
+		reader:         opts.Reader,
+		llmRunner:      opts.LLMRunner,
+		titleSearch:    opts.TitleSearch,
+		committer:      opts.Committer,
+		brancher:       opts.Brancher,
+		mover:          opts.Mover,
+		puller:         opts.Puller,
+		tracker:        opts.Tracker,
+		pusher:         opts.Pusher,
+		graphPuller:    opts.GraphPuller,
+		fetcher:        opts.GraphFetcher,
+		gate:           opts.Gate,
+		syncLock:       opts.SyncLock,
+		syncRecord:     opts.SyncRecord,
+		syncMode:       opts.SyncMode,
+		graphClone:     opts.GraphClone,
+		setAsideJudge:  opts.SetAsideJudge,
+		repos:          opts.Repos,
+		cloneRound:     opts.CloneRound,
+		graphClones:    opts.GraphClones,
+		projectRepos:   opts.ProjectRepositories,
+		committerAt:    opts.CommitterAt,
+		moverAt:        opts.GraphMoverAt,
+		strays:         opts.Strays,
+		sessionStores:  opts.SessionStoreDirs,
+		indexCacheRoot: opts.IndexCacheRoot,
+		fileMerger:     opts.FileMerger,
+		mergeDriverAt:  opts.MergeDriverAt,
+		stderr:         opts.Stderr,
+		now:            opts.Now,
+		language:       opts.Language,
+		background:     &sync.WaitGroup{},
 	}
 	if h.stderr == nil {
 		h.stderr = os.Stderr

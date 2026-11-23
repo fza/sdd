@@ -1,0 +1,401 @@
+package repos
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/networkteam/slogutils"
+
+	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/meta"
+	"github.com/networkteam/sdd/internal/model"
+)
+
+// GraphCloneGit is the git surface the sdd-owned graph clones need.
+type GraphCloneGit interface {
+	CloneGraph(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string, cone []string) error
+	SparseCone(ctx context.Context, dir string) ([]string, error)
+	SetSparseCone(ctx context.Context, dir string, cone []string) error
+	KeepGraphClone(ctx context.Context, dir string, routing []string) error
+	PushGraphClone(ctx context.Context, dir string) error
+	// CommitsWaiting reports whether the clone at dir holds commits its
+	// upstream lacks.
+	CommitsWaiting(ctx context.Context, dir string) (bool, error)
+	// RemoteURL is the URL of the protocol remote the clone at dir uses.
+	RemoteURL(ctx context.Context, dir string) (string, error)
+	// ExpandURL applies git's URL rewrites to url without reaching it.
+	ExpandURL(ctx context.Context, url string) (string, error)
+}
+
+// CloneLocker takes the locks every sync round and writer of the clone at
+// dir holds, graphDir its graph directory relative to dir.
+type CloneLocker interface {
+	LockClone(ctx context.Context, dir, graphDir string) (release func(), err error)
+}
+
+// GraphClones owns the sdd-owned clone of every graph and connected
+// repository this machine reads or writes, one per repository id under
+// <DataRoot>/repos/<repo-id>/. A clone passes
+// the gate as a gitgate.Clone, a publish as a push.
+type GraphClones struct {
+	dataRoot string
+	git      GraphCloneGit
+	gate     *gitgate.Gate
+	locker   CloneLocker
+}
+
+// NewGraphClones builds the clone owner over the locations' data root. A nil
+// gate and locker serve only the clones' places; a clone or publish fails
+// with ErrNoGate, a keep without a locker fails too.
+func NewGraphClones(loc Locations, git GraphCloneGit, gate *gitgate.Gate, locker CloneLocker) *GraphClones {
+	return &GraphClones{dataRoot: loc.DataRoot, git: git, gate: gate, locker: locker}
+}
+
+// Dir is where the clone of repoID lives.
+func (g *GraphClones) Dir(repoID model.RepoID) (string, error) {
+	return cloneDir(g.dataRoot, repoID)
+}
+
+// Ensure clones the graph repository repoID when no clone exists yet, trying
+// the protocol codeOrigin suggests first, then keeps it (see keep). It
+// reports whether a clone ran.
+func (g *GraphClones) Ensure(ctx context.Context, repoID model.RepoID, codeOrigin string) (dir string, cloned bool, err error) {
+	return g.ensure(ctx, repoID, model.CloneSource{First: model.InitialProtocol(repoID, codeOrigin)})
+}
+
+// EnsureConnected clones the connected repository repoID from cloneURL when
+// no clone exists yet (model.ConnectedCloneSource), then keeps it.
+func (g *GraphClones) EnsureConnected(ctx context.Context, repoID model.RepoID, cloneURL string) (dir string, cloned bool, err error) {
+	return g.ensure(ctx, repoID, model.ConnectedCloneSource(repoID, cloneURL))
+}
+
+func (g *GraphClones) ensure(ctx context.Context, repoID model.RepoID, source model.CloneSource) (dir string, cloned bool, err error) {
+	dir, err = g.Dir(repoID)
+	if err != nil {
+		return "", false, err
+	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	if !IsCloned(dir) {
+		err = g.clone(ctx, repoID, source, dir)
+		if err != nil {
+			return "", false, err
+		}
+		cloned = true
+	}
+	err = g.keep(ctx, repoID, dir)
+	if err != nil {
+		return "", false, err
+	}
+	return dir, cloned, nil
+}
+
+// ensureLockPoll is how often a caller waiting for another's clone of the
+// same repository retries its lock.
+const ensureLockPoll = 100 * time.Millisecond
+
+// lockEnsure holds the lock of repoID's clone while one process makes or
+// keeps it, so a second waits instead of clearing the first one's staging.
+func (g *GraphClones) lockEnsure(ctx context.Context, repoID model.RepoID) (unlock func() error, err error) {
+	locks := filepath.Join(g.dataRoot, "repos", ".locks")
+	err = os.MkdirAll(locks, 0o755)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s: %w", locks, err)
+	}
+	lock := flock.New(filepath.Join(locks, url.PathEscape(string(repoID))+".lock"))
+	_, err = lock.TryLockContext(ctx, ensureLockPoll)
+	if err != nil {
+		return nil, fmt.Errorf("waiting for another clone of %s: %w", repoID, err)
+	}
+	return lock.Unlock, nil
+}
+
+// Stage clones cloneURL into a fresh directory beside the clones, for a
+// repository whose id only its committed config declares. remove deletes
+// what Place did not move.
+func (g *GraphClones) Stage(ctx context.Context, cloneURL string) (staged string, remove func(), err error) {
+	root := filepath.Join(g.dataRoot, "repos")
+	err = os.MkdirAll(root, 0o755)
+	if err != nil {
+		return "", nil, fmt.Errorf("creating %s: %w", root, err)
+	}
+	parent, err := os.MkdirTemp(root, ".adding-*")
+	if err != nil {
+		return "", nil, err
+	}
+	remove = func() { _ = os.RemoveAll(parent) }
+	derived, deriveErr := model.DeriveRepoID(cloneURL)
+	source := model.CloneSource{URL: cloneURL}
+	if deriveErr == nil {
+		source = model.ConnectedCloneSource(derived, cloneURL)
+	} else {
+		derived = ""
+	}
+	staged = filepath.Join(parent, "clone")
+	err = g.clone(ctx, derived, source, staged)
+	if err != nil {
+		remove()
+		return "", nil, err
+	}
+	return staged, remove, nil
+}
+
+// Place moves a staged clone to where the clone of repoID lives and keeps
+// it; a clone already there stays and the staged one is left to its remove.
+func (g *GraphClones) Place(ctx context.Context, staged string, repoID model.RepoID) (dir string, err error) {
+	dir, err = g.Dir(repoID)
+	if err != nil {
+		return "", err
+	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	if !IsCloned(dir) {
+		err = moveWithin(filepath.Join(g.dataRoot, "repos"), staged, dir)
+		if err != nil {
+			return "", fmt.Errorf("placing the clone of %s: %w", repoID, err)
+		}
+	}
+	return dir, g.keep(ctx, repoID, dir)
+}
+
+// moveWithin moves src to dst through an os.Root over root, so a symlink
+// planted after cloneDir checked the path cannot carry the move outside it.
+func moveWithin(root, src, dst string) error {
+	from, err := filepath.Rel(root, src)
+	if err != nil {
+		return err
+	}
+	to, err := filepath.Rel(root, dst)
+	if err != nil {
+		return err
+	}
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", root, err)
+	}
+	defer func() { _ = opened.Close() }()
+	err = opened.MkdirAll(filepath.Dir(to), 0o755)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
+	}
+	return opened.Rename(from, to)
+}
+
+// keep restores the clone at dir to what sdd made: the cone holds .sdd and
+// the graph_dir its committed config names, merges route to sdd's drivers,
+// and anything sdd did not make is gone. It runs under the clone's locks, so
+// never beside a writer or a sync round.
+func (g *GraphClones) keep(ctx context.Context, repoID model.RepoID, dir string) error {
+	if g.locker == nil {
+		return fmt.Errorf("keeping the clone of %s: no clone locker", repoID)
+	}
+	graphDir, err := committedGraphDir(dir)
+	if err != nil {
+		return err
+	}
+	release, err := g.locker.LockClone(ctx, dir, graphDir)
+	if err != nil {
+		return fmt.Errorf("locking the clone of %s: %w", repoID, err)
+	}
+	defer release()
+	err = g.git.KeepGraphClone(ctx, dir, nil)
+	if err != nil {
+		return fmt.Errorf("keeping the clone of %s: %w", repoID, err)
+	}
+	graphDir, err = committedGraphDir(dir)
+	if err != nil {
+		return err
+	}
+	cone, changed, err := g.coneChange(ctx, dir, graphDir)
+	if err != nil {
+		return err
+	}
+	if changed {
+		// Checking out a wider cone fetches its contents, a fetch the gate
+		// admits; deferred, the clone keeps its cone until the next keep.
+		err = g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+			return g.git.SetSparseCone(ctx, dir, cone)
+		})
+		var deferred *gitgate.DeferredError
+		if errors.As(err, &deferred) {
+			slogutils.FromContext(ctx).Debug("clone: cone change deferred", "repo", repoID, "next", deferred.Next)
+		} else if err != nil {
+			return err
+		}
+	}
+	// Entry files route through the .gitattributes committed in the graph
+	// directory, which init writes and every move carries.
+	err = g.git.KeepGraphClone(ctx, dir, []string{model.ConfigMergeAttributeLine})
+	if err != nil {
+		return fmt.Errorf("keeping the clone of %s: %w", repoID, err)
+	}
+	return nil
+}
+
+// Widen sets the cone of the clone of repoID to hold graphDir, which its
+// committed config does not name yet: init commits the graph directory's
+// first files before that config reaches the clone's upstream.
+func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir string) (err error) {
+	dir, err := g.Dir(repoID)
+	if err != nil {
+		return err
+	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	if g.locker == nil {
+		return fmt.Errorf("widening the clone of %s: no clone locker", repoID)
+	}
+	release, err := g.locker.LockClone(ctx, dir, graphDir)
+	if err != nil {
+		return fmt.Errorf("locking the clone of %s: %w", repoID, err)
+	}
+	defer release()
+	cone, changed, err := g.coneChange(ctx, dir, graphDir)
+	if err != nil || !changed {
+		return err
+	}
+	err = g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+		return g.git.SetSparseCone(ctx, dir, cone)
+	})
+	if err != nil {
+		return fmt.Errorf("widening the clone of %s to %s: %w", repoID, graphDir, err)
+	}
+	return nil
+}
+
+// Publish pushes what sdd committed in the clone of repoID, only with commits
+// waiting.
+func (g *GraphClones) Publish(ctx context.Context, repoID model.RepoID) error {
+	dir, err := g.Dir(repoID)
+	if err != nil {
+		return err
+	}
+	waiting, err := g.git.CommitsWaiting(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("publishing the clone of %s: %w", repoID, err)
+	}
+	if !waiting {
+		return nil
+	}
+	err = g.run(gitgate.WithCredits(ctx, gitgate.Push), gitgate.Push, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+		return g.git.PushGraphClone(ctx, dir)
+	})
+	if err != nil {
+		return fmt.Errorf("publishing the clone of %s: %w", repoID, err)
+	}
+	return nil
+}
+
+// Target is the remote a fetch of repoID reaches: its clone's remote, or the
+// one its first clone from cloneURL tries first.
+func (g *GraphClones) Target(ctx context.Context, repoID model.RepoID, cloneURL string) (gitgate.Target, error) {
+	dir, err := g.Dir(repoID)
+	if err != nil {
+		return gitgate.Target{}, err
+	}
+	var url string
+	if IsCloned(dir) {
+		url, err = g.git.RemoteURL(ctx, dir)
+	} else {
+		url, err = g.sourceURL(ctx, repoID, model.ConnectedCloneSource(repoID, cloneURL))
+	}
+	if err != nil {
+		return gitgate.Target{}, err
+	}
+	return gitgate.TargetFromURL(url)
+}
+
+// clone makes the clone of repoID at dir from source, its target the remote
+// tried first.
+func (g *GraphClones) clone(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string) error {
+	return g.run(ctx, gitgate.Clone, func(ctx context.Context) (string, error) { return g.sourceURL(ctx, repoID, source) }, func(ctx context.Context) error {
+		err := g.git.CloneGraph(ctx, repoID, source, dir, model.GraphCloneCone(""))
+		if err != nil {
+			return err
+		}
+		graphDir, err := committedGraphDir(dir)
+		if err != nil {
+			return err
+		}
+		cone, changed, err := g.coneChange(ctx, dir, graphDir)
+		if err != nil || !changed {
+			return err
+		}
+		return g.git.SetSparseCone(ctx, dir, cone)
+	})
+}
+
+// coneChange is the cone the clone at dir needs, .sdd and graphDir, and
+// whether it differs from the one checked out.
+func (g *GraphClones) coneChange(ctx context.Context, dir, graphDir string) ([]string, bool, error) {
+	cone := model.GraphCloneCone(graphDir)
+	current, err := g.git.SparseCone(ctx, dir)
+	if err != nil {
+		return nil, false, err
+	}
+	return cone, !slices.Equal(current, cone), nil
+}
+
+// sourceURL is the URL a clone from source reaches first, rewrites applied.
+func (g *GraphClones) sourceURL(ctx context.Context, repoID model.RepoID, source model.CloneSource) (string, error) {
+	url := source.URL
+	if url == "" {
+		sshURL, httpsURL, err := model.GraphRemoteURLs(repoID)
+		if err != nil {
+			return "", err
+		}
+		url = sshURL
+		if source.First == model.ProtocolHTTPS {
+			url = httpsURL
+		}
+	}
+	return g.git.ExpandURL(ctx, url)
+}
+
+func (g *GraphClones) run(ctx context.Context, kind gitgate.Kind, remoteURL func(ctx context.Context) (string, error), op func(ctx context.Context) error) error {
+	if g.gate == nil {
+		return ErrNoGate
+	}
+	url, err := remoteURL(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := gitgate.TargetFromURL(url)
+	if err != nil {
+		return err
+	}
+	return g.gate.Run(ctx, target, kind, op)
+}
+
+// committedGraphDir is the graph directory the clone's committed config
+// names, relative to its root; the default for a repository without one.
+func committedGraphDir(dir string) (string, error) {
+	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(dir))
+	if errors.Is(err, meta.ErrNotAnSDDProject) {
+		return model.DefaultGraphDir, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if cfg.GraphDir == "" || cfg.GraphDir == model.GraphElsewhereFile {
+		return model.DefaultGraphDir, nil
+	}
+	return path.Clean(filepath.ToSlash(cfg.GraphDir)), nil
+}

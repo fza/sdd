@@ -1,7 +1,6 @@
 package handlers_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,23 +31,23 @@ func TestInit_RefusesToMigrateTheIndexUnderAnInvalidRepoID(t *testing.T) {
 	}
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(root, "cache"),
+		CacheRoot:  filepath.Join(root, "cache"), DataRoot: filepath.Join(root, "data"),
 	}
 	h := handlers.New(handlers.Options{
 		Reader: finders.New(finders.Options{}),
-		Repos:  repos.NewManager(repos.NewRegistry(loc), declaringGit{}),
+		Repos:  repos.NewManager(repos.NewRegistry(loc), nil),
 	})
 
-	err := h.Init(context.Background(), &command.InitCmd{
+	err := h.Init(t.Context(), &command.InitCmd{
 		RepoRoot:      repoRoot,
 		BinaryVersion: "v0.2.0",
 		Targets:       []model.AgentTarget{model.AgentClaude},
 		Scope:         model.ScopeProject,
 	})
 	if err == nil {
-		t.Error("Init should refuse a repo_id with parent segments")
+		t.Error("init should refuse a repo_id with parent segments")
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "escaped")); !os.IsNotExist(statErr) {
-		t.Errorf("Init should create nothing outside the cache root: %v", statErr)
+		t.Errorf("init should create nothing outside the cache root: %v", statErr)
 	}
 }

@@ -31,6 +31,9 @@ type InfoResult struct {
 	Contribution string
 	// SecretRules names the credential rule file this process scans with.
 	SecretRules SecretRules
+	// SyncBlocked is what blocks automatic sync of the branch's graph
+	// repository, nil while sync proceeds.
+	SyncBlocked *SyncBlocked
 }
 
 // SecretRules is the gitleaks rule file credential scans use: the built-in

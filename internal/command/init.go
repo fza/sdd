@@ -23,8 +23,20 @@ type InitCmd struct {
 
 	// GraphDir is the graph directory path relative to RepoRoot, or to the
 	// project init sets up at ProjectDir. Empty defaults to
-	// model.DefaultGraphDir (".sdd/graph").
+	// model.DefaultGraphDirFor's choice: model.GraphOnlyGraphDir for a project
+	// set up through ProjectDir or GraphRepo, model.DefaultGraphDir otherwise.
 	GraphDir string
+
+	// GraphRepo, when set, makes RepoRoot a code repository whose graph lives
+	// in that graph repository, reached through sdd's own clone of it: init
+	// clones it, sets up .sdd/ there when it holds none and pushes, then
+	// commits graph_repo and the stock guard in RepoRoot. RemoteURL is
+	// RepoRoot's origin, which picks the protocol the clone tries first.
+	GraphRepo model.RepoID
+	// GraphOnly marks RepoRoot as a graph repository set up through sdd's
+	// clone of it: agents work in the code repository, so no skills, MCP
+	// registrations or instruction bridge are written there.
+	GraphOnly bool
 
 	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
 	// in the sdd project at this path (relative to RepoRoot or absolute):
@@ -62,6 +74,11 @@ type InitCmd struct {
 	// VerifierRunner, when set, records what runs the deep verifier on this
 	// machine in the machine-local config.
 	VerifierRunner model.VerifierRunner
+	// LocalLayerFile is the machine-local config file Participant is written
+	// to: the code repository's for a graph repository set up through sdd's
+	// clone, whose upkeep removes any local file in the clone. Empty is the
+	// one under RepoRoot's .sdd/.
+	LocalLayerFile string
 
 	// Language is the graph authoring language (locale code) to record in
 	// .sdd/config.yaml on fresh init, the project's under ProjectDir. Empty means "use the default behavior"
@@ -140,8 +157,14 @@ type InitCmd struct {
 	// OnMigrated fires after .sdd-tmp/ contents are migrated to .sdd/tmp/.
 	OnMigrated func(count int)
 
-	// OnGitignoreUpdated fires after .gitignore is updated with .sdd/tmp/.
+	// OnGitignoreUpdated fires after a .gitignore changes: .sdd/.gitignore
+	// written, or the root .gitignore rid of the lines earlier builds derived.
 	OnGitignoreUpdated func(gitignorePath string)
+
+	// OnGitattributesUpdated fires after a .gitattributes changes: the graph
+	// directory's gaining the line routing entries to the entry merge driver,
+	// or the root one rid of the line earlier builds derived.
+	OnGitattributesUpdated func(gitattributesPath string)
 
 	// OnIndexMigrated fires per legacy index dir (in-tree .sdd/index or a
 	// clone cache's .index) the init pass handled: moved=true when it was
@@ -203,7 +226,8 @@ type InitCmd struct {
 	OnMCPRegistered func(target model.AgentTarget, path string)
 
 	// OnUnchanged fires once, after a run that wrote, removed and committed
-	// nothing, neither in RepoRoot nor in a project it set up.
+	// nothing, neither in RepoRoot nor in a project or graph repository it
+	// initialised.
 	OnUnchanged func()
 }
 

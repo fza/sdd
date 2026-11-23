@@ -9,6 +9,9 @@ type EffectiveConfigQuery struct {
 	// WorkSDDDir is the work repository's .sdd/ in a project_dir layout,
 	// whose layers contribute hooks.
 	WorkSDDDir string
+	// LocalLayerFile is the machine-local layer's file; empty means the one
+	// under SDDDir (meta.Project.LocalLayerFile).
+	LocalLayerFile string
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string
@@ -33,6 +36,8 @@ type EffectiveConfigResult struct {
 // alone.
 type UnknownConfigKeysQuery struct {
 	SDDDir string
+	// LocalLayerFile is as on EffectiveConfigQuery.
+	LocalLayerFile string
 }
 
 // UnknownConfigKey is one unrecognised key and the file carrying it.

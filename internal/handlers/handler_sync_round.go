@@ -1,0 +1,567 @@
+package handlers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/networkteam/slogutils"
+
+	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/model"
+)
+
+// SyncLock serializes every sync path on one graph repository across
+// processes.
+type SyncLock interface {
+	// TryLock takes the lock when it is free; release is nil when another
+	// holder has it.
+	TryLock(ctx context.Context) (release func(), err error)
+	// Lock waits for the lock until ctx ends.
+	Lock(ctx context.Context) (release func(), err error)
+}
+
+// SyncRecord holds the blocked-sync record of one graph repository.
+type SyncRecord interface {
+	Load() (*model.SyncBlocked, error)
+	// Update replaces the record with what change returns for the current
+	// one, atomically across processes; nil removes it.
+	Update(change func(current *model.SyncBlocked) *model.SyncBlocked) error
+}
+
+// GraphFetcher is the git surface a sync round fetches the upstream through.
+type GraphFetcher interface {
+	InRepo(ctx context.Context) bool
+	HasRemote(ctx context.Context) bool
+	UpstreamRef(ctx context.Context) (string, error)
+	Fetch(ctx context.Context) error
+	UpstreamLocator
+}
+
+// FetchGraph fetches the graph repository's upstream when the git gate
+// admits it.
+func (h *Handler) FetchGraph(ctx context.Context, cmd *command.FetchGraphCmd) error {
+	if h.fetcher == nil {
+		return errors.New("graph fetch is unavailable: no git surface configured")
+	}
+	report := func(state model.SyncState, reason string) {
+		if cmd.OnFetched != nil {
+			cmd.OnFetched(state, reason)
+		}
+	}
+	if !h.fetcher.InRepo(ctx) {
+		report(model.SyncStateNoRepo, "")
+		return nil
+	}
+	state, reason, err := h.fetchUpstream(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	report(state, reason)
+	return nil
+}
+
+func (h *Handler) fetchUpstream(ctx context.Context, cmd *command.FetchGraphCmd) (model.SyncState, string, error) {
+	if !h.fetcher.HasRemote(ctx) {
+		return model.SyncStateNoRemote, "", nil
+	}
+	upstream, err := h.fetcher.UpstreamRef(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving upstream: %w", err)
+	}
+	if upstream == "" {
+		return model.SyncStateNoUpstream, "", nil
+	}
+	var fetchErr error
+	err = h.gated(ctx, gitgate.Fetch, h.fetcher, func(ctx context.Context) error {
+		fetchErr = h.fetcher.Fetch(ctx)
+		return fetchErr
+	})
+	deferred, isDeferred := deferral(err)
+	switch {
+	case isDeferred:
+		slogutils.FromContext(ctx).Debug("sync: fetch deferred", "repo", deferred.Target.Repo, "reason", deferred.Reason, "next", deferred.Next)
+		if cmd.OnDeferred != nil {
+			cmd.OnDeferred(string(gitgate.Fetch), deferred.Next)
+		}
+		return model.SyncStateSkipped, "", nil
+	case err != nil && err != fetchErr:
+		return "", "", err
+	case fetchErr != nil:
+		return model.SyncStateFetchFailed, model.GitFailureDetail(fetchErr), nil
+	}
+	return model.SyncStateFetched, "", nil
+}
+
+// SyncRound runs one automatic sync round under the sync lock: fetch, merge
+// upstream graph commits, publish local ones, and record what blocks them,
+// removing the record once nothing does. While a conflict is recorded only an
+// explicit round fetches, merges or pushes.
+func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) error {
+	if h.syncMode != model.SyncModeAuto {
+		return nil
+	}
+	if h.fetcher == nil {
+		h.reportBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir})
+		return nil
+	}
+	release, err := h.takeSyncLock(ctx, cmd.Explicit)
+	if err != nil {
+		return err
+	}
+	if release == nil {
+		if cmd.OnSkipped != nil {
+			cmd.OnSkipped()
+		}
+		return h.reportRecorded(ctx)
+	}
+	defer release()
+	paused, err := h.syncPaused(ctx)
+	if err != nil {
+		return err
+	}
+	if !paused || cmd.Explicit {
+		err = h.syncRound(ctx, cmd)
+		if err != nil {
+			return err
+		}
+	}
+	return h.reportRecorded(ctx)
+}
+
+func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) error {
+	err := h.keepGraphClone(ctx)
+	if err != nil {
+		return err
+	}
+	if cmd.PushOnly {
+		blocked, err := h.publish(ctx, cmd)
+		if err != nil || blocked {
+			return err
+		}
+		return h.clearRecord(model.SyncBlocked.ClearedByPush)
+	}
+	var state model.SyncState
+	var reason string
+	err = h.FetchGraph(ctx, &command.FetchGraphCmd{OnDeferred: cmd.OnDeferred, OnFetched: func(fetched model.SyncState, why string) {
+		state, reason = fetched, why
+	}})
+	if err != nil {
+		return err
+	}
+	switch state {
+	case model.SyncStateSkipped:
+		// Commits waiting still go out once the push is due: a rejection
+		// fetches within the push's own admission.
+		_, err = h.publish(ctx, cmd)
+		return err
+	case model.SyncStateNoRepo:
+		h.reportBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir})
+		return nil
+	case model.SyncStateNoRemote:
+		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedNoUpstream, Detail: "no remote configured"})
+	case model.SyncStateNoUpstream:
+		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedNoUpstream})
+	case model.SyncStateFetchFailed:
+		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Detail: reason})
+	}
+	setAside, err := h.settleSetAside(ctx)
+	if err != nil {
+		return err
+	}
+	blocked, err := h.pullUpstream(ctx)
+	if err != nil || blocked {
+		return err
+	}
+	blocked, err = h.publish(ctx, cmd)
+	if err != nil || blocked {
+		return err
+	}
+	if setAside != nil {
+		return h.recordBlocked(ctx, *setAside)
+	}
+	return h.clearRecord(func(model.SyncBlocked) bool { return true })
+}
+
+// pullUpstream merges upstream graph commits by the pull rules and records a
+// held pull or a conflict; blocked reports either.
+func (h *Handler) pullUpstream(ctx context.Context) (bool, error) {
+	held := h.heldPull(ctx)
+	verdict, err := h.mergeUpstream(ctx, held.cmd)
+	var conflict *MergeConflictError
+	if errors.As(err, &conflict) {
+		return true, h.recordConflict(ctx, conflict.MergeConflict)
+	}
+	if err != nil {
+		return false, err
+	}
+	kind, blocked := model.HeldPullBlock(verdict)
+	if !blocked {
+		return false, nil
+	}
+	return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: kind, Upstream: held.upstream})
+}
+
+type heldPull struct {
+	cmd      *command.PullGraphCmd
+	upstream string
+}
+
+func (h *Handler) heldPull(ctx context.Context) *heldPull {
+	held := &heldPull{}
+	held.cmd = h.reportingPull(ctx)
+	held.cmd.OnHeld = func(_ model.PullVerdict, upstream string) {
+		held.upstream = upstream
+	}
+	return held
+}
+
+// publish pushes the graph commits ahead of upstream and records what holds
+// them back. A push the upstream rejects is retried once after merging what
+// upstream gained, by the pull rules. With
+// commits waiting the push, its retry and the fetch the retry needs are one
+// push admission of the git gate; a deferred push leaves them waiting,
+// unrecorded, and reports blocked so nothing is cleared.
+func (h *Handler) publish(ctx context.Context, round *command.SyncRoundCmd) (bool, error) {
+	var heldVerdict model.PushVerdict
+	var heldUpstream string
+	push := h.reportingPush(ctx)
+	if round != nil && round.OnPushed != nil {
+		logPushed := push.OnPushed
+		push.OnPushed = func(upstream string, commits int) {
+			logPushed(upstream, commits)
+			round.OnPushed(commits)
+		}
+	}
+	push.OnHeld = func(verdict model.PushVerdict, upstream string) {
+		heldVerdict, heldUpstream = verdict, upstream
+	}
+	if h.pusher == nil {
+		return false, errors.New("graph push is unavailable: no git surface configured")
+	}
+	verdict, _, _, err := h.pushVerdict(ctx)
+	if err != nil {
+		return false, err
+	}
+	var blocked bool
+	var pushErr error
+	attempt := func(ctx context.Context) error {
+		pushErr = h.PushGraph(ctx, push)
+		if pushErr == nil {
+			return nil
+		}
+		var retryErr error
+		blocked, retryErr = h.retryPush(ctx, push, pushErr)
+		if retryErr != nil {
+			return retryErr
+		}
+		if blocked {
+			return pushErr
+		}
+		return nil
+	}
+	if verdict == model.PushReady {
+		err = h.gated(ctx, gitgate.Push, h.pusher, attempt)
+	} else {
+		err = attempt(ctx)
+	}
+	deferred, isDeferred := deferral(err)
+	switch {
+	case isDeferred:
+		slogutils.FromContext(ctx).Debug("sync: push deferred", "repo", deferred.Target.Repo, "reason", deferred.Reason, "next", deferred.Next)
+		if round != nil && round.OnDeferred != nil {
+			round.OnDeferred(string(gitgate.Push), deferred.Next)
+		}
+		return true, nil
+	case blocked && err == pushErr:
+		return true, nil
+	case err != nil:
+		return false, err
+	}
+	kind, blocked := model.HeldPushBlock(heldVerdict)
+	if !blocked {
+		return false, nil
+	}
+	return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: kind, Upstream: heldUpstream})
+}
+
+func (h *Handler) retryPush(ctx context.Context, push *command.PushGraphCmd, pushErr error) (bool, error) {
+	failed := func(cause error) (bool, error) {
+		return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedPushFailed, Detail: model.GitFailureDetail(cause)})
+	}
+	if h.graphPuller == nil {
+		return failed(pushErr)
+	}
+	var fetched model.SyncState
+	var reason string
+	err := h.FetchGraph(ctx, &command.FetchGraphCmd{OnFetched: func(state model.SyncState, why string) { fetched, reason = state, why }})
+	if err != nil {
+		return false, err
+	}
+	if fetched != model.SyncStateFetched {
+		return failed(errors.Join(pushErr, errors.New(reason)))
+	}
+	blocked, err := h.pullUpstream(ctx)
+	if err != nil || blocked {
+		return blocked, err
+	}
+	err = h.PushGraph(ctx, push)
+	if err != nil {
+		return failed(err)
+	}
+	return false, nil
+}
+
+// publishGraph publishes what a graph command committed, waiting for the
+// sync lock. While a conflict pauses sync the commit stays local and the
+// command succeeds; a blocked push is recorded and reported, not failed.
+func (h *Handler) publishGraph(ctx context.Context) error {
+	if h.syncMode != model.SyncModeAuto {
+		return nil
+	}
+	ctx = gitgate.WithCredits(ctx, gitgate.Push)
+	release, err := h.takeSyncLock(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	paused, err := h.syncPaused(ctx)
+	if err != nil {
+		return err
+	}
+	if !paused {
+		err = h.keepGraphClone(ctx)
+		if err != nil {
+			return err
+		}
+		blocked, err := h.publish(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if !blocked {
+			err = h.clearRecord(model.SyncBlocked.ClearedByPush)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return h.reportRecorded(ctx)
+}
+
+// syncLockWait bounds how long a publish waits for another process's round,
+// which its own git timeouts bound in turn.
+const syncLockWait = 2 * time.Minute
+
+// takeSyncLock returns the lock's release, nil when wait is false and another
+// process holds it.
+func (h *Handler) takeSyncLock(ctx context.Context, wait bool) (func(), error) {
+	if h.syncLock == nil {
+		return func() {}, nil
+	}
+	var release func()
+	var err error
+	if wait {
+		waitCtx, cancel := context.WithTimeout(ctx, syncLockWait)
+		defer cancel()
+		release, err = h.syncLock.Lock(waitCtx)
+	} else {
+		release, err = h.syncLock.TryLock(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("taking the sync lock: %w", err)
+	}
+	return release, nil
+}
+
+// syncPaused reports whether a recorded conflict still pauses automatic
+// sync, removing the record once its source commit is in the branch.
+func (h *Handler) syncPaused(ctx context.Context) (bool, error) {
+	current, err := h.loadRecord()
+	if err != nil || current == nil || !current.Pauses() {
+		return false, err
+	}
+	if h.graphPuller == nil {
+		return true, nil
+	}
+	merged, err := h.graphPuller.Contains(ctx, current.Source)
+	if err != nil {
+		return false, fmt.Errorf("checking whether the conflict was merged: %w", err)
+	}
+	if merged {
+		return false, h.clearRecord(func(recorded model.SyncBlocked) bool {
+			return recorded.Kind == current.Kind && recorded.Source == current.Source
+		})
+	}
+	return true, nil
+}
+
+func (h *Handler) recordConflict(ctx context.Context, conflict model.MergeConflict) error {
+	source, err := h.graphPuller.RevParse(ctx, conflict.Upstream)
+	if err != nil {
+		return err
+	}
+	destination, err := h.graphPuller.RevParse(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	return h.recordBlocked(ctx, model.SyncBlocked{
+		Kind: model.SyncBlockedConflict, Upstream: conflict.Upstream, Paths: conflict.Paths, Source: source, Destination: destination,
+	})
+}
+
+// recordBlocked records block, keeping the start and owner of the same block
+// found earlier, and reports it.
+func (h *Handler) recordBlocked(ctx context.Context, block model.SyncBlocked) error {
+	block.Since = h.now()
+	if block.Repo == "" {
+		block.Repo = h.graphDir
+	}
+	if h.syncRecord == nil || !block.Persisted() {
+		h.reportBlocked(ctx, block)
+		return nil
+	}
+	renewed := block
+	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		// Only its merge lifts a conflict; a failed fetch or a held pull found
+		// meanwhile leaves the pause in place.
+		if current != nil && current.Pauses() && !block.Pauses() {
+			return current
+		}
+		renewed = block.Renew(current)
+		return &renewed
+	})
+	if err != nil {
+		return fmt.Errorf("recording the blocked sync: %w", err)
+	}
+	h.reportBlocked(ctx, renewed)
+	return nil
+}
+
+// clearRecord removes the record when cleared holds for it.
+func (h *Handler) clearRecord(cleared func(model.SyncBlocked) bool) error {
+	if h.syncRecord == nil {
+		return nil
+	}
+	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		if current == nil || cleared(*current) {
+			return nil
+		}
+		return current
+	})
+	if err != nil {
+		return fmt.Errorf("clearing the blocked sync: %w", err)
+	}
+	return nil
+}
+
+func (h *Handler) loadRecord() (*model.SyncBlocked, error) {
+	if h.syncRecord == nil {
+		return nil, nil
+	}
+	current, err := h.syncRecord.Load()
+	if err != nil {
+		return nil, fmt.Errorf("reading the blocked sync: %w", err)
+	}
+	return current, nil
+}
+
+func (h *Handler) reportRecorded(ctx context.Context) error {
+	current, err := h.loadRecord()
+	if err != nil || current == nil {
+		return err
+	}
+	h.reportBlocked(ctx, *current)
+	return nil
+}
+
+// ClaimSyncNotice delivers the blocked-sync notice to cmd.Session, which owns
+// the fix when no session does yet.
+func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNoticeCmd) error {
+	if h.syncRecord == nil {
+		if h.graphDir != "" && cmd.OnNotice != nil {
+			missing := model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir}
+			cmd.OnNotice(missing.Banner())
+		}
+		return nil
+	}
+	var notice string
+	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		if current == nil {
+			return nil
+		}
+		claimed := current.Claim(cmd.Session, h.now())
+		notice = claimed.NoticeFor(cmd.Session)
+		return &claimed
+	})
+	if err != nil {
+		return fmt.Errorf("claiming the blocked sync: %w", err)
+	}
+	if notice != "" && cmd.OnNotice != nil {
+		cmd.OnNotice(notice)
+	}
+	return nil
+}
+
+// ReleaseSyncOwner gives up the session's ownership of the blocked sync, so
+// the next agent to call owns the fix.
+func (h *Handler) ReleaseSyncOwner(_ context.Context, cmd *command.ReleaseSyncOwnerCmd) error {
+	if h.syncRecord == nil {
+		return nil
+	}
+	var notice string
+	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		if current == nil {
+			return nil
+		}
+		released := current.Release(cmd.Session)
+		notice = released.Banner()
+		return &released
+	})
+	if err != nil {
+		return fmt.Errorf("releasing the blocked sync: %w", err)
+	}
+	if notice != "" && cmd.OnNotice != nil {
+		cmd.OnNotice(notice)
+	}
+	return nil
+}
+
+type syncReportKey struct{}
+
+type syncReport struct {
+	mu       sync.Mutex
+	reported map[model.SyncBlockedKind]bool
+	emit     func(model.SyncBlocked)
+}
+
+// WithSyncReport scopes blocked-sync reporting to one invocation: emit
+// receives each blocked state once, however many sync paths the invocation
+// runs. Without one, blocks are logged at info.
+func WithSyncReport(ctx context.Context, emit func(model.SyncBlocked)) context.Context {
+	return context.WithValue(ctx, syncReportKey{}, &syncReport{reported: map[model.SyncBlockedKind]bool{}, emit: emit})
+}
+
+// WithoutSyncReport ends the invocation scope ctx carries, for a process
+// such as `sdd serve` whose every request and timer round is an invocation of
+// its own.
+func WithoutSyncReport(ctx context.Context) context.Context {
+	return context.WithValue(ctx, syncReportKey{}, (*syncReport)(nil))
+}
+
+func (h *Handler) reportBlocked(ctx context.Context, block model.SyncBlocked) {
+	report, _ := ctx.Value(syncReportKey{}).(*syncReport)
+	if report == nil {
+		slogutils.FromContext(ctx).Info(block.Banner())
+		return
+	}
+	report.mu.Lock()
+	defer report.mu.Unlock()
+	if report.reported[block.Kind] {
+		return
+	}
+	report.reported[block.Kind] = true
+	report.emit(block)
+}

@@ -63,7 +63,9 @@ func exportCmd() *cli.Command {
 				return err
 			}
 			if mode != query.ExportDependenciesNone {
-				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
+				defer settle()
+				if err != nil {
 					return err
 				}
 			}

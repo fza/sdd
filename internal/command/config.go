@@ -14,6 +14,9 @@ type ConfigSetCmd struct {
 	// Value is the scalar as typed by the user; numeric/bool forms are
 	// written as their YAML scalar types.
 	Value string
+	// Repo, when set, writes Key's override for that repository instead of
+	// the catch-all (`connected.repos.<repo-id>.write` for connected.write).
+	Repo string
 }
 
 // ConfigUnsetCmd removes one config key from a chosen layer file, comments
