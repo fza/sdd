@@ -8,7 +8,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestDraftMoved_WhenFewerThanHalfOfTheNearestStay(t *testing.T) {
+func TestDraftMoved_WhenFewerThanThreeQuartersOfTheNearestStay(t *testing.T) {
 	var judged []string
 	for i := range 20 {
 		judged = append(judged, fmt.Sprintf("e%02d", i))
@@ -20,7 +20,9 @@ func TestDraftMoved_WhenFewerThanHalfOfTheNearestStay(t *testing.T) {
 		moved bool
 	}{
 		{"all stay", 20, false},
-		{"half stay", 10, false},
+		{"fifteen stay", 15, false},
+		{"fourteen stay", 14, true},
+		{"half stay", 10, true},
 		{"nine stay", 9, true},
 		{"none stay", 0, true},
 	} {
