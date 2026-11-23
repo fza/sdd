@@ -10,6 +10,8 @@ import (
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/application/types"
+
+	"github.com/networkteam/slogutils"
 )
 
 // serveChainBudget bounds each direction of a served entry chain: the
@@ -37,6 +39,10 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowPredicates,
 		w.registerWorkflowWrites,
 		w.registerWorkflowWIP,
+		w.registerWorkflowGrounding,
+		w.registerWorkflowTiming,
+		w.registerWorkflowDeep,
+		w.registerWorkflowRecheck,
 	} {
 		if err := register(registry); err != nil {
 			return nil, err
@@ -106,7 +112,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout)."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -125,9 +131,24 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: servedViewBudget})
+			request := ViewRequest{Layout: layout, Budget: servedViewBudget}
+			if !w.framing {
+				if repeats := w.repeats(); repeats != nil {
+					request.Held, request.Served = repeats.Held, repeats.Served
+				}
+			}
+			mark := w.session.PieceMark()
+			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, request)
 			if err != nil {
 				return nil, err
+			}
+			if w.framing {
+				w.laneFull = append(w.laneFull, result.FullIDs...)
+			}
+			// A line cut can drop a body the view rendered.
+			_, cut := serveview.BoundValue(result.Sections, ctx.Cap)
+			if cut != nil {
+				w.session.DropPiecesSince(mark)
 			}
 			return result.Sections, nil
 		},
@@ -138,7 +159,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when every entry was already served in full this session; requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses.", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP served earlier in the same call, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer.", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string
@@ -156,7 +177,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if onceFull, _ := args["onceFull"].(bool); onceFull {
 				pending := ids[:0]
 				for _, id := range ids {
-					if ctx.Reads[workflowLiveHead(ctx.Graph, id)] != engine.ReadFull {
+					if !w.servedInFull(ctx, workflowLiveHead(ctx.Graph, id)) {
 						pending = append(pending, id)
 					}
 				}
@@ -175,16 +196,26 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 					}
 				}
 			}
+			var held func(id, hash string) bool
+			var served func(id, hash, body string)
+			if repeats := w.repeats(); repeats != nil {
+				held, served = repeats.Held, repeats.Served
+			}
 			view, err := w.graphs.viewFor(ctx.Store)
 			if err != nil {
 				return nil, err
 			}
+			mark := w.session.PieceMark()
 			result, err := showFromSnapshot(view.runtime, view.snapshot, ShowRequest{
 				IDs: ids, UpDepth: workflowIntArg(args, "up", query.DefaultUpDepth), DownDepth: workflowIntArg(args, "down", query.DefaultDownDepth),
-				Budget: serveChainBudget,
+				Budget: serveChainBudget, Held: held, Served: served,
 			})
 			if err != nil {
 				return nil, err
+			}
+			// A cut can drop an entry the chain rendered, as for viewLayout.
+			if _, cut := serveview.BoundValue(result.Entries, ctx.Cap); cut != nil {
+				w.session.DropPiecesSince(mark)
 			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
 			return result.Entries, nil
@@ -259,18 +290,43 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}); err != nil {
 		return err
 	}
+	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "preflightCut", Doc: "Pre-flight's model answer was cut at the output token cap, so the model did not judge the draft.", Reads: []string{fieldPreflightCut}},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			cut, _ := workflowStoreString(ctx.Store, fieldPreflightCut)
+			return cut != "", nil
+		},
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "preflightTimedOut", Doc: "Pre-flight's model call ran past llm.timeout, so the model did not judge the draft.", Reads: []string{fieldPreflightTimeout}},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			timeout, _ := workflowStoreString(ctx.Store, fieldPreflightTimeout)
+			return timeout != "", nil
+		},
+	}); err != nil {
+		return err
+	}
 	if err := registry.RegisterCommand(engine.Command{
-		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride"}},
+		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut or timeout of its model's call.",
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightTimeout, fieldPreflightSkip}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {
 		return err
 	}
 	if err := registry.RegisterCommand(engine.Command{
+		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut or timed out: the entry carries verification: skipped and confidence low. Refused under verify.skip: never and while a high finding is open.",
+			Reads: []string{"entryKind", "findings", fieldPreflightTimeout}, Writes: []string{fieldPreflightSkip}},
+		Fn: w.recordPreflightSkip,
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings", "recheckStored", "relevanceStored"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -283,7 +339,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "writingGuide", Doc: "Runs the writing guide against the draft in isolation (d-cpt-20r); findings are drafting input, never a gate. Runs once per capture — a recorded run is never repeated implicitly; requestGuideRecheck clears it for an explicit re-run.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings", fieldGuideBase},
 		},
 		Fn: w.runWorkflowWritingGuide,
 	}); err != nil {
@@ -330,13 +386,15 @@ func (w *WorkflowSession) registerWorkflowWIP(registry *engine.Registry) error {
 	})
 }
 
-// runWorkflowWritingGuide runs the writing guide op between assemble and
-// playback — once per capture. A recorded run (guideFindings present) is
-// never repeated implicitly: revises and adjusts pass through, because a
-// second pass judges the repairs instead of the draft and drifts toward
-// find-something escalation; re-running is the agent's explicit choice
-// (requestGuideRecheck). An LLM infrastructure failure returns loudly — the
-// op re-runs on the next report rather than degrading to a silent pass.
+// runWorkflowWritingGuide runs the writing guide op once per capture, where
+// the dialogue mode places it. A recorded run
+// (guideFindings present) is never repeated implicitly: revises and adjusts
+// pass through, because a second pass judges the repairs instead of the draft
+// and drifts toward find-something escalation; a later adjust gets the delta
+// check of its changed lines only (writingGuideDelta), and a full re-run is
+// the agent's explicit choice (requestGuideRecheck). An LLM infrastructure
+// failure returns loudly: the op re-runs on the next report rather than
+// degrading to a silent pass.
 func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	// A nil value is a cleared run (requestGuideRecheck), not a recorded one.
 	if v, ok := ctx.Store.Get("guideFindings"); ok && v != nil {
@@ -358,7 +416,7 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	if err := ctx.Store.WriteEngine("guideFindings", guideFindings); err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}
-	return nil
+	return writeGuideBase(ctx.Store)
 }
 
 func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
@@ -372,6 +430,12 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft.Body, _ = workflowStoreString(store, "body")
 	draft.Confidence, _ = workflowStoreString(store, "confidence")
 	draft.Intent, _ = workflowStoreString(store, "intent")
+	skip, _ := store.Get("skipGrounding")
+	draft.SkipGrounding, _ = skip.(bool)
+	draft.VerificationSkip = deepSkipCause(store)
+	if skip, _ := workflowStoreString(store, fieldPreflightSkip); skip != "" {
+		draft.VerificationSkip = skip
+	}
 	if index, ok := workflowStoreDocument(store, "index"); ok {
 		title, _ := index["title"].(string)
 		topic, _ := index["topic"].(string)
@@ -435,16 +499,74 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
 	}
-	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
-	if err != nil {
-		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+	entryID, written := ctx.Committed["entryId"].(string)
+	if !written {
+		entryID, err = w.publishDraft(ctx, draft)
+		if err != nil || entryID == "" {
+			return err
+		}
 	}
-	w.binding = result.Binding
-	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
+	err = commitStep(ctx, "recheckStored", func() error { return w.storeCaptureRecheck(ctx, target.Project, entryID) })
+	if err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	err = commitStep(ctx, "relevanceStored", func() error { return w.storeCaptureRelevance(ctx, target.Project, entryID) })
+	if err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", entryID, err)
+	}
+	w.session.LogRead("newEntry", []string{entryID}, nil)
+	return w.session.SinkErr()
+}
+
+// commitStep runs a step behind the publish and commits marker once it
+// succeeds, so a retry after a later failure skips it.
+func commitStep(ctx *engine.Context, marker string, step func() error) error {
+	if done, _ := ctx.Committed[marker].(bool); done {
+		return nil
+	}
+	err := step()
+	if err != nil {
 		return err
 	}
-	w.session.LogRead("newEntry", []string{result.EntryID}, nil)
-	return w.session.SinkErr()
+	return ctx.Commit(map[string]any{marker: true})
+}
+
+// publishDraft publishes the draft and commits its entryId, so a retry after
+// a failure past the publish continues from the entry; it returns no ID when
+// entries landed before the write.
+func (w *WorkflowSession) publishDraft(ctx *engine.Context, draft EntryDraft) (string, error) {
+	// A retry whose earlier attempt published but never committed finds its
+	// entry under the same key, which the late-entries check would take for
+	// a late one.
+	published, err := w.app.entryPublicationExists(w.ctx, w.identity, draft.Target, draft.Publication, draft.EntryID)
+	if err != nil {
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+	}
+	if !published {
+		// The write step's late-entries check, once more on a fresh graph right
+		// before the write: an entry landing in between leaves the capture
+		// unwritten, and publish routes to lateEntries.
+		late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
+			w.graphs.Invalidate()
+			return w.graphs.currentForInstance(ctx.Instance, ctx.Store)
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(late) > 0 {
+			slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+			return "", nil
+		}
+	}
+	result, err := w.app.CreateEntry(w.ctx, w.identity, draft.Target.Project, w.binding, draft)
+	if err != nil {
+		return "", fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
+	}
+	w.binding = result.Binding
+	if err := ctx.Commit(map[string]any{"entryId": result.EntryID}); err != nil {
+		return "", fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	}
+	return result.EntryID, nil
 }
 
 // wipTarget is the WIP marker's authority: the session's current branch,

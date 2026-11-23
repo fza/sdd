@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -47,6 +48,7 @@ type ProjectResult struct {
 const StatusProjectRequired = "project-required"
 
 type StartProcedureArgs struct {
+	Answering
 	Session   string         `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Canonical string         `json:"canonical" jsonschema:"the procedure to start, by its stable name (e.g. capture)"`
 	Params    map[string]any `json:"params,omitempty" jsonschema:"typed start inputs per the procedure's declaration: declared params, plus any declared state field the caller wants to seed at start (e.g. a known anchor)"`
@@ -56,17 +58,19 @@ type StartProcedureArgs struct {
 }
 
 type NextArgs struct {
+	Answering
 	RetryRef  uint64 `json:"retry_ref,omitempty" jsonschema:"exact retry reference from a failed operation; mutually exclusive with report and cancel_ref"`
 	CancelRef uint64 `json:"cancel_ref,omitempty" jsonschema:"exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref"`
 	Session   string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
-	// report_schema) or a chooser answer {chooser, choice, userWords?, fields?}.
-	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, fields?}"`
+	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
+	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting"`
 	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
 }
 
 type AbandonArgs struct {
+	Answering
 	Instance string `json:"instance,omitempty" jsonschema:"instance handle to abandon (a move); pass session too, naming the session the move belongs to"`
 	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing"`
 	Reason   string `json:"reason,omitempty" jsonschema:"why the instance or session is being abandoned"`
@@ -82,9 +86,11 @@ type AbandonResult struct {
 	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing — resume later or close via groom"`
 	Instructions     string     `json:"instructions,omitempty"`
 	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue now stands"`
+	ResultQuestion
 }
 
 type ParkArgs struct {
+	Answering
 	Session  string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Instance string `json:"instance" jsonschema:"running move instance to park"`
 	Note     string `json:"note,omitempty" jsonschema:"one line on why the move is shelved — carried in the session log for whoever resumes it"`
@@ -97,6 +103,7 @@ type ParkResult struct {
 	Step         string     `json:"step"`
 	Instructions string     `json:"instructions,omitempty"`
 	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve — where the dialogue lands"`
+	ResultQuestion
 }
 
 type ChooserOptionResult struct {
@@ -185,11 +192,33 @@ type ServeResult struct {
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"recorded cancellation: return position and what the operation reports it left"`
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
 	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID)"`
-	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged"`
-	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection"`
+	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it"`
+	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state already collected by this instance — values persist across handover; do not re-derive them"`
+	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions"`
+	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
+	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
+	Resume           string                  `json:"resume,omitempty" jsonschema:"the call a person resumes the parked move with"`
+	ResultQuestion
+}
+
+// DispatchResult is one delegate handoff: the child handles a delegate
+// receives, the prompts that carry them, and what to do this round. The
+// dispatching session's own handle is never part of it, and a delegate sdd
+// launched itself hands over neither handles nor prompts.
+type DispatchResult struct {
+	Session        string `json:"session,omitempty" jsonschema:"the delegate's child session handle; absent when sdd launched the delegate"`
+	Instance       string `json:"instance,omitempty" jsonschema:"the delegate's task instance in its child session; absent when sdd launched the delegate"`
+	Procedure      string `json:"procedure"`
+	Prompt         string `json:"prompt,omitempty" jsonschema:"the whole prompt of a fresh-context delegate"`
+	ContinuePrompt string `json:"continue_prompt,omitempty" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
+	Instructions   string `json:"instructions"`
+	Agent          string `json:"agent,omitempty" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
+	Model          string `json:"model,omitempty" jsonschema:"the model the harness launches that subagent with; unset leaves the harness's own"`
+	Effort         string `json:"effort,omitempty" jsonschema:"the effort the harness launches that subagent with; unset leaves the harness's own"`
+	Runner         string `json:"runner,omitempty" jsonschema:"set when sdd launched the delegate itself: the runner its round runs with, in the background"`
 }
 
 // BaseServe is the session shell's serve as nested into landing responses
@@ -213,7 +242,7 @@ type BaseServe struct {
 // --- sessions & staging ----------------------------------------------------
 
 type ResumeSessionArgs struct {
-	Session string `json:"session" jsonschema:"the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so the served-once memory resets and the complete position serves in full"`
+	Session string `json:"session" jsonschema:"the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds"`
 }
 
 type ResumeSessionResult struct {
@@ -227,6 +256,14 @@ type ResumeSessionResult struct {
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
+	ResultQuestion
+}
+
+// ResultQuestion ends a response that starts, resumes or advances a session
+// with the questions the next call that advances it answers
+// (20261121-230157-d-tac-ym8).
+type ResultQuestion struct {
+	Question string `json:"question,omitempty" jsonschema:"two questions about texts sdd served you, one per line, each as q <text>: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost"`
 }
 
 type BindBranchArgs struct {
@@ -261,6 +298,7 @@ type StageAttachmentResult struct {
 // --- free reads -------------------------------------------------------------
 
 type SearchArgs struct {
+	Rereads
 	IncludesRevision  string       `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
 	Session           string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
 	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
@@ -283,6 +321,7 @@ type SearchResult struct {
 }
 
 type ViewArgs struct {
+	Rereads
 	Session  string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
 	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
@@ -292,10 +331,11 @@ type ViewArgs struct {
 
 type ViewResult struct {
 	Sections string `json:"sections"`
-	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
+	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, on the first view of a session and after resume_session"`
 }
 
 type ShowArgs struct {
+	Rereads
 	Session string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
 	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
@@ -305,6 +345,19 @@ type ShowArgs struct {
 
 type ShowResult struct {
 	Entries string `json:"entries"`
+}
+
+type GatherArgs struct {
+	Rereads
+	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call already holds serves its pointer"`
+	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
+	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+}
+
+type GatherResult struct {
+	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
 }
 
 type ReadAttachmentArgs struct {
@@ -384,8 +437,8 @@ func (s *toolSet) register(srv *mcp.Server) {
 		Name: "next",
 		Description: "Advance a procedure instance in the session named by session (required): send state " +
 			"fields per the served report_schema, or answer a pending chooser with {chooser, choice, " +
-			"userWords?, fields?}. User choosers must carry the user's answer relayed verbatim in " +
-			"userWords. For an unfinished operation, omit report and pass its exact retry_ref to " +
+			"userWords?, reason?, fields?}. User choosers must carry the user's own message verbatim in " +
+			"userWords, never words of yours, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to " +
 			"continue or cancel_ref to leave its effects in place and return to the preceding interaction. " +
 			"Other transitions remain blocked until the operation is retried or cancelled. " +
 			"When a move ends, the response carries the session shell's serve — where the " +
@@ -415,7 +468,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"session whose handle you present — its framing plus every running move at its current step, " +
 			"each with the report schema to continue it. Presenting the handle is the whole authorization " +
 			"(a handle reaches you only by issuance or by the user handing it over), and it declares that " +
-			"you need re-serving: the served-once memory resets, so the complete position serves in full. " +
+			"you need re-serving: every piece of the position serves in full. " +
 			"Only recorded session state resumes — step position, collected fields, staged files — never " +
 			"another conversation's context. A lost handle is the user's to recover, not yours to guess.",
 	}, toolBoundary(s.resumeSession))
@@ -456,6 +509,15 @@ func (s *toolSet) register(srv *mcp.Server) {
 	}, toolBoundary(s.show))
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name: "gather",
+		Description: "Ground a draft before its capture, in one call, within the session named by session " +
+			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
+			"searches and the live listing of every draft topic, written from the draft. Name the running " +
+			"capture as instance: only reads made through gather inside it ground the capture. Pass ids to " +
+			"open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
+	}, toolBoundary(s.gather))
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "read_attachment",
 		Description: "Read an attachment's content, paged, within the session named by session (required): " +
 			"an entry's by ID and filename, or a file staged in the session (before any entry carries it) " +
@@ -473,8 +535,22 @@ func (s *toolSet) register(srv *mcp.Server) {
 	}, toolBoundary(s.registryDocs))
 }
 
-// attachedSession returns the named session locked and replayed from its ledger.
-func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string) (*shellSession, error) {
+// attachedSession returns the named session locked and replayed from its
+// ledger, its call opened with the pieces it rereads and no answer.
+func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string, reread []string) (*shellSession, error) {
+	return s.attach(ctx, req, session, "", reread, false)
+}
+
+// advancingSession is attachedSession for a call that advances the session:
+// it must carry an answer, and its response ends with a question.
+func (s *toolSet) advancingSession(ctx context.Context, req *mcp.CallToolRequest, session string, args Answering) (*shellSession, error) {
+	if strings.TrimSpace(args.Answer) == "" {
+		return nil, toolError("answer is required: the words each question the last response ended with asks for, in their order and parted by ; (reach sdd ; 280), or lost when you no longer see a text or saw no question")
+	}
+	return s.attach(ctx, req, session, args.Answer, rereadList(args.Reread), true)
+}
+
+func (s *toolSet) attach(ctx context.Context, req *mcp.CallToolRequest, session, answer string, reread []string, ask bool) (*shellSession, error) {
 	id := sdd.SessionID(strings.TrimSpace(session))
 	if id == "" {
 		return nil, noHandleError()
@@ -486,6 +562,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		if err != nil {
 			return nil, err
 		}
+		workflow.CutRepeats()
 		candidate := &shellSession{root: workflow}
 		candidate.mu.Lock()
 		ss = s.sessions.put(candidate)
@@ -501,14 +578,16 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 			ss.mu.Unlock()
 			return nil, err
 		}
+		workflow.CutRepeats()
 		ss.root = workflow
 	}
-	ss.pending, ss.seen = nil, nil
 	if ss.root.Finished() {
 		ss.mu.Unlock()
 		s.sessions.evict(id)
 		return nil, toolError("session %s has ended — %s", session, sdd.NewSessionNote)
 	}
+	ss.root.BeginCall(answer, reread)
+	ss.ask = ask
 	return ss, nil
 }
 
@@ -557,10 +636,17 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 		}
 		return nil, ServeResult{}, err
 	}
+	workflow.CutRepeats()
 	ss := s.sessions.put(&shellSession{root: workflow})
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+	ss.ask = true
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	if err != nil {
+		return nil, ServeResult{}, err
+	}
+	result.Instructions = questionGuide + "\n\n" + result.Instructions
+	result.Question, err = ss.question(ctx, identity)
 	return nil, result, err
 }
 
@@ -592,7 +678,7 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 	if strings.TrimSpace(args.Canonical) == "" {
 		return nil, ServeResult{}, toolError("canonical is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -606,11 +692,15 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, ServeResult{}, err
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	if err != nil {
+		return nil, ServeResult{}, err
+	}
+	result.Question, err = ss.question(ctx, identity)
 	return nil, result, err
 }
 
 func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -629,6 +719,10 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		defer s.sessions.evict(ss.root.ID())
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	if err != nil {
+		return nil, ServeResult{}, err
+	}
+	result.Question, err = ss.question(ctx, identity)
 	return nil, result, err
 }
 
@@ -639,7 +733,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		}
 		return s.abandonSession(ctx, req, args)
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, AbandonResult{}, err
 	}
@@ -660,7 +754,8 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		}
 		out.Base = base
 	}
-	return nil, out, nil
+	out.Question, err = ss.question(ctx, identity)
+	return nil, out, err
 }
 
 // park shelves a running move back to the shell junction: nothing about the
@@ -670,7 +765,7 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 // (d-tac-dbk). Seeded drafts ride the normal dispatch path; park adds no
 // side channel.
 func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkArgs) (*mcp.CallToolResult, ParkResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.advancingSession(ctx, req, args.Session, args.Answering)
 	if err != nil {
 		return nil, ParkResult{}, err
 	}
@@ -694,7 +789,8 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 		}
 		out.Base = base
 	}
-	return nil, out, nil
+	out.Question, err = ss.question(ctx, identity)
+	return nil, out, err
 }
 
 // abandonSession tears down a session by handle: no resume, no framing, one
@@ -731,24 +827,53 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 
 // resumeSession re-serves the current position of the session whose handle the
 // caller presents — the reorientation. Presenting the handle declares the
-// caller needs re-serving, so the ledger-derived served-once memory resets
-// there and the complete position serves in full (d-cpt-aen).
+// caller needs re-serving, so its call serves every piece in full (d-cpt-aen).
 func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, args ResumeSessionArgs) (*mcp.CallToolResult, ResumeSessionResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	identity := s.requestIdentity(req)
+	if id := sdd.SessionID(strings.TrimSpace(args.Session)); id != "" {
+		err := s.app.RefuseClient(ctx, identity, id, mcpClientName(req.Session))
+		if err != nil {
+			return nil, ResumeSessionResult{}, err
+		}
+	}
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
-	identity := s.requestIdentity(req)
+	ss.ask = true
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	result, err := ss.root.ServeAll(ctx, identity)
+	result, omitted, err := ss.root.ServeAllWithin(ctx, identity, resumeBudget())
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	mapped, err := s.mapRootResume(ctx, req, ss, result)
+	mapped, err := s.mapRootResume(ctx, req, ss, result, omitted)
+	if err != nil {
+		return nil, ResumeSessionResult{}, err
+	}
+	mapped.Question, err = ss.question(ctx, identity)
 	return nil, mapped, err
+}
+
+// resumeBudget keeps the open instances a resume projection has room for:
+// whole instances only (d-tac-qwc), at most maxResumeOpenInstances within
+// resumeOpenBudgetBytes, the instance holding an unfinished operation
+// always, since the resume exists to re-serve it. It decides as each
+// instance renders, so an omitted one withdraws the pieces it served.
+func resumeBudget() func(sdd.WorkflowServe) bool {
+	kept, spent := 0, 0
+	return func(serve sdd.WorkflowServe) bool {
+		size := resumeServeBytes(&serve)
+		pending := serve.PendingOperation != nil
+		if !pending && (kept >= maxResumeOpenInstances || (kept > 0 && spent+size > resumeOpenBudgetBytes)) {
+			return false
+		}
+		kept++
+		spent += size
+		return true
+	}
 }
 
 func (s *toolSet) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args BindBranchArgs) (*mcp.CallToolResult, BindBranchResult, error) {
@@ -758,7 +883,7 @@ func (s *toolSet) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args
 	if (args.Branch != "") == args.Clear {
 		return nil, BindBranchResult{}, toolError("pass exactly one of a nonblank branch or clear=true")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, BindBranchResult{}, err
 	}
@@ -791,7 +916,7 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 	if sources != 1 {
 		return nil, StageAttachmentResult{}, toolError("pass exactly one of content, path, or patches")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
@@ -838,19 +963,13 @@ func (s *toolSet) readScope(ctx context.Context, req *mcp.CallToolRequest, ss *s
 	return ss.root.ReadScope(ctx, s.requestIdentity(req), sdd.ProjectID(strings.TrimSpace(project)))
 }
 
-// viewHintServedKey is the served-once sentinel for the first-view breadcrumb,
-// deduped per session through the same served memory as instruction blocks.
-const viewHintServedKey = "view-layout-grammar-hint"
-
-// viewHint is the single producer of the view tool's Hint field: a one-time
-// pointer to the view-grammar fact on a session's first view call
-// (s-prc-3kh). It never gates the read (s-cpt-1dz, d-cpt-h99).
+// viewHint is the single producer of the view tool's Hint field: a pointer
+// to the view-grammar fact, served once per session, as a read carries no
+// answer to hold it by (s-prc-3kh). It never gates the read (s-cpt-1dz,
+// d-cpt-h99).
 func viewHint(ss *shellSession) string {
-	if ss.servedBefore(viewHintServedKey) {
-		return ""
-	}
-	return "view layout grammar: show " + basefacts.ViewGrammarFactID +
-		" for the full filter/rank/macro vocabulary and the quoting rules"
+	return ss.root.ServeNotice("view hint", "view layout grammar: show "+basefacts.ViewGrammarFactID+
+		" for the full filter/rank/macro vocabulary and the quoting rules")
 }
 
 func (s *toolSet) logRootRead(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, tool string, full, summary []string) error {
@@ -861,7 +980,7 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	if len(args.Terms) == 0 && args.Query == "" {
 		return nil, SearchResult{}, toolError("pass terms (text mode), query (vector mode), or both (hybrid)")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, SearchResult{}, err
 	}
@@ -884,7 +1003,7 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 		SyncMode: s.searchSyncMode, IncludesRevision: args.IncludesRevision,
 		Terms: args.Terms, Phrase: args.Query, Type: args.Type, Layer: args.Layer, Kind: args.Kind,
 		IncludeSuperseded: args.IncludeSuperseded, Limit: limit, MaxCitations: maxCitations,
-		Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
+		Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos, Held: ss.root.HoldsEntry, Served: ss.root.ServeEntry,
 	})
 	if err != nil {
 		return nil, SearchResult{}, toolError("searching: %v", err)
@@ -904,7 +1023,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	if strings.TrimSpace(args.Layout) == "" {
 		return nil, ViewResult{}, toolError("layout is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, ViewResult{}, err
 	}
@@ -914,7 +1033,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 		return nil, ViewResult{}, err
 	}
 	result, err := s.app.View(ctx, s.requestIdentity(req), project, sdd.ViewRequest{
-		Layout: args.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
+		Layout: args.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos, Held: ss.root.HoldsEntry, Served: ss.root.ServeEntry,
 	})
 	if err != nil {
 		return nil, ViewResult{}, toolError("viewing: %v", err)
@@ -932,7 +1051,17 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 			sections = msg + "\n\n" + sections
 		}
 	}
-	sections = guardViewSize(sections)
+	guarded := guardViewSize(sections)
+	// A cut can drop any body past it, so a cut view counts no body as read
+	// in full: refsInspected must not pass on text the agent never got.
+	full, summary := result.FullIDs, result.SummaryIDs
+	if guarded != sections {
+		full, summary = nil, append(slices.Clone(summary), full...)
+	}
+	if err := s.logRootRead(ctx, req, ss, "view", full, summary); err != nil {
+		return nil, ViewResult{}, err
+	}
+	sections = guarded
 	hint := viewHint(ss)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
@@ -1064,7 +1193,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if len(args.IDs) == 0 {
 		return nil, ShowResult{}, toolError("ids is required")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
@@ -1082,7 +1211,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 		return nil, ShowResult{}, err
 	}
 	result, err := s.app.Show(ctx, s.requestIdentity(req), project, sdd.ShowRequest{
-		IDs: args.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession,
+		IDs: args.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession, Held: ss.root.HoldsEntry, Served: ss.root.ServeEntry,
 	})
 	if err != nil {
 		return nil, ShowResult{}, err
@@ -1090,8 +1219,30 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
 		return nil, ShowResult{}, err
 	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, ShowResult{}, err
+	}
 	return nil, ShowResult{Entries: result.Entries}, nil
 
+}
+
+func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session, rereadList(args.Reread))
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	defer ss.mu.Unlock()
+	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
+		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
+		SyncMode: s.searchSyncMode,
+	})
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, GatherResult{}, err
+	}
+	return nil, GatherResult{Serve: result.Text}, nil
 }
 
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1105,7 +1256,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 	if args.Handle == "" && args.ID == "" {
 		return nil, ReadAttachmentResult{}, toolError("id is required (or handle, for a staged file)")
 	}
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, ReadAttachmentResult{}, err
 	}
@@ -1145,7 +1296,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoArgs) (*mcp.CallToolResult, InfoResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, InfoResult{}, err
 	}
@@ -1166,7 +1317,7 @@ func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoA
 }
 
 func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, args RegistryArgs) (*mcp.CallToolResult, RegistryResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, nil)
 	if err != nil {
 		return nil, RegistryResult{}, err
 	}
@@ -1199,29 +1350,6 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 
 // --- serve conversion --------------------------------------------------------
 
-// Serve conversion applies the served-once memory: full text the first time
-// the session's consumer sees these exact rendered bytes, a one-line stub
-// after — identical bytes stub, changed content always serves in full
-// (d-tac-dbk). The memory is derived from the session ledger and reset by a
-// reorientation (d-cpt-aen).
-
-// composeFraming renders the framing blocks with per-lane served-once dedup:
-// each block the consumer already holds is omitted, so only blocks whose
-// content is new serve in full. A graph write that changes one lane (the
-// recent-moves lane) re-serves that lane alone, never the stable aspirations or
-// directives — the per-lane dedup that keeps a reorientation from exceeding the
-// original serve (I6).
-func composeFraming(ss *shellSession, blocks []string) string {
-	var served []string
-	for _, block := range blocks {
-		if block == "" || ss.servedBefore(block) {
-			continue
-		}
-		served = append(served, block)
-	}
-	return strings.Join(served, "\n\n")
-}
-
 // serveResultBody converts the serve fields every landing shares —
 // instructions with per-lane dedup, chooser, framing, open threads. Schema
 // and vocabulary dedup live only in toRootServeResult: a base mapping drops
@@ -1235,12 +1363,21 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
+	if parked := serve.Parked; parked != nil {
+		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
+	}
 	if serve.PendingChooser != nil {
 		chooser := &ChooserResult{Chooser: serve.PendingChooser.Chooser, Kind: string(serve.PendingChooser.Kind)}
 		for _, option := range serve.PendingChooser.Options {
 			chooser.Options = append(chooser.Options, ChooserOptionResult{Choice: option.Choice, Collect: option.Collect})
 		}
 		res.PendingChooser = chooser
+	}
+	for _, dispatch := range serve.Dispatches {
+		res.Dispatches = append(res.Dispatches, DispatchResult{
+			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
+		})
 	}
 	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
 	if err != nil {
@@ -1253,40 +1390,6 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 	return res, nil
 }
 
-// composeInstructions applies the served-once memory at lane granularity:
-// lanes new to the consumer serve in full, already-served lanes collapse into
-// one line naming them, and a serve with no new lane falls back to the
-// whole-step reminder (d-tac-87o).
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
-	lanes := serve.InstructionLanes
-	if len(lanes) == 0 {
-		return serve.Instructions
-	}
-	var fresh, withheld []string
-	for _, lane := range lanes {
-		if ss.servedBefore(lane.Text) {
-			withheld = append(withheld, lane.Name)
-			continue
-		}
-		fresh = append(fresh, lane.Text)
-	}
-	if len(fresh) == 0 {
-		return serve.ReminderInstructions()
-	}
-	text := strings.Join(fresh, "\n\n")
-	if len(withheld) > 0 {
-		text += fmt.Sprintf("\n\n(lanes served earlier this session: %s — resume_session with this session's handle re-serves this position in full)", strings.Join(withheld, ", "))
-	}
-	return serve.ComposeInstructions(text)
-}
-
-// reportSchemaStub replaces a schema the consumer already holds.
-func reportSchemaStub(serve *sdd.WorkflowServe) map[string]any {
-	return map[string]any{
-		"served_earlier": fmt.Sprintf("identical to the %s/%s report schema served earlier this session — resume_session with this session's handle re-serves it in full", serve.Procedure, serve.Step),
-	}
-}
-
 // toRootServeResult converts an engine serve into the tool response and records
 // what it served in full into the session ledger. The shell's open-work block
 // lists this dialogue's own threads only; other dialogues never appear.
@@ -1295,20 +1398,17 @@ func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolReques
 	if err != nil {
 		return ServeResult{}, err
 	}
-	// The schema is a derived lane: generated, static per procedure version,
-	// deduped on its canonical bytes (Go maps marshal with sorted keys).
 	if len(serve.ReportSchema) > 0 {
-		if raw, err := json.Marshal(serve.ReportSchema); err == nil && ss.servedBefore("report_schema:"+string(raw)) {
-			res.ReportSchema = reportSchemaStub(serve)
+		res.ReportSchema, err = serveReportSchema(ss, serve)
+		if err != nil {
+			return ServeResult{}, err
 		}
 	}
 	vocabulary, err := s.app.Vocabulary(ctx, s.requestIdentity(req), ss.root.Project())
 	if err != nil {
 		return ServeResult{}, err
 	}
-	if vocabulary != "" && !ss.servedBefore(vocabulary) {
-		res.Vocabulary = vocabulary
-	}
+	res.Vocabulary = serveVocabulary(ss, vocabulary)
 	if serve.Base != nil {
 		base, err := s.toBaseServeResult(ctx, req, ss, serve.Base)
 		if err != nil {
@@ -1343,11 +1443,11 @@ func rootBaseServe(result ServeResult) *BaseServe {
 	}
 }
 
-func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult) (ResumeSessionResult, error) {
+func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult, left []sdd.WorkflowServe) (ResumeSessionResult, error) {
 	result := ResumeSessionResult{
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
-		Instructions: resumeInstructions, PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
+		Instructions: resumeInstructionsFor(ss), PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
 	}
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
@@ -1357,30 +1457,17 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 		return ResumeSessionResult{}, err
 	}
 	result.Framing = composeFraming(ss, framing)
-	// Whole-instance granularity is the only legitimate cut on a resume
-	// projection (d-tac-qwc): budget and count decisions run on the source
-	// serve, before mapping, because mapping records served-once blocks and an
-	// omitted instance must leave that ledger untouched for the serve that
-	// does deliver it.
-	var omitted []string
-	spent := 0
 	for i := range source.Open {
-		serve := &source.Open[i]
-		size := resumeServeBytes(serve)
-		// The instance holding an unfinished operation is the position the
-		// resume exists to re-serve; it is never the one cut for size.
-		pending := source.PendingOperation != nil && source.PendingOperation.Instance == serve.Instance
-		if !pending && (len(result.Open) >= maxResumeOpenInstances || (len(result.Open) > 0 && spent+size > resumeOpenBudgetBytes)) {
-			omitted = append(omitted, fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step))
-			continue
-		}
-		mapped, err := s.toRootServeResult(ctx, req, ss, serve)
+		mapped, err := s.toRootServeResult(ctx, req, ss, &source.Open[i])
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
 		mapped.Framing = ""
-		spent += size
 		result.Open = append(result.Open, mapped)
+	}
+	var omitted []string
+	for _, serve := range left {
+		omitted = append(omitted, fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step))
 	}
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
@@ -1422,15 +1509,31 @@ func openThreadsRoot(ss *shellSession) string {
 	}
 	body := boundLines(lines, "open threads")
 	// The one serve that reports dropped work states it in full — never stubbed by
-	// served-once dedup, and never framed as continuations it no longer offers.
+	// a pointer, and never framed as continuations it no longer offers.
 	if ss.root.Finished() {
+		if ss.root.Autonomous() {
+			return autonomousConcludedThreadsIntro + "\n" + body
+		}
 		return concludedThreadsIntro + "\n" + body
 	}
-	header := openThreadsReminder
-	if !ss.servedBefore(openThreadsIntro) {
-		header = openThreadsIntro
+	intro := openThreadsIntro
+	if ss.root.Autonomous() {
+		intro = autonomousOpenThreadsIntro
 	}
-	return header + "\n" + body
+	piece := ss.root.ServeText("open threads", intro, nil)
+	if piece.Held {
+		return openThreadsReminder + " " + heldLine([]string{"open threads"}) + "\n" + body
+	}
+	return piece.Text + "\n" + body
+}
+
+// resumeInstructionsFor leaves out briefing the user when the session is
+// autonomous.
+func resumeInstructionsFor(ss *shellSession) string {
+	if ss.root.Autonomous() {
+		return autonomousResumeInstructions + "\n\n" + questionGuide
+	}
+	return resumeInstructions + "\n\n" + questionGuide
 }
 
 // boundList cuts a whole-item string list at the line-list cap, appending a

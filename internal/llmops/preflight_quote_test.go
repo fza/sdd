@@ -51,7 +51,7 @@ func TestPreflightFlagsAFindingWhoseQuoteLocatesNothing(t *testing.T) {
 			proposed, graph := quoteGraph()
 			answer := `{"findings":[{"observation":"The section lacks an owner.","quote":"` + tt.quote + `","category":"scope","severity":"high"}]}`
 
-			result, err := llmops.Preflight(context.Background(), answering(answer), proposed, graph, "")
+			result, err := llmops.Preflight(context.Background(), answering(answer), proposed, graph, "", nil)
 			if err != nil {
 				t.Fatalf("Preflight: %v", err)
 			}

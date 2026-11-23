@@ -22,6 +22,8 @@ type ShowOptions struct {
 	// Off by default — the body renders right after the envelope, and the
 	// summary is only needed for human drift-review.
 	WithSummary bool
+	// Repeats applies the no-repeat rule; nil serves everything in full.
+	Repeats *Repeats
 	// Width is the target wrap width for the styled renderer's glamour body
 	// (terminal columns). Zero falls back to a sensible default. Ignored by
 	// the plain renderer, which never reflows the body.
@@ -44,9 +46,17 @@ func RenderShow(w io.Writer, result *query.ShowResult, opts ShowOptions) {
 		}
 		renderShowGroup(w, g, opts)
 	}
+	opts.Repeats.WriteWayBack(w)
 }
 
 func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
+	if g.PrimaryID == "" || g.PrimaryID == g.Primary.ID {
+		if pointer, held := opts.Repeats.pointer(g.Primary); held {
+			fmt.Fprintln(w, pointer)
+			renderShowChains(w, g, opts)
+			return
+		}
+	}
 	writeEnvelope(w, g, opts)
 	fmt.Fprintln(w)
 	// Top-level `# body` heading with the body demoted beneath it, so an
@@ -54,14 +64,18 @@ func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel))
+	fmt.Fprintln(w, opts.Repeats.serve(g.Primary, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel)))
+	renderShowChains(w, g, opts)
+}
+
+func renderShowChains(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 
 	if len(g.Upstream) > 0 || len(g.UpstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# upstream")
 		fmt.Fprintln(w)
 		for _, item := range g.Upstream {
-			renderTreeItem(w, item, primaryDisplayID(g))
+			renderTreeItem(w, item, primaryDisplayID(g), opts.Repeats)
 		}
 		renderDirectionCut(w, g.UpstreamTruncated)
 	}
@@ -71,7 +85,7 @@ func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 		fmt.Fprintln(w, "# downstream")
 		fmt.Fprintln(w)
 		for _, item := range g.Downstream {
-			renderTreeItem(w, item, primaryDisplayID(g))
+			renderTreeItem(w, item, primaryDisplayID(g), opts.Repeats)
 		}
 		renderDirectionCut(w, g.DownstreamTruncated)
 	}
@@ -123,6 +137,8 @@ type showEnvelope struct {
 	Supersedes   []string         `yaml:"supersedes,omitempty"`
 	Attachments  []string         `yaml:"attachments,omitempty"`
 	Preflight    string           `yaml:"preflight,omitempty"`
+	Grounding    string           `yaml:"grounding,omitempty"`
+	Verification string           `yaml:"verification,omitempty"`
 	Status       string           `yaml:"status,omitempty"`
 	Time         string           `yaml:"time"`
 	Params       yaml.Node        `yaml:"params,omitempty"`
@@ -154,6 +170,8 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 		Supersedes:   e.Supersedes,
 		Attachments:  e.Attachments,
 		Preflight:    e.Preflight,
+		Grounding:    e.Grounding,
+		Verification: e.Verification,
 		Status:       formatStatusTrailValue(g.PrimaryStatus, g.PrimarySupersedePath),
 		Time:         e.Time.Format("2006-01-02 15:04:05"),
 	}
@@ -179,7 +197,7 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 // sub-line follows when the ref carries a desc, and unexpanded children at the
 // depth boundary render as an indented child-level truncation line — never
 // inline on this node.
-func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
+func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string, r *Repeats) {
 	bulletIndent := strings.Repeat("  ", item.Depth-1)
 	subIndent := strings.Repeat("  ", item.Depth)
 
@@ -188,14 +206,23 @@ func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
 	line.WriteString("- ")
 	line.WriteString(treeVerb(item))
 	line.WriteString(" ")
-	line.WriteString(item.NodeID())
-	if qual := treeQualifier(item); qual != "" {
-		line.WriteString(" ")
-		line.WriteString(qual)
+	pointer, held := "", false
+	if item.Entry != nil && !item.ShownAbove && !item.ShownBelow && item.NodeID() == item.Entry.ID {
+		pointer, held = r.pointer(item.Entry)
 	}
-	if sentence := treeSentence(item, primaryID); sentence != "" {
-		line.WriteString(" — ")
-		line.WriteString(sentence)
+	switch {
+	case held:
+		line.WriteString(pointer)
+	default:
+		line.WriteString(item.NodeID())
+		if qual := treeQualifier(item); qual != "" {
+			line.WriteString(" ")
+			line.WriteString(qual)
+		}
+		if sentence := treeSentence(item, primaryID); sentence != "" {
+			line.WriteString(" — ")
+			line.WriteString(sentence)
+		}
 	}
 	fmt.Fprintln(w, line.String())
 

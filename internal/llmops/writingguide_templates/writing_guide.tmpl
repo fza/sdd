@@ -26,7 +26,7 @@ A good entry:
 
 Check only these axes:
 
-**stranding** — read as if you must act on the entry. Name each thing you would need that the body neither gives nor points to: a term neither explained nor anchored by a ref, a dangling mention ('the earlier approach'), a missing why. Framework vocabulary — kinds, layers, refs — is assumed known. An entry the draft closes or supersedes is listed with it under 'Closure edges' and anchors mentions of that entry exactly as a ref does — a target named there is never a dangling mention.
+**stranding** — read as if you must act on the entry. Name each thing you would need that the body neither gives nor points to: a term neither explained nor anchored by a ref, a dangling mention ('the earlier approach'), a missing why. Name what is missing, never its content: only the dialogue holds it. Framework vocabulary — kinds, layers, refs — is assumed known. An entry the draft closes or supersedes is listed with it under 'Closure edges' and anchors mentions of that entry exactly as a ref does — a target named there is never a dangling mention.
 
 **dilution** — name sentences whose removal loses nothing, and meaning said twice.
 
@@ -43,7 +43,7 @@ Each finding carries:
 - `reasoning` — one to three sentences working through what you noticed and why it fails the pull, ending in a conclusion
 - `axis` — the check it fails: `stranding`, `dilution`, `conflation`, `pointing` or `form`
 - `quote` — words from the draft that locate the passage at issue
-- `repair` — the direction of the fix, never replacement text: `cut`, `write-in`, `split`, `point` or `reword`
+- `repair` — the direction of the fix, never replacement text: `cut`, `write-in`, `split`, `point` or `reword`. A `write-in` names what is missing, not its content
 - `severity` — `substantive` when the drafting dialogue should take the finding up, `minor` when folding it in or ignoring it is fine
 
 **Reasoning first, verdict last.** The reasoning is your work — walk through what you noticed before naming the axis, repair, and severity; they are conclusions, assigned only after the reasoning has reached its own. If the reasoning concludes the concern does not hold, emit no finding at all rather than one at any severity.
@@ -67,4 +67,15 @@ The framework's definition of the drafted kind — meaning to judge against, not
 ## Draft entry
 
 {{ .Draft }}
+{{- if .Changed }}
+
+## Changed since the last check
+
+This draft was judged before; since then only the passages below changed. Judge these passages alone, read in the context of the whole draft above, and report nothing on text outside them: the rest already stood the check.
+{{ range .Changed }}
+````
+{{ . }}
+````
+{{ end -}}
+{{- end }}
 {{- end }}

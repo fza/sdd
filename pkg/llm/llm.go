@@ -13,6 +13,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // Purpose names what a call is for: a routing key for implementations and an
@@ -22,9 +23,22 @@ import (
 type Purpose string
 
 const (
+	// PurposeGatherQuery writes the semantic query and the keyword terms a
+	// grounding reading runs for a draft.
+	PurposeGatherQuery Purpose = "gather-query"
+	// PurposeRelevance rates one candidate entry against a draft for the
+	// grounding prefilter's generate bridge.
+	PurposeRelevance Purpose = "relevance"
+
 	PurposePreflight    Purpose = "preflight"
 	PurposeSummarize    Purpose = "summarize"
 	PurposeWritingGuide Purpose = "writing-guide"
+	// The extract purposes name the second call a JSON-shaped check makes
+	// when its first response does not parse. They are their own purposes so
+	// a host can route and bound them apart, and so the stats sink separates
+	// a reformat from the reasoning call it rescues.
+	PurposePreflightExtract    Purpose = "preflight-extract"
+	PurposeWritingGuideExtract Purpose = "writing-guide-extract"
 )
 
 // Request carries everything an implementation may route on: ctx (who) and
@@ -114,6 +128,12 @@ func (f RunnerFunc) Run(ctx context.Context, req Request) (Result, error) {
 	return f(ctx, req)
 }
 
+// ErrAnswerCut marks a call the model ended at the output token cap. A
+// reasoning model spends its thinking against that cap, so the answer comes
+// back cut short or missing. An implementation wraps it so a caller can tell
+// a cut from a provider fault.
+var ErrAnswerCut = errors.New("answer cut at the token cap")
+
 // Error optionally attributes a failed call. An implementation that knows what
 // it routed to wraps its error so failures measure like successes.
 type Error struct {
@@ -126,5 +146,25 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error {
+	return e.Err
+}
+
+// MalformedAnswerError reports an answer the provider delivered but the
+// implementation rejected, because it does not match the response shape the
+// call asked for. Text carries the rejected answer so a caller may ask for a
+// reformat of it; it is never a result.
+type MalformedAnswerError struct {
+	Text string
+	Err  error
+}
+
+func (e *MalformedAnswerError) Error() string {
+	if e.Err == nil {
+		return "malformed answer"
+	}
+	return e.Err.Error()
+}
+
+func (e *MalformedAnswerError) Unwrap() error {
 	return e.Err
 }

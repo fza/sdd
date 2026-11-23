@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/networkteam/sdd/pkg/llm"
@@ -39,12 +40,41 @@ type ProjectRuntimeOptions struct {
 	Finalizers  []MutationFinalizer
 	// Events is the project event store; nil leaves the project without one.
 	Events EventStore
+	// Prefilter is the relevance scorer gather runs under
+	// verify.prefilter; the zero value leaves it off.
+	Prefilter Prefilter
+	// Relevance is the relevance verdict ledger; nil stores no verdicts.
+	Relevance RelevanceStore
+	// HandEdits finds hand edits of committed entries for the recheck list;
+	// nil finds none.
+	HandEdits HandEditScanner
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per
 	// connected repo. The base runtime leaves it false — its store includes
 	// embedded entries. The rule is applied identically at index and read time.
 	ExcludeEmbeddedFromIndex bool
+	// Grounding is the project's grounding policy; the zero value leaves
+	// grounding off with the default limits.
+	Grounding GroundingPolicy
+	// Verifier is the project's draft verifier policy; the zero value leaves
+	// it off.
+	Verifier VerifierPolicy
+	// ContextTokens is llm.context_tokens, the model window a prose verifier
+	// call is sized from; 0 keeps the fixed default budget.
+	ContextTokens int
+	// Checkout is the project checkout the deep verifier's weighing rule looks
+	// a cited path up in, and its findings' cited files; nil finds none.
+	Checkout fs.FS
+	// Commits looks up the commits the deep verifier's findings cite; nil
+	// finds none.
+	Commits CommitLookup
+}
+
+// CommitLookup returns the message of a commit in the project checkout's
+// repository.
+type CommitLookup interface {
+	CommitMessage(ctx context.Context, hash string) (message string, found bool, err error)
 }
 
 func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {

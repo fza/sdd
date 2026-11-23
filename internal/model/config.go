@@ -33,6 +33,12 @@ const (
 	// against (d-tac-b30).
 	DefaultLLMModel = "claude-sonnet-4-6"
 
+	// DefaultLLMExtractTimeout bounds the extraction call a JSON-shaped
+	// check falls back to. Reformatting text the model already produced is
+	// cheap, and a bound of its own keeps a slipping endpoint from spending
+	// twice the configured timeout on one check.
+	DefaultLLMExtractTimeout = time.Minute
+
 	// DefaultLLMConcurrency is the default worker count for concurrent
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
@@ -81,6 +87,14 @@ type BaseConfig struct {
 	Embedding EmbeddingConfig `yaml:"embedding,omitempty"`
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
+	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	// Verify makes captures read the graph before they are written and checks
+	// every draft against that reading; DefaultVerifyMode unless a layer sets
+	// its mode.
+	Verify VerifyConfig `yaml:"verify,omitempty"`
+	// LLMPrefilter is the grounding prefilter's model; verify.prefilter switches
+	// it on, and ResolvedPrefilter fills it from LLM.
+	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -150,6 +164,9 @@ type PerRepoConfig struct {
 	// Events sets the sharing mode per event channel; only the committed
 	// .sdd/config.yaml sets it.
 	Events EventsConfig `yaml:"events,omitempty"`
+	// Recheck names who runs the recheck work; only the committed
+	// .sdd/config.yaml sets it.
+	Recheck RecheckConfig `yaml:"recheck,omitempty"`
 }
 
 // DefaultLLMTimeoutFor is the llm.timeout in effect for provider when none
@@ -169,6 +186,41 @@ type SyncConfig struct {
 	// Cooldown is the minimum interval between background git fetches. Go
 	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
 	Cooldown string `yaml:"cooldown,omitempty"`
+}
+
+// DialogueConfig holds how engine sessions treat the choices procedures put
+// to the user.
+type DialogueConfig struct {
+	// Mode decides whether the agent may take those choices itself. Empty
+	// means DialogueGuided.
+	Mode DialogueMode `yaml:"mode,omitempty"`
+}
+
+// DialogueMode is the dialogue.mode setting. It is set per person: only the
+// user-global config and config.local.yaml may set it, and a value sdd must
+// not honor is read past as guided.
+type DialogueMode string
+
+const (
+	DialogueGuided DialogueMode = "guided"
+	DialogueAuto   DialogueMode = "auto"
+)
+
+// DialogueModes returns the values dialogue.mode takes.
+func DialogueModes() []DialogueMode {
+	return []DialogueMode{DialogueGuided, DialogueAuto}
+}
+
+func ignoredDialogueMode(mode DialogueMode, committed bool) string {
+	switch {
+	case mode == "":
+		return ""
+	case committed:
+		return personalOnly.reason()
+	case mode != DialogueGuided && mode != DialogueAuto:
+		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAuto)
+	}
+	return ""
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -267,6 +319,10 @@ type LLMConfig struct {
 	Effort string `yaml:"effort,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
+	// ExtractTimeout is a Go duration string bounding the extraction call a
+	// JSON-shaped check falls back to when its first response does not
+	// parse. Empty means DefaultLLMExtractTimeout.
+	ExtractTimeout string `yaml:"extract_timeout,omitempty"`
 	// Params carries behaviour-affecting, provider-specific model settings —
 	// a reasoning effort, a thinking budget — forwarded verbatim into the
 	// provider request. They also form the call's recorded variant, because a
@@ -275,6 +331,9 @@ type LLMConfig struct {
 	Params map[string]string `yaml:"params,omitempty"`
 	// Preflight tunes the LLM pre-flight calls apart from every other call.
 	Preflight LLMPreflightConfig `yaml:"preflight,omitempty"`
+	// ContextTokens is the model's context window in tokens, which sizes the
+	// prose verifier's pre-flight calls. Zero keeps the fixed default budget.
+	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -474,6 +533,11 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	if overlay.Dialogue.Mode != "" {
+		out.Dialogue.Mode = overlay.Dialogue.Mode
+	}
+	out.Verify = mergeVerifyConfig(base.Verify, overlay.Verify)
+	out.LLMPrefilter = mergeLLMPrefilterConfig(base.LLMPrefilter, overlay.LLMPrefilter)
 	return out
 }
 
@@ -515,6 +579,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.Contribution = overlay.Contribution
 	}
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
+	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
 	return &out
 }
 
@@ -587,6 +652,12 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.Timeout != "" {
 		out.Timeout = overlay.Timeout
+	}
+	if overlay.ExtractTimeout != "" {
+		out.ExtractTimeout = overlay.ExtractTimeout
+	}
+	if overlay.ContextTokens != 0 {
+		out.ContextTokens = overlay.ContextTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency
@@ -737,7 +808,12 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
 		"# changes from collaborators. Go duration string.\n" +
 		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n"
+		"#   cooldown: " + DefaultSyncCooldown + "\n" +
+		"\n" +
+		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
+		"# choices an engine session otherwise puts to you.\n" +
+		"# dialogue:\n" +
+		"#   mode: " + string(DialogueGuided) + "\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -780,6 +856,14 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 		raw = cfg.Sync.Cooldown
 	}
 	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// ResolveDialogueMode returns the effective dialogue mode from cfg.
+func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
+	if cfg != nil && cfg.Dialogue.Mode == DialogueAuto {
+		return DialogueAuto
+	}
+	return DialogueGuided
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked

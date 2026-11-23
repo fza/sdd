@@ -139,12 +139,17 @@ func printUnknownConfigKeys(errWriter io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if len(result.Keys) == 0 {
-		return nil
+	if len(result.Keys) > 0 {
+		fmt.Fprintf(errWriter, "\nignored — this sdd does not know these keys:\n")
+		for _, k := range result.Keys {
+			fmt.Fprintf(errWriter, "  %s  (%s)\n", k.Key, k.File)
+		}
 	}
-	fmt.Fprintf(errWriter, "\nignored — this sdd does not know these keys:\n")
-	for _, k := range result.Keys {
-		fmt.Fprintf(errWriter, "  %s  (%s)\n", k.Key, k.File)
+	if len(result.Ignored) > 0 {
+		fmt.Fprintf(errWriter, "\nignored — these settings are not honored where they stand:\n")
+		for _, s := range result.Ignored {
+			fmt.Fprintf(errWriter, "  %s  (%s): %s\n", s.Key, s.File, s.Reason)
+		}
 	}
 	return nil
 }

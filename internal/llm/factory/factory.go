@@ -5,6 +5,7 @@
 package factory
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -24,8 +25,9 @@ import (
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
 // back to model.DefaultLLMTimeoutFor the provider). Deadlines are
 // configuration, so they compose here rather than being defaulted by any
-// consumer; an unbounded
-// runner would turn a hung provider into a hung process. Errors distinguish
+// consumer; an unbounded runner would turn a hung provider into a hung
+// process. The extraction purposes are bounded by cfg.ExtractTimeout
+// instead. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
 func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
@@ -51,7 +53,18 @@ func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 	for _, opt := range opts {
 		opt(&b)
 	}
-	return namedTimeout(llm.Bounded(runner, b.timeout), b), nil
+	extractTimeout := model.DefaultLLMExtractTimeout
+	if cfg.ExtractTimeout != "" {
+		d, err := time.ParseDuration(cfg.ExtractTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("llm: parsing extract_timeout %q: %w", cfg.ExtractTimeout, err)
+		}
+		if d > 0 {
+			extractTimeout = d
+		}
+	}
+
+	return boundedPerPurpose(runner, b, extractTimeout), nil
 }
 
 // Option adjusts the runner New composes.
@@ -65,6 +78,23 @@ func WithTimeoutFlag(flag string, d time.Duration) Option {
 			b.timeout, b.flag = d, flag
 		}
 	}
+}
+
+// boundedPerPurpose gives the extraction purposes their own deadline. A fresh
+// deadline starts on every call, so a check that falls back would otherwise be
+// free to spend twice the configured timeout; reformatting text the model
+// already produced needs far less than a reasoning pass.
+func boundedPerPurpose(runner llm.Runner, reasoningBound bound, extractTimeout time.Duration) llm.Runner {
+	reasoning := namedTimeout(llm.Bounded(runner, reasoningBound.timeout), reasoningBound)
+	extraction := namedTimeout(llm.Bounded(runner, extractTimeout), bound{timeout: extractTimeout, setting: "llm.extract_timeout"})
+	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
+		switch req.Purpose {
+		case llm.PurposePreflightExtract, llm.PurposeWritingGuideExtract:
+			return extraction.Run(ctx, req)
+		default:
+			return reasoning.Run(ctx, req)
+		}
+	})
 }
 
 // compose builds the provider adapter and its rate-limit wrap — everything

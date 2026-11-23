@@ -16,6 +16,26 @@ type Finding struct {
 	Severity    string
 	Category    string
 	Observation string
+	// Basis names the reading entries a light verifier finding rests on; a
+	// pointer keeps Finding comparable. nil names none.
+	Basis *[]string
+}
+
+// BasisIDs returns the entries Basis names.
+func (f Finding) BasisIDs() []string {
+	if f.Basis == nil {
+		return nil
+	}
+	return *f.Basis
+}
+
+// sliceRef points at s, or is nil when s is, so a nil slice keeps its JSON
+// null.
+func sliceRef[T any](s []T) *[]T {
+	if s == nil {
+		return nil
+	}
+	return &s
 }
 
 type EntryRef struct {
@@ -69,6 +89,14 @@ type EntryDraft struct {
 	FocusWhen     *types.FocusWhen
 	Involvement   []types.Involvement
 	SkipPreflight bool
+	// SkipGrounding records a bypass of the grounding gate: the entry is
+	// written with grounding: skipped and low confidence.
+	SkipGrounding bool
+	// VerificationSkip records that the user skipped the deep verifier: after a
+	// verifier failure ("failure") the entry is written with confidence low,
+	// after the weighed rule's skip ("weighed") with confidence at most medium;
+	// either way it carries verification: skipped.
+	VerificationSkip string
 }
 
 type StagedAttachment struct {
@@ -79,6 +107,14 @@ type StagedAttachment struct {
 type PreflightEntryResult struct {
 	Target   MutationTarget
 	Findings []Finding
+	// Calls is how many light verifier calls the reading took; zero outside
+	// the light verifier.
+	Calls int
+	// Excerpted names the reading entries a light call judged on excerpts.
+	Excerpted []string
+	// Rubric holds the rules pre-flight would have judged the draft by when
+	// the deep verifier judges in its place; empty when pre-flight's model ran.
+	Rubric string
 }
 
 // ValidationError reports that model.ValidateEntry rejected a draft at the
@@ -226,6 +262,16 @@ func entryFromDraft(draft EntryDraft, id string, now time.Time) (*model.Entry, [
 	}
 	entry.Closes = append([]string(nil), draft.Closes...)
 	entry.Supersedes = append([]string(nil), draft.Supersedes...)
+	if draft.SkipGrounding {
+		entry.Grounding = model.GroundingSkipped
+		entry.Confidence = "low"
+	}
+	if draft.VerificationSkip != "" {
+		err := model.MarkVerificationSkipped(entry, draft.VerificationSkip)
+		if err != nil {
+			findings = append(findings, model.Finding{Field: "verification", Message: err.Error()})
+		}
+	}
 	return entry, findings
 }
 

@@ -18,6 +18,8 @@ var responseSchemas embed.FS
 var (
 	preflightSchema    = mustSchema("preflight.json")
 	writingGuideSchema = mustSchema("writing_guide.json")
+	gatherQuerySchema  = mustSchema("gather_query.json")
+	relevanceSchema    = mustSchema("relevance.json")
 )
 
 // mustSchema loads an embedded response schema, compacted with its property
@@ -33,6 +35,20 @@ func mustSchema(name string) json.RawMessage {
 		panic(fmt.Sprintf("compacting response schema %s: %v", name, err))
 	}
 	return json.RawMessage(buf.Bytes())
+}
+
+// withAnalysisFlag is a check's schema with a required boolean "analysis"
+// property ahead of its findings, for the extraction call to say the text it
+// reformats holds no analysis. Spliced into the compact bytes rather than
+// re-encoded, which would reorder the findings' properties.
+func withAnalysisFlag(schema json.RawMessage) json.RawMessage {
+	const head = `{"type":"object","properties":{`
+	const required = `"required":["findings"]`
+	if !bytes.HasPrefix(schema, []byte(head)) || bytes.Count(schema, []byte(required)) != 1 {
+		panic(fmt.Sprintf("response schema has no top-level findings shape to flag: %s", schema))
+	}
+	flagged := append([]byte(head+`"analysis":{"type":"boolean"},`), schema[len(head):]...)
+	return bytes.Replace(flagged, []byte(required), []byte(`"required":["analysis","findings"]`), 1)
 }
 
 // findingEnum returns the closed value set a findings schema declares for one

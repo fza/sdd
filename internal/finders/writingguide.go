@@ -27,7 +27,7 @@ func (f *Finder) WritingGuide(ctx context.Context, graph *model.Graph, q query.W
 		TypeSystemFactID: basefacts.OverviewFactID,
 		KindFactID:       basefacts.AuthoringFactID(q.Entry.Kind),
 	}
-	result, err := llmops.WritingGuide(ctx, f.writingGuideRunner, q.Entry, q.ClosureTargets, refFacts)
+	result, err := llmops.WritingGuideDelta(ctx, f.writingGuideRunner, q.Entry, q.ClosureTargets, refFacts, q.Changed)
 	if err != nil {
 		return nil, err
 	}

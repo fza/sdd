@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -54,27 +55,11 @@ func serveCmd() *cli.Command {
 			},
 		),
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
-			dir, err := resolveGraphDir(cmd)
-			if err != nil {
-				return err
-			}
-			sddDir, err := resolveSDDDir()
-			if err != nil {
-				return err
-			}
-			runner, err := newRunner(cmd, "")
+			application, _, identity, err := localApplication(ctx, cmd, "")
 			if err != nil {
 				return err
 			}
 			cfg, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			reg, _, err := defaultRepos()
-			if err != nil {
-				return err
-			}
-			application, _, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
 			if err != nil {
 				return err
 			}
@@ -204,6 +189,7 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
+	dialogue     sdd.Dialogue
 	runtime      *sdd.ProjectRuntime
 	dependencies *cachedDependencies
 }
@@ -289,6 +275,12 @@ func (a *localRuntimeAccess) ResolveParticipant(context.Context, sdd.Principal, 
 	return a.participant, nil
 }
 
+// ResolveDialogue returns the dialogue mode read from the person's config
+// when the server started.
+func (a *localRuntimeAccess) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
+	return a.dialogue, nil
+}
+
 func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.ProjectList, error) {
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
@@ -307,6 +299,60 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 
 func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	return a.dependencies.resolve(dependency)
+}
+
+// localApplication builds the application over the project the working
+// directory belongs to, its LLM runner bounded by the duration flag
+// timeoutFlag names.
+func localApplication(ctx context.Context, cmd *cli.Command, timeoutFlag string) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
+	graphDir, err := resolveGraphDir(cmd)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	runner, err := newRunner(cmd, timeoutFlag)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	registry, _, err := defaultRepos()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	return buildLocalApplication(ctx, cmd, graphDir, sddDir, cfg, registry, runner)
+}
+
+// localDialogue reads dialogue.mode and the layer that sets it; the
+// committed layer arrives without it.
+func localDialogue(sddDir string) (sdd.Dialogue, error) {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	sources := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal: loc.ConfigPath,
+		model.ConfigSourceLocal:  filepath.Join(sddDir, "config.local.yaml"),
+	}
+	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
+		if value.Key == "dialogue.mode" {
+			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}, nil
+		}
+	}
+	return sdd.Dialogue{Mode: string(model.DialogueGuided)}, nil
 }
 
 func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
@@ -374,15 +420,27 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, "", sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
-	events, err := projectEventStore(sddDir, cfg)
+	events, err := projectEventStore(sddDir, graphDir, cfg)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
+	verdicts, err := projectRelevanceStore(locations.StateRoot, baseRepoKey)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	prefilter, err := projectPrefilter(cfg)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	workRoot := filepath.Dir(sddDir)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
-		LLM: runner, Events: events,
+		LLM: runner, Events: events, Relevance: verdicts, Prefilter: prefilter,
+		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
+		Grounding: groundingPolicy(cfg), Verifier: verifierPolicy(cfg), ContextTokens: cfg.LLM.ContextTokens,
+		Checkout: os.DirFS(workRoot), Commits: git.CLI{Dir: workRoot},
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
@@ -391,8 +449,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
 	}
+	dialogue, err := localDialogue(sddDir)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	access := &localRuntimeAccess{
-		project: project, participant: participant, runtime: runtime,
+		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
 		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			// The cache as a project of its own: its committed config supplies
 			// the graph layout, the language, and the dependencies its horizon
@@ -410,15 +472,26 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			// so binary-shipped base facts embed once per machine in the base
 			// store, not once per connected repo.
 			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+			// A connected repository's checkout and commits back the files and
+			// commits a deep verifier cites there.
 			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
 				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
 				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
 				ExcludeEmbeddedFromIndex: true,
+				Verifier:                 verifierPolicy(dependencyCfg),
+				Checkout:                 os.DirFS(cache.Dir), Commits: git.CLI{Dir: cache.Dir},
 			})
 		}},
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
+	rounds, err := newRoundProcesses(cmd)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{
+		Access: access, Sessions: sessions, StagedBlobs: blobs,
+		DelegateLauncher: headlessLauncher{project: project, workRoot: workRoot, cfg: cfg}, RoundProcesses: rounds,
+	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

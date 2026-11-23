@@ -1,0 +1,29 @@
+package model
+
+import (
+	"slices"
+	"strings"
+	"unicode"
+)
+
+// QuotedFrom reports whether words quote message: message holds them as
+// whole words in that order, case and punctuation set aside.
+func QuotedFrom(words, message string) bool {
+	w := wordRun(words)
+	return len(w) > 0 && indexWords(wordRun(message), w) >= 0
+}
+
+// wordRun splits s into its lowercased runs of letters and digits.
+func wordRun(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+}
+
+// indexWords returns where sub starts in words as a contiguous run, or -1.
+func indexWords(words, sub []string) int {
+	for at := 0; at+len(sub) <= len(words); at++ {
+		if slices.Equal(words[at:at+len(sub)], sub) {
+			return at
+		}
+	}
+	return -1
+}

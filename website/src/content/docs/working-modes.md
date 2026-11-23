@@ -31,11 +31,20 @@ A catch-up only reads. It leaves nothing in the graph.
 
 Use it when you notice something or settle something: "The export drops rows without a date" or "Let's release every two weeks." A [plan](/sdd/reference/entry-kinds/#plan) is captured the same way, with acceptance criteria: the outcomes that must be true when the work is done.
 
-- The agent searches the graph and drafts one entry: its [kind](/sdd/reference/entry-kinds/), its text, and links to the entries it builds on.
-- A separate model reads the draft as a stranger would and points out what is unclear. The agent revises.
+- The agent searches the graph and drafts one entry: its [kind](/sdd/reference/entry-kinds/), its text, and links to the entries it builds on. Under [`verify.mode`](/sdd/reference/configuration/#verify) `grounding` and above, the default included, sdd holds the draft until the agent read the related entries through `gather` and either linked or set aside, with a reason, each entry it read in full. A draft links only entries the session served in full: through `show`, `gather` or a `view` printing bodies; a `view` cut for size counts none of its bodies.
 - The agent plays back the exact entry. You confirm it, ask for changes, or drop it.
-- A pre-flight check compares the entry with the graph. A serious finding stops the write until you revise the entry or override the check. Only you can override.
+- Once you confirm, a separate model reads the draft as a stranger would and points out what is unclear. A revision is played back to you again.
+- A pre-flight check compares the entry with the graph: under `prose` with everything the reading found, under `deep` through a verifier agent that checks claims at their source. A serious finding stops the write until you revise the entry or override the check. Only you can override.
 - sdd writes the entry with a generated one-line summary and commits it. The agent checks the summary against the entry.
+
+A pre-flight answer that was cut short, or a call past `llm.timeout`, judges nothing, and the capture puts it to you:
+
+| What happened | Your choices |
+| --- | --- |
+| The answer was cut short | Revise the draft, skip the check, or drop the capture. Sending the same request again would be cut the same way. |
+| The call ran past `llm.timeout` | Send the call again, which is billed again, revise the draft, skip the check, or drop the capture. The error names `llm.timeout`, its value and the command that raises it. |
+
+Only you can skip, never while a serious finding is open, and not under `verify.skip: never`. A skipped check writes the entry with `verification: skipped` at low confidence. Under `dialogue.mode: auto` the agent revises after a cut answer and sends the call again after a timeout, once each; a second block parks the capture for you.
 
 It leaves one new entry. The entry can also close or replace an earlier one, and then says why. [Getting started](/sdd/getting-started/#6-record-your-first-observation) walks through a first capture.
 

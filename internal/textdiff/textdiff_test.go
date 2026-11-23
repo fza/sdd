@@ -60,3 +60,16 @@ func TestHeadTail(t *testing.T) {
 		t.Fatalf("short text must return whole, got %q", short)
 	}
 }
+
+func TestChangedPassages(t *testing.T) {
+	old := "first line\nsecond line\n\nthird line"
+	new := "first line\nsecond line changed\nadded line\n\nthird line\n\nnew tail"
+	got := textdiff.ChangedPassages(old, new)
+	want := []string{"second line changed\nadded line", "\nnew tail"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("changed passages should be the inserted runs in order, got %q", got)
+	}
+	if got := textdiff.ChangedPassages(old, old); len(got) != 0 {
+		t.Fatalf("an unchanged text has no changed passage, got %q", got)
+	}
+}

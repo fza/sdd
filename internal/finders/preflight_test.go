@@ -158,8 +158,8 @@ func TestRunPreflight_ParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Preflight() expected error when response is unparseable")
 	}
-	if !strings.Contains(err.Error(), "parsing pre-flight result") {
-		t.Errorf("error should wrap parse failure, got: %v", err)
+	if !strings.Contains(err.Error(), "unparseable in both phases") {
+		t.Errorf("error should report the parse failure in both phases, got: %v", err)
 	}
 }
 

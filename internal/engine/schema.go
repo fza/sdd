@@ -1,14 +1,22 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/networkteam/sdd/internal/model"
 )
 
+const entryIDSchemaCore = `\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+`
+
 // entryIDSchemaPattern is the JSON-Schema pattern for a full entry ID, shared
-// by every string property that carries one (entry-id, ref.id, involvement.target).
-const entryIDSchemaPattern = `^\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$`
+// by every string property that carries one (entry-id, involvement.target).
+const entryIDSchemaPattern = `^` + entryIDSchemaCore + `$`
+
+// refIDSchemaPattern also admits the <repo-id>:<entry-id> form: a ref may
+// cross into a declared dependency, closes and supersedes may not
+// (20260606-003344-d-cpt-s6q).
+const refIDSchemaPattern = `^([^\s:/]+(/[^\s:/]+)+:)?` + entryIDSchemaCore + `$`
 
 // ReportSchemaForStep generates the JSON Schema for a step's report from the
 // spec's variable declarations: the step's collect fields are the named,
@@ -54,6 +62,18 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 	return schema
 }
 
+// collectSchema is ReportSchemaForStep cut to the fields the step collects.
+func (s *Spec) collectSchema(step *Step) map[string]any {
+	schema := s.ReportSchemaForStep(step)
+	properties, _ := schema["properties"].(map[string]any)
+	for name := range properties {
+		if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == name }) {
+			delete(properties, name)
+		}
+	}
+	return schema
+}
+
 // AnswerSchemaForStep generates the JSON Schema for a chooser step's answer:
 // the chooser to name (its step id), the choice to pick, the user's verbatim
 // words for a user chooser, and the option-collected fields nested under
@@ -61,11 +81,17 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 // collected fields at the top level (rejected); this envelope makes the
 // required nesting explicit. `fields` unions every option's collect fields —
 // each option enforces its own required set at answer time, so the envelope
-// marks none of them required.
-func (s *Spec) AnswerSchemaForStep(step *Step) map[string]any {
+// marks none of them required. In an autonomous session a delegable user
+// chooser takes the agent's reason in place of the user's words, and an
+// unattended one only its answer.
+func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[string]any {
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
+	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode == model.DialogueAuto
 	for _, o := range step.Options {
+		if unattended && o.Choice != step.Unattended.Answer {
+			continue
+		}
 		choices = append(choices, o.Choice)
 		for _, cf := range o.Collect {
 			if _, seen := fieldProps[cf.Name]; seen {
@@ -90,10 +116,23 @@ func (s *Spec) AnswerSchemaForStep(step *Step) map[string]any {
 		},
 	}
 	required := []string{"choice", "chooser"}
-	if step.Chooser == ChooserUser {
+	switch {
+	case unattended:
+		properties["reason"] = map[string]any{"type": "string", "description": "your one-line reason"}
+		required = append(required, "reason")
+	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAuto:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer, relayed verbatim",
+			"description": "the user's own message verbatim, never yours, when the user gave one — otherwise omit it and give reason",
+		}
+		properties["reason"] = map[string]any{
+			"type":        "string",
+			"description": "one line on why you chose this option yourself — give exactly one of reason and userWords",
+		}
+	case step.Chooser == ChooserUser:
+		properties["userWords"] = map[string]any{
+			"type":        "string",
+			"description": "the user's own message verbatim, never yours",
 		}
 		required = append(required, "userWords")
 	}
@@ -178,8 +217,9 @@ func procedureSpecSchema() map[string]any {
 				"properties": map[string]any{
 					"procedure": map[string]any{"type": "string"},
 					"seed":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"receive":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"send":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				},
-				"required":             []string{"seed"},
 				"additionalProperties": false,
 			},
 		},
@@ -200,6 +240,19 @@ func procedureSpecSchema() map[string]any {
 			"transitions": map[string]any{"type": "array", "items": transition},
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"delegable":   map[string]any{"type": "boolean"},
+			"unattended": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+					"limit":  map[string]any{"type": "integer", "minimum": 0},
+				},
+				"required":             []string{"answer"},
+				"additionalProperties": false,
+			},
+			"deliver":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"await":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"awaitAny": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
@@ -214,6 +267,10 @@ func procedureSpecSchema() map[string]any {
 			"serveBudget": map[string]any{
 				"type": "integer", "minimum": 0,
 				"description": "declared worst-case serve total in bytes; a larger total than the engine default silences the authoring-arithmetic finding and records the trade",
+			},
+			"rounds": map[string]any{
+				"type": "integer", "minimum": 0,
+				"description": "a task's round cap: the most interim deliveries its delegate session makes before it concludes; required on a task with an interim delivery",
 			},
 		},
 		"required":             []string{"steps"},
@@ -257,7 +314,7 @@ func schemaForType(t VarType, desc string) map[string]any {
 			"properties": map[string]any{
 				"id": map[string]any{
 					"type":    "string",
-					"pattern": entryIDSchemaPattern,
+					"pattern": refIDSchemaPattern,
 				},
 				"kind": map[string]any{"type": "string", "enum": enum},
 				"desc": map[string]any{"type": "string"},
@@ -291,6 +348,51 @@ func schemaForType(t VarType, desc string) map[string]any {
 				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
+			"additionalProperties": false,
+		}
+	case TypeDeepFinding:
+		schema = deepFindingSchema()
+	case TypeDeepAnswer:
+		schema = deepAnswerSchema()
+	case TypeDeepResponse:
+		schema = deepResponseSchema()
+	case TypeVerdict:
+		codes := model.GroundingVerdictCodes()
+		enum := make([]any, 0, len(codes))
+		for _, code := range codes {
+			enum = append(enum, code)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 1,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"code": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "code"},
+			"additionalProperties": false,
+		}
+	case TypeStrain:
+		relations := model.StrainRelations()
+		enum := make([]any, 0, len(relations))
+		for _, relation := range relations {
+			enum = append(enum, relation)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 2,
+					"maxItems": 2,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"relation": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "relation"},
 			"additionalProperties": false,
 		}
 	case TypeEntryKind:
@@ -374,6 +476,98 @@ func involvementWhenSchema() map[string]any {
 			"to":   map[string]any{"type": "string", "pattern": `^\d{4}-\d{2}-\d{2}$`},
 		},
 		"minProperties":        1,
+		"additionalProperties": false,
+	}
+}
+
+func deepEditsSchema() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text of the base draft document, matching it exactly once"},
+				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+			},
+			"required":             []string{"old", "new"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func enumOf(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
+	}
+	return out
+}
+
+func deepFindingSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "what is wrong, in words, reasoning first"},
+			"axis":     map[string]any{"type": "string", "enum": enumOf(model.DeepAxes())},
+			"severity": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
+			"owner":    map[string]any{"type": "boolean", "description": "true when only the user can settle it; such a finding carries no edits"},
+			"pointers": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"field": map[string]any{"type": "string", "description": "the draft field the finding judges"},
+						"quote": map[string]any{"type": "string", "description": "exact draft words"},
+						"id":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+					},
+					"required":             []string{"field"},
+					"additionalProperties": false,
+				},
+			},
+			"basis": map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": entryIDSchemaPattern}},
+			"sources": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"kind":  map[string]any{"type": "string", "enum": enumOf(model.DeepSourceKinds())},
+						"ref":   map[string]any{"type": "string", "minLength": 1},
+						"quote": map[string]any{"type": "string"},
+					},
+					"required":             []string{"kind", "ref"},
+					"additionalProperties": false,
+				},
+			},
+			"edits": deepEditsSchema(),
+		},
+		"required":             []string{"verdict", "axis", "severity"},
+		"additionalProperties": false,
+	}
+}
+
+func deepAnswerSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"verdict": map[string]any{"type": "string", "enum": []any{"accept", "contest"}},
+			"reason":  map[string]any{"type": "string", "description": "why the finding does not hold; required on a contest"},
+		},
+		"required":             []string{"target", "verdict"},
+		"additionalProperties": false,
+	}
+}
+
+func deepResponseSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"outcome": map[string]any{"type": "string", "enum": []any{model.DeepHeld, model.DeepConceded, model.DeepRevised, model.DeepDropped}},
+			"note":    map[string]any{"type": "string", "description": "why; required except on a revision"},
+			"edits":   deepEditsSchema(),
+		},
+		"required":             []string{"target", "outcome"},
 		"additionalProperties": false,
 	}
 }

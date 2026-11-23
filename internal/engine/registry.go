@@ -46,6 +46,24 @@ type Context struct {
 	// was served at (refsInspected evaluates it). Nil means nothing was
 	// served; reading a nil map is safe.
 	Reads map[string]ReadDepth
+	// Reading is the running instance's credited grounding reads; nil only
+	// in contexts built outside an instance.
+	Reading *model.Reading
+	// Cap is the effective bound on the running inject's result: the spec's
+	// declaration over the query's registered default.
+	Cap serveview.Cap
+	// Arrived lists the fields the current await gate holds a delivery for
+	// that it has not consumed yet.
+	Arrived []string
+	// Commit writes engine fields holding an effect the running operation
+	// committed outside the session and logs them at once, so a later failure
+	// of the same command keeps them; set only for a command recording a
+	// mutation intent.
+	Commit func(fields map[string]any) error
+	// Committed holds what earlier attempts of the running invocation
+	// committed, so its retry continues past the effect instead of repeating
+	// it. The store already holds these fields.
+	Committed map[string]any
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
@@ -71,6 +89,11 @@ type Predicate struct {
 	// (refsInspected naming the un-inspected IDs). Empty results fall back
 	// to FailMessage.
 	FailDetail func(ctx *Context) string
+	// Selector marks a predicate that reads a mode or state no report can
+	// change: it chooses a gate's path and is never owed work, so a
+	// transition failing on it drops out of the gate's diagnostics. Off by
+	// default, since a wrongly marked selector hides an owed line.
+	Selector bool
 }
 
 // Query is a registered query.

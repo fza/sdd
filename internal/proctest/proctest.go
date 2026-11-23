@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
+	test "github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
@@ -53,9 +55,26 @@ type GuideFinding struct {
 type LLMScript struct {
 	mu                sync.Mutex
 	calls             map[llm.Purpose]int
+	prompts           map[llm.Purpose][]llm.Request
 	PreflightFindings []PreflightFinding
 	GuideFindings     []GuideFinding
-	Summary           string
+	// DuringPreflight runs inside every pre-flight call, before it answers:
+	// the point to land an entry between a capture's confirm and its write.
+	DuringPreflight func()
+	// PreflightErr, when set, fails every pre-flight call with it.
+	PreflightErr error
+	// GatherQuery is the semantic query the gather query writer answers
+	// with, and its one keyword term.
+	GatherQuery string
+	GatherTerm  string
+	Summary     string
+}
+
+// Prompts returns the requests the runner ran for the purpose, in order.
+func (s *LLMScript) Prompts(purpose llm.Purpose) []llm.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.Request(nil), s.prompts[purpose]...)
 }
 
 // Calls returns how often the runner ran for the purpose.
@@ -74,11 +93,23 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 		s.calls = map[llm.Purpose]int{}
 	}
 	s.calls[request.Purpose]++
+	if s.prompts == nil {
+		s.prompts = map[llm.Purpose][]llm.Request{}
+	}
+	s.prompts[request.Purpose] = append(s.prompts[request.Purpose], request)
 	switch request.Purpose {
 	case llm.PurposeSummarize:
 		return llm.Result{Text: s.Summary, Identity: scriptIdentity}, nil
 	case llm.PurposePreflight:
+		if s.DuringPreflight != nil {
+			s.DuringPreflight()
+		}
+		if s.PreflightErr != nil {
+			return llm.Result{}, s.PreflightErr
+		}
 		return marshalFindings(locatedFindings(s.PreflightFindings, request.UserPrompt))
+	case llm.PurposeGatherQuery:
+		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
 	default:
@@ -149,11 +180,21 @@ func WriteRawEntry(t *testing.T, graphDir, id, content string) {
 }
 
 type config struct {
-	graphDir    string
-	participant string
-	entries     []*model.Entry
-	branchDirs  map[string]string
-	finalizers  []sdd.MutationFinalizer
+	graphDir      string
+	participant   string
+	entries       []*model.Entry
+	branchDirs    map[string]string
+	finalizers    []sdd.MutationFinalizer
+	dialogue      sdd.Dialogue
+	grounding     sdd.GroundingPolicy
+	verifier      sdd.VerifierPolicy
+	contextTokens int
+	launcher      sdd.DelegateLauncher
+	clock         sdd.Clock
+	checkout      fs.FS
+	relevance     sdd.RelevanceStore
+	prefilter     sdd.Prefilter
+	events        sdd.EventStore
 }
 
 // Option configures NewWorld.
@@ -170,6 +211,63 @@ func WithEntries(entries ...*model.Entry) Option {
 
 // WithParticipant sets the resolved participant (default Christopher).
 func WithParticipant(name string) Option { return func(c *config) { c.participant = name } }
+
+// WithAutonomousDialogue opens every session of the world in the auto
+// dialogue mode.
+func WithAutonomousDialogue() Option {
+	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "auto", Source: "config.local.yaml"} }
+}
+
+// WithGroundingEnforced turns grounding enforcement on for the world's project.
+func WithGroundingEnforced() Option {
+	return func(c *config) { c.grounding.Enforce = true }
+}
+
+// WithVerifier sets the world project's draft verifier policy and its
+// llm.context_tokens; 0 keeps the fixed default budget.
+func WithVerifier(policy sdd.VerifierPolicy, contextTokens int) Option {
+	return func(c *config) {
+		c.verifier = policy
+		c.contextTokens = contextTokens
+	}
+}
+
+// WithDelegateLauncher makes the world's application launch delegates
+// through launcher, as a composition with headless launches does.
+func WithDelegateLauncher(launcher sdd.DelegateLauncher) Option {
+	return func(c *config) { c.launcher = launcher }
+}
+
+// WithClock makes clock the world's time source.
+func WithClock(clock sdd.Clock) Option {
+	return func(c *config) { c.clock = clock }
+}
+
+// WithCheckout gives the world's project a checkout the deep verifier's
+// weighing rule and its findings look cited paths up in.
+func WithCheckout(checkout fs.FS) Option {
+	return func(c *config) { c.checkout = checkout }
+}
+
+// WithGrounding sets the world project's whole grounding policy.
+func WithGrounding(policy sdd.GroundingPolicy) Option {
+	return func(c *config) { c.grounding = policy }
+}
+
+// WithRelevance gives the world's project a relevance verdict ledger.
+func WithRelevance(store sdd.RelevanceStore) Option {
+	return func(c *config) { c.relevance = store }
+}
+
+// WithEvents gives the world's project an event store.
+func WithEvents(store sdd.EventStore) Option {
+	return func(c *config) { c.events = store }
+}
+
+// WithPrefilter gives the world's project a relevance scorer.
+func WithPrefilter(prefilter sdd.Prefilter) Option {
+	return func(c *config) { c.prefilter = prefilter }
+}
 
 // WithFinalizers configures required completion after publication.
 func WithFinalizers(finalizers ...sdd.MutationFinalizer) Option {
@@ -247,8 +345,16 @@ type World struct {
 	Identity sdd.RequestIdentity
 	GraphDir string
 	LLM      *LLMScript
+	// Sessions is the session store the application appends to.
+	Sessions sdd.SessionStore
+	// SessionsDir holds the session logs Sessions writes, <session>.jsonl.
+	SessionsDir string
+	// Rounds runs the rounds a world with a delegate launcher launches.
+	Rounds *test.RoundProcesses
 
-	dropped map[string]bool
+	options  sdd.ApplicationOptions
+	sessions *test.ProcessSessions
+	dropped  map[string]bool
 }
 
 // DropBranch removes a registered branch's checkout: from here every read,
@@ -263,9 +369,20 @@ func (w *World) DropBranch(t *testing.T, branch string) {
 	w.dropped[branch] = true
 }
 
+// SetDialogue changes the dialogue mode the person's config sets, which a
+// session follows from its next call.
+func (w *World) SetDialogue(mode string) {
+	w.options.Access.(*accessResolver).dialogue = sdd.Dialogue{Mode: mode, Source: "config.local.yaml"}
+}
+
 type accessResolver struct {
 	runtime     *sdd.ProjectRuntime
 	participant string
+	dialogue    sdd.Dialogue
+}
+
+func (r *accessResolver) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
+	return r.dialogue, nil
 }
 
 func (r *accessResolver) ResolvePrincipal(_ context.Context, identity sdd.RequestIdentity) (sdd.Principal, error) {
@@ -311,7 +428,8 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := localadapter.NewFilesystemSessionStoreAt(t.TempDir())
+	sessionsDir := t.TempDir()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(sessionsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +440,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events, ContextTokens: cfg.contextTokens,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
@@ -343,13 +461,35 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant}, Sessions: sessions, StagedBlobs: blobs,
-	})
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, LLM: script, Sessions: sessions, SessionsDir: sessionsDir, dropped: dropped}
+	world.options = sdd.ApplicationOptions{
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+	}
+	if cfg.launcher != nil {
+		world.Rounds = test.NewRoundProcesses(t)
+		world.options.RoundProcesses = world.Rounds
+		world.Rounds.Runs(world.options, world.Identity)
+	}
+	world.Restart(t)
+	return world
+}
+
+// Restart replaces the world's application with a fresh one over the same
+// stores, as a server that started anew; the one it replaces writes nothing
+// more.
+func (w *World) Restart(t *testing.T) {
+	t.Helper()
+	if w.sessions != nil {
+		w.sessions.Kill()
+	}
+	w.sessions = &test.ProcessSessions{SessionStore: w.options.Sessions}
+	options := w.options
+	options.Sessions = w.sessions
+	application, err := sdd.NewApplication(options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &World{App: application, Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, LLM: script, dropped: dropped}
+	w.App = application
 }
 
 // Session wraps one workflow session on the world.
@@ -368,6 +508,17 @@ func (w *World) Open(t *testing.T, connID string) *Session {
 		t.Fatal(err)
 	}
 	return &Session{World: w, WF: workflow, ID: serve.Session}
+}
+
+// Refresh replays the session from its log into a fresh WorkflowSession, as
+// the MCP server does before every call.
+func (s *Session) Refresh(t *testing.T) {
+	t.Helper()
+	workflow, err := s.World.App.RefreshWorkflow(t.Context(), s.World.Identity, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WF = workflow
 }
 
 // Resume loads a session by ID from another client, as a re-attached or
@@ -420,6 +571,13 @@ func (s *Session) StartChild(t *testing.T, canonical string, params map[string]a
 	return serve
 }
 
+// StartChildErr starts a procedure under a spawning parent and returns the
+// error a refused start or launch gives.
+func (s *Session) StartChildErr(t *testing.T, canonical string, params map[string]any, parent string) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+}
+
 // Report sends state fields to the instance's current step.
 func (s *Session) Report(t *testing.T, instance string, fields map[string]any) *sdd.WorkflowServe {
 	t.Helper()
@@ -457,6 +615,38 @@ func (s *Session) AnswerErr(t *testing.T, instance, chooser, choice string, fiel
 		report["userWords"] = userWords
 	}
 	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+}
+
+// Decide answers a delegable chooser the agent decides itself in an
+// autonomous session, carrying its reason.
+func (s *Session) Decide(t *testing.T, instance, chooser, choice string, fields map[string]any, reason string) *sdd.WorkflowServe {
+	t.Helper()
+	serve, err := s.DecideErr(t, instance, chooser, choice, fields, reason)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return serve
+}
+
+// DecideErr is Decide for tests asserting the failure.
+func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fields map[string]any, reason string) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	report := map[string]any{"chooser": chooser, "choice": choice, "reason": reason}
+	if fields != nil {
+		report["fields"] = fields
+	}
+	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+}
+
+// Gather runs the grounding read inside instance, opening ids in full, as the
+// MCP gather tool does.
+func (s *Session) Gather(t *testing.T, instance string, ids ...string) sdd.GatherResult {
+	t.Helper()
+	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, SyncMode: sdd.SearchSyncNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 // LogRead records a read into the session ledger, as the host's read tools do.
@@ -502,4 +692,20 @@ func LoadEntry(t *testing.T, graphDir, id string) *model.Entry {
 		t.Fatal(err)
 	}
 	return entry
+}
+
+// Delegate opens a delegate child session by the handle its dispatch
+// carried, as the launched delegate does.
+func (w *World) Delegate(t *testing.T, dispatch *sdd.WorkflowDispatch) *Session {
+	t.Helper()
+	workflow, err := w.App.RefreshWorkflow(t.Context(), w.Identity, dispatch.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Session{World: w, WF: workflow, ID: dispatch.Session}
+}
+
+func marshalGatherQuery(query, term string) (llm.Result, error) {
+	output, err := json.Marshal(map[string]any{"query": query, "terms": []string{term}})
+	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
 }

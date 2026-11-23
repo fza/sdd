@@ -26,6 +26,11 @@ import (
 // programmer-side mistake (a layout produced by some path other than the
 // parser+executor) rather than a user-facing error.
 func RenderView(w io.Writer, result *query.ViewResult) {
+	RenderViewRepeats(w, result, nil)
+}
+
+// RenderViewRepeats is RenderView applying the no-repeat rule through r.
+func RenderViewRepeats(w io.Writer, result *query.ViewResult, r *Repeats) {
 	written := 0
 	for _, section := range result.Sections {
 		if (section.Data == nil || section.Data.Count() == 0) && !rendersWhenEmpty[section.Render] {
@@ -37,9 +42,10 @@ func RenderView(w io.Writer, result *query.ViewResult) {
 		if section.Name != "" {
 			fmt.Fprintf(w, "## %s\n\n", section.Name)
 		}
-		renderSection(w, result.Graph, section)
+		renderSection(w, result.Graph, section, r)
 		written++
 	}
+	r.WriteWayBack(w)
 }
 
 // sectionHeadingLevel is the level RenderView writes a named section's header
@@ -52,7 +58,7 @@ const sectionHeadingLevel = 2
 // nothing, so its section is dropped whole.
 var rendersWhenEmpty = map[string]bool{"as-wip-list": true}
 
-func renderSection(w io.Writer, g *model.Graph, section query.SectionResult) {
+func renderSection(w io.Writer, g *model.Graph, section query.SectionResult, r *Repeats) {
 	switch section.Render {
 	case "as-bodies":
 		bodies, ok := section.Data.(model.Bodies)
@@ -63,19 +69,19 @@ func renderSection(w io.Writer, g *model.Graph, section query.SectionResult) {
 		if section.Name == "" {
 			entryLevel = sectionHeadingLevel
 		}
-		renderAsBodies(w, bodies, entryLevel)
+		renderAsBodies(w, bodies, entryLevel, r)
 	case "as-list":
 		flat, ok := section.Data.(model.FlatList)
 		if !ok {
 			return
 		}
-		renderAsList(w, g, flat, section.Brief)
+		renderAsList(w, g, flat, section.Brief, r)
 	case "as-grouped":
 		grouped, ok := section.Data.(model.Grouped)
 		if !ok {
 			return
 		}
-		renderAsGrouped(w, g, grouped, section.Brief)
+		renderAsGrouped(w, g, grouped, section.Brief, r)
 	case "as-counts":
 		counts, ok := section.Data.(model.Counts)
 		if !ok {
@@ -87,13 +93,13 @@ func renderSection(w io.Writer, g *model.Graph, section query.SectionResult) {
 		if !ok {
 			return
 		}
-		renderAsFocusBlock(w, g, block, section.Brief)
+		renderAsFocusBlock(w, g, block, section.Brief, r)
 	case "as-participants-block":
 		block, ok := section.Data.(model.ParticipantsBlock)
 		if !ok {
 			return
 		}
-		renderAsParticipantsBlock(w, g, block, section.Brief)
+		renderAsParticipantsBlock(w, g, block, section.Brief, r)
 	case "as-wip-list":
 		list, ok := section.Data.(model.WipList)
 		if !ok {

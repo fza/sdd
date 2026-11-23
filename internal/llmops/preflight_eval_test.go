@@ -207,7 +207,7 @@ func runEvalOnceIn(t *testing.T, graph *model.Graph, proposed *model.Entry, lang
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	result, err := llmops.Preflight(ctx, runner, proposed, evalGraphWithBase(t, graph), language)
+	result, err := llmops.Preflight(ctx, runner, proposed, evalGraphWithBase(t, graph), language, nil)
 	return result, runner.lastText, err
 }
 

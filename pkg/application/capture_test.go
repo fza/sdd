@@ -83,6 +83,52 @@ func TestPreflightEntryReturnsFindingsWithoutPublishing(t *testing.T) {
 	}
 }
 
+func TestPreflightEntryCodesAnAnswerCutAtTheCap(t *testing.T) {
+	cut := &llm.Error{Err: fmt.Errorf("gollm openai: %w: finish_reason=length, reasoning 32770 tokens, content 75122 chars", llm.ErrAnswerCut)}
+	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{}, cut
+	})})
+	draft := sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Preflight names a cut answer for what it is."}
+	_, err := f.app.PreflightEntry(t.Context(), f.identity, "example", f.binding, draft)
+	var coded *sdd.ApplicationError
+	if !errors.As(err, &coded) || coded.Code != sdd.ErrorAnswerCut {
+		t.Fatalf("a cut pre-flight answer should carry its code, got %v", err)
+	}
+	if !errors.Is(err, llm.ErrAnswerCut) || !strings.Contains(err.Error(), "finish_reason=length, reasoning 32770 tokens") {
+		t.Fatalf("the coded error should keep the original cause, got %v", err)
+	}
+}
+
+func TestPreflightEntryCodesACallPastItsBound(t *testing.T) {
+	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{}, &llm.Error{Err: fmt.Errorf("gollm openai: timed out: %w", context.DeadlineExceeded)}
+	})})
+	draft := sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Preflight names a timeout for what it is."}
+	_, err := f.app.PreflightEntry(t.Context(), f.identity, "example", f.binding, draft)
+	var coded *sdd.ApplicationError
+	if !errors.As(err, &coded) || coded.Code != sdd.ErrorTimedOut {
+		t.Fatalf("a pre-flight call past its bound should carry its code, got %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "gollm openai: timed out") {
+		t.Fatalf("the coded error should keep the original cause, got %v", err)
+	}
+}
+
+func TestPreflightEntryLeavesACallerCancellationUncoded(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		cancel()
+		return llm.Result{}, fmt.Errorf("gollm openai: timed out: %w", context.DeadlineExceeded)
+	})})
+	draft := sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Preflight leaves the caller's own end alone."}
+	_, err := f.app.PreflightEntry(ctx, f.identity, "example", f.binding, draft)
+	var coded *sdd.ApplicationError
+	if err == nil || (errors.As(err, &coded) && coded.Code == sdd.ErrorTimedOut) {
+		t.Fatalf("a call ended by its caller should fail uncoded, got %v", err)
+	}
+}
+
 func TestCaptureUsesAcquiredLanguageAndDependencies(t *testing.T) {
 	dependency := acquiredRuntime(t, "example.org/dependency", staticGraphStore{snapshot: acquiredSnapshot(t, "example.org/dependency", "dependency-r1", "Declared source dependency.")})
 	var purposes []llm.Purpose

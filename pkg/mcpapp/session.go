@@ -2,8 +2,6 @@ package mcpapp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"sync"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -17,39 +15,27 @@ import (
 type shellSession struct {
 	mu   sync.Mutex
 	root *sdd.WorkflowSession
-	// pending are the content hashes of blocks the call in flight served in
-	// full, recorded into the session ledger when the call's result is
-	// composed; seen dedups within the call.
-	pending []string
-	seen    map[string]bool
+	// ask marks the call in flight as one that starts, resumes or advances
+	// the session, so its response ends with a question.
+	ask bool
 }
 
-// servedBefore reports whether the session's consumer already holds a block
-// with these exact bytes — from the ledger, or earlier in this call — and
-// marks it served when not.
-func (ss *shellSession) servedBefore(block string) bool {
-	hash := blockHash(block)
-	if ss.root.ServedBefore(hash) || ss.seen[hash] {
-		return true
-	}
-	if ss.seen == nil {
-		ss.seen = map[string]bool{}
-	}
-	ss.seen[hash] = true
-	ss.pending = append(ss.pending, hash)
-	return false
-}
-
-// flushServed records what this call served in full into the session ledger.
+// flushServed records the pieces this call served into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	hashes := ss.pending
-	ss.pending, ss.seen = nil, nil
-	return ss.root.RecordServed(ctx, identity, hashes)
+	return ss.root.RecordPieces(ctx, identity)
 }
 
-func blockHash(block string) string {
-	sum := sha256.Sum256([]byte(block))
-	return hex.EncodeToString(sum[:])
+// question is the line a response of the call in flight ends with: the text
+// question (20261121-230157-d-tac-ym8) when the call starts, resumes or
+// advances the session, else empty. Called once the response is composed.
+func (ss *shellSession) question(ctx context.Context, identity sdd.RequestIdentity) (string, error) {
+	if !ss.ask {
+		return "", nil
+	}
+	if err := ss.flushServed(ctx, identity); err != nil {
+		return "", err
+	}
+	return ss.root.Question(ctx, identity)
 }
 
 // sessionCache holds the loaded sessions by ID.

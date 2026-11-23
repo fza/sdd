@@ -25,13 +25,13 @@ framing: |
 
   ## Recent graph movement
 
+    20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high finding open: it reads the draft and its grounding reading page by page, checks the draft with its own tools, and returns findings with exact edits over the draft.
     20260828-160000-s-prc-rfk process fact signal The reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source naming why it points at its target — with each kind's direction, when it applies over a sharper or weaker neighbor, and the calibration that keeps related a floor rather than a default and a terminal done never "addressed".
     20260818-120000-s-prc-dsc process fact signal The tests that settle an entry's kind when two compete, sorted by the drafter's situation rather than by pair: what was noticed sorts by what is owed and what changed, a commitment by how it ends, a person by frame, structure by the strip test — each test stated once, with the guards that keep it honest.
     20260818-110500-s-prc-ann process fact signal The annotation kind adds no proposition of its own — it lays topic labels over entries already written so a thread becomes findable in one pull: membership binary and indistinguishable from tagging at capture, the references as the member set, labels the payload — reused before minted, near-permanent once minted — an empty body a correct shape, and open indefinitely its resting state.
     20260818-110400-s-prc-asp process fact signal The aspiration kind records a decision on a perpetual direction the work is pulled toward — binding no single piece of work, judged as degree of alignment rather than pass or fail, argued into being between the people involved rather than derived from the record, one pull among several held in tension — and never completed, only retired by an evolved successor or an entry carrying why it stopped holding.
     20260818-110300-s-prc-foc process fact signal The focus kind records a decision naming what the project is advancing right now and who carries each piece — targets are existing entries whose content stays theirs, engagement is plural by design, and what the period sets down is the negotiated half only dialogue produces — ending superseded when priorities shift or closed by a done signal when the period ran its course, with no check arbitrating which.
-    20260818-110200-s-prc-dsp process fact signal The activity kind records a commitment that one specific piece of work happens — its choosing already settled before the entry, its shape known from the plan it runs under, its references, or its own words — stating when it counts as finished and what it leaves behind, closed by the done that records the act.
-  (cut for size: kept 2493 of 4167 bytes — pull the rest: rank(by(date)):n(10):brief:as-list:name("Recent graph movement"))
+  (cut for size: kept 2456 of 4152 bytes — pull the rest: rank(by(date)):n(10):brief:as-list:name("Recent graph movement"))
 
   Graph health: 2 warning(s), 0 unreadable entry/entries.
   20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical or alias in the graph
@@ -44,6 +44,18 @@ instructions: |
   continuing, and continue through next, carrying this session's handle. If you
   lose your place again later, resume_session with this handle re-serves this
   list in full.
+
+  Every response that starts, resumes or advances the session ends with two
+  questions about texts sdd served you, one per line, such as
+  q <text name>: 2 words after "<a phrase>"? | lost
+  Your next call that advances the session (start_procedure, next, park,
+  abandon) must answer both in answer, in their order and parted by ;, as in
+  reach sdd ; 280: the words each asks for, looked up in its text, or lost
+  for one whose text you no longer see. A response with one question takes
+  one answer; saw no question, answer lost. Never guess. Both right serve
+  repeated instructions, report schemas and framing short; lost or a wrong
+  answer to either serves them in full. List in reread the name of a piece
+  you no longer see: it serves in full again.
 open_instances:
   -
     goal: dialogue freely; start a move when something crystallizes
@@ -117,7 +129,7 @@ open_instances:
           description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
           type: string
         userWords:
-          description: the user's answer, relayed verbatim
+          description: the user's own message verbatim, never yours
           type: string
       required:
         - choice
@@ -140,10 +152,10 @@ open_instances:
     instance: i_2
     instructions: This operation did not finish. Tell the user in a sentence. Retry, saying so, when trying again can help. When it cannot, or has stopped helping, put both choices to the user: retry, or cancel. It can stay pending until they choose. Retry is safe: it reuses the recorded input, and effects already applied are recognized, not repeated. Cancel leaves what exists in place.
     pending_operation:
-      cancel_ref: 14
+      cancel_ref: 20
       command: newEntry
       instance: i_2
-      retry_ref: 14
+      retry_ref: 20
       values:
         branch: main
         entryId: 20260921-120000-s-tac-op1
@@ -156,15 +168,16 @@ open_instances:
     step: write
 participant: Tester
 pending_operation:
-  cancel_ref: 14
+  cancel_ref: 20
   command: newEntry
   instance: i_2
-  retry_ref: 14
+  retry_ref: 20
   values:
     branch: main
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
 project: test
+question: <question drawn per response>
 session: <session-1>
 

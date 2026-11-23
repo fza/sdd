@@ -53,6 +53,33 @@ type Instance struct {
 	// answered option declared one; empty means the seed applies to whatever is
 	// dispatched next (a generic junction like engage's move).
 	dispatchProcedure string
+	// dispatchReceive and dispatchSend are the delegate mappings the same
+	// answered option declared, recorded on the fork its next task starts.
+	dispatchReceive map[string]string
+	dispatchSend    map[string]string
+	// unattended counts, per step, the agent's answers since a person last
+	// answered it; replayed from the log.
+	unattended map[string]int
+	// parking is the step an autonomous session parked the instance at,
+	// cleared by its next answer.
+	parking *Parking
+	// lastWords holds, per chooser, the choice and user words of its latest
+	// answer: replayed from the log, so the refusal of repeatedWords holds
+	// across a resume.
+	lastWords map[string]chosenWords
+	// forkPending marks a delegate dispatch answered whose fork is not
+	// recorded yet, so a delegateEnded route does not fire before it.
+	forkPending bool
+	// forks are the delegate child sessions this instance dispatched.
+	forks []*Fork
+	// unconsumed marks the fields holding a delivery no await gate has taken
+	// yet.
+	unconsumed map[string]bool
+	// sent counts the deliveries this instance sent, interim the delegate's
+	// accepted interim ones, which the round cap bounds.
+	sent     int
+	interim  int
+	exchange []ExchangeItem
 	// draftServed holds, per step, the serveDelta snapshot last served to this
 	// instance — the engine-owned base later serves diff against. In-memory
 	// only, deliberately: a process restart or resume forgets it, so those
@@ -61,7 +88,15 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
+	// reading folds the grounding reads credited to this instance; replay
+	// restores it from the read events.
+	reading model.Reading
+	// foreign marks a move an earlier build started (procedureRevision).
+	foreign bool
 }
+
+// Reading returns the instance's credited grounding reads.
+func (i *Instance) Reading() *model.Reading { return &i.reading }
 
 // loggedStep is the instance's position as its log records it.
 func (i *Instance) loggedStep() string {
@@ -150,55 +185,71 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Dispatches names the procedure the chooser answer this serve follows
+	// dispatches, so the shell forks a delegating task in the answering call
+	// (20260829-122157-d-cpt-zpe); empty on every other serve.
+	Dispatches string
+	// Parked is set when the serve parks the instance for a person.
+	Parked *Parking
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
 // it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
 type ServeLane = types.ServeLane
 
-// evalGuard evaluates a guard against the registry, returning the verdict
-// and the failing predicates for diagnostics.
+// evalGuard evaluates a step guard or transition guard against the registry,
+// returning the verdict and the clauses that block it for diagnostics.
 func (s *Session) evalGuard(inst *Instance, g *GuardExpr) (bool, []FailedPredicate, error) {
+	ok, ruledOut, failing, err := s.explainGuard(inst, g, s.isSelector)
+	if err != nil || ok || !ruledOut {
+		return ok, failing, err
+	}
+	// A guard ruled out by selectors holds the step on its mode alone; name
+	// the selectors rather than serve a hold without a reason.
+	ok, _, failing, err = s.explainGuard(inst, g, nil)
+	return ok, failing, err
+}
+
+// explainGuard evaluates g and, when it fails, renders its blocking clauses
+// (GuardExpr.Blocking) as failing predicates.
+func (s *Session) explainGuard(inst *Instance, g *GuardExpr, isSelector func(string) bool) (bool, bool, []FailedPredicate, error) {
 	ctx, err := s.funcContext(inst)
 	if err != nil {
-		return false, nil, err
+		return false, false, nil, err
 	}
-	ok, err := g.Eval(func(name string) (bool, error) {
+	ok, ruledOut, clauses, err := g.Blocking(func(name string) (bool, error) {
 		p, found := s.engine.Registry.Predicate(name)
 		if !found {
 			return false, fmt.Errorf("unknown predicate %q", name)
 		}
 		return p.Fn(ctx)
-	})
-	if err != nil {
-		return false, nil, err
+	}, isSelector)
+	if err != nil || ok {
+		return ok, false, nil, err
 	}
-	if ok {
-		return true, nil, nil
-	}
-	// Full evaluation for diagnostics: name every referenced predicate that
-	// is currently false (predicates are pure, so re-evaluation is safe).
-	var failing []FailedPredicate
-	for _, name := range g.Predicates() {
-		p, found := s.engine.Registry.Predicate(name)
-		if !found {
+	failing := make([]FailedPredicate, 0, len(clauses))
+	for _, c := range clauses {
+		p, _ := s.engine.Registry.Predicate(c.Name)
+		if c.Negated {
+			// FailMessage reads for the false case, so a true predicate
+			// under `not` gets the neutral form.
+			failing = append(failing, FailedPredicate{Name: c.Name, Message: "predicate " + c.Name + " holds"})
 			continue
 		}
-		v, err := p.Fn(ctx)
-		if err != nil {
-			return false, nil, err
-		}
-		if !v {
-			msg := p.FailMessage
-			if p.FailDetail != nil {
-				if detail := p.FailDetail(ctx); detail != "" {
-					msg = detail
-				}
+		msg := p.FailMessage
+		if p.FailDetail != nil {
+			if detail := p.FailDetail(ctx); detail != "" {
+				msg = detail
 			}
-			failing = append(failing, FailedPredicate{Name: name, Message: msg})
 		}
+		failing = append(failing, FailedPredicate{Name: c.Name, Message: msg})
 	}
-	return false, failing, nil
+	return false, ruledOut, failing, nil
+}
+
+func (s *Session) isSelector(name string) bool {
+	p, found := s.engine.Registry.Predicate(name)
+	return found && p.Selector
 }
 
 // funcContext builds the Context registry functions run against at the
@@ -218,7 +269,11 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}, nil
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
+	if step := inst.currentStep(); step != nil {
+		ctx.Arrived = inst.arrived(step)
+	}
+	return ctx, nil
 }
 
 // cascade advances gate steps until something stops them — a failing
@@ -241,18 +296,26 @@ func (s *Session) cascade(inst *Instance) error {
 				return err
 			}
 			if !ok {
-				// Confirmation staleness: when the gate is held by
-				// playbackConfirmed and a stale confirmation record exists,
-				// reopen the chooser that recorded it — the
-				// edit-after-confirm rule, owned entirely by the
-				// confirmPlayback/playbackConfirmed pair.
-				if reopened, err := s.reopenStalePlayback(inst, failing); err != nil {
+				if reopened, err := s.reopenPlayback(inst, failing); err != nil {
 					return err
 				} else if reopened {
 					continue
 				}
 				return nil // stalled: guard holds the gate
 			}
+		}
+		if s.roundCapReached(inst, step) {
+			s.endInstance(inst, fmt.Sprintf("round cap %d reached", inst.Spec.Rounds))
+			return s.checkSink()
+		}
+		if len(step.Await) > 0 && inst.awaitHeld(step) {
+			if step.DelegateEnded == "" || inst.forkPending || inst.liveFork() {
+				return nil // stalled: the linked session has not delivered yet
+			}
+			if err := s.transitionWith(inst, step.DelegateEnded, false, nil); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if step.Op != "" && !inst.opDone {
@@ -262,13 +325,10 @@ func (s *Session) cascade(inst *Instance) error {
 			inst.opDone = true
 		}
 
-		fired := false
+		to := ""
 		for _, t := range step.Transitions {
 			if t.Otherwise {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
-					return err
-				}
-				fired = true
+				to = t.To
 				break
 			}
 			ok, _, err := s.evalGuard(inst, t.When)
@@ -276,25 +336,32 @@ func (s *Session) cascade(inst *Instance) error {
 				return err
 			}
 			if ok {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
-					return err
-				}
-				fired = true
+				to = t.To
 				break
 			}
 		}
-		if !fired {
+		if to == "" {
 			return nil // stalled: the serve names what's missing
+		}
+		if len(step.Deliver) > 0 {
+			proceed, err := s.deliver(inst, step, to)
+			if err != nil || !proceed {
+				return err
+			}
+		}
+		if err := s.transitionWith(inst, to, false, step.Await); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// reopenStalePlayback implements edit-after-confirm: if the failing
-// predicates include playbackConfirmed and the store holds a confirmation
-// whose snapshot no longer matches, the confirmation is cleared and the
-// instance returns to the chooser step that recorded it.
-func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate) (bool, error) {
+// reopenPlayback returns a gate held on playbackConfirmed to a chooser that
+// records a confirmation: the one whose stale record it clears
+// (edit-after-confirm), or with none recorded the spec's confirming chooser,
+// since only a confirmation moves such a gate on. A gate reaches that state
+// when a mode switch drops the selector that let it pass unconfirmed.
+func (s *Session) reopenPlayback(inst *Instance, failing []FailedPredicate) (bool, error) {
 	holdsOnConfirmation := false
 	for _, f := range failing {
 		if f.Name == "playbackConfirmed" {
@@ -305,28 +372,51 @@ func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate)
 	if !holdsOnConfirmation {
 		return false, nil
 	}
-	v, ok := inst.Store.Get(fieldPlaybackConfirmation)
-	if !ok {
-		return false, nil // never confirmed — a plain stall, not staleness
+	target := confirmingStep(inst.Spec)
+	v, _ := inst.Store.Get(fieldPlaybackConfirmation)
+	conf, recorded := asConfirmation(v)
+	if recorded {
+		if conf.Snapshot == inst.Store.StateSnapshot() {
+			return false, nil // confirmation is current; the gate is held by something else
+		}
+		if inst.Spec.StepByID[conf.Step] != nil {
+			target = conf.Step
+		}
 	}
-	conf, ok := asConfirmation(v)
-	if !ok || conf.Step == "" || inst.Spec.StepByID[conf.Step] == nil {
+	if target == "" {
 		return false, nil
 	}
-	if conf.Snapshot == inst.Store.StateSnapshot() {
-		return false, nil // confirmation is current; the gate is held by something else
+	if recorded {
+		if err := inst.Store.WriteEngine(fieldPlaybackConfirmation, nil); err != nil {
+			return false, err
+		}
+		s.appendEvent(inst.ID, EventOpResult, map[string]any{
+			"step": inst.Step,
+			"fn":   "reopenPlayback",
+			"writes": map[string]any{
+				fieldPlaybackConfirmation: nil,
+			},
+		})
 	}
-	if err := inst.Store.WriteEngine(fieldPlaybackConfirmation, nil); err != nil {
-		return false, err
+	return true, s.transitionTo(inst, target, true)
+}
+
+// confirmingStep returns the one step with an option calling
+// confirmPlayback, empty when the spec has none or several.
+func confirmingStep(spec *Spec) string {
+	found := ""
+	for _, step := range spec.Steps {
+		for _, o := range step.Options {
+			if o.Call != "confirmPlayback" {
+				continue
+			}
+			if found != "" && found != step.ID {
+				return ""
+			}
+			found = step.ID
+		}
 	}
-	s.appendEvent(inst.ID, EventOpResult, map[string]any{
-		"step": inst.Step,
-		"fn":   "reopenPlayback",
-		"writes": map[string]any{
-			fieldPlaybackConfirmation: nil,
-		},
-	})
-	return true, s.transitionTo(inst, conf.Step, true)
+	return found
 }
 
 // runCommand executes a registry command at the instance's current step and
@@ -342,7 +432,7 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	if !ok {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
 	if cmd.Prepare != nil {
 		if s.intent == nil || s.intentDone {
 			values, err := cmd.Prepare(ctx)
@@ -360,6 +450,7 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 			s.intent = &MutationIntent{Ref: position, Instance: inst.ID, Step: inst.Step, Command: name, Values: values, To: to}
 			s.intentStore = inst.Store.Clone()
 			s.intentDone = false
+			s.intentCommitted = nil
 			s.cancelled = nil
 		}
 		if s.intent.Instance != inst.ID || s.intent.Step != inst.Step || s.intent.Command != name {
@@ -380,6 +471,11 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	}
 	ctx.Store = candidate
 	candidate.beginJournal()
+	if ctx.Intent != nil {
+		if err := s.openCommits(inst, ctx, candidate); err != nil {
+			return s.commandError(ctx.Intent, err)
+		}
+	}
 	if err := cmd.Fn(ctx); err != nil {
 		return s.commandError(ctx.Intent, fmt.Errorf("command %q at step %s: %w", name, inst.Step, err))
 	}
@@ -405,6 +501,11 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	if ctx.Intent != nil {
 		s.intentDone = true
 	}
+	// A send-mapped value the command wrote reaches the live forks as a
+	// reported one does.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(writes))); err != nil {
+		return err
+	}
 	if cmd.MutatesGraph {
 		s.engine.Graphs.Invalidate()
 	}
@@ -421,6 +522,12 @@ func (s *Session) prepares(name string) bool {
 // transition. The reopen flag marks the edit-after-confirm return to a
 // chooser.
 func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
+	return s.transitionWith(inst, to, reopen, nil)
+}
+
+// transitionWith is transitionTo leaving an await gate, whose consumed
+// deliveries the transition event records for replay.
+func (s *Session) transitionWith(inst *Instance, to string, reopen bool, consumed []string) error {
 	if err := s.checkSink(); err != nil {
 		return err
 	}
@@ -429,10 +536,14 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 	if reopen {
 		data["reopen"] = true
 	}
+	if len(consumed) > 0 {
+		data["consumed"] = consumed
+	}
 	s.appendEvent(inst.ID, EventTransition, data)
 	if err := s.checkSink(); err != nil {
 		return err
 	}
+	inst.consume(consumed)
 
 	switch to {
 	case EndCompleted:
@@ -517,6 +628,13 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		return sv, nil
 	}
+	if inst.foreign {
+		sv.Step = inst.loggedStep()
+		sv.Goal = ForeignMoveGoal
+		sv.Instructions = foreignMoveInstructions
+		sv.Sizes = []PartSize{{Part: "foreign", Bytes: len(sv.Instructions)}}
+		return sv, nil
+	}
 
 	step := inst.currentStep()
 	if step == nil {
@@ -531,7 +649,18 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
-	sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+	if s.unattendedAt(step) != nil && inst.unattendedSpent(step) {
+		s.park(inst, step, sv)
+		return sv, nil
+	}
+	switch {
+	case len(step.Await) == 0:
+		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+	case len(step.Collect) > 0:
+		// A gate awaiting a delivery takes only what it collects; one that
+		// collects nothing takes no report.
+		sv.ReportSchema = inst.Spec.collectSchema(step)
+	}
 	sv.Missing = s.missingFields(inst, step)
 
 	unitName := step.ID
@@ -545,6 +674,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	if err != nil {
 		return nil, err
 	}
+	if lane, exchangeCuts := s.exchangeLane(inst); lane != nil {
+		lanes = append(lanes, *lane)
+		cuts = append(cuts, exchangeCuts...)
+	}
 	if len(step.ServeDelta) > 0 {
 		cur := draftSnapshot(inst, step.ServeDelta)
 		var prev map[string]string
@@ -553,7 +686,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		draftCap := serveview.Default().Cap(serveview.PartDraft).MaxBytes
 		if block, draftCuts := renderDraft(inst.Spec, step.ServeDelta, prev, cur, fullDraft, draftCap); block != "" {
-			lanes = append(lanes, ServeLane{Name: "draft", Text: block})
+			lanes = append(lanes, ServeLane{Name: "draft", Text: block, Authored: true})
 			cuts = append(cuts, draftCuts...)
 		}
 		if inst.draftServed == nil {
@@ -596,7 +729,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 				sv.Failing = failing
 			}
 		}
-		if len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
+		awaiting := len(step.Await) > 0 && inst.awaitHeld(step)
+		if awaiting {
+			sv.Failing = append(sv.Failing, FailedPredicate{Name: "await", Message: s.awaitDiagnostic(inst, step)})
+		}
+		if !awaiting && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
 			// The gate didn't cascade, its guard holds, and no collect field
 			// is missing — the transitions' own predicates hold it. Name
 			// those.
@@ -625,10 +762,15 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step)
-		if step.Chooser == ChooserUser {
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
+		switch {
+		case s.unattendedAt(step) != nil:
+			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
+		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAuto:
+			sv.Goal = "decide the choice yourself and answer with a one-line reason"
+		case step.Chooser == ChooserUser:
 			sv.Goal = "put the choice to the user and relay their answer verbatim"
-		} else {
+		default:
 			sv.Goal = "judge and answer the chooser, with the evidence its option collects"
 		}
 	}
@@ -682,7 +824,8 @@ func (s *Session) missingFields(inst *Instance, step *Step) []string {
 }
 
 // transitionDiagnostics evaluates the step's transition guards and returns
-// the predicates that are false across them — why no transition fired.
+// the clauses that block them — why no transition fired. A transition ruled
+// out by a selector is off the step's path and blocks on no clause.
 func (s *Session) transitionDiagnostics(inst *Instance, step *Step) []FailedPredicate {
 	seen := make(map[string]bool)
 	var failing []FailedPredicate
@@ -690,7 +833,7 @@ func (s *Session) transitionDiagnostics(inst *Instance, step *Step) []FailedPred
 		if t.When == nil {
 			continue
 		}
-		_, f, err := s.evalGuard(inst, t.When)
+		_, _, f, err := s.explainGuard(inst, t.When, s.isSelector)
 		if err != nil {
 			continue
 		}
@@ -728,8 +871,13 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	// applies only here, on the unit context — inject args render against the
 	// raw store (renderInjectArgs), and the draft lane carries its own bound.
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
+	injected := make(map[string]bool, len(step.Inject))
+	for _, inj := range step.Inject {
+		injected[inj.EffectiveID()] = true
+	}
 	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
-		if !inst.Store.Has(name) {
+		// An inject under a store value's name replaces it with its own bound.
+		if !inst.Store.Has(name) || injected[name] {
 			continue
 		}
 		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)
@@ -753,6 +901,7 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
 			}
+			fctx.Cap = effectiveCap(q, inj)
 			result, err := q.Fn(fctx, args)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
@@ -787,7 +936,7 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 // over the query's registration default — and stamps the cut with the part
 // name and, when the query knows how, the pull for the remainder.
 func boundInject(q *Query, inj InjectCall, args map[string]any, result any) (any, *truncate.Cut) {
-	value, cut := serveview.BoundValue(result, serveview.Effective(inj.Cap, q.Bound.Cap))
+	value, cut := serveview.BoundValue(result, effectiveCap(q, inj))
 	if cut == nil {
 		return value, nil
 	}
@@ -796,6 +945,10 @@ func boundInject(q *Query, inj InjectCall, args map[string]any, result any) (any
 		cut.Pull = q.Bound.Pull(args, *cut)
 	}
 	return value, cut
+}
+
+func effectiveCap(q *Query, inj InjectCall) serveview.Cap {
+	return serveview.Effective(inj.Cap, q.Bound.Cap)
 }
 
 // renderInjectArgs renders string args as Go templates against the store
@@ -844,5 +997,46 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 		}
 		ctx[name] = value
 	}
+	if _, ok := inst.Spec.Params[dialogueModeValue]; ok {
+		return nil, fmt.Errorf("template value %q collides with a procedure param", dialogueModeValue)
+	}
+	if _, ok := inst.Spec.State[dialogueModeValue]; ok {
+		return nil, fmt.Errorf("template value %q collides with a procedure state field", dialogueModeValue)
+	}
+	ctx[dialogueModeValue] = string(s.dialogueMode())
 	return ctx, nil
+}
+
+// dialogueModeValue names the session's dialogue mode in every unit's
+// template context.
+const dialogueModeValue = "dialogueMode"
+
+func (s *Session) dialogueMode() model.DialogueMode {
+	if s.DialogueMode == model.DialogueAuto {
+		return model.DialogueAuto
+	}
+	return model.DialogueGuided
+}
+
+type chosenWords struct{ choice, words string }
+
+func (inst *Instance) recordWords(chooser, choice, words string) {
+	if words == "" {
+		return
+	}
+	if inst.lastWords == nil {
+		inst.lastWords = map[string]chosenWords{}
+	}
+	inst.lastWords[chooser] = chosenWords{choice, words}
+}
+
+// repeatedWords refuses user words relayed for another choice at the same
+// chooser than they were given for: words asking for a change say nothing
+// about the changed draft the step serves next.
+func (inst *Instance) repeatedWords(chooser, choice, words string) error {
+	last, ok := inst.lastWords[chooser]
+	if !ok || words == "" || last.choice == choice || last.words != words {
+		return nil
+	}
+	return fmt.Errorf("userWords repeat the user's words of the earlier %s answer at %s: relay the user's own answer to what this step serves now; they have not given one? End your turn and wait for it", last.choice, chooser)
 }

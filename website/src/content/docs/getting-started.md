@@ -98,19 +98,22 @@ On a new project it asks for:
 2. the graph language, `en` by default
 3. where to install the skill: choose **project**
 4. your participant name, by default your git user name
-5. which agents to set up: Claude Code, Codex, or both
+5. who makes the choices during a session: `guided`, you confirm each step, or `auto`, your agent decides
+6. which agents to set up: Claude Code, Codex, or both
+7. how carefully sdd checks a new entry before saving it, `prose` by default; for `deep`, also where the second agent runs
 
 It then writes these files and commits them as `sdd: init .sdd/ metadata directory`:
 
 | File | What it is |
 | --- | --- |
 | `.sdd/config.yaml` | Project settings, shared through git |
-| `.sdd/config.local.yaml` | Your participant name, on this machine only |
+| `.sdd/config.local.yaml` | Your participant name, dialogue mode and verifier runner, on this machine only |
 | `.claude/skills/sdd/` or `.agents/skills/sdd/` | The `sdd` skill for your agent |
+| `.claude/agents/sdd_delegate.md` or `.codex/agents/sdd_delegate.toml` | The `sdd_delegate` subagent your agent launches a delegate as, with the `sdd` server's tools, read-only tools and the web only: web search and fetch in Claude Code, live web search in Codex |
 | `.mcp.json` and `.claude/settings.json` | Claude Code: starts the `sdd` server and allows its tools |
 | `.codex/config.toml` | Codex: starts the `sdd` server |
 
-In a repository that already uses SDD, `sdd init` only asks for your name and installs the skill as the project has it configured.
+In a repository that already uses SDD, `sdd init` only asks for what no config file sets yet, such as your name and dialogue mode, and installs the skill as the project has it configured.
 
 If you chose **user** instead of project for the skill, sdd does not register the server. Register it yourself, for Claude Code with `claude mcp add sdd -- sdd serve`.
 
@@ -151,10 +154,10 @@ These first entries are what every later session starts from. When the agent ope
 
 Tell the agent something you noticed, in plain words, for example that a step in your setup fails and what you expected instead. The agent recognizes an observation and starts a capture:
 
-1. **Draft.** The agent searches the graph for related entries, reads them, and drafts the entry: its kind (a gap, for something that falls short of what was expected), its text, and links to the entries it relates to.
-2. **Writing check.** A separate model reads the draft as a stranger would and points out what is unclear. The agent revises.
-3. **Playback.** The agent shows you the exact entry. You confirm it, ask for changes, or drop it. Nothing is written before you confirm.
-4. **Pre-flight check.** Another check compares the entry with the graph, for example for contradictions with the entries it links to. A serious finding stops the write: you revise the entry, or override the check. Overriding is your call alone, never the agent's. Each finding quotes the passage it rests on; a finding whose quote matches nothing the check read is shown as unverified and never stops the write.
+1. **Draft.** The agent searches the graph for related entries, reads them, and drafts the entry: its kind (a gap, for something that falls short of what was expected), its text, and links to the entries it relates to. Each related entry it read in full is linked or set aside with a reason.
+2. **Playback.** The agent shows you the exact entry. You confirm it, ask for changes, or drop it. Nothing is written before you confirm.
+3. **Writing check.** Once you confirm, a separate model reads the draft as a stranger would and points out what is unclear. A revision comes back to you as a new playback. Where something is missing, such as a reason, the check names the gap, never its content: the agent writes in only what you said, or asks you.
+4. **Pre-flight check.** Another check compares the entry with the graph, for example for duplicates of other entries or contradictions with them. A serious finding stops the write: you revise the entry, or override the check. Overriding is your call alone, never the agent's. Each finding quotes the passage it rests on; a finding whose quote matches nothing the check read is shown as unverified and never stops the write.
 5. **Write.** sdd generates a one-line summary, writes the entry as a markdown file under `.sdd/graph/`, and commits it as `sdd: capture <id>`. The agent compares the summary with the entry and corrects it if it drifted.
 
 If a model call fails, the step stops and the agent tells you. Nothing half-done is written.

@@ -38,30 +38,71 @@ const (
 	EventOpResult        EventType = "op_result"
 	EventMutationIntent  EventType = "mutation_intent"
 	EventMutationOutcome EventType = "mutation_outcome"
-	EventServed          EventType = "served"
-	EventTransition      EventType = "transition"
-	EventCompleted       EventType = "completed"
-	EventAbandoned       EventType = "abandoned"
+	// EventMutationCommitted records engine writes a running operation
+	// committed ahead of its outcome (Context.Commit).
+	EventMutationCommitted EventType = "mutation_committed"
+	EventServed            EventType = "served"
+	EventTransition        EventType = "transition"
+	EventCompleted         EventType = "completed"
+	EventAbandoned         EventType = "abandoned"
 	// EventRead records what a read surface served to the session: the tool,
 	// the entry IDs, and the depth — metadata only, never payloads. Reads stay
-	// free and ungated; tracking is logging, not gating (d-tac-dbk). No
-	// instance — the read set is session-level, so evidence inspected by a
-	// dispatching parent counts for its seeded children.
+	// free and ungated; tracking is logging, not gating (d-tac-dbk). The read
+	// set is session-level, so evidence inspected by a dispatching parent
+	// counts for its seeded children. A grounding read alone names an
+	// instance: the capture its payload credits.
 	EventRead EventType = "read"
 	// EventParked records that a running move was deliberately parked back to
 	// the session junction — state kept, resumable through next. Forensic
 	// only: a resuming agent can tell a shelved move from one that drifted.
+	// With held set, an autonomous session parked it for a person (Parking).
 	EventParked EventType = "parked"
-	// EventServedBlocks records the content hashes of rendered blocks served
-	// to the session's consumer in full, so what the consumer already holds is
-	// derived from the ledger rather than from the transport (d-cpt-aen). No
-	// instance — the served set is session-level like the read set.
+	// EventServedBlocks is a log written before the text question: replay
+	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
+	// EventTexts records the pieces a call served in full, each text with its
+	// content the first time, and the question its answer answered, so a
+	// restarted server still asks and checks (Session.RecordServed). No
+	// instance: the served memory is session-level like the read set.
+	EventTexts EventType = "texts"
+	// EventQuestion records the question a response ended with (Session.Ask).
+	EventQuestion EventType = "question"
 	// EventReoriented records that the consumer asked for the session's
-	// position — the declaration that it needs re-serving. It resets the
-	// served set; blocks accumulate again after it.
+	// position — the declaration that it needs re-serving. Its call serves
+	// every piece in full.
 	EventReoriented EventType = "reoriented"
 )
+
+// procedureRevision rides the started event of every move. This build ships
+// the base procedures revised under their earlier IDs, the capture among
+// them, so a non-shell move whose started event carries a lower revision was
+// begun under a procedure this build cannot continue: it offers only abandon
+// (ForeignMoveGoal). Raise it with the next such revision.
+const procedureRevision = 2
+
+// The serve of a move an earlier build started, and the refusal of every
+// other call on it.
+const (
+	ForeignMoveGoal         = "abandon this move: an earlier sdd build started it"
+	foreignMoveInstructions = "An earlier sdd build started this move under a procedure of the same name, " +
+		"which this build cannot continue: abandon is its only choice. Start the move anew if it is still wanted."
+)
+
+func foreignMoveRefusal(inst *Instance) error {
+	return fmt.Errorf("%s %s was started by an earlier sdd build, which this build cannot continue: abandon it, then start it anew", inst.Spec.Canonical, inst.ID)
+}
+
+// startedRevision reads the procedure revision a started event carries, 0
+// for none.
+func startedRevision(data map[string]any) int {
+	switch rev := data["rev"].(type) {
+	case int:
+		return rev
+	case float64:
+		return int(rev)
+	}
+	return 0
+}
 
 // ReadDepth classifies how deeply an entry was served: full means the body
 // was served (a show primary, an injected chain's primary, or a same-session
@@ -215,7 +256,18 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
+	// DialogueMode is the mode in force: opened from config, then followed
+	// through SetDialogue; DialogueSource names the config layer that set it.
+	DialogueMode   model.DialogueMode
+	DialogueSource string
+	// Lineage names the dispatching instance of a delegate child session; nil
+	// on every session a user dialogue opened.
+	Lineage *Link
 
+	courier Courier
+	// received holds the IDs of accepted deliveries, so a repeated one lands
+	// once.
+	received  map[string]bool
 	engine    *Engine
 	sink      EventSink
 	now       func() time.Time
@@ -228,20 +280,60 @@ type Session struct {
 	// design: a parent's inspections count for children dispatched in the same
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
-	// served folds the served-block events since the last reorientation: the
-	// content hashes the session's consumer holds in full.
-	served map[string]bool
+	// texts folds the texts events: each text served in full with its latest
+	// copy, numbered by copies. questions and asked fold the question
+	// events. call is the tool call in flight; rnd draws questions.
+	texts     map[Piece]*heldText
+	copies    int
+	questions []askedQuestion
+	asked     map[string]bool
+	// authored folds what the agent and the person wrote into the session
+	// (noteAuthored), lower case and single-spaced, which no question's
+	// phrase may occur in.
+	authored map[string]bool
+	// lastShort is set while the session's last answering call served a
+	// piece short; lateCatches counts the lost or wrong answers right after
+	// one (LateCatches).
+	lastShort   bool
+	lateCatches int
+	// changed folds the content hash each piece that serves once per change
+	// last served under its name.
+	changed map[string]string
+	// onceTexts folds the text of each content those pieces served.
+	onceTexts map[Piece]string
+	call      pieceCall
+	rnd       model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
 	intent      *MutationIntent
 	intentStore *Store
 	intentDone  bool
-	cancelled   *MutationCancellation
+	// intentCommitted folds what the pending intent's attempts committed.
+	intentCommitted map[string]any
+	cancelled       *MutationCancellation
+	// progressing counts the transitions in flight that passed
+	// checkProgression, which Readmit checks again after a fold.
+	progressing int
 }
 
 // SessionOption configures a session.
 type SessionOption func(*Session)
+
+// WithDialogue opens the session in mode, set by the config layer source.
+func WithDialogue(mode model.DialogueMode, source string) SessionOption {
+	return func(s *Session) {
+		s.DialogueMode = mode
+		s.DialogueSource = source
+	}
+}
+
+// SetDialogue puts the session in mode from now on: steps served and answers
+// taken afterwards follow it, a gate already passed stays passed.
+func (s *Session) SetDialogue(mode model.DialogueMode, source string) {
+	s.DialogueMode = mode
+	s.DialogueSource = source
+}
 
 // WithClock injects the timestamp source (tests use a fixed clock).
 func WithClock(now func() time.Time) SessionOption {
@@ -258,17 +350,51 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		now:         time.Now,
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
-		served:      map[string]bool{},
+		received:    map[string]bool{},
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	if sink != nil {
-		s.appendEvent("", EventSessionMeta, map[string]any{
-			"participant": participant,
-		})
+		meta := map[string]any{"participant": participant}
+		if s.Lineage != nil {
+			meta["parent"] = linkData(*s.Lineage)
+		}
+		// A guided session's header stays as it always was; an absent mode
+		// reads back as guided.
+		if s.DialogueMode == model.DialogueAuto {
+			meta["dialogue"] = string(s.DialogueMode)
+			meta["dialogueSource"] = s.DialogueSource
+		}
+		s.appendEvent("", EventSessionMeta, meta)
 	}
 	return s
+}
+
+// answerer judges who may answer step and returns who did, as the answer
+// event records it in an autonomous session; guided sessions record nothing
+// and keep today's answer form.
+func (s *Session) answerer(step *Step, userWords, reason string) (string, error) {
+	autonomous := s.DialogueMode == model.DialogueAuto
+	switch {
+	case reason != "" && userWords != "":
+		return "", fmt.Errorf("give either the user's words or your reason at %s, not both", step.ID)
+	case reason != "" && step.Chooser != ChooserUser:
+		return "", fmt.Errorf("a reason answers only a user chooser; %s is not one", step.ID)
+	case reason != "" && !autonomous:
+		return "", fmt.Errorf("%s is the user's choice in a guided session — relay the user's words", step.ID)
+	case reason != "" && !step.Delegable && step.Unattended == nil:
+		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
+	case !autonomous || step.Chooser != ChooserUser:
+		return "", nil
+	case reason != "":
+		return "agent", nil
+	case userWords == "" && (step.Delegable || step.Unattended != nil):
+		return "", fmt.Errorf("%s needs the user's words or your reason", step.ID)
+	case userWords == "":
+		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
+	}
+	return "user", nil
 }
 
 // SetLabel records the session's subject label. Idempotent per value — a
@@ -288,19 +414,122 @@ func (s *Session) SetLabel(label string) {
 // — re-reads are part of the forensic record — and folds into the session's
 // read set, where full depth never downgrades. Empty calls append nothing.
 func (s *Session) LogRead(tool string, full, summary []string) {
-	full = s.foldReads(full, ReadFull)
-	summary = s.foldReads(summary, ReadSummary)
-	if len(full) == 0 && len(summary) == 0 {
-		return
+	// A read naming no instance cannot fail.
+	_ = s.Record(Read{Tool: tool, Full: full, Summary: summary})
+}
+
+// Read is what one read surface served: the tool, the entry IDs at full and
+// summary depth, and, for a grounding read, the running instance it credits
+// with the reads as run.
+type Read struct {
+	Tool    string
+	Full    []string
+	Summary []string
+	// Instance names the running instance the grounding payload credits;
+	// empty records a session-level read that credits no instance.
+	Instance  string
+	Grounding model.ReadPayload
+}
+
+// Record logs a read: the IDs fold into the session's read set as LogRead
+// does, and a grounding payload folds into the named instance's reading. Only
+// a running instance takes credit; a read made outside it credits nothing. A
+// read with nothing to record appends nothing.
+func (s *Session) Record(read Read) error {
+	var inst *Instance
+	if read.Instance != "" {
+		if err := s.checkSink(); err != nil {
+			return err
+		}
+		var ok bool
+		inst, ok = s.instances[read.Instance]
+		if !ok {
+			return fmt.Errorf("instance %q not found in session", read.Instance)
+		}
+		if inst.Status != StatusRunning {
+			return fmt.Errorf("instance %s has ended (%s): a read credits only a running move", read.Instance, inst.Outcome)
+		}
+	} else if !read.Grounding.Empty() {
+		return fmt.Errorf("a grounding read must name the instance it credits")
 	}
-	data := map[string]any{"tool": tool}
+	full := s.foldReads(read.Full, ReadFull)
+	summary := s.foldReads(read.Summary, ReadSummary)
+	if len(full) == 0 && len(summary) == 0 && read.Grounding.Empty() {
+		return nil
+	}
+	data := map[string]any{"tool": read.Tool}
 	if len(full) > 0 {
 		data["full"] = full
 	}
 	if len(summary) > 0 {
 		data["summary"] = summary
 	}
+	if inst != nil && !read.Grounding.Empty() {
+		encoded, err := encodeReadPayload(read.Grounding)
+		if err != nil {
+			return err
+		}
+		data["grounding"] = encoded
+		inst.reading.Fold(read.Grounding)
+		writes, err := s.seedReading(inst)
+		if err != nil {
+			return err
+		}
+		if len(writes) > 0 {
+			data["writes"] = writes
+		}
+		s.appendEvent(inst.ID, EventRead, data)
+		return s.checkSink()
+	}
 	s.appendEvent("", EventRead, data)
+	return s.checkSink()
+}
+
+// seedReading writes the instance's reading into every state field declared
+// with SeedReading and returns the writes for the read event, so replay
+// restores them without re-rendering.
+func (s *Session) seedReading(inst *Instance) (map[string]any, error) {
+	writes := map[string]any{}
+	for _, name := range slices.Sorted(maps.Keys(inst.Spec.State)) {
+		if inst.Spec.State[name].Seed != SeedReading {
+			continue
+		}
+		current, _ := inst.Store.Get(name)
+		text, _ := current.(string)
+		seeded := model.WithReadingSeed(text, &inst.reading)
+		err := inst.Store.WriteEngine(name, seeded)
+		if err != nil {
+			return nil, err
+		}
+		writes[name] = seeded
+	}
+	return writes, nil
+}
+
+// encodeReadPayload renders a payload in the JSON-document form a replayed
+// log carries, so live and replayed events hold the same shape.
+func encodeReadPayload(p model.ReadPayload) (map[string]any, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the grounding read: %w", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("encoding the grounding read: %w", err)
+	}
+	return doc, nil
+}
+
+func decodeReadPayload(v any) (model.ReadPayload, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return model.ReadPayload{}, err
+	}
+	var p model.ReadPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return model.ReadPayload{}, fmt.Errorf("decoding the grounding read: %w", err)
+	}
+	return p, nil
 }
 
 // foldReads folds IDs into the read set at depth (full wins over summary)
@@ -327,33 +556,22 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
-// ServedBefore reports whether a block with this content hash was served in
-// full since the last reorientation.
-func (s *Session) ServedBefore(hash string) bool {
-	return s.served[hash]
-}
-
-// RecordServed logs the content hashes of blocks just served in full and folds
-// them into the served set. Hashes already held or empty append nothing.
-func (s *Session) RecordServed(hashes []string) {
-	var fresh []string
-	for _, hash := range hashes {
-		if hash == "" || s.served[hash] {
-			continue
+// fullReads lists the entries served in full, sorted.
+func (s *Session) fullReads() []string {
+	var ids []string
+	for id, depth := range s.reads {
+		if depth == ReadFull {
+			ids = append(ids, id)
 		}
-		s.served[hash] = true
-		fresh = append(fresh, hash)
 	}
-	if len(fresh) == 0 {
-		return
-	}
-	s.appendEvent("", EventServedBlocks, map[string]any{"hashes": fresh})
+	slices.Sort(ids)
+	return ids
 }
 
 // Reorient records the consumer's request for the session's position and
-// clears the served set, so the position re-serves in full.
+// makes the call in flight serve every piece in full.
 func (s *Session) Reorient() {
-	s.served = map[string]bool{}
+	s.call.full = true
 	s.appendEvent("", EventReoriented, nil)
 }
 
@@ -365,12 +583,16 @@ func (s *Session) Park(instanceID, note string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)
 	}
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has ended (%s) — only running moves park", instanceID, inst.Outcome)
+	}
+	if inst.foreign {
+		return foreignMoveRefusal(inst)
 	}
 	data := map[string]any{"step": inst.Step}
 	if note != "" {
@@ -383,6 +605,7 @@ func (s *Session) Park(instanceID, note string) error {
 // appendEvent writes one event to the log. Sink errors fail loudly at the
 // call sites that can surface them; here the event is built centrally.
 func (s *Session) appendEvent(instance string, typ EventType, data map[string]any) uint64 {
+	s.noteAuthored(typ, data)
 	if s.sinkErr != nil {
 		return 0
 	}
@@ -423,8 +646,12 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	if len(spec.Steps) == 0 {
 		return nil, fmt.Errorf("procedure %s: no steps", spec.Canonical)
+	}
+	if err := s.startDelegateCheck(spec); err != nil {
+		return nil, err
 	}
 	if parent != "" {
 		if _, ok := s.instances[parent]; !ok {
@@ -456,6 +683,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		"procedure": spec.Canonical,
 		"entry":     spec.EntryID,
 		"step":      inst.Step,
+		"rev":       procedureRevision,
 	}
 	// Shell-ness rides the log so descriptors stay self-derived (no spec
 	// resolution when listing); absent means move, which covers old logs.
@@ -507,23 +735,15 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, nil // the pending seed was declared for a different child procedure
 	}
 
+	values, err := seedValues(p, inst.Spec)
+	if err != nil {
+		return nil, err
+	}
 	seed := make(map[string]any)
-	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
-		parentField := p.dispatchSeed[childField]
-		if _, declared := inst.Spec.State[childField]; !declared {
-			target := "not declared"
-			if _, isParam := inst.Spec.Params[childField]; isParam {
-				target = "declared under params, not state"
-			}
-			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, inst.Spec.Canonical)
-		}
+	for childField, v := range values {
 		if inst.Store.Has(childField) {
 			continue // already set on this instance — never overwrite
 		}
-		if !p.Store.Has(parentField) {
-			continue // the parent has no evidence to hand down under this name
-		}
-		v, _ := p.Store.Get(parentField)
 		seed[childField] = v
 	}
 
@@ -534,6 +754,28 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, fmt.Errorf("seeding from parent %s: %w", parent, err)
 	}
 	return seed, nil
+}
+
+// seedValues reads the values the parent's armed dispatch seed hands to a
+// child of spec: one per seed mapping whose parent field holds a value.
+func seedValues(p *Instance, spec *Spec) (map[string]any, error) {
+	values := make(map[string]any)
+	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
+		parentField := p.dispatchSeed[childField]
+		if _, declared := spec.State[childField]; !declared {
+			target := "not declared"
+			if _, isParam := spec.Params[childField]; isParam {
+				target = "declared under params, not state"
+			}
+			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s; a seeded field must be declared state", childField, parentField, childField, target, spec.Canonical)
+		}
+		if !p.Store.Has(parentField) {
+			continue // the parent has no evidence to hand down under this name
+		}
+		v, _ := p.Store.Get(parentField)
+		values[childField] = v
+	}
+	return values, nil
 }
 
 // recordDispatchSeed sets the parent instance's dispatch context to exactly
@@ -547,12 +789,17 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 // Not consume-once: a junction that fans out several children — evaluate
 // recording several findings — seeds each until another option changes it.
 func recordDispatchSeed(inst *Instance, opt *Option) {
-	if opt.Dispatch != nil && len(opt.Dispatch.Seed) > 0 {
+	if opt.Dispatch != nil {
 		inst.dispatchSeed = opt.Dispatch.Seed
+		inst.dispatchReceive = opt.Dispatch.Receive
+		inst.dispatchSend = opt.Dispatch.Send
 		inst.dispatchProcedure = opt.Dispatch.Procedure
+		inst.forkPending = len(opt.Dispatch.Receive)+len(opt.Dispatch.Send) > 0
 		return
 	}
 	inst.dispatchSeed = nil
+	inst.dispatchReceive = nil
+	inst.dispatchSend = nil
 	inst.dispatchProcedure = ""
 }
 
@@ -563,6 +810,7 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
@@ -570,8 +818,14 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
 	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
+	}
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty report — send state fields or a chooser answer")
+	}
+	if err := rejectDeliveryOnly(inst.Spec, fields); err != nil {
+		return nil, err
 	}
 
 	written, err := inst.Store.WriteState(fields)
@@ -588,6 +842,12 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 		"fields": logged,
 	})
 	if err := s.checkSink(); err != nil {
+		return nil, err
+	}
+	if err := s.sendFills(inst, written); err != nil {
+		return nil, err
+	}
+	if err := s.endGoneForks(inst, written); err != nil {
 		return nil, err
 	}
 	s.clearCancellation(inst.ID)
@@ -607,15 +867,33 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 // are limited to the option's collect list. User answers carry the user's
 // words verbatim for the auditable-relay record.
 func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]any, userWords string) (*Serve, error) {
+	return s.AnswerWith(instanceID, chooser, choice, fields, AnswerWords{User: userWords})
+}
+
+// AnswerWords is who speaks in a chooser answer: the user's words relayed, or
+// the agent's one-line reason for a delegable user chooser it decided itself
+// in an autonomous session.
+type AnswerWords struct {
+	User   string
+	Reason string
+}
+
+// AnswerWith is Answer carrying either the user's words or the agent's reason.
+func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[string]any, words AnswerWords) (*Serve, error) {
+	userWords, reason := words.User, words.Reason
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
 	}
 	if inst.Status != StatusRunning {
 		return nil, fmt.Errorf("instance %s has ended (%s)", instanceID, inst.Outcome)
+	}
+	if inst.foreign {
+		return nil, foreignMoveRefusal(inst)
 	}
 	step := inst.currentStep()
 	if step == nil {
@@ -626,6 +904,13 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	}
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
+	}
+	if err := s.checkUnattended(inst, step, choice, userWords); err != nil {
+		return nil, err
+	}
+	answeredBy, err := s.answerer(step, userWords, reason)
+	if err != nil {
+		return nil, err
 	}
 
 	var opt *Option
@@ -642,6 +927,9 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 		}
 		sort.Strings(choices)
 		return nil, fmt.Errorf("choice %q is not an option at %s (options: %s)", choice, step.ID, joinNames(choices))
+	}
+	if err := inst.repeatedWords(step.ID, choice, userWords); err != nil {
+		return nil, err
 	}
 
 	// Fields on an answer are limited to the option's collect list — the
@@ -683,6 +971,12 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	if userWords != "" {
 		data["userWords"] = userWords
 	}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	if answeredBy != "" {
+		data["answeredBy"] = answeredBy
+	}
 	if len(fields) > 0 {
 		data["fields"] = fields
 	}
@@ -691,6 +985,8 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 		if err := s.checkSink(); err != nil {
 			return err
 		}
+		inst.recordWords(step.ID, choice, userWords)
+		inst.countUnattended(step, answeredBy, userWords)
 		s.clearCancellation(inst.ID)
 		inst.interactionStep = inst.Step
 		// A dispatching junction's declared handoff rides the answered option:
@@ -716,13 +1012,25 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 			return nil, err
 		}
 	}
+	// The option's command judges the answer first, so a refused answer
+	// sends its delegate nothing.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(fields))); err != nil {
+		return nil, err
+	}
 	if err := s.transitionTo(inst, opt.To, false); err != nil {
 		return nil, err
 	}
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if opt.Dispatch != nil {
+		sv.Dispatches = opt.Dispatch.Procedure
+	}
+	return sv, nil
 }
 
 // Serve re-serves the instance's current position without advancing it —
@@ -763,6 +1071,7 @@ func (s *Session) Inject(instanceID string, call InjectCall) (any, *truncate.Cut
 	if err != nil {
 		return nil, nil, err
 	}
+	ctx.Cap = effectiveCap(q, call)
 	result, err := q.Fn(ctx, args)
 	if err != nil {
 		return nil, nil, err
@@ -778,6 +1087,7 @@ func (s *Session) Abandon(instanceID, reason string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)
@@ -811,27 +1121,64 @@ type SpecResolver func(canonical string) (*Spec, error)
 // it on.
 func (e *Engine) ReplaySession(id, participant string, events []Event, resolve SpecResolver, sink EventSink, opts ...SessionOption) (*Session, error) {
 	s := e.NewSession(id, participant, nil, opts...)
-	for _, ev := range events {
-		if ev.V != LogVersion {
-			return nil, fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
-		}
-		if ev.Seq > s.seq {
-			s.seq = ev.Seq
-		}
-		if err := s.applyEvent(ev, resolve); err != nil {
-			return nil, fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
-		}
+	err := s.fold(events, resolve)
+	if err != nil {
+		return nil, err
 	}
 	s.sink = sink
 	return s, nil
 }
 
+// Fold applies events another writer logged past the position the session
+// holds, as replay applies them, so a long-lived holder continues on the log
+// as it now stands. pending, when not nil, is the event being appended:
+// already applied in memory, it takes the sequence after the folded events.
+func (s *Session) Fold(events []Event, resolve SpecResolver, pending *Event) error {
+	err := s.fold(events, resolve)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		s.seq++
+		pending.Seq = s.seq
+	}
+	return nil
+}
+
+func (s *Session) fold(events []Event, resolve SpecResolver) error {
+	for _, ev := range events {
+		if ev.V != LogVersion {
+			return fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
+		}
+		if ev.Seq > s.seq {
+			s.seq = ev.Seq
+		}
+		err := s.applyEvent(ev, resolve)
+		if err != nil {
+			return fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
+		}
+	}
+	return nil
+}
+
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
+	s.noteAuthored(ev.Event, ev.Data)
 	switch ev.Event {
 	case EventSessionMeta:
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
 			s.Participant = p
 		}
+		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode) == model.DialogueAuto {
+			s.DialogueMode = model.DialogueAuto
+			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
+		}
+		if parent, ok := ev.Data["parent"].(map[string]any); ok {
+			lineage := linkFrom(parent)
+			s.Lineage = &lineage
+		}
+
+	case EventForked, EventForkEnded, EventDelivered, EventReceived:
+		return s.applyDeliveryEvent(ev)
 
 	case EventLabeled:
 		if l, ok := ev.Data["label"].(string); ok {
@@ -854,12 +1201,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			return fmt.Errorf("procedure %s has no step %q", canonical, step)
 		}
 		inst := &Instance{
-			ID:     ev.Instance,
-			Spec:   spec,
-			Store:  NewStore(spec),
-			Step:   step,
-			Status: StatusRunning,
-			Parent: parent,
+			ID:      ev.Instance,
+			Spec:    spec,
+			Store:   NewStore(spec),
+			Step:    step,
+			Status:  StatusRunning,
+			Parent:  parent,
+			foreign: startedRevision(ev.Data) < procedureRevision && spec.Class != model.ProcedureClassShell,
 		}
 		if params, ok := ev.Data["params"].(map[string]any); ok {
 			if err := inst.Store.SetStart(declaredInputs(spec, params)); err != nil {
@@ -916,8 +1264,12 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		// after resume; a child already dispatched restores its own seed from
 		// its started event.
 		if chooser, _ := ev.Data["chooser"].(string); chooser != "" {
+			words, _ := ev.Data["userWords"].(string)
+			answeredBy, _ := ev.Data["answeredBy"].(string)
+			inst.countUnattended(inst.Spec.StepByID[chooser], answeredBy, words)
+			choice, _ := ev.Data["choice"].(string)
+			inst.recordWords(chooser, choice, words)
 			if step := inst.Spec.StepByID[chooser]; step != nil {
-				choice, _ := ev.Data["choice"].(string)
 				for i := range step.Options {
 					if step.Options[i].Choice == choice {
 						recordDispatchSeed(inst, &step.Options[i])
@@ -929,6 +1281,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 
 	case EventMutationIntent:
 		return s.restoreIntent(ev)
+
+	case EventMutationCommitted:
+		if err := s.validateOutcome(ev); err != nil {
+			return err
+		}
+		writes, _ := ev.Data["writes"].(map[string]any)
+		s.foldCommitted(writes)
 
 	case EventOpResult, EventMutationOutcome:
 		inst, err := s.replayInstance(ev)
@@ -970,6 +1329,12 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			return err
 		}
 		to, _ := ev.Data["to"].(string)
+		switch consumed := ev.Data["consumed"].(type) {
+		case []string:
+			inst.consume(consumed)
+		case []any:
+			inst.consume(asStrings(consumed))
+		}
 		switch {
 		case IsEndTarget(to):
 			// The paired completed/abandoned event carries the terminal
@@ -1016,20 +1381,35 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 				}
 			}
 		}
-
-	case EventServedBlocks:
-		if hashes, ok := ev.Data["hashes"].([]any); ok {
-			for _, v := range hashes {
-				if hash, ok := v.(string); ok && hash != "" {
-					s.served[hash] = true
+		if grounding, ok := ev.Data["grounding"]; ok && ev.Instance != "" {
+			inst, err := s.replayInstance(ev)
+			if err != nil {
+				return err
+			}
+			payload, err := decodeReadPayload(grounding)
+			if err != nil {
+				return err
+			}
+			inst.reading.Fold(payload)
+			writes, _ := ev.Data["writes"].(map[string]any)
+			for name, v := range writes {
+				err := inst.Store.importValue(name, ExportedValue{Value: v, Provenance: ProvenanceEngine})
+				if err != nil {
+					return err
 				}
 			}
 		}
 
-	case EventReoriented:
-		s.served = map[string]bool{}
+	case EventTexts:
+		s.foldTexts(ev.Data)
 
-	case EventServed, EventParked:
+	case EventQuestion:
+		s.foldQuestion(ev.Data)
+
+	case EventParked:
+		return s.replayParked(ev)
+
+	case EventServed, EventServedBlocks, EventReoriented:
 		// Forensic only — no state effect.
 
 	default:

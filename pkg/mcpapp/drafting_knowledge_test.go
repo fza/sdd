@@ -29,17 +29,25 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 	if strings.Contains(second.Instructions, "a signal records something noticed:") {
 		t.Fatalf("a second capture start in the same session must not repeat the overview body")
 	}
-	if !strings.Contains(second.Instructions, basefacts.OverviewFactID) {
+	if !pointsAtOverview(second.Instructions) {
 		t.Errorf("the suppressed serve must still point at the overview fact")
 	}
 }
 
+// pointsAtOverview reports whether a capture serve points at the type-system
+// overview: by its ID, or by the held typeSystem lane whose text names it.
+func pointsAtOverview(instructions string) bool {
+	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, "lane typeSystem")
+}
+
 // The overview grounding is durable session state: a second server over the
-// same stores — a real restart, not an in-process resume — must still know the
-// overview was served.
+// same stores — a real restart, not an in-process resume — still points the
+// agent that answers right at it, and serves it in full to an
+// agent context that holds nothing.
 func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, t.TempDir(), "")
-	cs := connect(t, env.srv)
+	agent := newAgentMemory()
+	cs := connectAs(t, env.srv, agent)
 	door := openSession(t, cs)
 
 	var first mcpserver.ServeResult
@@ -49,23 +57,18 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	}
 
 	env2 := newTestServer(t, nil, env.graphDir, env.sessionsDir)
-	cs2 := connect(t, env2.srv)
-	var resumed mcpserver.ResumeSessionResult
-	call(t, cs2, "resume_session", map[string]any{"session": door.Session}, &resumed)
-
-	var reServed *mcpserver.ServeResult
-	for i := range resumed.Open {
-		if resumed.Open[i].Procedure == "capture" {
-			reServed = &resumed.Open[i]
-		}
-	}
-	if reServed == nil {
-		t.Fatalf("the resumed session must re-serve the open capture, got %+v", resumed.Open)
-	}
-	if strings.Contains(reServed.Instructions, "a signal records something noticed:") {
+	var again mcpserver.ServeResult
+	call(t, connectAs(t, env2.srv, agent), "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &again)
+	if strings.Contains(again.Instructions, "a signal records something noticed:") {
 		t.Fatalf("the overview grounding must survive a server restart — the re-serve repeated the body")
 	}
-	if !strings.Contains(reServed.Instructions, basefacts.OverviewFactID) {
+	if !pointsAtOverview(again.Instructions) {
 		t.Errorf("the re-served capture must still point at the overview fact")
+	}
+
+	var fresh mcpserver.ServeResult
+	call(t, connect(t, env2.srv), "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
+	if !strings.Contains(fresh.Instructions, "a signal records something noticed:") {
+		t.Fatalf("an agent context holding nothing must get the overview in full")
 	}
 }

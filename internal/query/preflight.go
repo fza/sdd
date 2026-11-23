@@ -12,6 +12,21 @@ import (
 type PreflightQuery struct {
 	Entry *model.Entry
 	Model string // LLM model identifier (e.g. "claude-sonnet-4-6")
+	// Light runs pre-flight as the light verifier over a grounding reading;
+	// nil runs it over the draft's refs alone.
+	Light *LightPreflight
+	// KindFit adds the check that the draft fits its kind; nil leaves it out.
+	KindFit *model.KindFit
+}
+
+// LightPreflight is the grounding reading a light pre-flight judges the
+// draft against, and the characters one call holds.
+type LightPreflight struct {
+	Full        []string
+	Listed      []string
+	SetAside    []model.GroundingVerdict
+	Shown       []string
+	BudgetChars int
 }
 
 // Severity classifies a pre-flight finding. The tooling layer decides what
@@ -32,12 +47,18 @@ type Finding struct {
 	Severity    Severity `json:"severity"`
 	Category    string   `json:"category"`
 	Observation string   `json:"observation"`
+	// Basis names the reading entries a light finding rests on.
+	Basis []string `json:"basis,omitempty"`
 }
 
 // PreflightResult holds all findings from a pre-flight validator run.
 // An empty Findings slice means the validator reported no findings.
 type PreflightResult struct {
 	Findings []Finding
+	// Calls is how many light calls the reading took; zero outside light.
+	Calls int
+	// Excerpted names the reading entries a light call judged on excerpts.
+	Excerpted []string
 }
 
 // HasBlocking reports whether any finding blocks entry creation. Currently

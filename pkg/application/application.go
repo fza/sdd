@@ -43,6 +43,13 @@ type ApplicationOptions struct {
 	// EntrySuffix supplies the random part of a new entry ID; nil draws it
 	// from the system's randomness (d-cpt-t8i).
 	EntrySuffix func(length int) (string, error)
+	// DelegateLauncher, when set, makes sdd itself launch and resume the agent
+	// driving each delegate child session; nil leaves the launch to the harness
+	// the dispatch handoff instructs.
+	DelegateLauncher DelegateLauncher
+	// RoundProcesses runs the rounds sdd launches, and checks and stops them
+	// later; a DelegateLauncher needs it.
+	RoundProcesses RoundProcesses
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -56,6 +63,8 @@ type Application struct {
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
+	launcher      DelegateLauncher
+	processes     RoundProcesses
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -67,6 +76,9 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	}
 	if options.StagedBlobs == nil {
 		return nil, fmt.Errorf("sdd: StagedBlobStore is required")
+	}
+	if options.DelegateLauncher != nil && options.RoundProcesses == nil {
+		return nil, fmt.Errorf("sdd: a DelegateLauncher needs RoundProcesses to run the rounds it launches")
 	}
 	clock := options.Clock
 	if clock == nil {
@@ -83,6 +95,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
+		launcher:      options.DelegateLauncher,
+		processes:     options.RoundProcesses,
 	}, nil
 }
 
@@ -118,6 +132,20 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 		Project: runtime.options.Project, Participant: participant, Language: runtime.options.Language,
 		Search: search, Contribution: source.Contribution(),
 	}, nil
+}
+
+// dialogueFor resolves the dialogue mode a new session of the principal opens
+// in; the engine opens anything but "auto" guided.
+func (a *Application) dialogueFor(ctx context.Context, principal Principal, runtime *ProjectRuntime) (Dialogue, error) {
+	resolver, ok := a.access.(DialogueResolver)
+	if !ok {
+		return Dialogue{}, nil
+	}
+	dialogue, err := resolver.ResolveDialogue(ctx, principal, runtime.options.Project.ID)
+	if err != nil {
+		return Dialogue{}, fmt.Errorf("resolving the dialogue mode: %w", err)
+	}
+	return dialogue, nil
 }
 
 // participantFor resolves the participant the principal appears as in the
@@ -224,7 +252,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		return ViewResult{}, err
 	}
 	var rendered bytes.Buffer
-	presenters.RenderView(&rendered, viewResult)
+	presenters.RenderViewRepeats(&rendered, viewResult, repeatsFor(request.Held, request.Served))
 	// Matched count is a read-side fact owned by the finder; sum it across the
 	// local graph and every queried dependency so "empty" means nothing
 	// rendered anywhere, not just an empty rendered string (which is also false
@@ -259,11 +287,14 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if matched == 0 && layout.UsesFunction("participant") {
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
+	full, summary := viewResult.ServedIDs()
 	return ViewResult{
 		Project:           runtime.options.Project,
 		Sections:          strings.TrimRight(rendered.String(), "\n"),
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
+		FullIDs:           full,
+		SummaryIDs:        summary,
 	}, nil
 }
 
@@ -299,7 +330,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 		return ShowResult{}, err
 	}
 	var rendered bytes.Buffer
-	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{})
+	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{Repeats: repeatsFor(request.Held, request.Served)})
 	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
@@ -373,7 +404,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
 	var rendered bytes.Buffer
-	presenters.RenderSearch(&rendered, searchResult, snapshot.graph)
+	presenters.RenderSearchRepeats(&rendered, searchResult, snapshot.graph, repeatsFor(request.Held, request.Served))
 	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Coverage: coverage}
 	for _, member := range coverage {
 		if !member.Complete {
@@ -794,3 +825,12 @@ func publicProcedureSignature(head *model.Entry) (string, error) {
 }
 
 var errVectorUnavailable = errors.New("vector search requires an Embedder and a SearchIndexStore")
+
+// repeatsFor applies the no-repeat rule for a consumer holding the entries
+// held reports; nil serves everything in full.
+func repeatsFor(held func(id, hash string) bool, served func(id, hash, body string)) *presenters.Repeats {
+	if held == nil {
+		return nil
+	}
+	return &presenters.Repeats{Held: held, Served: served}
+}

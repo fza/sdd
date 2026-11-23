@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,6 +67,9 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	// preflight-model is a legacy alias for --model in the `sdd new` context.
 	if cmd.IsSet("preflight-model") {
 		cfg.Model = cmd.String("preflight-model")
+	}
+	if cmd.IsSet("preflight-extract-timeout") {
+		cfg.ExtractTimeout = cmd.Duration("preflight-extract-timeout").String()
 	}
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
@@ -217,6 +221,9 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	for _, k := range result.Keys {
 		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
 	}
+	for _, s := range result.Ignored {
+		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
+	}
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`
@@ -317,6 +324,10 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			// A detached verifier round reports to its own log, never warns.
+			if cmd.Args().First() == delegateRoundCommandName {
+				return ctx, nil
+			}
 
 			warnUnknownConfigKeys(ctx)
 
@@ -353,8 +364,13 @@ func New(options Options) *cli.Command {
 			summarizeCmd(),
 			indexCmd(),
 			searchCmd(),
+			gatherCmd(),
+			groundingCmd(),
 			serveCmd(),
+			delegateRoundCmd(),
 			sessionsCmd(),
+			relevanceCmd(),
+			recheckCmd(),
 			syncCmd(),
 			repoCmd(),
 			statsCmd(),
@@ -641,6 +657,10 @@ func newCmd() *cli.Command {
 				Name:  "preflight-verified",
 				Usage: "Skip pre-flight validation for a capture whose findings a prior --dry-run settled (entry is annotated with preflight: dry-run-verified)",
 			},
+			&cli.BoolFlag{
+				Name:  "skip-grounding",
+				Usage: "Record a bypass of the grounding gate where verify.mode enforces grounding (entry is annotated with grounding: skipped and written with confidence low)",
+			},
 			&cli.StringFlag{
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
@@ -664,6 +684,11 @@ func newCmd() *cli.Command {
 			&cli.DurationFlag{
 				Name:  "preflight-timeout",
 				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m); default llm.timeout",
+			},
+			&cli.DurationFlag{
+				Name:  "preflight-extract-timeout",
+				Usage: "Timeout for the extraction call a pre-flight response falls back to (e.g. 60s)",
+				Value: model.DefaultLLMExtractTimeout,
 			},
 		},
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
@@ -799,6 +824,7 @@ func newCmd() *cli.Command {
 				Attachments:       atts,
 				SkipPreflight:     cmd.Bool("skip-preflight"),
 				PreflightVerified: cmd.Bool("preflight-verified"),
+				SkipGrounding:     cmd.Bool("skip-grounding"),
 				Summary:           strings.TrimSpace(cmd.String("summary")),
 				DryRun:            cmd.Bool("dry-run"),
 				PreflightModel:    cmd.String("preflight-model"),
@@ -818,6 +844,10 @@ func newCmd() *cli.Command {
 				return err
 			}
 			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			err = refuseUngroundedNew(cfg, ncmd)
 			if err != nil {
 				return err
 			}
@@ -1231,6 +1261,20 @@ func promptGraphDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
+// promptDialogueMode asks whether this person's agents take the choices an
+// engine session otherwise puts to them.
+func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.DialogueMode]{
+			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
+			{Label: string(model.DialogueAuto), Hint: "your AI decides; a capture blocked twice waits for you", Value: model.DialogueAuto},
+		},
+	})
+}
+
 // promptParticipant runs an interactive prompt for the local participant name.
 // Empty input accepts the default; cancellation returns an error.
 func promptParticipant(cmd *cli.Command, defaultValue string) (string, error) {
@@ -1376,6 +1420,18 @@ func initCmd() *cli.Command {
 				Name:  "bump",
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
 			},
+			&cli.StringFlag{
+				Name:  "dialogue-mode",
+				Usage: "Your dialogue mode, guided or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+			},
+			&cli.StringFlag{
+				Name:  "verify-mode",
+				Usage: "How carefully drafts are checked against the graph: off, grounding, prose or deep, recorded as verify.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
+			},
+			&cli.StringFlag{
+				Name:  "verify-runner",
+				Usage: "What runs the deep verifier on this machine: subagent, claude or driver, recorded as verify.runner in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -1418,8 +1474,12 @@ func initCmd() *cli.Command {
 				}
 			}
 			recordedParticipant := ""
+			var recordedDialogueMode model.DialogueMode
+			verifyModeRecorded := false
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
+				recordedDialogueMode = existingMerged.Dialogue.Mode
+				verifyModeRecorded = existingMerged.Verify.Mode != ""
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -1516,6 +1576,14 @@ func initCmd() *cli.Command {
 				participant = prompted
 			}
 
+			dialogueMode := model.DialogueMode(strings.TrimSpace(cmd.String("dialogue-mode")))
+			if dialogueMode == "" && recordedDialogueMode == "" && cliout.IsTerminalReader(cmd.Reader) {
+				dialogueMode, err = promptDialogueMode(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			// Resolve agent targets: an explicit --agents flag wins; otherwise,
 			// on a fresh tree with a TTY, run the multi-select. On existing
 			// trees we pass nothing and let the handler honor the recorded
@@ -1537,6 +1605,47 @@ func initCmd() *cli.Command {
 				targets = chosen
 			}
 
+			var verifyMode model.VerifyMode
+			verifyModeFlag := strings.TrimSpace(cmd.String("verify-mode"))
+			if verifyModeFlag != "" {
+				verifyMode, err = model.ParseVerifyMode(verifyModeFlag)
+				if err != nil {
+					return fmt.Errorf("invalid --verify-mode: %w", err)
+				}
+			} else if !verifyModeRecorded && cliout.IsTerminalReader(cmd.Reader) {
+				verifyMode, err = promptVerifyMode(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
+			runnerAgents := targets
+			var recorded model.VerifyConfig
+			if existingMerged != nil {
+				recorded = existingMerged.Verify
+				if len(runnerAgents) == 0 {
+					runnerAgents = existingMerged.SupportedAgents
+				}
+			}
+			if len(runnerAgents) == 0 {
+				runnerAgents = model.DefaultSupportedAgents
+			}
+			runnerChoices := model.VerifierRunnerChoices(runnerAgents, recorded.Driver)
+			resolvedMode := recorded.Mode
+			if verifyMode != "" {
+				resolvedMode = verifyMode
+			}
+			verifierRunner := model.VerifierRunner(strings.TrimSpace(cmd.String("verify-runner")))
+			if verifierRunner != "" && !slices.Contains(runnerChoices, verifierRunner) {
+				return fmt.Errorf("invalid --verify-runner %q: this project offers %s (claude only where supported_agents names it, driver only once a layer sets verify.driver.command)", verifierRunner, joinRunners(runnerChoices))
+			}
+			if verifierRunner == "" && model.VerifierRunnerAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
+				verifierRunner, err = promptVerifierRunner(cmd, runnerChoices)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -1547,6 +1656,9 @@ func initCmd() *cli.Command {
 				GraphDir:       graphDir,
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
+				DialogueMode:   dialogueMode,
+				VerifyMode:     verifyMode,
+				VerifierRunner: verifierRunner,
 				Language:       language,
 				BinaryVersion:  cmd.Root().Version,
 				Targets:        targets,
@@ -1587,6 +1699,9 @@ func initCmd() *cli.Command {
 				},
 				OnParticipantWritten: func(path, name string) {
 					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
+				},
+				OnLocalSettingWritten: func(path, key, value string) {
+					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID model.RepoID) {
 					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)
@@ -2069,4 +2184,48 @@ func refKindsForUsage() string {
 		parts[i] = string(k)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// promptVerifyMode asks how carefully drafts are checked against the graph.
+func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.VerifyMode]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "How carefully should sdd check a new entry before saving it? (↑/↓ to navigate, enter to confirm)",
+		Cursor: slices.Index(model.DefaultVerifyMode.AllowedValues(), string(model.DefaultVerifyMode)),
+		Options: []tui.SelectOption[model.VerifyMode]{
+			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
+			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},
+			{Label: string(model.VerifyProse), Hint: "your AI reads related entries, then checks the new one fits", Value: model.VerifyProse},
+			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it (Claude Code only)", Value: model.VerifyDeep},
+		},
+	})
+}
+
+// promptVerifierRunner asks what runs the deep verifier on this machine,
+// offering choices with subagent first as the default.
+func promptVerifierRunner(cmd *cli.Command, choices []model.VerifierRunner) (model.VerifierRunner, error) {
+	hints := map[model.VerifierRunner]string{
+		model.VerifierRunnerSubagent: "inside your AI chat, you can watch it",
+		model.VerifierRunnerClaude:   "a separate Claude in the background, hidden",
+		model.VerifierRunnerDriver:   "your own program, set up in the config",
+	}
+	options := make([]tui.SelectOption[model.VerifierRunner], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, tui.SelectOption[model.VerifierRunner]{Label: string(choice), Hint: hints[choice], Value: choice})
+	}
+	return tui.RunSelect(tui.SelectPrompt[model.VerifierRunner]{
+		Reader:  cmd.Reader,
+		Writer:  cmd.Writer,
+		Header:  "Where should the second AI run? (↑/↓ to navigate, enter to confirm)",
+		Options: options,
+	})
+}
+
+func joinRunners(runners []model.VerifierRunner) string {
+	names := make([]string, len(runners))
+	for i, runner := range runners {
+		names[i] = string(runner)
+	}
+	return strings.Join(names, ", ")
 }

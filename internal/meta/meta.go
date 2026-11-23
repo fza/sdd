@@ -58,6 +58,16 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 	return model.MergeConfig(base, overlay), nil
 }
 
+// ConfigLayerFiles names the file behind each config layer, for messages
+// that name where a value stands.
+func ConfigLayerFiles(sddDir string) map[model.ConfigValueSource]string {
+	return map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal:  "the user-global config",
+		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
+		model.ConfigSourceLocal:   filepath.Join(sddDir, "config.local.yaml"),
+	}
+}
+
 // ResolveConfig builds the effective per-repo config from the full overlay:
 // the user-global base settings under the committed .sdd/config.yaml under
 // .sdd/config.local.yaml. CLI flags apply on top at the call site. Returns
@@ -65,9 +75,14 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig, error) {
-	fileCfg, err := ReadConfig(sddDir)
+	committed, local, err := ReadConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
+	}
+	global, committed, local, _ = model.HonoredVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir))
+	var fileCfg *model.PerRepoConfig
+	if committed != nil || local != nil {
+		fileCfg = model.MergeConfig(committed, local)
 	}
 	if fileCfg == nil {
 		if global.IsZero() {

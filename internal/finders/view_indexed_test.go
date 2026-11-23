@@ -30,7 +30,7 @@ func TestViewIndexedIsStructuralAndComposes(t *testing.T) {
 	graph := model.NewGraph([]*model.Entry{old, closer, first, second, other, unindexed})
 	finder := New(Options{})
 
-	result, err := finder.OnGraph(graph).View(query.ViewQuery{Layout: mustParseLayout(t, "indexed:as-list")})
+	result, err := finder.OnGraph(graph).View(query.ViewQuery{Layout: mustParseLayout(t, "history:indexed:as-list")})
 	if err != nil {
 		t.Fatal(err)
 	}

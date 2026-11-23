@@ -4,6 +4,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "type": "string"
+        },
         "instance": {
           "description": "instance handle to abandon (a move); pass session too, naming the session the move belongs to",
           "type": "string"
@@ -12,11 +16,24 @@
           "description": "why the instance or session is being abandoned",
           "type": "string"
         },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing",
           "type": "string"
         }
       },
+      "required": [
+        "answer"
+      ],
       "type": "object"
     },
     "name": "abandon",
@@ -151,6 +168,10 @@
           "description": "the torn-down session's subject label",
           "type": "string"
         },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+          "type": "string"
+        },
         "session": {
           "description": "the torn-down session, on teardown by handle",
           "type": "string"
@@ -199,6 +220,71 @@
       },
       "required": [
         "status"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full in the same result prints as a pointer with its brief.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "description": "without instance: the draft text the searches are written from; credits nothing",
+          "type": "string"
+        },
+        "ids": {
+          "description": "entries to open in full; an entry the call already holds serves its pointer",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "instance": {
+          "description": "the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "type": "string"
+        },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "attached session's handle, from start_session or resume_session; required",
+          "type": "string"
+        },
+        "topics": {
+          "description": "without instance: the draft's topic labels, each listed in full",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "gather",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "serve": {
+          "description": "the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serve"
       ],
       "type": "object"
     }
@@ -254,10 +340,14 @@
     }
   },
   {
-    "description": "Advance a procedure instance in the session named by session (required): send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, fields?}. User choosers must carry the user's answer relayed verbatim in userWords. For an unfinished operation, omit report and pass its exact retry_ref to continue or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions remain blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve — where the dialogue lands.",
+    "description": "Advance a procedure instance in the session named by session (required): send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, fields?}. User choosers must carry the user's own message verbatim in userWords, never words of yours, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to continue or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions remain blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve — where the dialogue lands.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "type": "string"
+        },
         "cancel_ref": {
           "description": "exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref",
           "minimum": 0,
@@ -273,8 +363,18 @@
         },
         "report": {
           "additionalProperties": true,
-          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, fields?}",
+          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting",
           "type": "object"
+        },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "retry_ref": {
           "description": "exact retry reference from a failed operation; mutually exclusive with report and cancel_ref",
@@ -287,6 +387,7 @@
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -469,12 +570,67 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -500,6 +656,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -638,10 +798,22 @@
             "array"
           ]
         },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+          "type": "string"
+        },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -655,7 +827,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -671,6 +843,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "type": "string"
+        },
         "instance": {
           "description": "running move instance to park",
           "type": "string"
@@ -679,12 +855,23 @@
           "description": "one line on why the move is shelved — carried in the session log for whoever resumes it",
           "type": "string"
         },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
           "type": "string"
         }
       },
       "required": [
+        "answer",
         "instance"
       ],
       "type": "object"
@@ -801,6 +988,10 @@
           "type": "boolean"
         },
         "procedure": {
+          "type": "string"
+        },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
           "type": "string"
         },
         "step": {
@@ -972,12 +1163,12 @@
     }
   },
   {
-    "description": "The second door, and the compaction escape: re-serve the current position of the session whose handle you present — its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization (a handle reaches you only by issuance or by the user handing it over), and it declares that you need re-serving: the served-once memory resets, so the complete position serves in full. Only recorded session state resumes — step position, collected fields, staged files — never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
+    "description": "The second door, and the compaction escape: re-serve the current position of the session whose handle you present — its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization (a handle reaches you only by issuance or by the user handing it over), and it declares that you need re-serving: every piece of the position serves in full. Only recorded session state resumes — step position, collected fields, staged files — never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "session": {
-          "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so the served-once memory resets and the complete position serves in full",
+          "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds",
           "type": "string"
         }
       },
@@ -1248,12 +1439,67 @@
                 "description": "state already collected by this instance — values persist across handover; do not re-derive them",
                 "type": "object"
               },
+              "dispatches": {
+                "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "agent": {
+                      "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                      "type": "string"
+                    },
+                    "continue_prompt": {
+                      "description": "the prompt continuing a delegate that worked an earlier round",
+                      "type": "string"
+                    },
+                    "effort": {
+                      "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                      "type": "string"
+                    },
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                      "type": "string"
+                    },
+                    "procedure": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "description": "the whole prompt of a fresh-context delegate",
+                      "type": "string"
+                    },
+                    "runner": {
+                      "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                      "type": "string"
+                    },
+                    "session": {
+                      "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "procedure",
+                    "instructions"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "execution": {
                 "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
                 "type": "string"
               },
               "framing": {
-                "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
+                "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
                 "type": "string"
               },
               "goal": {
@@ -1279,6 +1525,10 @@
               "open_threads": {
                 "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
                 "type": "string"
+              },
+              "parked": {
+                "description": "set when the move is parked at step for a person; nothing was written",
+                "type": "boolean"
               },
               "pending_chooser": {
                 "additionalProperties": false,
@@ -1417,10 +1667,22 @@
                   "array"
                 ]
               },
+              "question": {
+                "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+                "type": "string"
+              },
+              "reason": {
+                "description": "why the move is parked",
+                "type": "string"
+              },
               "report_schema": {
                 "additionalProperties": true,
                 "description": "JSON Schema for the current step's report",
                 "type": "object"
+              },
+              "resume": {
+                "description": "the call a person resumes the parked move with",
+                "type": "string"
               },
               "session": {
                 "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -1434,7 +1696,7 @@
                 "type": "string"
               },
               "vocabulary": {
-                "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
+                "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
                 "type": "string"
               }
             },
@@ -1502,6 +1764,10 @@
           "description": "the project this session is bound to",
           "type": "string"
         },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+          "type": "string"
+        },
         "session": {
           "description": "session handle (the session ID)",
           "type": "string"
@@ -1559,6 +1825,16 @@
         },
         "repos": {
           "description": "also search these repos of the project's dependency closure by repo-id (additive to the local graph)",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },
@@ -1668,6 +1944,16 @@
           "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
           "type": "string"
         },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
           "type": "string"
@@ -1771,6 +2057,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "answer": {
+          "description": "required: the answers to the questions the last response of this session ended with (q \u003ctext\u003e: …? | lost, one per line), in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost when you no longer see that text or saw no question. Never guess. Both right serve repeated text short; lost or a wrong answer to either serves it in full",
+          "type": "string"
+        },
         "canonical": {
           "description": "the procedure to start, by its stable name (e.g. capture)",
           "type": "string"
@@ -1792,12 +2082,23 @@
           "description": "project the move works in, when not the session's home project: it must lie in the home project's declared dependency closure and be one the principal can read. Omitted, a foreign anchor selects its project, else the parent's, else the home project",
           "type": "string"
         },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
           "type": "string"
         }
       },
       "required": [
+        "answer",
         "canonical"
       ],
       "type": "object"
@@ -1980,12 +2281,67 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -2011,6 +2367,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -2149,10 +2509,22 @@
             "array"
           ]
         },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+          "type": "string"
+        },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -2166,7 +2538,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -2375,12 +2747,67 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
         },
         "framing": {
-          "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
+          "description": "session framing (aspirations, directives, focus, participants); each block in full, left out while a right answer holds it",
           "type": "string"
         },
         "goal": {
@@ -2406,6 +2833,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -2544,10 +2975,22 @@
             "array"
           ]
         },
+        "question": {
+          "description": "two questions about texts sdd served you, one per line, each as q \u003ctext\u003e: …? | lost. Answer both in answer on your next call that advances this session, in their order and parted by ; (reach sdd ; 280): the words each asks for, looked up in its text, or lost",
+          "type": "string"
+        },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -2561,7 +3004,7 @@
           "type": "string"
         },
         "vocabulary": {
-          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
+          "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full, left out while a right answer holds it",
           "type": "string"
         }
       },
@@ -2599,6 +3042,16 @@
             "array"
           ]
         },
+        "reread": {
+          "description": "names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
           "type": "string"
@@ -2614,7 +3067,7 @@
       "additionalProperties": false,
       "properties": {
         "hint": {
-          "description": "one-line pointer to the view layout grammar, served once per connection",
+          "description": "one-line pointer to the view layout grammar, on the first view of a session and after resume_session",
           "type": "string"
         },
         "sections": {

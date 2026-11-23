@@ -258,6 +258,16 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
+	if cmd.VerifyMode != "" {
+		changed, err := writeVerifyMode(configPath, cmd.VerifyMode)
+		if err != nil {
+			return err
+		}
+		if changed {
+			touched = append(touched, configPath)
+		}
+	}
+
 	// Housekeeping applied on every init (idempotent — ensureGitignoreEntries
 	// skips entries already present). Covers fresh checkouts and upgrades
 	// where a new entry has been added to the required set. The index no
@@ -299,31 +309,9 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	// Write the participant into .sdd/config.local.yaml when a value was
-	// resolved by the caller. Preserves any other keys already present in
-	// the file (notably the llm: block from d-tac-bes) by operating on a
-	// yaml.Node tree rather than re-marshaling the Config struct.
-	if cmd.Participant != "" {
-		configLocalPath := filepath.Join(sddDir, "config.local.yaml")
-		existing, readErr := os.ReadFile(configLocalPath)
-		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("reading %s: %w", configLocalPath, readErr)
-		}
-		updated, err := model.SetYAMLField(existing, "participant", cmd.Participant)
-		if err != nil {
-			return fmt.Errorf("updating %s: %w", configLocalPath, err)
-		}
-		if !bytes.Equal(existing, updated) {
-			if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", configLocalPath, err)
-			}
-			// Deliberately NOT appended to `touched`: config.local.yaml is
-			// gitignored, so staging it would fail the commit. The write
-			// is still recorded via OnParticipantWritten for CLI feedback.
-			if cmd.OnParticipantWritten != nil {
-				cmd.OnParticipantWritten(configLocalPath, cmd.Participant)
-			}
-		}
+	// The personal settings init resolved land in .sdd/config.local.yaml.
+	if err := writeLocalSettings(sddDir, cmd); err != nil {
+		return err
 	}
 
 	// Write .sdd/meta.json when absent. MinimumVersion is populated only on
@@ -1033,4 +1021,64 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		}
 	}
 	return nil
+}
+
+// writeLocalSettings writes each personal setting init resolved into the
+// machine-local config, keeping the other keys of the file in place.
+func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
+	settings := []struct{ key, value string }{
+		{"participant", cmd.Participant},
+		{"dialogue.mode", string(cmd.DialogueMode)},
+		{"verify.runner", string(cmd.VerifierRunner)},
+	}
+	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
+	for _, setting := range settings {
+		if setting.value == "" {
+			continue
+		}
+		existing, err := os.ReadFile(configLocalPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("reading %s: %w", configLocalPath, err)
+		}
+		updated, err := model.SetYAMLField(existing, setting.key, setting.value)
+		if err != nil {
+			return fmt.Errorf("updating %s: %w", configLocalPath, err)
+		}
+		if bytes.Equal(existing, updated) {
+			continue
+		}
+		if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", configLocalPath, err)
+		}
+		// Not committed: config.local.yaml is gitignored, so staging it would
+		// fail the commit.
+		if setting.key == "participant" && cmd.OnParticipantWritten != nil {
+			cmd.OnParticipantWritten(configLocalPath, setting.value)
+		}
+		if setting.key != "participant" && cmd.OnLocalSettingWritten != nil {
+			cmd.OnLocalSettingWritten(configLocalPath, setting.key, setting.value)
+		}
+	}
+	return nil
+}
+
+// writeVerifyMode records verify.mode in the committed config at configPath,
+// keeping every other key, and reports whether the file changed.
+func writeVerifyMode(configPath string, mode model.VerifyMode) (bool, error) {
+	existing, err := os.ReadFile(configPath)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", configPath, err)
+	}
+	updated, err := model.SetYAMLField(existing, "verify.mode", string(mode))
+	if err != nil {
+		return false, fmt.Errorf("updating %s: %w", configPath, err)
+	}
+	if bytes.Equal(existing, updated) {
+		return false, nil
+	}
+	err = os.WriteFile(configPath, updated, 0o644)
+	if err != nil {
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return true, nil
 }

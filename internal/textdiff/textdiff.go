@@ -141,3 +141,26 @@ func HeadTail(text string, head, tail int) string {
 	parts = append(parts, lines[len(lines)-tail:]...)
 	return strings.Join(parts, "\n")
 }
+
+// ChangedPassages returns the runs of lines new holds that old does not, in
+// order, each run joined by line breaks; blank lines alone are no passage.
+func ChangedPassages(old, new string) []string {
+	var passages []string
+	var run []string
+	flush := func() {
+		if strings.TrimSpace(strings.Join(run, "")) != "" {
+			passages = append(passages, strings.Join(run, "\n"))
+		}
+		run = nil
+	}
+	for _, o := range diffOps(strings.Split(old, "\n"), strings.Split(new, "\n")) {
+		switch o.kind {
+		case opInsert:
+			run = append(run, o.line)
+		case opEqual:
+			flush()
+		}
+	}
+	flush()
+	return passages
+}

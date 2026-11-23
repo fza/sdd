@@ -41,13 +41,16 @@ type sectionSpec struct {
 	sinceCutoff        *time.Time // pointer so we can distinguish "no since()" from "since(0d)"
 	topicPrefix        model.TopicPath
 	indexed            bool
-	untagged           bool      // untagged: keep only entries whose effective topic set is empty
-	idFilter           []string  // id(<id>,...): keep only the listed entries (raw IDs, resolved at apply time)
-	rank               *rankSpec // last-write-wins per d-tac-uww §2
-	pageN              int       // -1 = no page limit
-	skipN              int       // -1 = no skip; skip(N) drops the first N after filtering and ranking, before n(N)
-	groupField         string    // empty = no group; non-empty = group(by(<field>))
-	expandField        string    // empty = no expand; "involvement" (focus-block) or "refs" (per-row ref sub-lines on as-list)
+	// history keeps closed, superseded and retired entries; without it a
+	// listing serves the live population.
+	history     bool
+	untagged    bool      // untagged: keep only entries whose effective topic set is empty
+	idFilter    []string  // id(<id>,...): keep only the listed entries (raw IDs, resolved at apply time)
+	rank        *rankSpec // last-write-wins per d-tac-uww §2
+	pageN       int       // -1 = no page limit
+	skipN       int       // -1 = no skip; skip(N) drops the first N after filtering and ranking, before n(N)
+	groupField  string    // empty = no group; non-empty = group(by(<field>))
+	expandField string    // empty = no expand; "involvement" (focus-block) or "refs" (per-row ref sub-lines on as-list)
 
 	// expandRefsInactive is set by expand(refs(inactive)) — narrows the
 	// per-entry ref sub-lines to refs whose target is currently inactive
@@ -164,6 +167,8 @@ func (s *sectionSpec) rejectGraphPrimitivesForWip() error {
 // the first finding keeps the error focused.
 func (s *sectionSpec) validateMutualExclusion() error {
 	switch {
+	case s.history && s.filter.OpenOnly:
+		return fmt.Errorf("history is mutually exclusive with active; history keeps the whole population, active only the live part")
 	case s.render == "as-counts" && s.groupField != "":
 		return fmt.Errorf("as-counts is mutually exclusive with group; both aggregate the entry set, in different shapes (per-topic counts vs per-field buckets)")
 	case s.render == "as-counts" && s.expandField != "":

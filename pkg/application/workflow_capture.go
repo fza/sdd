@@ -13,7 +13,40 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
-var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
+// fieldPreflightCut holds the error of a pre-flight model answer cut at the
+// token cap: the model did not judge the draft.
+const fieldPreflightCut = "preflightCut"
+
+// fieldPreflightTimeout holds the error of a pre-flight model call that ran
+// past llm.timeout: the model did not judge the draft.
+const fieldPreflightTimeout = "preflightTimeout"
+
+// fieldPreflightSkip records the user's skip of a pre-flight the model did
+// not judge, as the cause model.MarkVerificationSkipped takes.
+const fieldPreflightSkip = "preflightSkip"
+
+// recordPreflightSkip records the user's skip after pre-flight's model answer
+// was cut or timed out, under the verify.skip of a verifier that cannot run.
+func (w *WorkflowSession) recordPreflightSkip(ctx *engine.Context) error {
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
+	if err != nil {
+		return err
+	}
+	if policy.Skip == model.VerifierSkipNever {
+		if timeout, _ := workflowStoreString(ctx.Store, fieldPreflightTimeout); timeout != "" {
+			return errors.New("verify.skip is never, so the capture waits until pre-flight's model judges the draft: retry, or revise it once llm.timeout changed")
+		}
+		return errors.New("verify.skip is never, so the capture waits until pre-flight's model judges the draft: revise it once the settings changed")
+	}
+	for _, finding := range workflowStoreDocuments(ctx.Store, "findings") {
+		if finding["severity"] == string(query.SeverityHigh) {
+			return errors.New("a high finding is open, and a skip leaves it standing: revise the draft")
+		}
+	}
+	return ctx.Store.WriteEngine(fieldPreflightSkip, model.DeepSkipFailure)
+}
+
+var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 	for _, filename := range draft.AttachmentHandles {
@@ -36,24 +69,60 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, w.staged); err != nil {
 		return err
 	}
-	result, err := w.app.PreflightEntry(w.ctx, w.identity, target.Project, w.binding, draft)
+	deepJudges, err := w.deepJudgesPreflight(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := w.app.preflightEntry(w.ctx, w.identity, target.Project, draft, instanceReading(ctx), deepJudges)
 	err = w.withSessionBindingTargetError(err, fromBinding)
 	if target.Branch == "" {
 		err = withBaseTargetError("", err)
 	}
 	var validation *ValidationError
-	if errors.As(err, &validation) {
+	var coded *ApplicationError
+	var cut, timeout any
+	switch {
+	case errors.As(err, &validation):
 		for _, warning := range validation.Warnings {
 			result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "validation", Observation: warning.Message})
 		}
-	} else if err != nil {
+	case errors.As(err, &coded) && coded.Code == ErrorAnswerCut:
+		cut = coded.Error()
+	case errors.As(err, &coded) && coded.Code == ErrorTimedOut:
+		timeout = coded.Error()
+	case err != nil:
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightCut, cut); err != nil {
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightTimeout, timeout); err != nil {
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightSkip, nil); err != nil {
 		return err
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))
 	for _, finding := range result.Findings {
-		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation})
+		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.BasisIDs()})
 	}
 	if err := ctx.Store.WriteEngine("findings", findings); err != nil {
+		return err
+	}
+	err = ctx.Store.WriteEngine("preflightCalls", result.Calls)
+	if err != nil {
+		return err
+	}
+	err = ctx.Store.WriteEngine("preflightExcerpted", result.Excerpted)
+	if err != nil {
+		return err
+	}
+	var rubric any
+	if result.Rubric != "" {
+		rubric = result.Rubric
+	}
+	err = ctx.Store.WriteEngine(fieldPreflightRubric, rubric)
+	if err != nil {
 		return err
 	}
 	if err := ctx.Store.WriteEngine("preflightOverride", nil); err != nil {
@@ -65,6 +134,13 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 func (w *WorkflowSession) prepareWorkflowNewEntry(ctx *engine.Context) (map[string]string, error) {
 	if err := w.verifyCapturePreflight(ctx); err != nil {
 		return nil, err
+	}
+	current, err := w.deepVerdictCurrent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, fmt.Errorf("capture requires a current deep verdict or skip for its current input")
 	}
 	branch, _ := workflowStoreString(ctx.Store, "resolvedCaptureBranch")
 	if branch == "" {
@@ -162,7 +238,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	if err != nil {
 		return false, false, err
 	}
-	current, accepted := false, false
+	current, accepted, mechanicalOnly, unjudged := false, false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -176,7 +252,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				return false, false, err
 			}
 			if slices.Contains(selected, item.Handle) && staged[item.Handle] != item.BlobID {
-				current, accepted = false, false
+				current, accepted, unjudged = false, false, false
 			}
 			staged[item.Handle] = item.BlobID
 			continue
@@ -196,16 +272,19 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 			if fields, ok := record.Data["fields"].(map[string]any); ok {
 				for name := range fields {
 					if slices.Contains(captureDraftFields, name) {
-						current, accepted = false, false
+						current, accepted, unjudged = false, false, false
 					}
 				}
 			}
 		case engine.EventOpResult:
 			name, _ := record.Data["fn"].(string)
 			if name == "preflightEntry" {
-				current, accepted = true, true
 				writes, _ := record.Data["writes"].(map[string]any)
+				unjudged = writes[fieldPreflightCut] != nil || writes[fieldPreflightTimeout] != nil
+				current, accepted = !unjudged, true
 				checkedBranch, _ = writes["resolvedCaptureBranch"].(string)
+				rubric, _ := writes[fieldPreflightRubric].(string)
+				mechanicalOnly = rubric != ""
 				encoded, err := json.Marshal(writes["findings"])
 				if err != nil {
 					return false, false, err
@@ -220,6 +299,11 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 					}
 				}
 			}
+			// A pre-flight the model did not judge covers the draft only
+			// once the user skipped it.
+			if name == "recordPreflightSkip" && unjudged {
+				current = true
+			}
 			if name == "recordOverride" && current {
 				accepted = true
 			}
@@ -227,6 +311,12 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	}
 	if !current {
 		return false, false, nil
+	}
+	if mechanicalOnly {
+		judges, err := w.deepJudgesPreflight(ctx)
+		if err != nil || !judges {
+			return false, false, err
+		}
 	}
 	target, _ := w.effectiveTargetFor(w.instanceProject(ctx.Instance), ctx.Store)
 	if target.Branch == "" {
@@ -243,4 +333,26 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 		return false, false, nil
 	}
 	return current, accepted, nil
+}
+
+// instanceReading is the capture's credited grounding reading as the light
+// verifier judges it: entries served in full, entries listed in the order
+// the reads listed them, and the drafter's verdicts.
+func instanceReading(ctx *engine.Context) *captureReading {
+	reading := &captureReading{setAside: storeVerdicts(ctx.Store)}
+	if ctx.Reading == nil {
+		return reading
+	}
+	reading.full = ctx.Reading.Full()
+	reading.shown = ctx.Reading.Shown()
+	seen := map[string]bool{}
+	for _, read := range ctx.Reading.Reads {
+		for _, id := range read.IDs {
+			if id != "" && !seen[id] {
+				seen[id] = true
+				reading.listed = append(reading.listed, id)
+			}
+		}
+	}
+	return reading
 }

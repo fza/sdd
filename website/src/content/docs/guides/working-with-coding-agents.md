@@ -36,6 +36,21 @@ When a conversation grows long, the agent compacts it into a summary. The sdd se
 - If the agent carries on from memory instead, skipping steps or answering for you, remind it: "Resume the sdd session first."
 - If the summary lost the session ID, the agent cannot find the session by itself. Give it the ID, or start a new session with `/sdd`.
 
+sdd cannot tell whether a compaction happened, so it repeats a piece of text short only while the agent shows it still holds it. sdd sends each piece in full once: an instruction lane, a framing block, a report schema, the vocabulary table. Every response that starts, resumes or advances a session ends with two questions about texts sdd served, one per line in its `question` field, such as `q lane intro: 2 words after "the user first"? | lost`. The next call that advances the session (`start_procedure`, `next`, `park`, `abandon`) must answer both in its `answer` argument, in their order and parted by `;`, as in `reach sdd ; 280`: the words each asks for, or `lost` for one whose text the agent no longer sees. A call without it is refused. When both answers are right, each piece served before comes as a short pointer. A wrong answer or `lost` to either brings every piece in full. The first question asks about the text sdd served longest ago, counting each text from its latest full copy, so right answers show the agent still holds everything served since. The second asks about another held text, or about another spot of the same text when it holds the only one. A question names a phrase that occurs once in its text and asks for the 2 words before or after it, the word between two phrases, or the number after one. The phrase and the words asked for stand side by side on one line, with nothing between them that an agent might count as a word: no arrow, sign or code span, no entry ID, and no full stop inside the run. Two words asked for never end on a word such as "the", "of" or "on", which invites completing the phrase past them. No question rests on where a sentence ends. sdd asks nothing about what the agent or the person wrote, since a compaction summary quotes it: the draft played back, the exchange with a delegate. No phrase occurs in a report, an answer to a choice, the person's words, a park note or a start input, wherever sdd echoes them back. sdd makes the questions when it sends the response and never asks the same question twice in a session. Served text carries no mark for the check.
+
+After a compaction the agent answers `lost` where the summary dropped the text, and the text comes back in full. A question pending at the compaction can be answered from the summary, so sdd notices a compaction one call late at most: the next response's fresh questions catch it. `sdd sessions` counts these catches per session, a `lost` or wrong answer right after a short serve, as in `1 compaction caught one call late`, and `sdd sessions --format json` lists them as `lateCatches`. A subagent working on the same session saw no question, answers `lost` and gets the full text; the main agent's next right answer still gets the pointers. Its `lost` right after a short serve counts as a catch too. An agent that has lost a piece names it in `reread`, and sdd sends it in full again. An entry comes in full on every later call, whatever the answer; within one result an entry already sent comes as its ID and brief. Resuming a session sends every piece in full.
+
+```text
+1 → start_procedure {canonical: capture, answer: lost}
+  ← … instructions, framing and report schema in full …
+    question: q lane intro: 2 words after "the user first"? | lost
+              q lane step: number after "the summary under"? | lost
+2 → next {answer: "before drafting ; 280"}   both right
+  ← (held: lane intro — served to you before; …)
+3 → next {answer: lost}                      text lost in a compaction
+  ← … instructions, framing and report schema in full …
+```
+
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.
 
 ## Resume a session in a fresh agent session
@@ -44,9 +59,25 @@ A session you did not wrap up stays open. In a new agent session, give the agent
 
 How best to hand work between agent sessions this way is still being worked out. Capturing the state as entries first is the safer path.
 
+## Parked captures
+
+Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it with the step and the reason:
+
+```text
+$ sdd sessions
+7f3c2a · idle · last 2026-11-15T03:10:00+01:00
+  - 9d1e4b: capture parked at reviseOrOverride · 9h ago · blocked again after 1 unattended revise
+```
+
+`sdd sessions --format json` lists every open move, parked or not, with `session`, `procedure`, `parked`, `step` and `since`, the park time or else the last activity, `reason` for a parked move, and `lateCatches` where a compaction was caught one call late. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself.
+
 ## Wrap up sessions
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
+
+## Deep verification needs Claude Code
+
+`verify.mode: deep` has a second agent, run by Claude Code, check each draft. In Codex, a session under `deep`, or under a kind set to `deep` in `verify.kinds`, fails to start or resume and names the setting. For a project you work on in Codex, set it to `prose`, `grounding` or `off`, which work with every agent. Codex cannot run the verifier read-only, does not follow the served instructions reliably, and ends its turn while a verifier round still runs.
 
 ## In the dialogue
 

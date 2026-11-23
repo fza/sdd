@@ -1,0 +1,370 @@
+package model
+
+import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
+	"math"
+	"slices"
+	"strings"
+)
+
+// Prefilter constants.
+const (
+	// RecallFloor is the Wilson lower bound (95%) of recall a judge reaches
+	// before it sets any entry aside.
+	RecallFloor = 0.98
+	// RelevantPrecision is the Wilson lower bound (95%) of the referenced
+	// share above which a scored candidate is served in full.
+	RelevantPrecision = 0.5
+	wilsonZ           = 1.959963984540054
+)
+
+// Prefilter statuses a gather serve names.
+const (
+	PrefilterOff     = "off"
+	PrefilterOK      = "ok"
+	PrefilterPartial = "partial"
+	PrefilterFailed  = "failed"
+)
+
+// PrefilterPayload is what one gather's prefilter adds to a capture's
+// reading: the judge, the direction its scores answer from the draft, the
+// draft they answer (RelevanceSubjectHash), and a score byte per candidate.
+type PrefilterPayload struct {
+	Judge   string           `json:"judge"`
+	Forward bool             `json:"forward,omitempty"`
+	Subject string           `json:"subject,omitempty"`
+	Scores  map[string]uint8 `json:"scores,omitempty"`
+	// Audit names the set-aside candidates shown blind as lines to judge.
+	Audit []string `json:"audit,omitempty"`
+}
+
+// RelevanceSubjectHash keys the scores a judge gave against one draft text
+// (RelevanceText): a revised draft has its candidates scored again.
+func RelevanceSubjectHash(subject string) string {
+	sum := sha256.Sum256([]byte(subject))
+	return hex.EncodeToString(sum[:8])
+}
+
+// readingScores is the reading's fold of one judge's prefilter scores, all
+// against the latest draft it scored.
+type readingScores struct {
+	forward bool
+	subject string
+	scores  map[string]uint8
+}
+
+// Scores returns the scores judge gave inside the reading against the draft
+// subject keys, and whether they answer only from the draft to each
+// candidate. Scores against an earlier draft are none.
+func (r *Reading) Scores(judge, subject string) (map[string]uint8, bool) {
+	if r == nil || r.scores[judge] == nil || r.scores[judge].subject != subject {
+		return nil, false
+	}
+	held := r.scores[judge]
+	return held.scores, held.forward
+}
+
+func (r *Reading) foldPrefilter(p *PrefilterPayload) {
+	if p == nil || p.Judge == "" {
+		return
+	}
+	if r.scores == nil {
+		r.scores = map[string]*readingScores{}
+	}
+	held := r.scores[p.Judge]
+	if held == nil || held.subject != p.Subject {
+		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}}
+		r.scores[p.Judge] = held
+	}
+	if r.audit == nil {
+		r.audit = map[string]bool{}
+	}
+	for _, id := range p.Audit {
+		r.audit[id] = true
+	}
+	for id, score := range p.Scores {
+		if current, ok := held.scores[id]; !ok || score > current {
+			held.scores[id] = score
+		}
+	}
+}
+
+// WilsonLower is the Wilson score interval's lower bound (95%) of the share
+// successes/n.
+func WilsonLower(successes, n int) float64 {
+	return WilsonLowerWeighted(float64(successes), float64(n))
+}
+
+// WilsonLowerWeighted is WilsonLower over weighted labels: n is the sum of
+// the labels' weights and successes the sum over the successful ones, so
+// with p = successes/n and z = 1.96 the bound is
+//
+//	(p + z²/2n - z·sqrt(p(1-p)/n + z²/4n²)) / (1 + z²/n)
+//
+// A label of weight w counts as w of a whole one: four implicit dismissals
+// at 0.25 move the bound as one explicit answer does.
+func WilsonLowerWeighted(successes, n float64) float64 {
+	if n <= 0 {
+		return 0
+	}
+	p := min(max(successes/n, 0), 1)
+	z2 := wilsonZ * wilsonZ
+	center := p + z2/(2*n)
+	margin := wilsonZ * math.Sqrt(p*(1-p)/n+z2/(4*n*n))
+	return (center - margin) / (1 + z2/n)
+}
+
+// Label kinds: how a reader record counts as a calibration label.
+const (
+	LabelPositive = "positive"
+	LabelNegative = "negative"
+	LabelCounted  = "counted"
+	LabelExcluded = "excluded"
+)
+
+// Label weights by reader state: how much one label counts in calibration.
+const (
+	WeightReferenced = 1.0
+	WeightOpened     = 0.5
+	WeightDismissed  = 1.0
+	WeightImplicit   = 0.25
+)
+
+// RelevanceLabel is one judged pair a judge scored: the reader's answer as a
+// calibration label with the judge's score and the label's weight.
+type RelevanceLabel struct {
+	Pair   RelevancePair
+	Score  uint8
+	Kind   string
+	Reason string
+	Audit  bool
+	Source ReaderSource
+	Weight float64
+}
+
+// LabelKind classifies a reader record: a reference and a flipped implicit
+// dismissal are positive; an implicit dismissal and a set-aside coded
+// topic-only, other-scope or term-clash are negative; other is counted only;
+// covered, meta, no code and unknown codes are excluded.
+func LabelKind(verdict ReaderVerdict) string {
+	switch verdict.Code {
+	case ReaderReferenced:
+		return LabelPositive
+	case ReaderImplicit:
+		if verdict.Flipped {
+			return LabelPositive
+		}
+		return LabelNegative
+	case ReaderNone:
+		return LabelExcluded
+	}
+	switch VerdictReasonCode(verdict.Reason) {
+	case VerdictTopicOnly, VerdictOtherScope, VerdictTermClash:
+		return LabelNegative
+	case VerdictOther:
+		return LabelCounted
+	}
+	return LabelExcluded
+}
+
+// LabelWeight is the weight of a reader record's label by its state; a
+// flip keeps the implicit weight.
+func LabelWeight(verdict ReaderVerdict) float64 {
+	switch verdict.Code {
+	case ReaderReferenced:
+		return WeightReferenced
+	case ReaderOpened:
+		return WeightOpened
+	case ReaderDismissed:
+		return WeightDismissed
+	case ReaderImplicit:
+		return WeightImplicit
+	}
+	return 0
+}
+
+// Labels returns every pair with a reader record that judge scored, sorted
+// by pair. The subject of a pair is its later entry, the one whose reading
+// judged the other.
+func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
+	var labels []RelevanceLabel
+	for _, pair := range l.Pairs() {
+		score, ok := l.Score(pair, pair.B, judge)
+		if !ok {
+			continue
+		}
+		verdict := l.readers[pair]
+		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Source: verdict.Source, Weight: LabelWeight(verdict)})
+	}
+	return labels
+}
+
+// Unscored returns the labelled pairs judge has no score for: what a judge
+// change re-scores before its bound is computed.
+func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
+	var pairs []RelevancePair
+	for _, pair := range l.Pairs() {
+		kind := LabelKind(l.readers[pair])
+		if kind != LabelPositive && kind != LabelNegative {
+			continue
+		}
+		if _, ok := l.Score(pair, pair.B, judge); !ok {
+			pairs = append(pairs, pair)
+		}
+	}
+	return pairs
+}
+
+// Calibrate computes a judge's thresholds from its labels, each counted by
+// its weight (WilsonLowerWeighted). The set-aside threshold is the highest
+// score that keeps the lower bound of weighted recall over the positive
+// labels at RecallFloor (setAsideCut), or the lower cut of the live labels
+// once they hold the bound alone: a replayed reference is an easier positive
+// than an entry a live reading had to find. The relevant threshold is the
+// lowest score, never below the set-aside threshold, at and above which the
+// lower bound of the weighted positive share of the live labels reaches
+// RelevantPrecision: replayed labels are positives only, so counting them
+// would hold that share at every score. Until the recall bound holds, the
+// thresholds are invalid and decide nothing. Drift steps cap the set-aside
+// threshold; it never rises above a step.
+func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
+	setAside, ok := setAsideCut(labels)
+	if !ok {
+		return RelevanceThresholds{}
+	}
+	live := LiveLabels(labels)
+	fromLive := false
+	if cut, ok := setAsideCut(live); ok && cut < setAside {
+		setAside, fromLive = cut, true
+	}
+	for _, step := range steps {
+		if step.Judge == judge && step.SetAside < setAside {
+			setAside = step.SetAside
+		}
+	}
+	return RelevanceThresholds{Valid: true, SetAside: ScoreValue(setAside), SetAsideLive: fromLive, Relevant: relevantThreshold(live, setAside)}
+}
+
+// setAsideCut is the highest score that keeps the lower bound of the
+// positive labels' weighted recall at RecallFloor; ok is false while the
+// bound does not hold.
+func setAsideCut(labels []RelevanceLabel) (cut uint8, ok bool) {
+	var positives []RelevanceLabel
+	total := 0.0
+	for _, label := range labels {
+		if label.Kind == LabelPositive {
+			positives = append(positives, label)
+			total += label.Weight
+		}
+	}
+	slices.SortStableFunc(positives, func(a, b RelevanceLabel) int { return cmp.Compare(a.Score, b.Score) })
+	missed := 0.0
+	for i, positive := range positives {
+		if WilsonLowerWeighted(total-missed, total) < RecallFloor {
+			break
+		}
+		missed += positive.Weight
+		if i > 0 && positive.Score == positives[i-1].Score {
+			continue
+		}
+		cut, ok = positive.Score, true
+	}
+	return cut, ok
+}
+
+// noRelevantThreshold lies above every score: nothing is served in full.
+const noRelevantThreshold = 2.0
+
+func relevantThreshold(labels []RelevanceLabel, floor uint8) float64 {
+	judged := slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool {
+		return label.Kind != LabelPositive && label.Kind != LabelNegative
+	})
+	slices.SortFunc(judged, func(a, b RelevanceLabel) int { return cmp.Compare(b.Score, a.Score) })
+	relevant := noRelevantThreshold
+	positive, weight := 0.0, 0.0
+	for i, label := range judged {
+		if label.Score < floor {
+			break
+		}
+		weight += label.Weight
+		if label.Kind == LabelPositive {
+			positive += label.Weight
+		}
+		if i+1 < len(judged) && judged[i+1].Score == label.Score {
+			continue
+		}
+		if WilsonLowerWeighted(positive, weight) >= RelevantPrecision {
+			relevant = ScoreValue(label.Score)
+		}
+	}
+	return relevant
+}
+
+// Prefiltered is where a scored reading places its candidates.
+type Prefiltered struct {
+	Relevant []GatherCandidate
+	ToJudge  []GatherCandidate
+	SetAside []string
+}
+
+// PlacePrefiltered places candidates by their scores: with valid thresholds a
+// score below SetAside is set aside and any other at or above Relevant
+// served in full; every other candidate, scored or not, stays to judge, scored ones
+// first by falling score. Without valid thresholds nothing is set aside or
+// served: the prefilter only sorts.
+func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds) Prefiltered {
+	var placed Prefiltered
+	for _, candidate := range candidates {
+		score, ok := scores[candidate.Entry.ID]
+		if ok {
+			value := ScoreValue(score)
+			candidate.Score = &value
+		}
+		switch {
+		case ok && thresholds.Valid && ScoreValue(score) < thresholds.SetAside:
+			placed.SetAside = append(placed.SetAside, candidate.Entry.ID)
+		case ok && thresholds.Valid && ScoreValue(score) >= thresholds.Relevant:
+			placed.Relevant = append(placed.Relevant, candidate)
+		default:
+			placed.ToJudge = append(placed.ToJudge, candidate)
+		}
+	}
+	byScore := func(a, b GatherCandidate) int {
+		switch {
+		case a.Score != nil && b.Score == nil:
+			return -1
+		case a.Score == nil && b.Score != nil:
+			return 1
+		case a.Score != nil && b.Score != nil && *a.Score != *b.Score:
+			return cmp.Compare(*b.Score, *a.Score)
+		}
+		return 0
+	}
+	slices.SortStableFunc(placed.ToJudge, byScore)
+	slices.SortStableFunc(placed.Relevant, byScore)
+	slices.Sort(placed.SetAside)
+	return placed
+}
+
+// RelevanceText is the whole text the prefilter reads of an entry: kind,
+// topics and body, never cut.
+func RelevanceText(kind string, topics []string, body string) string {
+	var b strings.Builder
+	b.WriteString("kind: " + kind + "\n")
+	if len(topics) > 0 {
+		b.WriteString("topics: " + strings.Join(topics, ", ") + "\n")
+	}
+	b.WriteString("\n" + strings.TrimSpace(body))
+	return b.String()
+}
+
+// EntryRelevanceText is RelevanceText of an entry with its effective topics.
+func EntryRelevanceText(g *Graph, e *Entry) string {
+	var topics []string
+	for _, topic := range g.EffectiveTopics(e) {
+		topics = append(topics, topic.String())
+	}
+	return RelevanceText(string(e.Kind), topics, e.Content)
+}

@@ -115,6 +115,48 @@ func TestStoreValueBoundsAtTheUnitContext(t *testing.T) {
 	}
 }
 
+func TestInjectUnderAStoreNameServesItsOwnBound(t *testing.T) {
+	reg := engine.NewRegistry()
+	long := longLines(100) // ~4100 bytes, over the 2000-byte store-value default
+	if err := reg.RegisterCommand(engine.Command{
+		Doc: engine.FuncDoc{Name: "writePage", Doc: "test engine-written value", Writes: []string{"page"}},
+		Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine("page", long) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterQuery(engine.Query{
+		Doc:   engine.FuncDoc{Name: "wholePage", Doc: "test whole store value"},
+		Bound: engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: 10000}},
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			value, _ := ctx.Store.Get("page")
+			return value, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	machine := `state:
+    note: {type: text, desc: x}
+steps:
+    - id: load
+      op: writePage
+      transitions:
+          - otherwise: draft
+    - id: draft
+      collect: [note]
+      inject:
+          - {fn: wholePage, id: page}
+      transitions:
+          - when: hasBody
+            to: end(completed)`
+	sv := startServe(t, reg, machine, "## unit: draft\n\n### lane: page\n\n{{.page}}\n")
+	if page := serveLaneText(t, sv, "page"); page != long {
+		t.Errorf("page lane = %dB, want the inject's whole value", len(page))
+	}
+	if len(sv.Cuts) != 0 {
+		t.Errorf("Serve.Cuts = %+v, want no store cut for a value an inject replaces", sv.Cuts)
+	}
+}
+
 func TestDraftListRenderCutsAtWholeItems(t *testing.T) {
 	machine := `state:
     topics: {type: list<label>, desc: labels}

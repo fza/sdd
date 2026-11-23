@@ -96,8 +96,11 @@ type NewEntryCmd struct {
 	// a prior --dry-run pass already settled, recording
 	// model.PreflightDryRunVerified rather than a bypass.
 	PreflightVerified bool
-	DryRun            bool
-	PreflightModel    string
+	// SkipGrounding records a bypass of the grounding gate: the entry is
+	// written with grounding: skipped and low confidence.
+	SkipGrounding  bool
+	DryRun         bool
+	PreflightModel string
 
 	// Summary supplies the entry's stored summary verbatim, skipping LLM
 	// generation entirely. For callers that already hold a faithful
@@ -170,6 +173,10 @@ func (c *NewEntryCmd) BuildEntry(id string) (*model.Entry, error) {
 	// Apply per-type default when no kind is specified.
 	if entry.Kind == "" {
 		entry.Kind = model.DefaultKindForType(entry.Type)
+	}
+	if c.SkipGrounding {
+		entry.Grounding = model.GroundingSkipped
+		entry.Confidence = "low"
 	}
 
 	// Topics routing: annotation entries take the rich AnnotationTopics

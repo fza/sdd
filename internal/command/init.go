@@ -36,6 +36,18 @@ type InitCmd struct {
 	// field into the mapping without disturbing other keys (e.g. llm:).
 	Participant string
 
+	// DialogueMode, when set, records the person's dialogue.mode in the
+	// machine-local config.
+	DialogueMode model.DialogueMode
+
+	// VerifyMode, when set, records how carefully drafts are checked against
+	// the graph as verify.mode in the committed config.yaml.
+	VerifyMode model.VerifyMode
+
+	// VerifierRunner, when set, records what runs the deep verifier on this
+	// machine in the machine-local config.
+	VerifierRunner model.VerifierRunner
+
 	// Language is the graph authoring language (locale code) to record in
 	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.
@@ -138,6 +150,10 @@ type InitCmd struct {
 	// value already matches (idempotent re-init produces no callback).
 	OnParticipantWritten func(path, name string)
 
+	// OnLocalSettingWritten fires when init writes another personal setting
+	// into the machine-local config.
+	OnLocalSettingWritten func(path, key, value string)
+
 	// OnRepoIDWritten fires when a derived repo_id is recorded in
 	// .sdd/config.yaml — on fresh init or as an upgrade upsert. Does not
 	// fire when the config already carries a value.
@@ -193,6 +209,10 @@ func (r AgentPruneResult) TouchedAnything() bool {
 func (c *InitCmd) Validate() error {
 	if c.RepoRoot == "" {
 		return fmt.Errorf("repo root is required")
+	}
+	settings := model.BaseConfig{Dialogue: model.DialogueConfig{Mode: c.DialogueMode}}
+	if ignored := model.IgnoredSettings(settings, model.ConfigSourceLocal); len(ignored) > 0 {
+		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
 	}
 	return nil
 }

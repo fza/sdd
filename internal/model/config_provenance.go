@@ -31,11 +31,19 @@ type ConfigValue struct {
 // layer sets a key — the values a run actually uses, so `sdd config` answers
 // "what will happen" rather than "what is written down".
 var configDefaults = map[string]string{
-	"graph_dir":       DefaultGraphDir,
-	"llm.provider":    DefaultLLMProvider,
-	"llm.model":       DefaultLLMModel,
-	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
-	"sync.cooldown":   DefaultSyncCooldown,
+	"graph_dir":            DefaultGraphDir,
+	"llm.provider":         DefaultLLMProvider,
+	"llm.model":            DefaultLLMModel,
+	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
+	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
+	"sync.cooldown":        DefaultSyncCooldown,
+	"dialogue.mode":        string(DialogueGuided),
+	"verify.mode":          string(DefaultVerifyMode),
+	"verify.skip":          string(VerifierSkipFailure),
+	"verify.runner":        string(VerifierRunnerSubagent),
+	"verify.prefilter":     strconv.FormatBool(DefaultGroundingPrefilter),
+	"verify.claude.model":  DefaultVerifierClaude.Model,
+	"verify.claude.effort": DefaultVerifierClaude.Effort,
 
 	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
 
@@ -222,6 +230,9 @@ func effectiveMapEntries(leaf configLeaf, layers []struct {
 }
 
 func renderConfigValue(v reflect.Value) string {
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
 	if v.Kind() == reflect.Slice {
 		parts := make([]string, 0, v.Len())
 		for i := 0; i < v.Len(); i++ {

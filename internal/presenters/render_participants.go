@@ -15,7 +15,7 @@ import (
 // Empty groups suppress output entirely. The CLI shell handles the
 // outer `## <name>` header (when name() is set), so this function
 // focuses on the per-actor bodies.
-func renderAsParticipantsBlock(w io.Writer, g *model.Graph, block model.ParticipantsBlock, brief bool) {
+func renderAsParticipantsBlock(w io.Writer, g *model.Graph, block model.ParticipantsBlock, brief bool, r *Repeats) {
 	if len(block.Groups) == 0 {
 		return
 	}
@@ -31,9 +31,9 @@ func renderAsParticipantsBlock(w io.Writer, g *model.Graph, block model.Particip
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintf(w, "### %s\n", grp.Actor.Canonical)
-		line(w, grp.Actor, g)
-		for _, r := range grp.Roles {
-			line(w, r, g)
+		r.entry(w, grp.Actor, func() { line(w, grp.Actor, g) })
+		for _, role := range grp.Roles {
+			r.entry(w, role, func() { line(w, role, g) })
 		}
 	}
 	if block.Dropped > 0 {

@@ -53,6 +53,12 @@ running move at its current step with the schema to continue it, in full. If
 you lost the handle itself, ask the user: sessions are never listed on this
 surface, and a handle is never guessed.`
 
+const autonomousResumeInstructions = `Session resumed: step position and collected evidence persist; the
+open_instances list carries each running instance's current serve — the
+session shell (user-dialogue) among them, carrying the open-threads block.
+Continue through next, carrying this session's handle. If you lose your place
+again later, resume_session with this handle re-serves this list in full.`
+
 const resumeInstructions = `Session resumed: step position and collected evidence persist; the
 open_instances list carries each running instance's current serve — the
 session shell (user-dialogue) among them, carrying the open-threads block.
@@ -60,3 +66,17 @@ Brief the user on where the work stands (procedure, step, goal) before
 continuing, and continue through next, carrying this session's handle. If you
 lose your place again later, resume_session with this handle re-serves this
 list in full.`
+
+// questionGuide tells an agent, at the opening and at every reorientation,
+// how it answers the text question (20261121-230157-d-tac-ym8).
+const questionGuide = `Every response that starts, resumes or advances the session ends with two
+questions about texts sdd served you, one per line, such as
+q <text name>: 2 words after "<a phrase>"? | lost
+Your next call that advances the session (start_procedure, next, park,
+abandon) must answer both in answer, in their order and parted by ;, as in
+reach sdd ; 280: the words each asks for, looked up in its text, or lost
+for one whose text you no longer see. A response with one question takes
+one answer; saw no question, answer lost. Never guess. Both right serve
+repeated instructions, report schemas and framing short; lost or a wrong
+answer to either serves them in full. List in reread the name of a piece
+you no longer see: it serves in full again.`

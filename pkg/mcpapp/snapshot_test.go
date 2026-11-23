@@ -33,6 +33,13 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
 		}
+		// The question a response ends with is drawn per response; its own
+		// tests pin it (text_question_test.go).
+		if fields, ok := value.(map[string]any); ok {
+			if _, asked := fields["question"]; asked {
+				fields["question"] = "<question drawn per response>"
+			}
+		}
 		writeValue(&sb, value, 0)
 	}
 	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, aliasSessions(sb.String()))
