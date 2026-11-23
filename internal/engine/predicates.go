@@ -431,6 +431,9 @@ func registerBuiltinPredicates(r *Registry) {
 		},
 		Fn:          noHookFindings,
 		FailMessage: "the hooks joined findings into the step's findings channel",
+		// Routes a gate as verification's selectors do: a transition it rules
+		// out is off the step's path and names nothing that holds it.
+		Selector: true,
 	})
 
 	mustRegisterPredicate(r, Predicate{
