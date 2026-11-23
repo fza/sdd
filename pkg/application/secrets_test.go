@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ func TestEngineRefusesACredentialBeforeAnyModelCall(t *testing.T) {
 func TestEngineRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	credential := fixtureCredential(t, "gitlab-pat")
 	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(_ context.Context, request llm.Request) (llm.Result, error) {
-		return llm.Result{Text: credential}, nil
+		return llm.Result{Text: fmt.Sprintf(`{"title": "Test title", "summary": %q}`, credential)}, nil
 	})})
 	draft := f.identifiedDraft(sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "A clean body."})
 
@@ -123,7 +124,7 @@ func TestEngineSendsAStoredCredentialAsContext(t *testing.T) {
 			preflights++
 			return llm.Result{Text: `{"findings":[]}`}, nil
 		}
-		return llm.Result{Text: "The leaked deployment notes are replaced."}, nil
+		return llm.Result{Text: `{"title": "Test title", "summary": "The leaked deployment notes are replaced."}`}, nil
 	}))
 	f := newWriteFixture(t, writeFixtureOptions{Runner: runner})
 	stored := filepath.Join(f.graphDir, "2026", "01", "01-120000-s-tac-lek.md")

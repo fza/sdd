@@ -39,7 +39,7 @@ func newGroundedDependencyFixture(t *testing.T) groundedDependencyFixture {
 		text := `{"findings":[]}`
 		switch request.Purpose {
 		case pkgllm.PurposeSummarize:
-			text = "A gap captured under grounding."
+			text = `{"title": "Grounded gap", "summary": "A gap captured under grounding."}`
 		}
 		return pkgllm.Result{Text: text, Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
 	})

@@ -103,6 +103,7 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 	if embeddings != nil {
 		options.Embedder = embeddings
 		options.SearchIndex = localadapter.NewPersistentSearchIndexStore(gatherProject, t.TempDir(), "gather/repo")
+		options.RuneCap = testRuneCap
 	}
 	runtime, err := sdd.NewProjectRuntime(options)
 	if err != nil {

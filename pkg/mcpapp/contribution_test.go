@@ -69,7 +69,7 @@ func contributionServer(t *testing.T) (*mcpserver.Server, string, string) {
 		Targets: targets, Branches: targets,
 		LLM: pkgllm.RunnerFunc(func(_ context.Context, request pkgllm.Request) (pkgllm.Result, error) {
 			if request.Purpose == pkgllm.PurposeSummarize {
-				return pkgllm.Result{Text: "A contributed gap."}, nil
+				return pkgllm.Result{Text: `{"title": "Contributed gap", "summary": "A contributed gap."}`}, nil
 			}
 			return pkgllm.Result{Text: `{"findings": []}`}, nil
 		}),

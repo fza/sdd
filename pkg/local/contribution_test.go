@@ -65,7 +65,7 @@ func TestRepositoryTargetsApplyContributionModePerCheckout(t *testing.T) {
 	}
 	repo.write("global-config.yaml", "")
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: "Rendered summary."}, nil
+		return pkgllm.Result{Text: `{"title": "Contributed capture", "summary": "Rendered summary."}`}, nil
 	}))
 	capture := func(sequence uint64, branch string) error {
 		_, err := application.CreateEntry(t.Context(), identity, "example", binding, sdd.EntryDraft{
