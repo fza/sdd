@@ -118,7 +118,8 @@ func TestInitCompletesTheCommitAnEarlierRunLeftUndone(t *testing.T) {
 func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 	repo := initTempRepo(t)
 	mustInit(t, firstInit...)
-	gitignore := filepath.Join(repo, ".gitignore")
+	// Init keeps its ignore lines in .sdd/.gitignore (sync-graph-repository).
+	gitignore := filepath.Join(repo, ".sdd", ".gitignore")
 	content, err := os.ReadFile(gitignore)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +136,7 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 
 	mustInit(t)
 
-	if status := gitIn(t, repo, "status", "--porcelain"); status != " M .gitignore\n" {
+	if status := gitIn(t, repo, "status", "--porcelain"); status != " M .sdd/.gitignore\n" {
 		t.Errorf("the retried commit should take the restored skill and leave the user's own edit uncommitted:\n%s", status)
 	}
 	if _, statErr := os.Stat(uncommittedRecord(repo)); !os.IsNotExist(statErr) {

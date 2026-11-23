@@ -96,6 +96,9 @@ func TestServeFollowsAnLLMChange(t *testing.T) {
 			report := map[string]any{
 				"body": body, "entryKind": "gap", "layer": "tactical", "topics": []string{"testing/llm"},
 				"confidence": "low", "widenReport": "searched the graph for onboarding and release records; it holds none.",
+				// No gather reads the graph; verification's grounding gate lets the
+				// low-confidence draft past its reading.
+				"skipGrounding": true,
 			}
 			playback, served, failed := callStepTool(t, client, "next", map[string]any{"session": session, "instance": started.Instance, "report": report})
 			if failed || playback.Step != "playback" {
@@ -134,7 +137,7 @@ type servedStep struct {
 // and whether the call failed.
 func callStepTool(t *testing.T, client *mcp.ClientSession, tool string, args map[string]any) (servedStep, string, bool) {
 	t.Helper()
-	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: answered(tool, args)})
 	if err != nil {
 		t.Fatalf("%s: %v", tool, err)
 	}

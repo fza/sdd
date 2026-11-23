@@ -203,7 +203,7 @@ func TestServeReadsHooksAfreshOnEveryCall(t *testing.T) {
 	fixture.serve(t, func(client *mcp.ClientSession) {
 		handle := startSession(t, client)
 		payloadFile = fixture.payloadHook(t, "config/sdd/config.yaml", "capture.assemble.start")
-		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture"}})
+		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: answered("start_procedure", map[string]any{"session": handle, "canonical": "capture"})})
 		if err != nil || result.IsError {
 			t.Fatalf("start_procedure: %v %+v", err, result)
 		}

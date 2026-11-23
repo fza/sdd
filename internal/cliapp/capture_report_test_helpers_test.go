@@ -8,5 +8,8 @@ func captureReport() map[string]any {
 		"topics":      []string{"testing/connected"},
 		"confidence":  "low",
 		"widenReport": "searched the platform graph for consumer records; it holds none.",
+		// No gather reads the graph here; verification's grounding gate passes
+		// the low-confidence draft past its reading.
+		"skipGrounding": true,
 	}
 }
