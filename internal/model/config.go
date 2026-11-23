@@ -264,6 +264,64 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+	// ClaudeCLI tunes the claude-cli provider alone.
+	ClaudeCLI ClaudeCLIConfig `yaml:"claude_cli,omitempty"`
+}
+
+// ClaudeCLIConfig holds the settings only the claude-cli provider reads.
+type ClaudeCLIConfig struct {
+	// Credentials selects what `claude -p` authenticates with. Empty means
+	// DefaultClaudeCLICredentials.
+	Credentials ClaudeCLICredentials `yaml:"credentials,omitempty"`
+}
+
+// ClaudeCLICredentials is the closed set of llm.claude_cli.credentials values.
+type ClaudeCLICredentials string
+
+const (
+	// ClaudeCLICredentialsLogin runs `claude -p` on the Claude Code login,
+	// with the Anthropic credential variables removed from its environment.
+	ClaudeCLICredentialsLogin ClaudeCLICredentials = "login"
+	// ClaudeCLICredentialsEnv passes the environment through unchanged, so
+	// `claude -p` can run on an Anthropic API key, Bedrock or Vertex.
+	ClaudeCLICredentialsEnv ClaudeCLICredentials = "env"
+)
+
+// DefaultClaudeCLICredentials applies when llm.claude_cli.credentials is unset.
+const DefaultClaudeCLICredentials = ClaudeCLICredentialsLogin
+
+var knownClaudeCLICredentials = []ClaudeCLICredentials{ClaudeCLICredentialsLogin, ClaudeCLICredentialsEnv}
+
+// ParseClaudeCLICredentials validates s against the known values, resolving
+// empty to DefaultClaudeCLICredentials.
+func ParseClaudeCLICredentials(s string) (ClaudeCLICredentials, error) {
+	if s == "" {
+		return DefaultClaudeCLICredentials, nil
+	}
+	for _, c := range knownClaudeCLICredentials {
+		if string(c) == s {
+			return c, nil
+		}
+	}
+	names := make([]string, len(knownClaudeCLICredentials))
+	for i, c := range knownClaudeCLICredentials {
+		names[i] = string(c)
+	}
+	return "", fmt.Errorf("unknown llm.claude_cli.credentials %q (known: %s)", s, strings.Join(names, ", "))
+}
+
+// UnmarshalYAML refuses a value outside the closed set, so a misspelt value
+// fails the config load and `sdd config set` instead of falling back to login.
+func (c *ClaudeCLICredentials) UnmarshalYAML(node *yaml.Node) error {
+	var s string
+	if err := node.Decode(&s); err != nil {
+		return err
+	}
+	if _, err := ParseClaudeCLICredentials(s); err != nil {
+		return err
+	}
+	*c = ClaudeCLICredentials(s)
+	return nil
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -464,6 +522,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 		out.RateLimitRPS = overlay.RateLimitRPS
 	}
 	out.Retry = mergeRetryConfig(base.Retry, overlay.Retry)
+	if overlay.ClaudeCLI.Credentials != "" {
+		out.ClaudeCLI.Credentials = overlay.ClaudeCLI.Credentials
+	}
 	if len(overlay.APIKeys) > 0 {
 		if out.APIKeys == nil {
 			out.APIKeys = make(map[string]string, len(overlay.APIKeys))

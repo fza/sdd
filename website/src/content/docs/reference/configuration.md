@@ -90,6 +90,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
+| `llm.claude_cli.credentials` | `login` | What `claude-cli` authenticates with. `login` uses your Claude Code login: `claude -p` gets no `ANTHROPIC_*` or `CLAUDE_*` variable but the login's own and a few TLS and path ones, and no user, project or local settings file. `env` passes the environment and your settings, so `claude -p` can run on an Anthropic API key or another provider such as Bedrock or Vertex. See [Claude Code CLI](#claude-code-cli). |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
@@ -251,6 +252,28 @@ llm:
   provider: claude-cli
   model: claude-sonnet-4-6
 ```
+
+sdd runs `claude -p` isolated:
+
+- `--tools ""` and `--strict-mcp-config`: no built-in tools and no MCP servers.
+- `--safe-mode`: instruction files, skills, plugins, hooks and your other customizations stay out of the prompt.
+- `--no-session-persistence`: no transcript of the draft stays under `~/.claude`.
+- An empty temporary working directory, removed after the call, so no project file is in reach either.
+- In every mode, none of the variables a Claude Code session hands the processes it starts, such as `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` or `CLAUDE_CODE_ENTRYPOINT`. When an agent started sdd, the call would otherwise count itself part of that agent's session.
+- With `llm.claude_cli.credentials: login`, the default, no `ANTHROPIC_*` or `CLAUDE_*` variable reaches `claude -p`, matched without regard to case, except `CLAUDE_CONFIG_DIR`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_CERT_STORE`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`, `CLAUDE_CODE_DISABLE_LOOPED_CROSS_CERT_DROP`, `CLAUDE_CODE_DISABLE_SELF_NAMED_CERT_DROP`, `CLAUDE_CODE_GIT_BASH_PATH` and `CLAUDE_CODE_TMPDIR`. Every other variable passes. No user, project or local settings file loads (`--setting-sources ""`), since a settings file's `env` block and `apiKeyHelper` apply even in safe mode; managed policy settings still apply.
+
+Every variable that moves a call off the login, such as a key, an endpoint, a provider switch, `ANTHROPIC_PROFILE` or a host-managed credential, sits in Claude's own name space. Provider credentials outside it, such as `AWS_*`, take effect only through a `CLAUDE_CODE_USE_*` switch inside it. To use an API key or another variable of that name space, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex. A proxy or CA set only in your settings' `env` block is left out in `login` mode: export it, or use `env`.
+
+Two file-borne routes stay open in `login` mode:
+
+- The `env` map of Claude Code's global config, `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`, or a legacy `.config.json` in Claude Code's config directory. Claude Code applies it whatever `--setting-sources` says, so a key, endpoint or provider switch there moves the call off your login.
+- An Anthropic Console profile. Claude Code looks for it in `ANTHROPIC_CONFIG_DIR`, else `$XDG_CONFIG_HOME/anthropic`, else `~/.config/anthropic`, under the name in `<dir>/active_config`, else `default`. A profile of type `oidc_federation` takes precedence over your stored claude.ai login and may carry its own `base_url`, so with one the calls run on that profile, unless `CLAUDE_CODE_OAUTH_TOKEN` or its file descriptor is set. A `user_oauth` profile answers only when no claude.ai login is stored.
+
+Without either, and unless your managed policy settings' `env` sets one, `login` mode bills your Claude Code login.
+
+`claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
+
+If you ran `claude-cli` on an exported `ANTHROPIC_API_KEY` without a Claude Code login, calls now fail with `Not logged in`. Sign in to Claude Code with `/login`, or set `llm.claude_cli.credentials: env`. With one of the two file-borne routes above, the calls run on it instead of failing. Any other `ANTHROPIC_*` or `CLAUDE_*` variable a setup relied on needs `llm.claude_cli.credentials: env` too.
 
 ## Embedding providers
 
