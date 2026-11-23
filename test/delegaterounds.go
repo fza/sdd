@@ -56,7 +56,7 @@ func (l *ScriptedLauncher) LaunchDelegate(ctx context.Context, launch sdd.Delega
 	}
 	l.mu.Lock()
 	refusal := l.refusal
-	if refusal == nil && !inRoundProcess(ctx) {
+	if refusal == nil && !InRoundProcess(ctx) {
 		l.launches = append(l.launches, launch)
 	}
 	l.mu.Unlock()
@@ -134,7 +134,8 @@ func (r *ScriptedRound) FinishSaying(session, message string) {
 }
 
 // Eventually waits until done holds, failing the test naming what when it
-// does not in time. For outcomes a background round records after it ended.
+// does not in time. For outcomes that land in the background, such as what a
+// round records after it ended.
 func Eventually(t testing.TB, what string, done func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(roundWait)

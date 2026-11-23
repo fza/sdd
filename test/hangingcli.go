@@ -13,8 +13,9 @@ import (
 )
 
 // HangingCLI is an executable on PATH whose run never ends, as a CLI whose
-// call hangs: it records its PID, then waits on a child of its own holding
-// its output.
+// call hangs: it starts a child of its own holding its output, records its
+// PID, then waits on the child. Recording after the fork keeps a group kill
+// that follows Leader from missing a child still being forked.
 type HangingCLI struct {
 	dir string
 }
@@ -28,9 +29,9 @@ func NewHangingCLI(t *testing.T, name string) *HangingCLI {
 	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
+		"sleep 300 &\n" +
 		"echo $$ > '" + dir + "/leader.tmp'\n" +
 		"mv '" + dir + "/leader.tmp' '" + dir + "/leader'\n" +
-		"sleep 300 &\n" +
 		"wait\n"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

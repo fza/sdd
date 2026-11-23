@@ -470,11 +470,5 @@ func TestCaptureDeep_ShutdownEndsABackgroundRankingsCLI(t *testing.T) {
 	if err := world.App.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !test.GroupGone(group) {
-		if time.Now().After(deadline) {
-			t.Fatal("the ranking pass's claude CLI outlived the application's shutdown")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	test.Eventually(t, "the ranking pass's claude CLI ending with the application's shutdown", func() bool { return test.GroupGone(group) })
 }

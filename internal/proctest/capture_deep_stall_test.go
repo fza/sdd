@@ -13,10 +13,17 @@ import (
 
 // stalledLauncher launches rounds that never return, not even once their
 // context ends, as a headless agent whose script failed while its process
-// stayed alive.
-type stalledLauncher struct{ release chan struct{} }
+// stayed alive. A round's process gets its round only once run is closed.
+type stalledLauncher struct{ run, release chan struct{} }
 
-func (l stalledLauncher) LaunchDelegate(context.Context, sdd.DelegateLaunch) (sdd.DelegateRun, error) {
+func (l stalledLauncher) LaunchDelegate(ctx context.Context, _ sdd.DelegateLaunch) (sdd.DelegateRun, error) {
+	if test.InRoundProcess(ctx) {
+		select {
+		case <-l.run:
+		case <-ctx.Done():
+			return sdd.DelegateRun{}, ctx.Err()
+		}
+	}
 	return sdd.DelegateRun{Runner: "claude", Round: func(context.Context, sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
 		<-l.release
 		return sdd.DelegateRoundEnd{}, nil
@@ -26,14 +33,19 @@ func (l stalledLauncher) LaunchDelegate(context.Context, sdd.DelegateLaunch) (sd
 // A headless round that runs past verify.round_timeout is stopped and fails,
 // so the waiting capture moves to deepFailed naming the limit.
 func TestCaptureDeep_AStalledRoundFailsPastItsTimeLimit(t *testing.T) {
-	launcher := stalledLauncher{release: make(chan struct{})}
+	launcher := stalledLauncher{run: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { close(launcher.release) })
-	world, session := newDeepWorld(t, "deep-stalled", sdd.VerifierPolicy{Runner: "claude", RoundTimeout: 50 * time.Millisecond}, proctest.WithDelegateLauncher(launcher))
+	// The clock stands still, so the time limit counts only the round's run,
+	// which starts once the capture waits on it.
+	clock := &stepClock{now: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
+	world, session := newDeepWorld(t, "deep-stalled", sdd.VerifierPolicy{Runner: "claude", RoundTimeout: 50 * time.Millisecond},
+		proctest.WithDelegateLauncher(launcher), proctest.WithClock(clock))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
 	proctest.RequireStep(t, serve, "deepWait")
+	close(launcher.run)
 	test.Eventually(t, "the stalled round failing the exchange", func() bool {
 		workflow, err := world.App.RefreshWorkflow(t.Context(), world.Identity, session.ID)
 		if err != nil {
