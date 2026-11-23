@@ -114,7 +114,9 @@ func (p *RoundProcesses) Start(ctx context.Context, round sdd.LaunchedRound) (sd
 // composition is another process with a launcher of its own.
 type roundProcessKey struct{}
 
-func inRoundProcess(ctx context.Context) bool {
+// InRoundProcess reports whether ctx is a round's process's, where the
+// process asks the launcher again for the round it runs.
+func InRoundProcess(ctx context.Context) bool {
 	marked, _ := ctx.Value(roundProcessKey{}).(bool)
 	return marked
 }

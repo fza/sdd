@@ -54,7 +54,7 @@ func (l *ScriptedLauncher) LaunchDelegate(ctx context.Context, launch sdd.Delega
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
 	l.mu.Lock()
-	if !inRoundProcess(ctx) {
+	if !InRoundProcess(ctx) {
 		l.launches = append(l.launches, launch)
 	}
 	l.mu.Unlock()
