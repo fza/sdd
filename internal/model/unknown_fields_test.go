@@ -11,14 +11,14 @@ const entryWithUnknownFields = "---\n" +
 	"type: decision\n" +
 	"layer: tactical\n" +
 	"kind: directive\n" +
-	"title: Keep unknown fields\n" +
+	"headline: Keep unknown fields\n" +
 	"reason: |-\n" +
 	"    Another tool reads these.\n" +
 	"    Two lines.\n" +
 	"decided-by: agent\n" +
 	"approves:\n" +
 	"    - 20260101-100000-s-tac-aaa\n" +
-	"grounding:\n" +
+	"provenance:\n" +
 	"    read: [20260101-100000-s-tac-aaa]\n" +
 	"    rounds: 2\n" +
 	"summary: Old summary.\n" +
@@ -36,7 +36,7 @@ func TestFormatFrontmatterKeepsUnknownFields(t *testing.T) {
 	for _, f := range e.UnknownFields {
 		keys = append(keys, f.Key)
 	}
-	if got, want := strings.Join(keys, ","), "title,reason,decided-by,approves,grounding"; got != want {
+	if got, want := strings.Join(keys, ","), "headline,reason,decided-by,approves,provenance"; got != want {
 		t.Fatalf("unknown keys = %s, want %s", got, want)
 	}
 
@@ -47,14 +47,14 @@ func TestFormatFrontmatterKeepsUnknownFields(t *testing.T) {
 		"layer: tactical\n" +
 		"kind: directive\n" +
 		"summary: New summary.\n" +
-		"title: Keep unknown fields\n" +
+		"headline: Keep unknown fields\n" +
 		"reason: |-\n" +
 		"    Another tool reads these.\n" +
 		"    Two lines.\n" +
 		"decided-by: agent\n" +
 		"approves:\n" +
 		"    - 20260101-100000-s-tac-aaa\n" +
-		"grounding:\n" +
+		"provenance:\n" +
 		"    read: [20260101-100000-s-tac-aaa]\n" +
 		"    rounds: 2\n" +
 		"---\n"

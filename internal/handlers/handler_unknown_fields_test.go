@@ -12,7 +12,7 @@ import (
 )
 
 // unknownFields is frontmatter another sdd build writes and this one does not read.
-const unknownFields = "title: Fields another build writes\n" +
+const unknownFields = "headline: Fields another build writes\n" +
 	"reason: |-\n" +
 	"    Kept across rewrites.\n" +
 	"approves:\n" +
