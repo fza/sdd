@@ -66,10 +66,10 @@ type Launched struct {
 }
 
 // claudeTools are the tools a headless claude verifier may use: read,
-// search and glob, the web, the sdd MCP tools, and read-only git.
+// search and glob, the web and the sdd MCP tools, read_git among them for
+// history (20261123-114150-d-tac-d8f).
 var claudeTools = []string{
 	"Read", "Grep", "Glob", "WebFetch", "WebSearch", "mcp__sdd__*",
-	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git blame:*)",
 }
 
 // Resolve names the runner Run runs: settings.Runner, or for Fallback claude
@@ -137,7 +137,7 @@ func ClaudeArgs(sdd, resume string, agent model.VerifierAgent) ([]string, error)
 	}
 	args := []string{
 		"-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands",
-		"--tools", "Read,Grep,Glob,WebFetch,WebSearch,Bash",
+		"--tools", "Read,Grep,Glob,WebFetch,WebSearch",
 		"--allowedTools", strings.Join(claudeTools, ","),
 		"--strict-mcp-config", "--mcp-config", config,
 	}

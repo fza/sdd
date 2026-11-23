@@ -798,7 +798,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Verifier:  verifierPolicy(cfg), Window: modelWindow(llmConfig), Checkout: os.DirFS(layout.WorkRoot),
-		Commits:   git.CLI{Dir: layout.WorkRoot},
+		Commits: git.CLI{Dir: layout.WorkRoot}, Git: localadapter.GitHistory{Dir: layout.WorkRoot},
 		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 		Events:    events,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
@@ -938,6 +938,7 @@ func cloneRuntimeOptions(ctx context.Context, repoID sdd.RepoID, dir string, cfg
 		HandEdits:                localadapter.GitHandEdits{GraphDir: cloneGraphDir},
 		Checkout:                 os.DirFS(dir),
 		Commits:                  git.CLI{Dir: dir},
+		Git:                      localadapter.GitHistory{Dir: dir},
 	}, nil
 }
 

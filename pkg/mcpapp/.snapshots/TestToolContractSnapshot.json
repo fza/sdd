@@ -305,6 +305,52 @@
     "name": "read_attachment"
   },
   {
+    "description": "Read the project checkout's git history, read-only; session required. op file returns a file at a revision, log the commits of a revision or range, commit one commit's message and changed files, diff the change between two revisions. sdd builds the git command itself: no raw arguments.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "diff: the older revision; log: commits reachable from it are left out",
+          "type": "string"
+        },
+        "limit": {
+          "description": "log: at most this many commits; default 20, at most 200",
+          "type": "integer"
+        },
+        "op": {
+          "description": "file: a file's content at rev; log: the commits from rev (default HEAD), not reachable from from when given, touching path when given; commit: one commit's message and changed files; diff: between from and to, for path when given",
+          "type": "string"
+        },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
+        },
+        "path": {
+          "description": "file: the file to read; log and diff: narrows them to this path. Relative to the checkout root",
+          "type": "string"
+        },
+        "project": {
+          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "type": "string"
+        },
+        "rev": {
+          "description": "revision a file, log or commit read starts from: a branch, tag or commit hash such as main or HEAD~2",
+          "type": "string"
+        },
+        "session": {
+          "description": "attached session's handle; required. The read runs in that session's project checkout",
+          "type": "string"
+        },
+        "to": {
+          "description": "diff: the newer revision",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "read_git"
+  },
+  {
     "description": "Read one value a move of the session collected, whole, in pages where it runs past one result. resume_session carries the small values and names the larger ones under collected_large; this returns one of those.",
     "inputSchema": {
       "additionalProperties": false,
