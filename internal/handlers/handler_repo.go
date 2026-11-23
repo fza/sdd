@@ -109,19 +109,19 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if _, exists := cfg.Connected(declared); exists {
 		return fmt.Errorf("repo %q is already connected", declared)
 	}
+	if err := cfg.CheckOverlap(declared); err != nil {
+		return err
+	}
 
 	cacheDir, err := h.repos.Registry().CacheDir(declared)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
-		return fmt.Errorf("creating cache dir: %w", err)
-	}
 	unlock, err := h.repos.Registry().LockClones(ctx)
 	if err != nil {
 		return err
 	}
-	connectErr := h.placeAndConnect(cloneDir, cacheDir, repo, declared)
+	connectErr := h.placeAndConnect(root, cloneDir, cacheDir, repo, declared)
 	if err := errors.Join(connectErr, unlock()); err != nil {
 		return err
 	}
@@ -137,18 +137,44 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 // placeAndConnect moves the clone into the cache and connects the repo, under
 // the clone lock the caller holds, so cache pruning never sees the clone
 // in place before its repo is connected.
-func (h *Handler) placeAndConnect(cloneDir, cacheDir string, repo repos.ConnectedRepo, declared model.RepoID) error {
-	if err := os.RemoveAll(cacheDir); err != nil {
-		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
-	}
-	if err := os.Rename(cloneDir, cacheDir); err != nil {
-		return fmt.Errorf("moving clone into cache: %w", err)
+func (h *Handler) placeAndConnect(cacheRoot, cloneDir, cacheDir string, repo repos.ConnectedRepo, declared model.RepoID) error {
+	if err := placeInCache(cacheRoot, cloneDir, cacheDir); err != nil {
+		return err
 	}
 	repo.RepoID = declared
 	if err := h.repos.ClearDisconnected(declared); err != nil {
 		return err
 	}
 	return h.connectRepo(repo)
+}
+
+// placeInCache clears cacheDir and moves the staged clone there through an
+// os.Root over the cache root, so a symlink planted after CacheDir checked
+// the path cannot carry the removal or the move outside it.
+func placeInCache(cacheRoot, cloneDir, cacheDir string) error {
+	src, err := filepath.Rel(cacheRoot, cloneDir)
+	if err != nil {
+		return err
+	}
+	dst, err := filepath.Rel(cacheRoot, cacheDir)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(cacheRoot)
+	if err != nil {
+		return fmt.Errorf("opening cache root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("creating cache dir: %w", err)
+	}
+	if err := root.RemoveAll(dst); err != nil {
+		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
+	}
+	if err := root.Rename(src, dst); err != nil {
+		return fmt.Errorf("moving clone into cache: %w", err)
+	}
+	return nil
 }
 
 // declareDependency ensures repoID is listed in the committed dependencies
@@ -382,10 +408,15 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 		return fmt.Errorf("no connected repos — add one with `sdd repo add <clone-url>`")
 	}
 
+	var overlaps []error
 	for _, repoID := range targets {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
 			return fmt.Errorf("repo %q is not connected", repoID)
+		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			overlaps = append(overlaps, h.overlapSkipped(err))
+			continue
 		}
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
 		if err != nil {
@@ -404,7 +435,14 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 			cmd.OnSynced(repoID)
 		}
 	}
-	return nil
+	return errors.Join(overlaps...)
+}
+
+// overlapSkipped is the error for a repo of an overlapping pair connected
+// before AddRepo checked overlap: syncing either side writes into the other's
+// clone, so callers skip both, refresh the rest and return the joined errors.
+func (h *Handler) overlapSkipped(err error) error {
+	return fmt.Errorf("not syncing: %w; drop one of them from repos in %s", err, h.repos.Registry().ConfigPath())
 }
 
 // freshenReferencedRepos refreshes the caches of every repo a ref set
@@ -654,10 +692,15 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		return false, err
 	}
 	logger := slogutils.FromContext(ctx)
+	var overlaps []error
 	for _, repoID := range cmd.RepoIDs {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
 			logger.Debug("repo not connected; skipping cache refresh", "repo", repoID)
+			continue
+		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			overlaps = append(overlaps, h.overlapSkipped(err))
 			continue
 		}
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
@@ -685,7 +728,7 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		}
 		changed = changed || pulled
 	}
-	return changed, nil
+	return changed, errors.Join(overlaps...)
 }
 
 // emitPhase fires an optional phase callback, guarding the nil case at the one

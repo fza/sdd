@@ -953,6 +953,11 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 				repoID = cfgFile.RepoID
 			}
 		}
+		if repoID != "" {
+			if err := model.ValidateRepoID(repoID); err != nil {
+				return fmt.Errorf("invalid repo_id for the index store: %w", err)
+			}
+		}
 		repoRoot := cmd.StableRepoRoot
 		if repoRoot == "" {
 			repoRoot = filepath.Dir(sddDir)
