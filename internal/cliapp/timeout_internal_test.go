@@ -12,6 +12,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -94,7 +95,7 @@ func TestTimeoutErrorNamesWhatSetTheBound(t *testing.T) {
 						if err != nil {
 							return err
 						}
-						_, runErr = runner.Run(ctx, pkgllm.Request{UserPrompt: "review"})
+						_, runErr = runner.Run(secrets.WithNoNewParts(ctx), pkgllm.Request{UserPrompt: "review"})
 						return nil
 					},
 				}

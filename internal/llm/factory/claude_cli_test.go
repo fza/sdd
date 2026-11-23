@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -47,7 +48,7 @@ func TestClaudeCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := runner.Run(context.Background(), llm.Request{UserPrompt: "review"})
+			res, err := runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{UserPrompt: "review"})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}

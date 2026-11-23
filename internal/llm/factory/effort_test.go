@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -35,7 +36,7 @@ func TestClaudeCLIRunsAtTheConfiguredEffort(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		if _, err := runner.Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		if _, err := runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{UserPrompt: "U"}); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, "args"))

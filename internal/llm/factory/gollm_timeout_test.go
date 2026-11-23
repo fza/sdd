@@ -11,6 +11,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -43,7 +44,7 @@ func TestGollmTimeoutNamesTheSetting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "review"})
+			_, err = runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{UserPrompt: "review"})
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("a call outlasting its bound should fail as a deadline, got %v", err)
 			}
@@ -72,7 +73,7 @@ func TestCallerDeadlinePassesThroughUnnamed(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	_, err = runner.Run(ctx, llm.Request{UserPrompt: "review"})
+	_, err = runner.Run(secrets.WithNoNewParts(ctx), llm.Request{UserPrompt: "review"})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("the caller's deadline should end the call, got %v", err)
 	}
