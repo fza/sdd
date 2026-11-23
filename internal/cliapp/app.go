@@ -78,23 +78,18 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 // decorator that writes the stats rows `sdd stats` reads. Errors surface
 // misconfiguration (unknown provider, missing API key, broken config file)
 // at CLI entry so failures are visible before graph work begins.
-// timeoutFlag optionally names a per-command duration flag that overrides the
-// configured llm.timeout ("" means config or the factory default).
+// timeoutFlag optionally names a per-command duration flag that, when set,
+// bounds each call in place of llm.timeout and the provider default.
 func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 	cfg, err := resolveLLMConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if timeoutFlag != "" {
-		d, err := resolveTimeout(cmd, timeoutFlag)
-		if err != nil {
-			return nil, err
-		}
-		if d > 0 {
-			cfg.Timeout = d.String()
-		}
+	var opts []factory.Option
+	if timeoutFlag != "" && cmd.IsSet(timeoutFlag) {
+		opts = append(opts, factory.WithTimeoutFlag(timeoutFlag, cmd.Duration(timeoutFlag)))
 	}
-	runner, err := factory.New(cfg)
+	runner, err := factory.New(cfg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,41 +110,6 @@ func statsSink() pkgllm.StatsSink {
 		return llmstats.Logged(nil)
 	}
 	return llmstats.Logged(fileSink)
-}
-
-// resolveTimeout returns the per-call LLM timeout for the given flag name,
-// preferring the user's explicit --<flag> over the llm.timeout field in
-// config. Falls back to the flag's default Value when neither is set.
-func resolveTimeout(cmd *cli.Command, flagName string) (time.Duration, error) {
-	if cmd.IsSet(flagName) {
-		return cmd.Duration(flagName), nil
-	}
-	d, err := configuredLLMTimeout(cmd)
-	if err != nil {
-		return 0, err
-	}
-	if d > 0 {
-		return d, nil
-	}
-	return cmd.Duration(flagName), nil
-}
-
-// configuredLLMTimeout returns the llm.timeout field from config, or zero when
-// it is unset or unparseable. Callers with no flag of their own (sdd serve)
-// take it directly and let their own default stand in for zero.
-func configuredLLMTimeout(cmd *cli.Command) (time.Duration, error) {
-	cfg, err := resolveLLMConfig(cmd)
-	if err != nil {
-		return 0, err
-	}
-	if cfg.Timeout == "" {
-		return 0, nil
-	}
-	d, err := time.ParseDuration(cfg.Timeout)
-	if err != nil || d <= 0 {
-		return 0, nil
-	}
-	return d, nil
 }
 
 // readOnlyRunner satisfies llm.Runner but always errors on Run. Used by
@@ -676,6 +636,10 @@ func newCmd() *cli.Command {
 				Name:  "skip-preflight",
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
+			&cli.BoolFlag{
+				Name:  "preflight-verified",
+				Usage: "Skip pre-flight validation for a capture whose findings a prior --dry-run settled (entry is annotated with preflight: dry-run-verified)",
+			},
 			&cli.StringFlag{
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
@@ -698,12 +662,15 @@ func newCmd() *cli.Command {
 			},
 			&cli.DurationFlag{
 				Name:  "preflight-timeout",
-				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m)",
-				Value: 120 * time.Second,
+				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m); default llm.timeout",
 			},
 		},
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
+
+			if cmd.Bool("skip-preflight") && cmd.Bool("preflight-verified") {
+				return fmt.Errorf("--skip-preflight and --preflight-verified are mutually exclusive: one records a bypass, the other records findings settled by a prior --dry-run")
+			}
 
 			args := cmd.Args()
 			if args.Len() < 2 {
@@ -807,32 +774,33 @@ func newCmd() *cli.Command {
 				return err
 			}
 			ncmd := &command.NewEntryCmd{
-				Type:             typ,
-				Layer:            layer,
-				Kind:             kind,
-				Intent:           strings.TrimSpace(cmd.String("intent")),
-				Description:      description,
-				Participants:     participants,
-				Refs:             refs,
-				Supersedes:       splitCSV(cmd.String("supersedes")),
-				Closes:           splitCSV(cmd.String("closes")),
-				Confidence:       confidence,
-				Canonical:        strings.TrimSpace(cmd.String("canonical")),
-				Aliases:          splitCSV(cmd.String("aliases")),
-				ActorKind:        strings.TrimSpace(cmd.String("actor-kind")),
-				Class:            strings.TrimSpace(cmd.String("class")),
-				Actor:            strings.TrimSpace(cmd.String("actor")),
-				TopicLabels:      splitCSV(cmd.String("topics")),
-				Index:            factIndex,
-				AnnotationTopics: annotationTopics,
-				FocusActors:      focusActors,
-				FocusWhen:        focusWhen,
-				Involvement:      involvement,
-				Attachments:      atts,
-				SkipPreflight:    cmd.Bool("skip-preflight"),
-				Summary:          strings.TrimSpace(cmd.String("summary")),
-				DryRun:           cmd.Bool("dry-run"),
-				PreflightModel:   cmd.String("preflight-model"),
+				Type:              typ,
+				Layer:             layer,
+				Kind:              kind,
+				Intent:            strings.TrimSpace(cmd.String("intent")),
+				Description:       description,
+				Participants:      participants,
+				Refs:              refs,
+				Supersedes:        splitCSV(cmd.String("supersedes")),
+				Closes:            splitCSV(cmd.String("closes")),
+				Confidence:        confidence,
+				Canonical:         strings.TrimSpace(cmd.String("canonical")),
+				Aliases:           splitCSV(cmd.String("aliases")),
+				ActorKind:         strings.TrimSpace(cmd.String("actor-kind")),
+				Class:             strings.TrimSpace(cmd.String("class")),
+				Actor:             strings.TrimSpace(cmd.String("actor")),
+				TopicLabels:       splitCSV(cmd.String("topics")),
+				Index:             factIndex,
+				AnnotationTopics:  annotationTopics,
+				FocusActors:       focusActors,
+				FocusWhen:         focusWhen,
+				Involvement:       involvement,
+				Attachments:       atts,
+				SkipPreflight:     cmd.Bool("skip-preflight"),
+				PreflightVerified: cmd.Bool("preflight-verified"),
+				Summary:           strings.TrimSpace(cmd.String("summary")),
+				DryRun:            cmd.Bool("dry-run"),
+				PreflightModel:    cmd.String("preflight-model"),
 				OnNewEntry: func(id, summary string) {
 					fmt.Fprintln(cmd.Writer, id+".md")
 					if rel, err := model.IDToRelPath(id); err == nil {
@@ -1092,8 +1060,7 @@ func summarizeCmd() *cli.Command {
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
-				Usage: "Timeout per summary generation (e.g. 60s, 1m)",
-				Value: 60 * time.Second,
+				Usage: "Timeout per summary generation (e.g. 60s, 1m); default llm.timeout",
 			},
 			&cli.StringFlag{
 				Name:  "text",

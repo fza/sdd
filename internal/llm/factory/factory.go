@@ -15,11 +15,6 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// defaultTimeout bounds each call when neither config nor caller sets one.
-// The factory always composes a timeout: an unbounded runner turns a hung
-// provider into a hung process.
-const defaultTimeout = 2 * time.Minute
-
 // New builds a composed llm.Runner from config. Provider and model fall back
 // to model.DefaultLLMProvider / model.DefaultLLMModel when empty. Remote
 // providers (anthropic, openai) get wrapped with llm.RateLimited: an
@@ -27,17 +22,22 @@ const defaultTimeout = 2 * time.Minute
 // tier-1-safe default is selected per provider/model family (see
 // providerDefaultRPS). Local providers (claude-cli, ollama) stay
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
-// back to defaultTimeout) — deadlines are configuration, so they compose here
-// rather than being defaulted by any consumer. Errors distinguish
+// back to model.DefaultLLMTimeoutFor the provider). Deadlines are
+// configuration, so they compose here rather than being defaulted by any
+// consumer; an unbounded
+// runner would turn a hung provider into a hung process. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
-func New(cfg model.LLMConfig) (llm.Runner, error) {
+func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 	runner, err := compose(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	timeout := defaultTimeout
+	timeout, err := time.ParseDuration(model.DefaultLLMTimeoutFor(cfg.Provider))
+	if err != nil {
+		return nil, fmt.Errorf("llm: parsing default timeout for %q: %w", cfg.Provider, err)
+	}
 	if cfg.Timeout != "" {
 		d, err := time.ParseDuration(cfg.Timeout)
 		if err != nil {
@@ -47,7 +47,24 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 			timeout = d
 		}
 	}
-	return llm.Bounded(runner, timeout), nil
+	b := bound{timeout: timeout, setting: "llm.timeout"}
+	for _, opt := range opts {
+		opt(&b)
+	}
+	return namedTimeout(llm.Bounded(runner, b.timeout), b), nil
+}
+
+// Option adjusts the runner New composes.
+type Option func(*bound)
+
+// WithTimeoutFlag bounds each call by d in place of llm.timeout, for the
+// command-line flag named flag that set it; a zero d leaves the bound as is.
+func WithTimeoutFlag(flag string, d time.Duration) Option {
+	return func(b *bound) {
+		if d > 0 {
+			b.timeout, b.flag = d, flag
+		}
+	}
 }
 
 // compose builds the provider adapter and its rate-limit wrap — everything
@@ -66,7 +83,17 @@ func compose(cfg model.LLMConfig) (llm.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(cfg.Preflight.Params) > 0 {
+		tuned := cfg
+		tuned.Params = cfg.PreflightParams()
+		preflight, err := buildProvider(tuned)
+		if err != nil {
+			return nil, err
+		}
+		runner = llm.ByPurpose(map[llm.Purpose]llm.Runner{llm.PurposePreflight: preflight}, runner)
+	}
 
+	// One limit over both runners: they call one provider account.
 	if isRemote(provider) {
 		if rps := effectiveRPS(cfg); rps > 0 {
 			runner = llm.RateLimited(runner, rps)

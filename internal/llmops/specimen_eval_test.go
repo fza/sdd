@@ -113,7 +113,7 @@ func (s evalSpecimen) validate() error {
 	default:
 		return fmt.Errorf("unknown operation %q", s.Operation)
 	}
-	if e.Passage != "" && !quoteLocatesIn(s.Draft.Content, e.Passage, "") {
+	if e.Passage != "" && !llmops.QuoteLocatesIn(s.Draft.Content, e.Passage, "") {
 		return fmt.Errorf("passage %q is not in the draft", e.Passage)
 	}
 	return nil
@@ -130,7 +130,7 @@ func (e specimenExpect) tier() passRate {
 
 func (e specimenExpect) checkGuide(content string, r *llmops.WritingGuideResult) error {
 	for _, f := range r.Findings {
-		if f.Axis == e.Axis && quoteLocatesIn(content, f.Quote, e.Passage) {
+		if f.Axis == e.Axis && llmops.QuoteLocatesIn(content, f.Quote, e.Passage) {
 			return nil
 		}
 	}
@@ -145,8 +145,8 @@ func (e specimenExpect) checkPreflight(content string, r *llmops.PreflightResult
 		if string(f.Severity) != e.Severity {
 			continue
 		}
-		for _, excerpt := range citedExcerpts(f.Observation) {
-			if quoteLocatesIn(content, excerpt, e.Passage) {
+		for _, excerpt := range append([]string{f.Quote}, citedExcerpts(f.Observation)...) {
+			if llmops.QuoteLocatesIn(content, excerpt, e.Passage) {
 				return nil
 			}
 		}

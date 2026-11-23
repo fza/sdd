@@ -87,9 +87,12 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 			}
 			if !set {
 				def, ok := configDefaults[leaf.path]
-				if leaf.path == "llm.effort" {
+				switch leaf.path {
+				case "llm.effort":
 					def = DefaultLLMEffortFor(provider)
 					ok = def != ""
+				case "llm.timeout":
+					def, ok = DefaultLLMTimeoutFor(provider), true
 				}
 				if !ok {
 					continue

@@ -108,10 +108,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	cmd.Env = append(env, "PWD="+workDir)
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, runErr := cmd.Output()
-	if runErr != nil && ctx.Err() == context.DeadlineExceeded {
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")}
-	}
-	if runErr != nil && errors.Is(ctx.Err(), context.Canceled) {
+	if runErr != nil && ctx.Err() != nil {
 		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p: %w", ctx.Err())}
 	}
 

@@ -150,7 +150,7 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 			return result, err
 		}
 		if draft.SkipPreflight {
-			entry.Preflight = "skipped"
+			entry.Preflight = model.PreflightSkipped
 		}
 		summary, err := llmops.Summarize(ctx, effective.options.LLM, entry, snapshot.graph, effective.options.Language)
 		if err != nil {

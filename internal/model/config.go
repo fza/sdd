@@ -37,6 +37,14 @@ const (
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
 
+	// DefaultLLMTimeout bounds each LLM call when llm.timeout is unset.
+	DefaultLLMTimeout = "2m"
+
+	// DefaultClaudeCLITimeout replaces DefaultLLMTimeout for the claude-cli
+	// provider: `claude -p` returns nothing until its turn completes, and a
+	// writing-guide review of a 5 KB entry takes it over three minutes.
+	DefaultClaudeCLITimeout = "5m"
+
 	// DefaultRetryMaxAttempts is the total number of LLM call attempts
 	// (1 = no retry) when the gollm runner hits a transient failure. Five
 	// attempts ride out a connection blip or a short 429 without making an
@@ -139,6 +147,15 @@ type PerRepoConfig struct {
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
 	// committed config.yaml never does.
 	Contribution string `yaml:"contribution,omitempty"`
+}
+
+// DefaultLLMTimeoutFor is the llm.timeout in effect for provider when none
+// is set; an empty provider means DefaultLLMProvider.
+func DefaultLLMTimeoutFor(provider string) string {
+	if provider == "" || provider == DefaultLLMProvider {
+		return DefaultClaudeCLITimeout
+	}
+	return DefaultLLMTimeout
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -253,6 +270,8 @@ type LLMConfig struct {
 	// setting that moves latency and token usage makes a different population
 	// of calls that must not be averaged with the defaults.
 	Params map[string]string `yaml:"params,omitempty"`
+	// Preflight tunes the LLM pre-flight calls apart from every other call.
+	Preflight LLMPreflightConfig `yaml:"preflight,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -357,6 +376,18 @@ func DefaultLLMEffortFor(provider string) string {
 		return "low"
 	}
 	return ""
+}
+
+// LLMPreflightConfig holds the settings of the LLM pre-flight calls.
+type LLMPreflightConfig struct {
+	// Params lay over llm.params key by key for these calls; unset, they take
+	// llm.params as they stand.
+	Params map[string]string `yaml:"params,omitempty"`
+}
+
+// PreflightParams returns the params the pre-flight calls run with.
+func (c LLMConfig) PreflightParams() map[string]string {
+	return mergeStringMap(c.Params, c.Preflight.Params)
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -585,6 +616,7 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 		}
 	}
 	out.Params = mergeStringMap(out.Params, overlay.Params)
+	out.Preflight.Params = mergeStringMap(out.Preflight.Params, overlay.Preflight.Params)
 	return out
 }
 
