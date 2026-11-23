@@ -47,6 +47,14 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if !model.KnownYAMLKey(cmd.Key, typ) {
 			return nil, fmt.Errorf("%q is not a valid %s config key", cmd.Key, layer)
 		}
+		// A judge named as llm.provider gets the pointer to
+		// llm_prefilter.provider before the allowed-values refusal.
+		if cmd.Key == "llm.provider" {
+			err := model.CheckLLMProviderIsNoJudge(cmd.Value)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if err := model.ConfigValueRefusal(typ, strings.Split(cmd.Key, "."), cmd.Value); err != nil {
 			return nil, err
 		}
@@ -64,12 +72,6 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		}
 		if cmd.Key == "llm_prefilter.provider" {
 			err := model.CheckPrefilterProvider(settings.LLMPrefilter.Provider)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if cmd.Key == "llm.provider" {
-			err := model.CheckLLMProviderIsNoJudge(string(settings.LLM.Provider))
 			if err != nil {
 				return nil, err
 			}
