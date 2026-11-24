@@ -28,9 +28,12 @@ const (
 )
 
 // Candidate is one text to rate against the subject, named by the caller.
+// Line is its one-line form, kind and summary, which a chat scorer lists
+// instead of Text; empty for an entry without a summary.
 type Candidate struct {
 	ID   string
 	Text string
+	Line string
 }
 
 // Request asks for the relevance of every candidate to the subject.
@@ -58,6 +61,31 @@ type Scorer interface {
 	MaxInputTokens() int
 }
 
+// Reader is a Scorer that does not read every candidate: Reads reports
+// whether a call may carry candidate at all, so a scorer that lists Line
+// reads none without one. A Scorer that is no Reader reads every
+// candidate; the decorators hand on the Reads of the scorer they wrap.
+type Reader interface {
+	Reads(candidate Candidate) bool
+}
+
+// Reads reports whether scorer reads candidate (Reader).
+func Reads(scorer Scorer, candidate Candidate) bool {
+	reader, ok := scorer.(Reader)
+	return !ok || reader.Reads(candidate)
+}
+
+// Readable returns the candidates scorer reads, in order.
+func Readable(scorer Scorer, candidates []Candidate) []Candidate {
+	var readable []Candidate
+	for _, candidate := range candidates {
+		if Reads(scorer, candidate) {
+			readable = append(readable, candidate)
+		}
+	}
+	return readable
+}
+
 // EstimateTokens is a conservative token estimate of text: three bytes per
 // token, so a filled call stays under a provider's limit.
 func EstimateTokens(text string) int { return (len(text) + 2) / 3 }
@@ -78,14 +106,19 @@ func CheckResult(request Request, result Result) error {
 
 // Plan splits candidates into calls for scorer: each call within MaxBatch and
 // MaxInputTokens, counting the subject once per call. A candidate too long for
-// a call on its own lands in oversize instead, by index; nothing is cut.
-// Batches hold candidate indexes in request order.
-func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize []int) {
+// a call on its own lands in oversize instead, by index; nothing is cut. A
+// candidate scorer does not read (Reader) lands in unread, so no call
+// carries it. Batches hold candidate indexes in request order.
+func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize, unread []int) {
 	maxBatch, maxTokens := scorer.MaxBatch(), scorer.MaxInputTokens()
 	subjectTokens := EstimateTokens(subject)
 	var current []int
 	tokens := subjectTokens
 	for i, candidate := range candidates {
+		if !Reads(scorer, candidate) {
+			unread = append(unread, i)
+			continue
+		}
 		cost := EstimateTokens(candidate.Text)
 		if maxTokens > 0 && subjectTokens+cost > maxTokens {
 			oversize = append(oversize, i)
@@ -103,5 +136,5 @@ func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]in
 	if len(current) > 0 {
 		batches = append(batches, current)
 	}
-	return batches, oversize
+	return batches, oversize, unread
 }

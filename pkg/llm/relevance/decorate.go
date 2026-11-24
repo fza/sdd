@@ -22,6 +22,8 @@ func (d decorated) Score(ctx context.Context, request Request) (Result, error) {
 	return d.score(ctx, request)
 }
 
+func (d decorated) Reads(candidate Candidate) bool { return Reads(d.Scorer, candidate) }
+
 // Bounded gives every call a deadline.
 func Bounded(s Scorer, timeout time.Duration) Scorer {
 	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
@@ -83,9 +85,10 @@ type perItem struct {
 	slots       chan struct{}
 }
 
-func (p perItem) Direction() Direction { return p.inner.Direction() }
-func (p perItem) MaxBatch() int        { return p.inner.MaxBatch() }
-func (p perItem) MaxInputTokens() int  { return p.inner.MaxInputTokens() }
+func (p perItem) Direction() Direction           { return p.inner.Direction() }
+func (p perItem) MaxBatch() int                  { return p.inner.MaxBatch() }
+func (p perItem) MaxInputTokens() int            { return p.inner.MaxInputTokens() }
+func (p perItem) Reads(candidate Candidate) bool { return Reads(p.inner, candidate) }
 
 func (p perItem) Score(ctx context.Context, request Request) (Result, error) {
 	results := make([]Result, len(request.Candidates))

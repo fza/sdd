@@ -98,7 +98,7 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 		for _, id := range bySubject[subjectID] {
 			candidates = append(candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id])})
 		}
-		batches, oversize := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
+		batches, oversize, _ := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
 		result.Unanswered += len(oversize)
 		requests := make([]relevance.Request, len(batches))
 		answers := make([]relevance.Result, len(batches))

@@ -110,7 +110,7 @@ type scoredPairs struct {
 // failed call leaves its candidates unscored; the result names it.
 func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate) scoredPairs {
 	scored := scoredPairs{fresh: map[string]uint8{}}
-	batches, oversize := relevance.Plan(prefilter.Scorer, subject, pending)
+	batches, oversize, _ := relevance.Plan(prefilter.Scorer, subject, pending)
 	scored.oversize = len(oversize)
 	ctx, cancel := context.WithTimeout(ctx, prefilterDeadline)
 	defer cancel()

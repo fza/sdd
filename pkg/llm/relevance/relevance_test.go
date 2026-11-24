@@ -80,8 +80,8 @@ func TestPlan(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scorer := &fixedScorer{maxBatch: tc.maxBatch, maxTokens: tc.maxTokens}
-			batches, oversize := relevance.Plan(scorer, "subject", candidates(tc.texts...))
-			if !reflect.DeepEqual(batches, tc.batches) || !reflect.DeepEqual(oversize, tc.oversize) {
+			batches, oversize, unread := relevance.Plan(scorer, "subject", candidates(tc.texts...))
+			if !reflect.DeepEqual(batches, tc.batches) || !reflect.DeepEqual(oversize, tc.oversize) || unread != nil {
 				t.Fatalf("Plan = %v, oversize %v; want %v, oversize %v", batches, oversize, tc.batches, tc.oversize)
 			}
 		})
