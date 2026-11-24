@@ -28,12 +28,13 @@ type GroundingStatusRequest struct {
 
 // GroundingStatus reports the current judge's labels, recall bound,
 // thresholds, audit and drift state, and the precision per reason code.
-func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
+func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (_ GroundingStatus, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return GroundingStatus{}, err
 	}
-	judge := runtime.options.Prefilter.Judge
+	prefilter := runtime.options.Prefilter
+	judge := prefilter.Judge
 	if judge == "" {
 		return GroundingStatus{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
 	}
@@ -41,8 +42,13 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 	if err != nil {
 		return GroundingStatus{}, err
 	}
+	selected, err := acquireSnapshotForSearch(ctx, runtime, "", "")
+	if err != nil {
+		return GroundingStatus{}, err
+	}
+	defer selected.releaseInto(&err)
 	var rendered bytes.Buffer
-	presenters.RenderCalibration(&rendered, ledger.Calibration(judge, request.ExcludeReplay))
+	presenters.RenderCalibration(&rendered, ledger.Calibration(judge, request.ExcludeReplay, readablePairs(prefilter, selected.snapshot.graph)))
 	return GroundingStatus{Judge: judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
 }
 
@@ -50,8 +56,9 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 type RescoreResult struct {
 	Judge string
 	// Scored pairs got a score; Missing pairs name an entry the graph no
-	// longer holds; Unanswered pairs the judge did not answer.
-	Scored, Missing, Unanswered int
+	// longer holds; Unanswered pairs the judge did not answer; Unread pairs
+	// it cannot read (relevance.Reader).
+	Scored, Missing, Unanswered, Unread int
 }
 
 // RescoreRelevance has the current judge score every labelled pair it has not
@@ -96,10 +103,11 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 		subject := graph.ByID[subjectID]
 		var candidates []relevance.Candidate
 		for _, id := range bySubject[subjectID] {
-			candidates = append(candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id])})
+			candidates = append(candidates, entryCandidate(graph, graph.ByID[id]))
 		}
-		batches, oversize, _ := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
+		batches, oversize, unread := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
 		result.Unanswered += len(oversize)
+		result.Unread += len(unread)
 		requests := make([]relevance.Request, len(batches))
 		answers := make([]relevance.Result, len(batches))
 		group, groupCtx := errgroup.WithContext(ctx)

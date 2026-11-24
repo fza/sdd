@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,11 +52,34 @@ func TestReads_IsOptionalAndPassesThroughTheDecorators(t *testing.T) {
 	for name, scorer := range map[string]relevance.Scorer{
 		"bounded":      relevance.Bounded(lines, time.Second),
 		"rate limited": relevance.RateLimited(lines, 10),
+		"limited":      relevance.Limited(lines, 1),
 		"observed":     relevance.Observed(lines, &statSink{}),
-		"per item":     relevance.PerItem(lines, 1),
 	} {
 		if _, _, unread := relevance.Plan(scorer, "subject", planned); !slices.Equal(unread, []int{1}) {
 			t.Errorf("%s: unread %v: the decorator should hand on the inner scorer's Reads", name, unread)
 		}
 	}
+}
+
+func TestLimited_HoldsTheCallsInFlight(t *testing.T) {
+	inner := &fixedScorer{maxBatch: 100, entered: make(chan struct{}, 8), release: make(chan struct{})}
+	scorer := relevance.Limited(inner, 2)
+	if scorer.MaxBatch() != 100 {
+		t.Fatal("Limited should keep the inner scorer's limits")
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			_, _ = scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a")})
+		})
+	}
+	<-inner.entered
+	<-inner.entered
+	select {
+	case <-inner.entered:
+		t.Error("a third call should wait for a slot")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(inner.release)
+	wg.Wait()
 }

@@ -262,3 +262,16 @@ func TestPlacePrefiltered_SetsAsideBeforeItServesInFull(t *testing.T) {
 		})
 	}
 }
+
+// An entry's ranking line is its type, kind and summary on one line; one
+// without a summary has no line.
+func TestEntryRankingLine(t *testing.T) {
+	entry := &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Summary: "The deep reading ranks.\nThen it lists."}
+	if got := model.EntryRankingLine(entry); got != "[decision/directive] The deep reading ranks. Then it lists." {
+		t.Fatalf("line %q", got)
+	}
+	unsummarized := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Content: "The body's first sentence. More."}
+	if got := model.EntryRankingLine(unsummarized); got != "" {
+		t.Fatalf("line %q: an entry without a summary should have no line", got)
+	}
+}
