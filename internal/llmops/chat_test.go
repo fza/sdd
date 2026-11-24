@@ -34,7 +34,7 @@ func TestChatJudgeScoresAListInOneCall(t *testing.T) {
 		Subject: "The draft refines 20260101-000000-d-cpt-abc (see 20260101-000000-d-cpt-abc).",
 		Candidates: []relevance.Candidate{
 			{ID: "a", Text: "full a", Line: "[decision/directive] First: rests on 20260102-000000-s-tac-xyz."},
-			{ID: "b", Text: "[signal/gap] Second: no line given."},
+			{ID: "b", Text: "full b", Line: "[signal/gap] Second: its line."},
 			{ID: "c", Line: "[signal/gap] Third: unrelated."},
 		},
 	})
@@ -47,7 +47,7 @@ func TestChatJudgeScoresAListInOneCall(t *testing.T) {
 	if got.Purpose != llm.PurposeRelevance || !strings.Contains(got.SystemPrompt, "Rate every candidate") {
 		t.Fatalf("request %+v should carry the relevance purpose and the chat prompt", got)
 	}
-	for _, want := range []string{"The draft refines", "c1 [decision/directive] First: rests on .", "c2 [signal/gap] Second: no line given.", "c3 [signal/gap] Third: unrelated."} {
+	for _, want := range []string{"The draft refines", "c1 [decision/directive] First: rests on .", "c2 [signal/gap] Second: its line.", "c3 [signal/gap] Third: unrelated."} {
 		if !strings.Contains(got.UserPrompt, want) {
 			t.Errorf("user prompt lacks %q:\n%s", want, got.UserPrompt)
 		}
@@ -112,5 +112,30 @@ func TestChatJudgeRefusesMoreThanABatch(t *testing.T) {
 	}
 	if _, err := judge.Score(t.Context(), relevance.Request{Candidates: candidates}); err == nil {
 		t.Fatal("more candidates than a batch should be refused")
+	}
+}
+
+// The chat judge reads lines alone: a candidate without one, an entry
+// without a summary, is not read, and a call carrying one never reaches
+// the model with the candidate's text in its place.
+func TestChatJudgeReadsNoCandidateWithoutALine(t *testing.T) {
+	runner := llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		t.Fatal("a candidate without a line should not reach the model")
+		return llm.Result{}, nil
+	})
+	judge, err := llmops.NewChatJudge(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unread := relevance.Candidate{ID: "b", Text: "kind: gap\n\nThe whole body."}
+	if !judge.Reads(relevance.Candidate{ID: "a", Line: "a"}) || judge.Reads(unread) {
+		t.Fatal("the judge should read a candidate by its line alone")
+	}
+	_, err = judge.Score(t.Context(), relevance.Request{Candidates: []relevance.Candidate{{ID: "a", Line: "a"}, unread}})
+	if err == nil {
+		t.Fatal("a call carrying a candidate without a line should be refused")
+	}
+	if _, ok := errors.AsType[*llm.MalformedAnswerError](err); ok {
+		t.Fatalf("error %v: a refused candidate is no broken answer to halve", err)
 	}
 }

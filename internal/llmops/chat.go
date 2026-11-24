@@ -48,6 +48,10 @@ func (j *ChatJudge) MaxBatch() int                  { return ChatBatch }
 func (j *ChatJudge) MaxInputTokens() int            { return 0 }
 func (j *ChatJudge) MaxPairTokens() int             { return 0 }
 
+// Reads holds for a candidate with a line: the judge reads no entry
+// without a summary.
+func (j *ChatJudge) Reads(candidate relevance.Candidate) bool { return candidate.Line != "" }
+
 // Score rates every candidate of request in one call.
 func (j *ChatJudge) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	n := len(request.Candidates)
@@ -57,12 +61,11 @@ func (j *ChatJudge) Score(ctx context.Context, request relevance.Request) (relev
 	labels := make([]string, n)
 	lines := make([]string, n)
 	for i, candidate := range request.Candidates {
-		labels[i] = "c" + strconv.Itoa(i+1)
-		line := candidate.Line
-		if line == "" {
-			line = candidate.Text
+		if !j.Reads(candidate) {
+			return relevance.Result{}, fmt.Errorf("the chat judge reads no candidate without a line, got %s", candidate.ID)
 		}
-		lines[i] = labels[i] + " " + withoutEntryIDs(line)
+		labels[i] = "c" + strconv.Itoa(i+1)
+		lines[i] = labels[i] + " " + withoutEntryIDs(candidate.Line)
 	}
 	var user strings.Builder
 	data := struct {

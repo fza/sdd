@@ -77,7 +77,7 @@ type AutoCalibrationRequest struct {
 // checks and runs the scan after writing (replayRound), the proof records
 // the hiding rules step on.
 func (a *Application) AutoCalibrate(ctx context.Context, identity RequestIdentity, project ProjectID, request AutoCalibrationRequest) {
-	calibrator := &autoCalibrator{app: a, identity: identity, project: project, request: request, free: true, skipped: map[string]bool{}}
+	calibrator := &autoCalibrator{app: a, identity: identity, project: project, request: request, free: true, skipped: map[string]bool{}, unscorable: map[string]bool{}}
 	for {
 		wait := calibrator.round(ctx)
 		timer := time.NewTimer(wait)
@@ -96,10 +96,13 @@ type autoCalibrator struct {
 	project  ProjectID
 	request  AutoCalibrationRequest
 	// free holds until the first stage this server reached; skipped are the
-	// subjects whose requests failed or held only candidates too long to
-	// score, left until the next server.
-	free    bool
-	skipped map[string]bool
+	// subjects whose requests failed, left until the next server;
+	// unscorable those whose requests held only candidates too long to
+	// score or that the judge cannot read, scored no more until the next
+	// server but still replayed.
+	free       bool
+	skipped    map[string]bool
+	unscorable map[string]bool
 }
 
 // round runs one calibration pass and returns the pause before the next.
@@ -213,10 +216,12 @@ func (c *autoCalibrator) replayPhase(ctx context.Context, runtime *ProjectRuntim
 	return autoCalibrateRecheck
 }
 
-// pending are the batches ledger plans for judge, past the skipped
-// subjects.
+// pending are the batches ledger plans for judge, past the skipped and
+// unscorable subjects.
 func (c *autoCalibrator) pending(ledger *model.RelevanceLedger, judge string) []model.CalibrationBatch {
-	return slices.DeleteFunc(ledger.CalibrationBatches(judge, autoCalibrateBatch), func(batch model.CalibrationBatch) bool { return c.skipped[batch.Subject] })
+	return slices.DeleteFunc(ledger.CalibrationBatches(judge, autoCalibrateBatch), func(batch model.CalibrationBatch) bool {
+		return c.skipped[batch.Subject] || c.unscorable[batch.Subject]
+	})
 }
 
 // plan labels the graph's own references on a ledger holding no labelled
@@ -341,8 +346,11 @@ dispatch:
 				}
 				return
 			}
-			if outcome.Failure != nil || outcome.Scored == 0 {
+			switch {
+			case outcome.Failure != nil:
 				c.skipped[subject.ID] = true
+			case outcome.Scored == 0:
+				c.unscorable[subject.ID] = true
 			}
 			if outcome.Failure != nil {
 				failed++

@@ -141,7 +141,12 @@ func (a *Application) replay(ctx context.Context, runtime *ProjectRuntime, graph
 	var neededListed []string
 	for _, candidate := range candidates {
 		id := candidate.Entry.ID
-		entry := model.ReplayCandidate{ID: id, Score: scored.fresh[id], Needed: slices.Contains(needed, id), Spared: len(candidate.FoundBy) >= 2}
+		score, judged := scored.fresh[id]
+		// A candidate the judge cannot read is never hidden, so it labels nothing.
+		if !judged {
+			continue
+		}
+		entry := model.ReplayCandidate{ID: id, Score: score, Needed: slices.Contains(needed, id), Spared: len(candidate.FoundBy) >= 2}
 		if mark, marked := scored.marks[id]; marked {
 			entry.Far, entry.Lowest, entry.Median = true, model.ScoreByte(mark.line.Lowest), model.ScoreByte(mark.line.Median)
 		}

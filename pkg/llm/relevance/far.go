@@ -37,23 +37,24 @@ func ScoreWithFar(ctx context.Context, s Scorer, request Request, far []Candidat
 // PlanWithFar is Plan for calls that each carry far beside their
 // candidates: far takes its room of MaxBatch and its tokens of
 // MaxInputTokens in every call. ok is false where no call holds far and one
-// candidate more, or a far candidate passes MaxPairTokens beside the subject.
-func PlanWithFar(scorer Scorer, subject string, candidates, far []Candidate) (batches [][]int, oversize []int, ok bool) {
+// candidate more, or a far candidate passes MaxPairTokens beside the subject
+// or is one scorer does not read (Readable keeps those out).
+func PlanWithFar(scorer Scorer, subject string, candidates, far []Candidate) (batches [][]int, oversize, unread []int, ok bool) {
 	maxBatch, maxTokens, maxPair := scorer.MaxBatch(), scorer.MaxInputTokens(), scorer.MaxPairTokens()
 	subjectTokens := EstimateTokens(subject)
 	farTokens := 0
 	for _, candidate := range far {
 		cost := EstimateTokens(candidate.Text)
-		if maxPair > 0 && subjectTokens+cost > maxPair {
-			return nil, nil, false
+		if maxPair > 0 && subjectTokens+cost > maxPair || !scorer.Reads(candidate) {
+			return nil, nil, nil, false
 		}
 		farTokens += cost
 	}
 	if maxBatch > 0 && maxBatch <= len(far) || maxTokens > 0 && subjectTokens+farTokens > maxTokens {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
-	batches, oversize = plan(scorer, subject, candidates, len(far), farTokens)
-	return batches, oversize, true
+	batches, oversize, unread = plan(scorer, subject, candidates, len(far), farTokens)
+	return batches, oversize, unread, true
 }
 
 // withFar returns the call of request with far among its candidates, and

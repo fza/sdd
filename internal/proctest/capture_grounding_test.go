@@ -402,9 +402,10 @@ func (s *countingScorer) Direction() llmrelevance.Direction {
 	}
 	return llmrelevance.Both
 }
-func (s *countingScorer) MaxBatch() int       { return 0 }
-func (s *countingScorer) MaxInputTokens() int { return 0 }
-func (s *countingScorer) MaxPairTokens() int  { return 0 }
+func (s *countingScorer) MaxBatch() int                     { return 0 }
+func (s *countingScorer) MaxInputTokens() int               { return 0 }
+func (s *countingScorer) MaxPairTokens() int                { return 0 }
+func (s *countingScorer) Reads(llmrelevance.Candidate) bool { return true }
 
 func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
 	s.scored += len(request.Candidates)

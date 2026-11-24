@@ -333,7 +333,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		if limit <= 0 || request.Wait {
 			limit = pass.waited
 		}
-		if short, ok := model.NewJudgeShortfall(pass.scored, len(split.Undecided), policy.JudgeMinimum, limit, state); ok {
+		if short, ok := model.NewJudgeShortfall(pass.scored, len(split.Undecided)-pass.unread, policy.JudgeMinimum, limit, state); ok {
 			short.Unattended = request.unattended
 			shortfall = &short
 			slogutils.FromContext(ctx).Warn("gather: the ranking judge scored fewer candidates than the minimum",

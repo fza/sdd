@@ -81,7 +81,7 @@ func update(ctx context.Context, cmd *cli.Command, application *sdd.Application,
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score; %d left unscored by a failed request\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered, scored.Failed)
+	_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs in %d requests; %d name an entry the graph no longer holds; %d too long to score; %d the judge cannot read; %d left unscored by a failed request\n", scored.Judge, scored.Scored, scored.Requests, scored.Missing, scored.Unanswered, scored.Unread, scored.Failed)
 	if err != nil {
 		return err
 	}

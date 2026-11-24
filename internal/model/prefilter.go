@@ -433,11 +433,12 @@ func RelevanceText(kind string, topics []string, title, body string) string {
 
 // EntryRankingLine is the one line a chat judge reads of an entry:
 // [type/kind], then title and summary, the summary alone for an untitled
-// entry, the first sentence of the body for one without a summary.
+// entry; empty for an entry without a summary, which a chat judge leaves
+// unscored.
 func EntryRankingLine(e *Entry) string {
 	summary := strings.Join(strings.Fields(e.Summary), " ")
 	if summary == "" {
-		summary = FirstSentence(e.Content)
+		return ""
 	}
 	text := summary
 	if e.Title != "" {

@@ -46,11 +46,12 @@ func rescoreJudge(ctx context.Context, graph *model.Graph, pairs []model.Relevan
 	advance(0, false)
 	for _, subjectID := range subjects {
 		outcome, err := scoreSubject(ctx, prefilter, newScoringSubject(graph, subjectID, bySubject[subjectID]), save, advance)
-		if outcome.Oversize > 0 {
-			advance(outcome.Oversize, false)
+		if left := outcome.Oversize + outcome.Unread; left > 0 {
+			advance(left, false)
 		}
 		result.Requests += outcome.Requests
 		result.Unanswered += outcome.Oversize
+		result.Unread += outcome.Unread
 		result.Scored += outcome.Scored
 		result.Failed += outcome.Failed
 		if err != nil {
@@ -81,11 +82,11 @@ func newScoringSubject(graph *model.Graph, subjectID string, candidateIDs []stri
 }
 
 // subjectOutcome is what scoring one subject did: its requests, its
-// candidates too long for one, those scored and those its failed requests
-// left, with the first failure.
+// candidates too long for one, those the judge cannot read, those scored
+// and those its failed requests left, with the first failure.
 type subjectOutcome struct {
-	Requests, Oversize, Scored, Failed int
-	Failure                            error
+	Requests, Oversize, Unread, Scored, Failed int
+	Failure                                    error
 }
 
 // scoreSubject has prefilter score subject's candidates in the requests
@@ -95,8 +96,8 @@ type subjectOutcome struct {
 // and whether it failed. The error is what stops the pass: a cancelled ctx
 // or a failed save.
 func scoreSubject(ctx context.Context, prefilter Prefilter, subject scoringSubject, save func(context.Context, model.RelevanceBatch) error, onRequest func(done int, failed bool)) (subjectOutcome, error) {
-	batches, oversize := relevance.Plan(prefilter.Scorer, subject.Text, subject.Candidates)
-	outcome := subjectOutcome{Requests: len(batches), Oversize: len(oversize)}
+	batches, oversize, unread := relevance.Plan(prefilter.Scorer, subject.Text, subject.Candidates)
+	outcome := subjectOutcome{Requests: len(batches), Oversize: len(oversize), Unread: len(unread)}
 	forward := prefilter.Scorer.Direction() == relevance.Forward
 	var mu sync.Mutex
 	group, groupCtx := errgroup.WithContext(ctx)

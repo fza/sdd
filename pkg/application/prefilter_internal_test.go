@@ -23,6 +23,7 @@ func (s *timedScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *timedScorer) MaxBatch() int                  { return 1 }
 func (s *timedScorer) MaxInputTokens() int            { return 0 }
 func (s *timedScorer) MaxPairTokens() int             { return 0 }
+func (s *timedScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *timedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	at, ok := s.answerAt[request.Candidates[0].ID]
@@ -102,4 +103,55 @@ func answersOf(n, m int, then time.Duration) []time.Duration {
 		answers = append(answers, then)
 	}
 	return answers
+}
+
+// blindScorer is a timedScorer that reads no blind candidate, batch
+// candidates a call where batch is set.
+type blindScorer struct {
+	*timedScorer
+	blind map[string]bool
+	batch int
+}
+
+func (s *blindScorer) Reads(candidate relevance.Candidate) bool { return !s.blind[candidate.ID] }
+
+func (s *blindScorer) MaxBatch() int { return max(s.batch, 1) }
+
+// The check waits for no candidate its judge cannot read: a few short of
+// the candidates it reads keep judging where the full minimum, counting
+// the unread ones, would stop at the limit.
+func TestJudgeLive_WaitsForNoCandidateTheJudgeCannotRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		scorer := &blindScorer{timedScorer: &timedScorer{start: time.Now(), answerAt: map[string]time.Duration{}}, blind: map[string]bool{}}
+		var pending []relevance.Candidate
+		for i, at := range answersOf(37, 8, 45*time.Second) {
+			id := fmt.Sprintf("c%02d", i)
+			pending = append(pending, relevance.Candidate{ID: id, Text: id, Line: id})
+			scorer.answerAt[id] = at
+		}
+		for i := range 15 {
+			id := fmt.Sprintf("u%02d", i)
+			pending = append(pending, relevance.Candidate{ID: id, Text: id})
+			scorer.blind[id] = true
+		}
+		scored, waited := judgeLive(t.Context(), Prefilter{Scorer: scorer, Judge: "test:blind"}, "draft", pending, nil, 0, judgeBudget{limit: 30 * time.Second, target: 50})
+		if len(scored.fresh) != 45 || waited != 45*time.Second || scored.unread != 15 {
+			t.Fatalf("scored %d after %v, %d unread: the check should wait for every candidate the judge reads, and for no other", len(scored.fresh), waited, scored.unread)
+		}
+	})
+}
+
+// A far entry the judge cannot read is not carried as far; the others are.
+func TestPlanScoring_CarriesOnlyTheFarEntriesTheJudgeReads(t *testing.T) {
+	scorer := &blindScorer{timedScorer: &timedScorer{}, blind: map[string]bool{"far-b": true}, batch: 5}
+	pending := []relevance.Candidate{{ID: "a", Text: "a"}}
+	far := []relevance.Candidate{{ID: "far-a", Text: "x"}, {ID: "far-b", Text: "y"}, {ID: "far-c", Text: "z"}}
+	plan := planScoring(scorer, "draft", pending, far)
+	var ids []string
+	for _, candidate := range plan.far {
+		ids = append(ids, candidate.ID)
+	}
+	if fmt.Sprint(ids) != "[far-a far-c]" || len(plan.batches) != 1 {
+		t.Fatalf("far %v, %d batches: the unread far entry should be left out, the rest kept", ids, len(plan.batches))
+	}
 }

@@ -54,10 +54,12 @@ type prefilterPass struct {
 	// wouldBelow counts the candidates the median form would put below.
 	wouldBelow int
 	// judged reports that the judge ran: then scored counts the candidates
-	// holding a score, waited how long the check waited, and broken the
-	// failures of its calls other than running out of time.
+	// holding a score, unread those it cannot read (relevance.Scorer.Reads),
+	// waited how long the check waited, and broken the failures of its calls
+	// other than running out of time.
 	judged bool
 	scored int
+	unread int
 	waited time.Duration
 	broken []string
 }
@@ -111,7 +113,7 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 	pass.fresh = scored.fresh
 	maps.Copy(pass.scores, scored.fresh)
 	pass.floored = scored.floored
-	pass.judged, pass.waited, pass.broken = true, waited, scored.broken
+	pass.judged, pass.waited, pass.broken, pass.unread = true, waited, scored.broken, scored.unread
 	for _, candidate := range candidates {
 		if _, ok := pass.scores[candidate.Entry.ID]; ok {
 			pass.scored++
@@ -134,6 +136,9 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 	if scored.oversize > 0 {
 		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", scored.oversize))
 	}
+	if scored.unread > 0 {
+		notes = append(notes, fmt.Sprintf("%d the judge cannot read, left to judge unscored", scored.unread))
+	}
 	if scored.unanswered > 0 {
 		notes = append(notes, fmt.Sprintf("%d unanswered and left to judge (%s)", scored.unanswered, strings.Join(scored.failures, "; ")))
 		pass.status = model.PrefilterPartial
@@ -151,9 +156,12 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 // hold a score. With a limit it stops there once the target holds; short of
 // it the check keeps judging until the target holds or one further limit
 // passes, where at most model.JudgeKeepsJudging candidates are missing or
-// the session has no person to choose. It returns how long it waited.
+// the session has no person to choose. No candidate the judge cannot read
+// counts toward the target. It returns how long it waited.
 func judgeLive(ctx context.Context, prefilter Prefilter, subject string, pending, far []relevance.Candidate, held int, budget judgeBudget) (scoredPairs, time.Duration) {
 	start := time.Now()
+	plan := planScoring(prefilter.Scorer, subject, pending, far)
+	budget.target = min(budget.target, held+len(pending)-plan.unread)
 	var run context.Context
 	var cancel context.CancelFunc
 	timed := !budget.wait && budget.limit > 0
@@ -174,7 +182,7 @@ func judgeLive(ctx context.Context, prefilter Prefilter, subject string, pending
 	}
 	onScored(0)
 	done := make(chan scoredPairs, 1)
-	go func() { done <- scoreCandidatesUntil(run, prefilter, subject, pending, far, onScored) }()
+	go func() { done <- scorePlanned(run, prefilter, subject, pending, plan, onScored) }()
 	stop := func() (scoredPairs, time.Duration) {
 		cancel()
 		scored := <-done
@@ -211,17 +219,18 @@ func judgeLive(ctx context.Context, prefilter Prefilter, subject string, pending
 }
 
 // scoredPairs is what one scoring of pending candidates got: a score byte
-// per answered candidate, how many were too long for one call, and how many
-// calls left unanswered with their distinct failures, broken those other
-// than running out of time or being stopped; late marks a ranking
-// collected before every pass ended. floored reports that every call
-// carried the far entries; marks then hold each answered candidate's score
-// beside the floor its own call measured.
+// per answered candidate, how many were too long for one call, how many the
+// judge cannot read, and how many calls left unanswered with their distinct
+// failures, broken those other than running out of time or being stopped;
+// late marks a ranking collected before every pass ended. floored reports
+// that every call carried the far entries; marks then hold each answered
+// candidate's score beside the floor its own call measured.
 type scoredPairs struct {
 	fresh      map[string]uint8
 	marks      map[string]floorMark
 	floored    bool
 	oversize   int
+	unread     int
 	unanswered int
 	failures   []string
 	broken     []string
@@ -248,32 +257,47 @@ func farCandidates(g *model.Graph, floor *model.FarFloor) []relevance.Candidate 
 }
 
 // scoreCandidates rates pending against subject within deadline
-// (scoreCandidatesUntil).
+// (scorePlanned).
 func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending, far []relevance.Candidate, deadline time.Duration) scoredPairs {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
-	return scoreCandidatesUntil(ctx, prefilter, subject, pending, far, nil)
+	return scorePlanned(ctx, prefilter, subject, pending, planScoring(prefilter.Scorer, subject, pending, far), nil)
 }
 
-// scoreCandidatesUntil rates pending against subject in filled calls, at
-// most prefilterInFlight at once, until ctx ends, and hands onScored the
-// count of each call's answered candidates. A failed call leaves its
-// candidates unscored; the result names it. Every call carries far beside
-// its candidates (relevance.ScoreWithFar), unless the scorer's calls have
-// no room for them.
-func scoreCandidatesUntil(ctx context.Context, prefilter Prefilter, subject string, pending, far []relevance.Candidate, onScored func(n int)) scoredPairs {
-	scored := scoredPairs{fresh: map[string]uint8{}, marks: map[string]floorMark{}}
-	batches, oversize, room := relevance.PlanWithFar(prefilter.Scorer, subject, pending, far)
+// scoringPlan is how pending goes to the judge: its calls by index, the far
+// entries each carries, and how many candidates no call carries.
+type scoringPlan struct {
+	batches          [][]int
+	far              []relevance.Candidate
+	oversize, unread int
+}
+
+// planScoring fills calls with pending, each carrying the far entries the
+// scorer reads beside its candidates (relevance.ScoreWithFar), unless its
+// calls have no room for them.
+func planScoring(scorer relevance.Scorer, subject string, pending, far []relevance.Candidate) scoringPlan {
+	far = relevance.Readable(scorer, far)
+	batches, oversize, unread, room := relevance.PlanWithFar(scorer, subject, pending, far)
 	if !room {
 		far = nil
-		batches, oversize = relevance.Plan(prefilter.Scorer, subject, pending)
+		batches, oversize, unread = relevance.Plan(scorer, subject, pending)
 	}
-	scored.floored = len(far) > 0 && len(batches) > 0
-	scored.oversize = len(oversize)
+	return scoringPlan{batches: batches, far: far, oversize: len(oversize), unread: len(unread)}
+}
+
+// scorePlanned rates pending against subject in plan's calls, at most
+// prefilterInFlight at once, until ctx ends, and hands onScored the count
+// of each call's answered candidates. A failed call leaves its candidates
+// unscored; the result names it.
+func scorePlanned(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate, plan scoringPlan, onScored func(n int)) scoredPairs {
+	scored := scoredPairs{fresh: map[string]uint8{}, marks: map[string]floorMark{}}
+	far := plan.far
+	scored.floored = len(far) > 0 && len(plan.batches) > 0
+	scored.oversize, scored.unread = plan.oversize, plan.unread
 	var mu sync.Mutex
 	group := errgroup.Group{}
 	group.SetLimit(prefilterInFlight)
-	for _, batch := range batches {
+	for _, batch := range plan.batches {
 		group.Go(func() error {
 			request := relevance.Request{Subject: subject}
 			for _, index := range batch {
