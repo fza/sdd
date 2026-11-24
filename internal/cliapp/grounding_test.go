@@ -22,10 +22,10 @@ func TestCLIGroundingStatusReportsTheConfiguredJudge(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "judge: generate:gpt-5-mini", "thresholds: none yet")
+	assertContainsOutput(t, "stdout", result.stdout, "judge: chat:gpt-5-mini", "thresholds: none yet")
 }
 
-// Without an llm_prefilter block the prefilter is on and judges with generate
+// Without an llm_prefilter block the prefilter is on and judges with chat
 // on the llm provider and model.
 func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 	f := newAppFixture(t)
@@ -34,5 +34,5 @@ func TestCLIGroundingStatusDerivesTheJudgeFromLLM(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("sdd grounding status: %v\n%s", result.err, result.stderr)
 	}
-	assertContainsOutput(t, "stdout", result.stdout, "judge: generate:gpt-5.5")
+	assertContainsOutput(t, "stdout", result.stdout, "judge: chat:gpt-5.5")
 }

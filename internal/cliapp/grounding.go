@@ -47,7 +47,7 @@ func groundingCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score\n", result.Judge, result.Scored, result.Missing, result.Unanswered)
+					_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score; %d the judge cannot read\n", result.Judge, result.Scored, result.Missing, result.Unanswered, result.Unread)
 					return err
 				},
 			},
