@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/networkteam/sdd/internal/viewlayout"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // Each operation marks its draft as new, so the provider guard refuses a draft
@@ -65,5 +66,30 @@ func TestOperationsMarkTheDraftAsNew(t *testing.T) {
 				t.Error("a refused draft must not reach the provider")
 			}
 		})
+	}
+}
+
+// The chat judge marks the draft it scores against as new, so the provider
+// guard refuses a draft holding a credential before the call.
+func TestChatJudgeMarksTheDraftAsNew(t *testing.T) {
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	guarded := secrets.GuardRunner(llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		calls++
+		return llm.Result{Text: `{"scores": {"c1": 0.5}}`}, nil
+	}))
+	judge, err := llmops.NewChatJudge(guarded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = judge.Score(t.Context(), relevance.Request{Subject: "Setup:\n" + strings.TrimSpace(string(content)), Candidates: []relevance.Candidate{{ID: "a", Text: "A stored entry.", Line: "A stored entry."}}})
+	if !errors.Is(err, secrets.ErrCredential) || !strings.Contains(err.Error(), "draft") {
+		t.Errorf("the draft should be refused naming it: %v", err)
+	}
+	if calls != 0 {
+		t.Error("a refused draft must not reach the provider")
 	}
 }

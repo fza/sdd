@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
@@ -75,7 +76,8 @@ func (j *ChatJudge) Score(ctx context.Context, request relevance.Request) (relev
 	if err := relevanceTemplate.ExecuteTemplate(&user, "chat_user", data); err != nil {
 		return relevance.Result{}, fmt.Errorf("rendering the chat prompt: %w", err)
 	}
-	result, err := j.runner.Run(ctx, llm.Request{
+	// The candidates are stored entries; the subject is the draft.
+	result, err := j.runner.Run(secrets.WithNewParts(ctx, secrets.Part{Where: "draft", Text: request.Subject}), llm.Request{
 		Purpose: llm.PurposeRelevance, SystemPrompt: j.system, UserPrompt: strings.TrimSpace(user.String()), ResponseSchema: chatSchema(labels),
 	})
 	if err != nil {
