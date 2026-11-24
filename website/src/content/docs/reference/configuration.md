@@ -338,11 +338,10 @@ In a guided dialogue the agent plays the draft back without a check; once you co
 
 #### Relevance prefilter
 
-The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the keys of [`llm`](#language-model) that apply to a judge: `provider`, `model`, `endpoint`, `ollama_endpoint`, `api_keys`, `timeout`, `params`, `concurrency`, `rate_limit_rps` and `retry`, and the protocol it rates by:
+The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the keys of [`llm`](#language-model) that apply to a judge: `provider`, `model`, `endpoint`, `ollama_endpoint`, `api_keys`, `timeout`, `params`, `concurrency`, `rate_limit_rps` and `retry`. The judge scores up to 100 entries a call, each listed as one line, its type, kind and summary, with entry IDs stripped; the answer holds one score per entry:
 
 ```yaml
 llm_prefilter:
-  protocol: chat
   provider: openai
   model: gpt-5-mini
   timeout: 45s
@@ -351,14 +350,13 @@ llm_prefilter:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `llm_prefilter.protocol` | `chat` | How the judge rates. `chat`: the chat model scores up to 100 entries a call, each listed as one line, its kind and summary, with entry IDs stripped; the answer holds one score per entry. sdd reads `generate` and `listwise`, which an older version wrote, as `chat`. |
 | `llm_prefilter.provider`, `llm_prefilter.model`, `llm_prefilter.endpoint`, `llm_prefilter.ollama_endpoint`, `llm_prefilter.api_keys.<provider>` | The `llm` value | The judge's model and connection. Each value the block sets wins over the `llm` one. |
 | `llm_prefilter.timeout` | `45s` | Time limit for one judge call. |
 | `llm_prefilter.concurrency` | `8` | Judge calls in flight across every reading; each call rates a batch of up to 100 entries. |
 
-The judge's identity is `chat:<model>`, and calibration keys its labels on it; a judge named `generate:<model>` by an older version is another judge, whose labels `sdd grounding rescore` scores again. A whole pass ends after 45 seconds; candidates whose call failed or came late stay unscored and go to judge. A call whose answer misses a score fails as a whole, and its entries go to judge. A candidate too long for one call is never cut: it goes to judge too. An entry without a summary goes into no call: it stays unscored, a brief to judge that is never set aside, and the pass names how many the judge cannot read. `sdd grounding rescore` leaves such pairs unscored and counts them apart, and `sdd grounding status` counts none of them as unscored.
+The judge's identity is `chat:<model>`, and calibration keys its labels on it. A whole pass ends after 45 seconds; candidates whose call failed or came late stay unscored and go to judge. A call whose answer misses a score fails as a whole, and its entries go to judge. A candidate too long for one call is never cut: it goes to judge too. An entry without a summary goes into no call: it stays unscored, a brief to judge that is never set aside, and the pass names how many the judge cannot read. `sdd grounding rescore` leaves such pairs unscored and counts them apart, and `sdd grounding status` counts none of them as unscored.
 
-Two dedicated judges rate a whole batch of candidates in one call over their own protocol. `llm_prefilter.provider` picks them, and `llm_prefilter.protocol` does not apply: `systemone`, Jev over the System One protocol, or `cohere`, Cohere rerank. The block then takes nothing from `llm`; it needs its own key under `llm_prefilter.api_keys.<provider>`:
+Two dedicated judges rate a whole batch of candidates in one call over their own protocol. `llm_prefilter.provider` picks them: `systemone`, Jev over the System One protocol, or `cohere`, Cohere rerank. The block then takes nothing from `llm`; it needs its own key under `llm_prefilter.api_keys.<provider>`:
 
 ```yaml
 llm_prefilter:

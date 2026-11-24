@@ -33,7 +33,7 @@ func TestNewPrefilter(t *testing.T) {
 		batch     int
 		pair      int
 	}{
-		{"chat provider runs the chat judge", model.LLMPrefilterConfig{Protocol: model.PrefilterChat, Provider: "claude-cli", Model: "haiku"}, "chat:haiku", relevance.Both, llmops.ChatBatch, 0},
+		{"chat provider runs the chat judge", model.LLMPrefilterConfig{Provider: "claude-cli", Model: "haiku"}, "chat:haiku", relevance.Both, llmops.ChatBatch, 0},
 		{"systemone defaults to Jev through Opper", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, jev.MaxBatch(), 0},
 		{"cohere defaults to rerank v3.5 through Opper", model.LLMPrefilterConfig{Provider: "cohere", APIKeys: keys}, "cohere:aws/cohere/rerank-v3.5", relevance.Forward, 1000, rerank.MaxPairTokens()},
 		{"a set model names the judge", model.LLMPrefilterConfig{Provider: "cohere", Model: "cohere/rerank-v4", APIKeys: keys}, "cohere:cohere/rerank-v4", relevance.Forward, 1000, rerank.MaxPairTokens()},
@@ -61,7 +61,7 @@ func TestNewPrefilter_RefusesABadBlock(t *testing.T) {
 		{"systemone without its key", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: map[string]string{"opper": "k"}}, "llm_prefilter: provider systemone needs llm_prefilter.api_keys.systemone"},
 		{"cohere without its key", model.LLMPrefilterConfig{Provider: "cohere"}, "llm_prefilter: provider cohere needs llm_prefilter.api_keys.cohere"},
 		{"relative endpoint", model.LLMPrefilterConfig{Provider: "cohere", Endpoint: "/v3/rerank", APIKeys: map[string]string{"cohere": "k"}}, "not an absolute http or https URL"},
-		{"unknown provider", model.LLMPrefilterConfig{Protocol: model.PrefilterChat, Provider: "bm25"}, "unknown llm provider \"bm25\""},
+		{"unknown provider", model.LLMPrefilterConfig{Provider: "bm25"}, "unknown llm provider \"bm25\""},
 		{"params on systemone", model.LLMPrefilterConfig{Provider: "systemone", Params: map[string]string{"temperature": "0"}, APIKeys: map[string]string{"systemone": "k"}}, "provider systemone takes no params"},
 		{"concurrency and retry on cohere", model.LLMPrefilterConfig{Provider: "cohere", Concurrency: 4, Retry: model.RetryConfig{MaxAttempts: 2}, APIKeys: map[string]string{"cohere": "k"}}, "provider cohere takes no concurrency, retry"},
 		{"bad timeout", model.LLMPrefilterConfig{Provider: "claude-cli", Timeout: "soon"}, "parsing timeout"},
@@ -78,32 +78,15 @@ func TestNewPrefilter_RefusesABadBlock(t *testing.T) {
 
 // Without a model of its own the judge is named after the default model.
 func TestNewPrefilter_DefaultModelNamesTheJudge(t *testing.T) {
-	resolved, err := model.BaseConfig{}.ResolvedPrefilter()
+	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{}, nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	chat, err := factory.NewPrefilter(resolved, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if relevance.Reads(chat.Scorer, relevance.Candidate{ID: "a", Text: "kind: gap\n\nA body."}) {
-		t.Fatal("the composed chat judge should read no candidate without a line")
 	}
 	if chat.Judge != "chat:"+model.DefaultLLMModel {
 		t.Fatalf("judge %q should name the default model", chat.Judge)
 	}
-}
-
-// A block without a protocol or with an unknown one is refused, naming the
-// protocols there are.
-func TestNewPrefilter_RefusesAMissingOrUnknownProtocol(t *testing.T) {
-	for name, protocol := range map[string]model.PrefilterProtocol{"missing": "", "unknown": "listwise-v2"} {
-		t.Run(name, func(t *testing.T) {
-			_, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: protocol}, nil)
-			if err == nil || !strings.Contains(err.Error(), "llm_prefilter.protocol") || !strings.Contains(err.Error(), "chat") {
-				t.Fatalf("NewPrefilter = %v, should name the protocol key and the protocols there are", err)
-			}
-		})
+	if relevance.Reads(chat.Scorer, relevance.Candidate{ID: "a", Text: "kind: gap\n\nA body."}) {
+		t.Fatal("the composed chat judge should read no candidate without a line")
 	}
 }
 

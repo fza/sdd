@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -71,9 +69,6 @@ func TestResolvedPrefilter(t *testing.T) {
 	if set.Provider != "openai" || set.Model != "gpt-mini" || set.Timeout != "45s" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
 	}
-	if derived.Protocol != model.PrefilterChat || set.Protocol != model.PrefilterChat {
-		t.Errorf("a block without a protocol should run chat, got %q and %q", derived.Protocol, set.Protocol)
-	}
 
 	for _, provider := range []model.PrefilterProvider{model.PrefilterSystemOne, model.PrefilterCohere} {
 		block := model.LLMPrefilterConfig{Provider: provider, APIKeys: map[string]string{string(provider): "p"}}
@@ -127,20 +122,5 @@ func TestParseConfig_ReadsTheLLMPrefilterBlock(t *testing.T) {
 	got := cfg.LLMPrefilter
 	if got.Provider != model.PrefilterCohere || got.Model != "m" || got.Endpoint != "https://example.invalid/rerank" || got.Timeout != "10s" || got.APIKeys["cohere"] != "k" {
 		t.Fatalf("the block should read every key it sets, got %+v", got)
-	}
-}
-
-// A protocol name a former sdd wrote reads as the protocol it became.
-func TestPrefilterProtocol_ReadsLegacyNamesAsChat(t *testing.T) {
-	for _, name := range []string{"chat", "generate", "listwise"} {
-		t.Run(name, func(t *testing.T) {
-			var block model.LLMPrefilterConfig
-			if err := yaml.Unmarshal([]byte("protocol: "+name+"\nmodel: haiku\n"), &block); err != nil {
-				t.Fatal(err)
-			}
-			if block.Protocol != model.PrefilterChat || block.Model != "haiku" {
-				t.Fatalf("block %+v: the name should read as chat beside the model", block)
-			}
-		})
 	}
 }

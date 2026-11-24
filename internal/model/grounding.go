@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Grounding defaults.
@@ -232,11 +230,8 @@ func readTag(read GroundingRead) string {
 // the keys of `llm` that apply to it. Its provider is a field of its own,
 // since it takes the dedicated judges beside the chat providers.
 type LLMPrefilterConfig struct {
-	// Protocol is how a chat provider's judge rates (PrefilterProtocol); a
-	// dedicated provider rates over its own and ignores it.
-	Protocol PrefilterProtocol `yaml:"protocol,omitempty"`
-	// Provider picks the judge: a chat provider runs the chat judge on its
-	// model; a dedicated provider rates over its own protocol.
+	// Provider picks the judge: a chat provider runs the generate judge on
+	// its model; a dedicated provider rates over its own protocol.
 	Provider       PrefilterProvider `yaml:"provider,omitempty"`
 	Model          string            `yaml:"model,omitempty"`
 	Timeout        string            `yaml:"timeout,omitempty"`
@@ -319,10 +314,6 @@ func (b BaseConfig) ResolvedPrefilter() (LLMPrefilterConfig, error) {
 		APIKeys: b.LLM.APIKeys,
 	}
 	resolved := prefilterFromChat(mergeLLMConfig(base, b.LLMPrefilter.Chat()))
-	resolved.Protocol = b.LLMPrefilter.Protocol
-	if resolved.Protocol == "" {
-		resolved.Protocol = PrefilterChat
-	}
 	err := CheckLLMProviderIsNoJudge(string(resolved.Provider))
 	if err != nil {
 		return LLMPrefilterConfig{}, err
@@ -331,43 +322,7 @@ func (b BaseConfig) ResolvedPrefilter() (LLMPrefilterConfig, error) {
 }
 
 func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
-	out := prefilterFromChat(mergeLLMConfig(base.Chat(), overlay.Chat()))
-	out.Protocol = base.Protocol
-	if overlay.Protocol != "" {
-		out.Protocol = overlay.Protocol
-	}
-	return out
-}
-
-// PrefilterProtocol is the protocol a chat provider's judge rates by.
-type PrefilterProtocol string
-
-// PrefilterChat has a chat model score a batch of candidates against the
-// draft per call.
-const PrefilterChat PrefilterProtocol = "chat"
-
-func (PrefilterProtocol) AllowedValues() []string {
-	return closedValues(PrefilterChat)
-}
-
-// legacyProtocols are the protocol names a former sdd wrote, by the one each
-// reads as now.
-var legacyProtocols = map[string]PrefilterProtocol{
-	"generate": PrefilterChat,
-	"listwise": PrefilterChat,
-}
-
-// UnmarshalYAML reads a legacy protocol name as the protocol it became.
-func (p *PrefilterProtocol) UnmarshalYAML(node *yaml.Node) error {
-	var value string
-	if err := node.Decode(&value); err != nil {
-		return err
-	}
-	*p = PrefilterProtocol(value)
-	if current, ok := legacyProtocols[value]; ok {
-		*p = current
-	}
-	return nil
+	return prefilterFromChat(mergeLLMConfig(base.Chat(), overlay.Chat()))
 }
 
 func boolOr(v *bool, fallback bool) bool {
