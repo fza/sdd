@@ -146,7 +146,7 @@ func TestPlan_CountsTheInstructionInThePairWindow(t *testing.T) {
 	room := cohere.MaxPairTokens - relevance.EstimateTokens(subject)
 	fits := strings.Repeat("x", 3*(room-relevance.EstimateTokens(cohere.Instruction)))
 	past := strings.Repeat("x", 3*room)
-	_, oversize := relevance.Plan(scorer, subject, []relevance.Candidate{{ID: "fits", Text: fits}, {ID: "past", Text: past}})
+	_, oversize, _ := relevance.Plan(scorer, subject, []relevance.Candidate{{ID: "fits", Text: fits}, {ID: "past", Text: past}})
 	if len(oversize) != 1 || oversize[0] != 1 {
 		t.Fatalf("oversize %v: only the pair past the window with the instruction should be left out", oversize)
 	}

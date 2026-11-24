@@ -172,7 +172,7 @@ verify:
 | `verify.depth.down`, `verify.depth.up` | User-global, project, local | `2`, `1` | How far down and up a candidate's chain of refs the reading takes in candidates. |
 | `verify.brief_all_below` | User-global, project, local | `100` | Below this many live entries, the reading lists every live entry's brief and runs no search. |
 | `verify.prefilter_from` | User-global, project, local | `30` | Below this many candidates, the reading calls no [relevance prefilter](#relevance-prefilter). |
-| `verify.prefilter` | User-global, project, local | `true` | Rates the relevance of each candidate before the reading lists it, and sets aside the ones below the calibrated threshold. The judge runs on the [`llm_prefilter`](#relevance-prefilter) model. On `claude-cli` each rated entry starts a process of its own. The deep verifier's reading uses the same judge and threshold. |
+| `verify.prefilter` | User-global, project, local | `true` | Rates the relevance of each candidate before the reading lists it, and sets aside the ones below the calibrated threshold. The judge runs on the [`llm_prefilter`](#relevance-prefilter) model. On `claude-cli` each call of up to 100 entries starts a process of its own. The deep verifier's reading uses the same judge and threshold. |
 | `verify.runner` | User-global, project, local | `subagent` | What runs the deep verifier. See [runners and rounds](#runners-and-rounds). Under `deep`, `sdd init` asks for it while no file sets it, or takes `--verify-runner`, and writes it to the local file; it offers `claude` only where `supported_agents` names it and `driver` only where a file sets `verify.driver.command`. The setting describes the machine, so the local file wins. |
 | `verify.driver.command`, `verify.driver.args` | User-global, local | None | The command the `driver` runner runs each round. sdd refuses it in `.sdd/config.yaml`, since it would run on every contributor's machine. |
 | `verify.claude.model`, `verify.claude.effort` | User-global, project, local | `sonnet`, `medium` | The model and effort of the deep verifier: the `claude` runner passes them to `--model` and `--effort`, and a `subagent` dispatch names them when the MCP client is Claude Code. The values pass as written. The local file wins. |
@@ -234,25 +234,25 @@ In a guided dialogue the agent plays the draft back without a check; once you co
 
 #### Relevance prefilter
 
-The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the keys of [`llm`](#language-model) that apply to a judge: `provider`, `model`, `endpoint`, `ollama_endpoint`, `api_keys`, `timeout`, `params`, `concurrency`, `rate_limit_rps` and `retry`:
+The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the keys of [`llm`](#language-model) that apply to a judge: `provider`, `model`, `endpoint`, `ollama_endpoint`, `api_keys`, `timeout`, `params`, `concurrency`, `rate_limit_rps` and `retry`. The judge scores up to 100 entries a call, each listed as one line, its type, kind and summary, with entry IDs stripped; the answer holds one score per entry:
 
 ```yaml
 llm_prefilter:
   provider: openai
   model: gpt-5-mini
   timeout: 45s
-  concurrency: 16
+  concurrency: 8
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `llm_prefilter.provider`, `llm_prefilter.model`, `llm_prefilter.endpoint`, `llm_prefilter.ollama_endpoint`, `llm_prefilter.api_keys.<provider>` | The `llm` value | The judge's model and connection. Each value the block sets wins over the `llm` one. |
 | `llm_prefilter.timeout` | `45s` | Time limit for one judge call. |
-| `llm_prefilter.concurrency` | `16` | Judge calls in flight; each call rates one candidate. |
+| `llm_prefilter.concurrency` | `8` | Judge calls in flight across every reading; each call rates a batch of up to 100 entries. |
 
-The judge's identity is `generate:<model>`, and calibration keys its labels on it. A whole pass ends after 45 seconds; candidates whose call failed or came late stay unscored and go to judge. A candidate too long for one call is never cut: it goes to judge too.
+The judge's identity is `chat:<model>`, and calibration keys its labels on it. A whole pass ends after 45 seconds; candidates whose call failed or came late stay unscored and go to judge. A call whose answer misses a score fails as a whole, and its entries go to judge. A candidate too long for one call is never cut: it goes to judge too. An entry without a summary goes into no call: it stays unscored, a brief to judge that is never set aside, and the pass names how many the judge cannot read. `sdd grounding rescore` leaves such pairs unscored and counts them apart, and `sdd grounding status` counts none of them as unscored.
 
-Two dedicated judges rate a whole batch of candidates in one call instead of one chat call per candidate. `llm_prefilter.provider` picks them: `systemone`, Jev over the System One protocol, or `cohere`, Cohere rerank. The block then takes nothing from `llm`; it needs its own key under `llm_prefilter.api_keys.<provider>`:
+Two dedicated judges rate a whole batch of candidates in one call over their own protocol. `llm_prefilter.provider` picks them: `systemone`, Jev over the System One protocol, or `cohere`, Cohere rerank. The block then takes nothing from `llm`; it needs its own key under `llm_prefilter.api_keys.<provider>`:
 
 ```yaml
 llm_prefilter:

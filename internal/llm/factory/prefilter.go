@@ -14,11 +14,11 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
-// Prefilter defaults: a call is bounded by the pass deadline, and the chat
-// bridge fans one call per candidate out to the calls in flight.
+// Prefilter defaults: a call's own limit, and the chat judge holds a few
+// calls in flight, each carrying a whole batch.
 const (
-	defaultPrefilterTimeout     = 45 * time.Second
-	defaultPrefilterConcurrency = 16
+	defaultPrefilterTimeout = 45 * time.Second
+	defaultChatConcurrency  = 8
 )
 
 // Prefilter is a composed relevance scorer and the judge it scores as, the
@@ -30,8 +30,9 @@ type Prefilter struct {
 
 // NewPrefilter composes a resolved llm_prefilter block
 // (model.BaseConfig.ResolvedPrefilter) into a bounded, observed scorer: a
-// dedicated provider's adapter, judge <provider>:<model>, or the generate
-// chat bridge over a chat provider's model, judge generate:<model>.
+// dedicated provider's adapter, judge <provider>:<model>, or the chat judge
+// over a chat provider's model, scoring a batch per call, judge
+// chat:<model>.
 func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, error) {
 	timeout := defaultPrefilterTimeout
 	if cfg.Timeout != "" {
@@ -79,16 +80,12 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
-		bridge, err := llmops.NewRelevanceBridge(chat)
+		chatJudge, err := llmops.NewChatJudge(chat)
 		if err != nil {
 			return Prefilter{}, err
 		}
-		concurrency := cfg.Concurrency
-		if concurrency <= 0 {
-			concurrency = defaultPrefilterConcurrency
-		}
-		scorer = relevance.PerItem(bridge, concurrency)
-		judge = "generate:" + cmp.Or(cfg.Model, string(cfg.Provider), model.DefaultLLMModel)
+		scorer = relevance.Limited(chatJudge, cmp.Or(cfg.Concurrency, defaultChatConcurrency))
+		judge = "chat:" + cmp.Or(cfg.Model, string(cfg.Provider), model.DefaultLLMModel)
 	}
 	if cfg.RateLimitRPS > 0 {
 		scorer = relevance.RateLimited(scorer, cfg.RateLimitRPS)
@@ -107,8 +104,8 @@ func prefilterKey(cfg model.LLMPrefilterConfig) (string, error) {
 	return key, nil
 }
 
-// chatOnlyKeys lists the keys cfg sets that only the generate judge's chat
-// model reads.
+// chatOnlyKeys lists the keys cfg sets that only a chat provider's judge
+// reads.
 func chatOnlyKeys(cfg model.LLMPrefilterConfig) []string {
 	var keys []string
 	if cfg.Concurrency != 0 {

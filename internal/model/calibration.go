@@ -195,8 +195,9 @@ func (r CalibrationReport) DominantCode() string {
 }
 
 // Calibration reports judge's calibration over the ledger, over its live
-// labels alone when excludeReplay is set.
-func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) CalibrationReport {
+// labels alone when excludeReplay is set. Unscored counts the pairs
+// readable keeps (UnscoredReadable).
+func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool, readable func(RelevancePair) bool) CalibrationReport {
 	labels := l.Labels(judge)
 	steps := l.Steps()
 	live := LiveLabels(labels)
@@ -204,7 +205,7 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 	if excludeReplay {
 		labels = live
 	}
-	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
+	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.UnscoredReadable(judge, readable)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
 	for _, verdict := range l.readers {
 		if verdict.OpenedHidden && verdict.Code != ReaderReferenced {
 			report.OpenedHidden++

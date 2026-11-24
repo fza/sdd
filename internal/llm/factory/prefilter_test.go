@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 	"github.com/networkteam/sdd/pkg/llm/relevance/cohere"
@@ -32,7 +33,7 @@ func TestNewPrefilter(t *testing.T) {
 		batch     int
 		pair      int
 	}{
-		{"chat provider runs generate", model.LLMPrefilterConfig{Provider: "claude-cli", Model: "haiku"}, "generate:haiku", relevance.Both, 1, 0},
+		{"chat provider runs the chat judge", model.LLMPrefilterConfig{Provider: "claude-cli", Model: "haiku"}, "chat:haiku", relevance.Both, llmops.ChatBatch, 0},
 		{"systemone defaults to Jev through Opper", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, jev.MaxBatch(), 0},
 		{"cohere defaults to rerank v3.5 through Opper", model.LLMPrefilterConfig{Provider: "cohere", APIKeys: keys}, "cohere:aws/cohere/rerank-v3.5", relevance.Forward, 1000, rerank.MaxPairTokens()},
 		{"a set model names the judge", model.LLMPrefilterConfig{Provider: "cohere", Model: "cohere/rerank-v4", APIKeys: keys}, "cohere:cohere/rerank-v4", relevance.Forward, 1000, rerank.MaxPairTokens()},
@@ -77,12 +78,15 @@ func TestNewPrefilter_RefusesABadBlock(t *testing.T) {
 
 // Without a model of its own the judge is named after the default model.
 func TestNewPrefilter_DefaultModelNamesTheJudge(t *testing.T) {
-	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{}, nil)
+	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:"+model.DefaultLLMModel {
-		t.Fatalf("judge %q should name the default model", generate.Judge)
+	if chat.Judge != "chat:"+model.DefaultLLMModel {
+		t.Fatalf("judge %q should name the default model", chat.Judge)
+	}
+	if relevance.Reads(chat.Scorer, relevance.Candidate{ID: "a", Text: "kind: gap\n\nA body."}) {
+		t.Fatal("the composed chat judge should read no candidate without a line")
 	}
 }
 
