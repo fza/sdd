@@ -59,7 +59,7 @@ func TestOperationsMarkTheDraftAsNew(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			_, err = judge.Score(t.Context(), relevance.Request{Subject: entry.Content, Candidates: []relevance.Candidate{{ID: "a", Text: "A stored entry."}}})
+			_, err = judge.Score(t.Context(), relevance.Request{Subject: entry.Content, Candidates: []relevance.Candidate{{ID: "a", Text: "A stored entry.", Line: "A stored entry."}}})
 			return err
 		}},
 	}

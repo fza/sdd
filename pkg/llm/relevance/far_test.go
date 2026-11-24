@@ -25,6 +25,7 @@ func (s *callScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *callScorer) MaxBatch() int                  { return s.maxBatch }
 func (s *callScorer) MaxInputTokens() int            { return 0 }
 func (s *callScorer) MaxPairTokens() int             { return 0 }
+func (s *callScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *callScorer) Score(_ context.Context, request relevance.Request) (relevance.Result, error) {
 	s.mu.Lock()
@@ -81,9 +82,10 @@ func TestPlanWithFar(t *testing.T) {
 		{name: "far candidates past the tokens of a call have no plan", scorer: &fixedScorer{maxTokens: 20}, far: farCandidates(30, 30, 30)},
 		{name: "a far candidate past the pair limit has no plan", scorer: &fixedScorer{maxPair: 12}, far: farCandidates(3, 60, 3)},
 		{name: "a candidate with no room beside the far ones is left out", scorer: &fixedScorer{maxTokens: 36}, far: farCandidates(30, 30, 30), ok: true, oversize: 10},
+		{name: "a far candidate the scorer does not read has no plan", scorer: &fixedScorer{lines: true}, far: farCandidates(3, 3, 3)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			batches, oversize, ok := relevance.PlanWithFar(tc.scorer, "subject", candidates, tc.far)
+			batches, oversize, _, ok := relevance.PlanWithFar(tc.scorer, "subject", candidates, tc.far)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v: a plan exists only where a call holds the far candidates and one more", ok)
 			}
@@ -101,8 +103,8 @@ func TestPlanWithFar(t *testing.T) {
 func TestPlan_KeepsItsCallsWithoutFarCandidates(t *testing.T) {
 	scorer := &fixedScorer{maxBatch: 4, maxTokens: 40}
 	candidates := manyCandidates(11)
-	batches, oversize := relevance.Plan(scorer, "subject", candidates)
-	planned, plannedOversize, ok := relevance.PlanWithFar(scorer, "subject", candidates, nil)
+	batches, oversize, _ := relevance.Plan(scorer, "subject", candidates)
+	planned, plannedOversize, _, ok := relevance.PlanWithFar(scorer, "subject", candidates, nil)
 	if !ok || !reflect.DeepEqual(batches, planned) || !slices.Equal(oversize, plannedOversize) {
 		t.Fatalf("plan %v and %v: without far candidates both plans should be one", batches, planned)
 	}

@@ -198,6 +198,7 @@ func (s *stuckScorer) Direction() pkgrelevance.Direction { return pkgrelevance.B
 func (s *stuckScorer) MaxBatch() int                     { return 0 }
 func (s *stuckScorer) MaxInputTokens() int               { return 0 }
 func (s *stuckScorer) MaxPairTokens() int                { return 0 }
+func (s *stuckScorer) Reads(pkgrelevance.Candidate) bool { return true }
 
 func (s *stuckScorer) Score(context.Context, pkgrelevance.Request) (pkgrelevance.Result, error) {
 	s.mu.Lock()

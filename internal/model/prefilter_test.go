@@ -195,7 +195,8 @@ func TestReadingKept_KeepsAJudgementAcrossDrafts(t *testing.T) {
 }
 
 // An entry's ranking line is its type, kind, title and summary on one line;
-// an untitled one carries its summary alone.
+// an untitled one carries its summary alone; one without a summary has no
+// line.
 func TestEntryRankingLine(t *testing.T) {
 	titled := &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Title: "Rank with a judge", Summary: "The deep reading ranks.\nThen it lists."}
 	if got := model.EntryRankingLine(titled); got != "[decision/directive] Rank with a judge: The deep reading ranks. Then it lists." {
@@ -204,6 +205,10 @@ func TestEntryRankingLine(t *testing.T) {
 	untitled := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Summary: "A gap. More."}
 	if got := model.EntryRankingLine(untitled); got != "[signal/gap] A gap. More." {
 		t.Fatalf("line %q", got)
+	}
+	unsummarized := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Title: "A title", Content: "The body's first sentence. More."}
+	if got := model.EntryRankingLine(unsummarized); got != "" {
+		t.Fatalf("line %q: an entry without a summary should have no line", got)
 	}
 }
 

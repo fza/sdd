@@ -26,6 +26,8 @@ type fixedScorer struct {
 	requests  []relevance.Request
 	err       error
 	block     bool
+	// lines reads a candidate's Line alone, as a chat scorer does.
+	lines bool
 	// entered, when set, takes a signal per call, which then waits for
 	// release.
 	entered chan struct{}
@@ -36,6 +38,9 @@ func (f *fixedScorer) Direction() relevance.Direction { return relevance.Both }
 func (f *fixedScorer) MaxBatch() int                  { return f.maxBatch }
 func (f *fixedScorer) MaxInputTokens() int            { return f.maxTokens }
 func (f *fixedScorer) MaxPairTokens() int             { return f.maxPair }
+func (f *fixedScorer) Reads(candidate relevance.Candidate) bool {
+	return !f.lines || candidate.Line != ""
+}
 
 func (f *fixedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	f.mu.Lock()
@@ -87,11 +92,35 @@ func TestPlan(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scorer := &fixedScorer{maxBatch: tc.maxBatch, maxTokens: tc.maxTokens, maxPair: tc.maxPair}
-			batches, oversize := relevance.Plan(scorer, "subject", candidates(tc.texts...))
-			if !reflect.DeepEqual(batches, tc.batches) || !reflect.DeepEqual(oversize, tc.oversize) {
-				t.Fatalf("Plan = %v, oversize %v; want %v, oversize %v", batches, oversize, tc.batches, tc.oversize)
+			batches, oversize, unread := relevance.Plan(scorer, "subject", candidates(tc.texts...))
+			if !reflect.DeepEqual(batches, tc.batches) || !reflect.DeepEqual(oversize, tc.oversize) || unread != nil {
+				t.Fatalf("Plan = %v, oversize %v, unread %v; want %v, oversize %v", batches, oversize, unread, tc.batches, tc.oversize)
 			}
 		})
+	}
+}
+
+// A candidate the scorer does not read goes into no call and is reported
+// apart from the oversize ones; Readable keeps the others.
+func TestPlan_LeavesOutWhatTheScorerDoesNotRead(t *testing.T) {
+	scorer := &fixedScorer{maxBatch: 2, maxTokens: 50, lines: true}
+	planned := []relevance.Candidate{
+		{ID: "a", Text: "a", Line: "a"},
+		{ID: "b", Text: "b"},
+		{ID: "c", Text: strings.Repeat("x", 300), Line: "c"},
+		{ID: "d", Text: "d", Line: "d"},
+		{ID: "e", Text: "e", Line: "e"},
+	}
+	batches, oversize, unread := relevance.Plan(scorer, "subject", planned)
+	if !reflect.DeepEqual(batches, [][]int{{0, 3}, {4}}) || !slices.Equal(oversize, []int{2}) || !slices.Equal(unread, []int{1}) {
+		t.Fatalf("Plan = %v, oversize %v, unread %v: no call should carry the candidate the scorer does not read", batches, oversize, unread)
+	}
+	var ids []string
+	for _, candidate := range relevance.Readable(scorer, planned) {
+		ids = append(ids, candidate.ID)
+	}
+	if !slices.Equal(ids, []string{"a", "c", "d", "e"}) {
+		t.Fatalf("Readable = %v: it should keep every candidate the scorer reads, in order", ids)
 	}
 }
 

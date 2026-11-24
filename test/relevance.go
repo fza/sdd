@@ -35,6 +35,7 @@ func (s *ScriptedScorer) Direction() relevance.Direction { return relevance.Both
 func (s *ScriptedScorer) MaxBatch() int                  { return s.Batch }
 func (s *ScriptedScorer) MaxInputTokens() int            { return 0 }
 func (s *ScriptedScorer) MaxPairTokens() int             { return 0 }
+func (s *ScriptedScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *ScriptedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	s.mu.Lock()

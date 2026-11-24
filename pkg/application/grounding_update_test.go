@@ -232,6 +232,8 @@ type tooLongScorer struct{ *scriptedScorer }
 
 func (tooLongScorer) MaxPairTokens() int { return 1 }
 
+func (tooLongScorer) Reads(llmrelevance.Candidate) bool { return true }
+
 // The pass reports its progress in pairs: the total before the first
 // request, then each finished request, its failed pairs and those too long
 // to score included, so the count ends at the total however the judge

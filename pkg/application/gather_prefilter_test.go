@@ -23,12 +23,14 @@ import (
 const gatherJudge = "test:scripted"
 
 // scriptedScorer scores candidates from a table, 0.5 for any other, fails
-// the candidates it is told to and holds slow ones until the call ends.
+// the candidates it is told to, holds slow ones until the call ends and
+// reads no blind one.
 type scriptedScorer struct {
 	mu      sync.Mutex
 	scores  map[string]float64
 	fail    map[string]bool
 	slow    map[string]bool
+	blind   map[string]bool
 	failAll bool
 	// short answers one score fewer than asked, in every call or, with a
 	// limit, in a call of more candidates than it.
@@ -42,6 +44,22 @@ func (s *scriptedScorer) Direction() llmrelevance.Direction { return llmrelevanc
 func (s *scriptedScorer) MaxBatch() int                     { return s.maxBatch }
 func (s *scriptedScorer) MaxInputTokens() int               { return 0 }
 func (s *scriptedScorer) MaxPairTokens() int                { return 0 }
+
+func (s *scriptedScorer) Reads(candidate llmrelevance.Candidate) bool {
+	return !s.blind[candidate.ID]
+}
+
+// carried reports whether a request held id.
+func (s *scriptedScorer) carried(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, request := range s.requests {
+		if slices.ContainsFunc(request.Candidates, func(c llmrelevance.Candidate) bool { return c.ID == id }) {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *scriptedScorer) Score(ctx context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
 	for _, candidate := range request.Candidates {

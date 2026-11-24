@@ -139,8 +139,9 @@ func judgeOrigin(runtime *ProjectRuntime, judge Prefilter) string {
 type RescoreResult struct {
 	Judge string
 	// Scored pairs got a score; Missing pairs name an entry the graph no
-	// longer holds; Unanswered pairs the judge did not answer.
-	Scored, Missing, Unanswered int
+	// longer holds; Unanswered pairs the judge did not answer; Unread pairs
+	// it cannot read (relevance.Scorer.Reads).
+	Scored, Missing, Unanswered, Unread int
 	// Requests counts the scoring requests sent, what a reranker bills by.
 	Requests int
 	// Failed counts the pairs Failures left unscored.
@@ -166,8 +167,8 @@ type GroundingUpdateRequest struct {
 
 // RescoreProgress is how far a scoring pass has come: Done of the Total
 // pairs it scores, counted in pairs so a request split in halves counts
-// once. Done counts the pairs scored, failed or too long to score; Failed
-// counts the failed ones.
+// once. Done counts the pairs scored, failed, too long to score or
+// unreadable to the judge; Failed counts the failed ones.
 type RescoreProgress struct {
 	Judge               string
 	Done, Total, Failed int
