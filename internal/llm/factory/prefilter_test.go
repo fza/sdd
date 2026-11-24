@@ -5,19 +5,23 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 func TestNewPrefilter(t *testing.T) {
-	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "haiku"}}, nil)
+	chat, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: model.PrefilterChat, LLMConfig: model.LLMConfig{Provider: "claude-cli", Model: "haiku"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:haiku" || generate.Scorer.MaxBatch() != 1 || generate.Scorer.Direction() != relevance.Both {
-		t.Fatalf("judge %q: the generate bridge should read both texts and score one pair per call", generate.Judge)
+	if chat.Judge != "chat:haiku" || chat.Scorer.MaxBatch() != llmops.ChatBatch || chat.Scorer.Direction() != relevance.Both {
+		t.Fatalf("judge %q: the chat judge should read both texts and score a batch per call", chat.Judge)
 	}
-	_, err = factory.NewPrefilter(model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Provider: "claude-cli", Timeout: "soon"}}, nil)
+	if relevance.Reads(chat.Scorer, relevance.Candidate{ID: "a", Text: "kind: gap\n\nA body."}) {
+		t.Fatal("the composed chat judge should read no candidate without a line")
+	}
+	_, err = factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: model.PrefilterChat, LLMConfig: model.LLMConfig{Provider: "claude-cli", Timeout: "soon"}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "parsing timeout") {
 		t.Fatalf("NewPrefilter = %v, should name the malformed timeout", err)
 	}
@@ -25,11 +29,24 @@ func TestNewPrefilter(t *testing.T) {
 
 // Without a model of its own the judge is named after the default model.
 func TestNewPrefilter_DefaultModelNamesTheJudge(t *testing.T) {
-	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{}, nil)
+	chat, err := factory.NewPrefilter(model.BaseConfig{}.ResolvedPrefilter(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:"+model.DefaultLLMModel {
-		t.Fatalf("judge %q should name the default model", generate.Judge)
+	if chat.Judge != "chat:"+model.DefaultLLMModel {
+		t.Fatalf("judge %q should name the default model", chat.Judge)
+	}
+}
+
+// A block without a protocol or with an unknown one is refused, naming the
+// protocols there are.
+func TestNewPrefilter_RefusesAMissingOrUnknownProtocol(t *testing.T) {
+	for name, protocol := range map[string]model.PrefilterProtocol{"missing": "", "unknown": "listwise-v2"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: protocol}, nil)
+			if err == nil || !strings.Contains(err.Error(), "llm_prefilter.protocol") || !strings.Contains(err.Error(), "chat") {
+				t.Fatalf("NewPrefilter = %v, should name the protocol key and the protocols there are", err)
+			}
+		})
 	}
 }

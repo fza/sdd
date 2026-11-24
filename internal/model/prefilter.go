@@ -217,6 +217,17 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	return pairs
 }
 
+// UnscoredReadable is Unscored without the pairs readable reports false
+// for, those whose candidate the judge cannot read, which no re-scoring
+// scores; nil keeps every pair.
+func (l *RelevanceLedger) UnscoredReadable(judge string, readable func(RelevancePair) bool) []RelevancePair {
+	pairs := l.Unscored(judge)
+	if readable == nil {
+		return pairs
+	}
+	return slices.DeleteFunc(pairs, func(pair RelevancePair) bool { return !readable(pair) })
+}
+
 // Calibrate computes a judge's thresholds from its labels, each counted by
 // its weight (WilsonLowerWeighted). The set-aside threshold is the highest
 // score that keeps the lower bound of weighted recall over the positive
@@ -358,6 +369,17 @@ func RelevanceText(kind string, topics []string, body string) string {
 	}
 	b.WriteString("\n" + strings.TrimSpace(body))
 	return b.String()
+}
+
+// EntryRankingLine is the one line a chat judge reads of an entry:
+// [type/kind], then its summary; empty for an entry without a summary,
+// which a chat judge leaves unscored.
+func EntryRankingLine(e *Entry) string {
+	summary := strings.Join(strings.Fields(e.Summary), " ")
+	if summary == "" {
+		return ""
+	}
+	return "[" + string(e.Type) + "/" + string(e.Kind) + "] " + summary
 }
 
 // EntryRelevanceText is RelevanceText of an entry with its effective topics.

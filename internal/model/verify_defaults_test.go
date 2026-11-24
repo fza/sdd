@@ -3,6 +3,8 @@ package model_test
 import (
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -65,5 +67,23 @@ func TestResolvedPrefilter(t *testing.T) {
 	set := model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Model: "gpt-mini", Timeout: "45s"}}}.ResolvedPrefilter()
 	if set.Provider != "openai" || set.Model != "gpt-mini" || set.Timeout != "45s" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
+	}
+	if derived.Protocol != model.PrefilterChat || set.Protocol != model.PrefilterChat {
+		t.Errorf("a block without a protocol should run chat, got %q and %q", derived.Protocol, set.Protocol)
+	}
+}
+
+// A protocol name a former sdd wrote reads as the protocol it became.
+func TestPrefilterProtocol_ReadsLegacyNamesAsChat(t *testing.T) {
+	for _, name := range []string{"chat", "generate", "listwise"} {
+		t.Run(name, func(t *testing.T) {
+			var block model.LLMPrefilterConfig
+			if err := yaml.Unmarshal([]byte("protocol: "+name+"\nmodel: haiku\n"), &block); err != nil {
+				t.Fatal(err)
+			}
+			if block.Protocol != model.PrefilterChat || block.Model != "haiku" {
+				t.Fatalf("block %+v: the name should read as chat beside the model", block)
+			}
+		})
 	}
 }

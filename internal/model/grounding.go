@@ -3,6 +3,8 @@ package model
 import (
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Grounding defaults.
@@ -225,25 +227,68 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// LLMPrefilterConfig is the `llm_prefilter` block: the chat model the
-// relevance judge runs on, in the shape of `llm`.
+// PrefilterProtocol is the protocol that rates relevance.
+type PrefilterProtocol string
+
+// PrefilterChat has a chat model score a batch of candidates against the
+// draft per call.
+const PrefilterChat PrefilterProtocol = "chat"
+
+func (PrefilterProtocol) AllowedValues() []string {
+	return closedValues(PrefilterChat)
+}
+
+// legacyProtocols are the protocol names a former sdd wrote, by the one each
+// reads as now.
+var legacyProtocols = map[string]PrefilterProtocol{
+	"generate": PrefilterChat,
+	"listwise": PrefilterChat,
+}
+
+// UnmarshalYAML reads a legacy protocol name as the protocol it became.
+func (p *PrefilterProtocol) UnmarshalYAML(node *yaml.Node) error {
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	*p = PrefilterProtocol(value)
+	if current, ok := legacyProtocols[value]; ok {
+		*p = current
+	}
+	return nil
+}
+
+// LLMPrefilterConfig is the `llm_prefilter` block: the shape of `llm` plus
+// the protocol that rates relevance; Provider and Model select the chat
+// model as in `llm`.
 type LLMPrefilterConfig struct {
+	Protocol  PrefilterProtocol `yaml:"protocol,omitempty"`
 	LLMConfig `yaml:",inline"`
 }
 
-// ResolvedPrefilter is the prefilter block as it runs: the llm block's
-// provider, model and connection, each value llm_prefilter sets winning.
+// ResolvedPrefilter is the prefilter block as it runs: without a protocol,
+// chat, on the llm block's provider, model and connection, each value
+// llm_prefilter sets winning.
 func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
+	out := b.LLMPrefilter
+	if out.Protocol == "" {
+		out.Protocol = PrefilterChat
+	}
 	base := LLMConfig{
 		Provider: b.LLM.Provider, Model: b.LLM.Model,
 		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,
 		APIKeys: b.LLM.APIKeys,
 	}
-	return LLMPrefilterConfig{LLMConfig: mergeLLMConfig(base, b.LLMPrefilter.LLMConfig)}
+	out.LLMConfig = mergeLLMConfig(base, out.LLMConfig)
+	return out
 }
 
 func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
-	return LLMPrefilterConfig{LLMConfig: mergeLLMConfig(base.LLMConfig, overlay.LLMConfig)}
+	out := LLMPrefilterConfig{Protocol: base.Protocol, LLMConfig: mergeLLMConfig(base.LLMConfig, overlay.LLMConfig)}
+	if overlay.Protocol != "" {
+		out.Protocol = overlay.Protocol
+	}
+	return out
 }
 
 func boolOr(v *bool, fallback bool) bool {
