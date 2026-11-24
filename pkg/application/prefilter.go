@@ -64,7 +64,7 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 	var pending []relevance.Candidate
 	for _, candidate := range candidates {
 		if _, ok := held[candidate.Entry.ID]; !ok {
-			pending = append(pending, relevance.Candidate{ID: candidate.Entry.ID, Text: model.EntryRelevanceText(g, candidate.Entry)})
+			pending = append(pending, entryCandidate(g, candidate.Entry))
 		}
 	}
 	pass.status = model.PrefilterOK
@@ -84,6 +84,9 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 	if scored.oversize > 0 {
 		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", scored.oversize))
 	}
+	if scored.unread > 0 {
+		notes = append(notes, fmt.Sprintf("%d the judge cannot read, left to judge unscored", scored.unread))
+	}
 	if scored.unanswered > 0 {
 		notes = append(notes, fmt.Sprintf("%d unanswered and left to judge (%s)", scored.unanswered, strings.Join(scored.failures, "; ")))
 		pass.status = model.PrefilterPartial
@@ -96,13 +99,31 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 }
 
 // scoredPairs is what one scoring of pending candidates got: a score byte
-// per answered candidate, how many were too long for one call, and how many
-// calls left unanswered with their distinct failures.
+// per answered candidate, how many were too long for one call, how many the
+// judge cannot read (relevance.Reader), and how many calls left unanswered
+// with their distinct failures.
 type scoredPairs struct {
 	fresh      map[string]uint8
 	oversize   int
+	unread     int
 	unanswered int
 	failures   []string
+}
+
+// entryCandidate is e as a judge call carries it: its whole text and its
+// line.
+func entryCandidate(g *model.Graph, e *model.Entry) relevance.Candidate {
+	return relevance.Candidate{ID: e.ID, Text: model.EntryRelevanceText(g, e), Line: model.EntryRankingLine(e)}
+}
+
+// readablePairs reports for a labelled pair whether judge reads its
+// candidate in graph, pair.A as re-scoring sends it; a pair whose candidate
+// graph lacks counts as read.
+func readablePairs(judge Prefilter, graph *model.Graph) func(model.RelevancePair) bool {
+	return func(pair model.RelevancePair) bool {
+		e := graph.ByID[pair.A]
+		return e == nil || relevance.Reads(judge.Scorer, entryCandidate(graph, e))
+	}
 }
 
 // scoreCandidates rates pending against subject in filled calls, at most
@@ -110,8 +131,8 @@ type scoredPairs struct {
 // failed call leaves its candidates unscored; the result names it.
 func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate) scoredPairs {
 	scored := scoredPairs{fresh: map[string]uint8{}}
-	batches, oversize := relevance.Plan(prefilter.Scorer, subject, pending)
-	scored.oversize = len(oversize)
+	batches, oversize, unread := relevance.Plan(prefilter.Scorer, subject, pending)
+	scored.oversize, scored.unread = len(oversize), len(unread)
 	ctx, cancel := context.WithTimeout(ctx, prefilterDeadline)
 	defer cancel()
 	var mu sync.Mutex

@@ -20,7 +20,6 @@ var (
 	preflightSchema    = mustSchema("preflight.json")
 	writingGuideSchema = mustSchema("writing_guide.json")
 	gatherQuerySchema  = mustSchema("gather_query.json")
-	relevanceSchema    = mustSchema("relevance.json")
 	summarySchema      = mustSchema("summary.json")
 	titleSchema        = mustSchema("title.json")
 )

@@ -758,7 +758,7 @@ func (w *WorkflowSession) verifierLanes(ctx *engine.Context, reading *captureRea
 	var pending []relevance.Candidate
 	for _, id := range reading.listed {
 		if _, scored := scores[id]; !scored && !structural[id] && graph.ByID[id] != nil {
-			pending = append(pending, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id])})
+			pending = append(pending, entryCandidate(graph, graph.ByID[id]))
 		}
 	}
 	if len(pending) > 0 && prefilter.Scorer != nil {

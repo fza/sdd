@@ -174,7 +174,7 @@ func TestPlan_KeepsEveryCallWithinJevsLimits(t *testing.T) {
 			for i := range candidates {
 				candidates[i] = relevance.Candidate{ID: strconv.Itoa(i), Text: strings.Repeat("x", size)}
 			}
-			batches, oversize := relevance.Plan(scorer, "kind: gap\n\nThe draft text.", candidates)
+			batches, oversize, _ := relevance.Plan(scorer, "kind: gap\n\nThe draft text.", candidates)
 			if len(oversize) > 0 {
 				t.Fatalf("%d candidates left out: each fits a call on its own", len(oversize))
 			}

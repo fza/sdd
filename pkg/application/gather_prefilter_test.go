@@ -254,10 +254,10 @@ func TestGather_PrefilterNoteNamesTheScoreOrderOnlyOverScores(t *testing.T) {
 	}
 }
 
-// A one-pair scorer fanned out per candidate, as the generate protocol
-// composes it, rates each candidate in a call of its own: a failed or slow
-// call costs only its candidate, under a deadline of its own.
-func TestGather_PerItemPrefilterLosesOnlyTheLostCall(t *testing.T) {
+// A scorer taking one pair per call rates each candidate in a call of its
+// own: a failed or slow call costs only its candidate, under a deadline of
+// its own.
+func TestGather_OnePairCallsLoseOnlyTheLostCall(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		fail map[string]bool
@@ -270,7 +270,7 @@ func TestGather_PerItemPrefilterLosesOnlyTheLostCall(t *testing.T) {
 			inner := &scriptedScorer{fail: tc.fail, slow: tc.slow, maxBatch: 1, scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.0}}
 			f := newGatherFixture(t)
 			f.seed(t)
-			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(llmrelevance.PerItem(inner, 4), 200*time.Millisecond), Judge: gatherJudge}
+			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(inner, 200*time.Millisecond), Judge: gatherJudge}
 			f.relevance = calibratedLedger(t)
 			application := f.app(t, prefilterPolicy(1), nil)
 			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
