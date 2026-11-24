@@ -23,7 +23,6 @@ func (s *timedScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *timedScorer) MaxBatch() int                  { return 1 }
 func (s *timedScorer) MaxInputTokens() int            { return 0 }
 func (s *timedScorer) MaxPairTokens() int             { return 0 }
-func (s *timedScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *timedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	at, ok := s.answerAt[request.Candidates[0].ID]

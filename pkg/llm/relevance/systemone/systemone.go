@@ -111,8 +111,6 @@ func (s *Scorer) MaxInputTokens() int {
 }
 func (s *Scorer) MaxPairTokens() int { return 0 }
 
-func (s *Scorer) Reads(relevance.Candidate) bool { return true }
-
 type question struct {
 	Type         string `json:"type"`
 	Instructions string `json:"instructions"`

@@ -202,7 +202,6 @@ func (s *slowScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *slowScorer) MaxBatch() int                  { return 100 }
 func (s *slowScorer) MaxInputTokens() int            { return 0 }
 func (s *slowScorer) MaxPairTokens() int             { return 0 }
-func (s *slowScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *slowScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	if len(request.Candidates) > s.limit {

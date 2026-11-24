@@ -139,6 +139,8 @@ func (h halving) MaxBatch() int {
 	return h.Scorer.MaxBatch()
 }
 
+func (h halving) Reads(candidate Candidate) bool { return Reads(h.Scorer, candidate) }
+
 func (h halving) Score(ctx context.Context, request Request) (Result, error) {
 	return h.score(ctx, request, nil)
 }

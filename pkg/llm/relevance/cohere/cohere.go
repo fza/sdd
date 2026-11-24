@@ -93,7 +93,6 @@ func (s *Scorer) Direction() relevance.Direction { return relevance.Forward }
 func (s *Scorer) MaxBatch() int                  { return MaxBatch }
 func (s *Scorer) MaxInputTokens() int            { return 0 }
 func (s *Scorer) MaxPairTokens() int             { return MaxPairTokens - relevance.EstimateTokens(Instruction) }
-func (s *Scorer) Reads(relevance.Candidate) bool { return true }
 
 type request struct {
 	Model     string   `json:"model"`

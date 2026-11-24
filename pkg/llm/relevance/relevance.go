@@ -64,23 +64,34 @@ type FarLine struct {
 // together, 0 for no bound, so a caller fills each call up to the
 // provider's limit without cutting any text. MaxPairTokens bounds the
 // subject and one candidate together, 0 for no bound: a reranker reads each
-// document beside the query in a window of its own. Reads reports whether a
-// call may carry candidate at all: a scorer that lists Line reads none
-// without one.
+// document beside the query in a window of its own.
 type Scorer interface {
 	Score(ctx context.Context, request Request) (Result, error)
 	Direction() Direction
 	MaxBatch() int
 	MaxInputTokens() int
 	MaxPairTokens() int
+}
+
+// Reader is a Scorer that does not read every candidate: Reads reports
+// whether a call may carry candidate at all, so a scorer that lists Line
+// reads none without one. A Scorer that is no Reader reads every
+// candidate; the decorators hand on the Reads of the scorer they wrap.
+type Reader interface {
 	Reads(candidate Candidate) bool
+}
+
+// Reads reports whether scorer reads candidate (Reader).
+func Reads(scorer Scorer, candidate Candidate) bool {
+	reader, ok := scorer.(Reader)
+	return !ok || reader.Reads(candidate)
 }
 
 // Readable returns the candidates scorer reads, in order.
 func Readable(scorer Scorer, candidates []Candidate) []Candidate {
 	var readable []Candidate
 	for _, candidate := range candidates {
-		if scorer.Reads(candidate) {
+		if Reads(scorer, candidate) {
 			readable = append(readable, candidate)
 		}
 	}
@@ -109,7 +120,7 @@ func CheckResult(request Request, result Result) error {
 // MaxInputTokens, counting the subject once per call. A candidate too long for
 // a call on its own, or beside the subject past MaxPairTokens, lands in
 // oversize instead, by index; nothing is cut. A candidate scorer does not
-// read (Scorer.Reads) lands in unread, so no call carries it. Batches hold
+// read (Reader) lands in unread, so no call carries it. Batches hold
 // candidate indexes in request order.
 func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize, unread []int) {
 	return plan(scorer, subject, candidates, 0, 0)
@@ -124,7 +135,7 @@ func plan(scorer Scorer, subject string, candidates []Candidate, reserved, reser
 	var current []int
 	tokens := base
 	for i, candidate := range candidates {
-		if !scorer.Reads(candidate) {
+		if !Reads(scorer, candidate) {
 			unread = append(unread, i)
 			continue
 		}

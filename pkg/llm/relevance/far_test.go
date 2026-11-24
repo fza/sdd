@@ -25,7 +25,6 @@ func (s *callScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *callScorer) MaxBatch() int                  { return s.maxBatch }
 func (s *callScorer) MaxInputTokens() int            { return 0 }
 func (s *callScorer) MaxPairTokens() int             { return 0 }
-func (s *callScorer) Reads(relevance.Candidate) bool { return true }
 
 func (s *callScorer) Score(_ context.Context, request relevance.Request) (relevance.Result, error) {
 	s.mu.Lock()
