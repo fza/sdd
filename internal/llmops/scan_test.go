@@ -29,7 +29,7 @@ func TestScanJudge_FlagsDuplicatesAndContradictionsInOneCall(t *testing.T) {
 	flagged, err := scan.Scan(t.Context(), "The written entry refines 20260101-000000-d-cpt-abc.", []relevance.Candidate{
 		{ID: "a", Line: "[decision/directive] First: says the same."},
 		{ID: "b", Line: "[signal/gap] Second: unrelated."},
-		{ID: "c", Text: "[decision/plan] Third: rules it out, see 20260102-000000-s-tac-xyz."},
+		{ID: "c", Text: "full c", Line: "[decision/plan] Third: rules it out, see 20260102-000000-s-tac-xyz."},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +88,32 @@ func TestScanJudge_ScansNothingWithoutHiddenEntries(t *testing.T) {
 	}
 	if flagged, err := scan.Scan(t.Context(), "written", nil); err != nil || flagged != nil {
 		t.Fatalf("flagged %v, %v", flagged, err)
+	}
+}
+
+// The scan's model reads lines alone, as the chat judge does: a hidden
+// entry without a summary is left out of the call, its text never sent,
+// and a list of only such entries sends no call.
+func TestScanJudge_LeavesOutAnEntryWithoutALine(t *testing.T) {
+	var prompts []string
+	runner := llm.RunnerFunc(func(_ context.Context, request llm.Request) (llm.Result, error) {
+		prompts = append(prompts, request.UserPrompt)
+		return llm.Result{Text: `{"flagged": ["e2"]}`}, nil
+	})
+	scan, err := llmops.NewScanJudge(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsummarized := relevance.Candidate{ID: "b", Text: "kind: gap\n\nThe unsummarized body."}
+	flagged, err := scan.Scan(t.Context(), "written", []relevance.Candidate{{ID: "a", Line: "a line"}, unsummarized, {ID: "c", Line: "c line"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) != 1 || strings.Contains(prompts[0], "unsummarized body") || !slices.Equal(flagged, []string{"c"}) {
+		t.Fatalf("flagged %v after %d calls: the entry without a line should be left out and the labels follow the rest:\n%s", flagged, len(prompts), strings.Join(prompts, "\n"))
+	}
+	if flagged, err := scan.Scan(t.Context(), "written", []relevance.Candidate{unsummarized}); err != nil || flagged != nil || len(prompts) != 1 {
+		t.Fatalf("flagged %v, %v after %d calls: no call should carry only entries without a line", flagged, err, len(prompts))
 	}
 }
 

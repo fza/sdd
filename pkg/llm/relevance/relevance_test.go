@@ -124,6 +124,37 @@ func TestPlan_LeavesOutWhatTheScorerDoesNotRead(t *testing.T) {
 	}
 }
 
+// plainScorer is a Scorer outside this package's making: it declares no
+// Reads.
+type plainScorer struct{}
+
+func (plainScorer) Direction() relevance.Direction { return relevance.Both }
+func (plainScorer) MaxBatch() int                  { return 0 }
+func (plainScorer) MaxInputTokens() int            { return 0 }
+func (plainScorer) MaxPairTokens() int             { return 0 }
+func (plainScorer) Score(context.Context, relevance.Request) (relevance.Result, error) {
+	return relevance.Result{}, nil
+}
+
+// A scorer without Reads reads every candidate; the decorators hand on the
+// Reads of a scorer that has one.
+func TestReads_IsOptionalAndPassesThroughTheDecorators(t *testing.T) {
+	planned := []relevance.Candidate{{ID: "a", Text: "a", Line: "a"}, {ID: "b", Text: "b"}}
+	if batches, _, unread := relevance.Plan(plainScorer{}, "subject", planned); !reflect.DeepEqual(batches, [][]int{{0, 1}}) || unread != nil {
+		t.Fatalf("Plan = %v, unread %v: a scorer without Reads should read every candidate", batches, unread)
+	}
+	lines := &fixedScorer{lines: true}
+	for name, scorer := range map[string]relevance.Scorer{
+		"bounded": relevance.Bounded(lines, time.Second),
+		"limited": relevance.Limited(lines, 1),
+		"halving": relevance.Halving(lines, &relevance.MemoryBatchSizes{}, "key"),
+	} {
+		if _, _, unread := relevance.Plan(scorer, "subject", planned); !slices.Equal(unread, []int{1}) {
+			t.Errorf("%s: unread %v: the decorator should hand on the inner scorer's Reads", name, unread)
+		}
+	}
+}
+
 func TestBounded_EndsACallAtItsDeadline(t *testing.T) {
 	scorer := relevance.Bounded(&fixedScorer{block: true, maxBatch: 3, maxTokens: 9, maxPair: 5}, 10*time.Millisecond)
 	if scorer.MaxBatch() != 3 || scorer.MaxInputTokens() != 9 || scorer.MaxPairTokens() != 5 {

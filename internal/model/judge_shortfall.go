@@ -95,8 +95,9 @@ const JudgeKeepsJudging = 10
 
 // ReachableStage returns the recall stage judge holds, the one it would
 // hold once its unscored labelled pairs are scored and miss nothing, and
-// how many pairs are unscored.
-func (l *RelevanceLedger) ReachableStage(judge string) (held, reachable float64, unscored int) {
+// how many pairs are unscored, those readable keeps alone
+// (UnscoredReadable).
+func (l *RelevanceLedger) ReachableStage(judge string, readable func(RelevancePair) bool) (held, reachable float64, unscored int) {
 	labels := l.Labels(judge)
 	held = Calibrate(labels, l.Steps(), judge).Stage
 	positives := 0.0
@@ -105,7 +106,7 @@ func (l *RelevanceLedger) ReachableStage(judge string) (held, reachable float64,
 			positives += label.Weight
 		}
 	}
-	pairs := l.Unscored(judge)
+	pairs := l.UnscoredReadable(judge, readable)
 	for _, pair := range pairs {
 		verdict := l.readers[pair]
 		if LabelKind(verdict) == LabelPositive {

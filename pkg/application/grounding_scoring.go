@@ -76,7 +76,7 @@ type scoringSubject struct {
 func newScoringSubject(graph *model.Graph, subjectID string, candidateIDs []string) scoringSubject {
 	subject := scoringSubject{ID: subjectID, Text: model.EntryRelevanceText(graph, graph.ByID[subjectID])}
 	for _, id := range candidateIDs {
-		subject.Candidates = append(subject.Candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id]), Line: model.EntryRankingLine(graph.ByID[id])})
+		subject.Candidates = append(subject.Candidates, entryCandidate(graph, graph.ByID[id]))
 	}
 	return subject
 }

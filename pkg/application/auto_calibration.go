@@ -383,10 +383,12 @@ func judgeStage(ledger *model.RelevanceLedger, judge string) float64 {
 // judgeState is what tells the causes of a check's judge shortfall apart
 // (model.NewJudgeShortfall): the failures of its calls, the background run
 // scoring with the same judge, and the judge's stage against the one its
-// unscored labelled pairs would give.
-func (r *ProjectRuntime) judgeState(ctx context.Context, ledger *model.RelevanceLedger, judge string, failures []string) (model.JudgeState, error) {
+// unscored labelled pairs would give, leaving out the pairs whose candidate
+// in graph it cannot read (readablePairs).
+func (r *ProjectRuntime) judgeState(ctx context.Context, ledger *model.RelevanceLedger, prefilter Prefilter, graph *model.Graph, failures []string) (model.JudgeState, error) {
+	judge := prefilter.Judge
 	state := model.JudgeState{Failures: failures}
-	state.Stage, state.Reachable, state.Unscored = ledger.ReachableStage(judge)
+	state.Stage, state.Reachable, state.Unscored = ledger.ReachableStage(judge, readablePairs(prefilter, graph))
 	if runs := r.options.CalibrationRuns; runs != nil {
 		run, running, err := runs.Running(ctx)
 		if err != nil {

@@ -68,7 +68,7 @@ type GroundingStatusRequest struct {
 // (presenters.RenderHiding). Verbose reports that judge's labels, recall
 // bound and stage, ranking recall, thresholds, drift steps and the precision
 // per reason code in place of the summary.
-func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
+func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (_ GroundingStatus, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return GroundingStatus{}, err
@@ -92,29 +92,30 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 			auto.Run = &shown
 		}
 	}
-	hiding, err := runtime.hidingReport(ctx, judge)
+	selected, err := acquireSnapshotForSearch(ctx, runtime, "", "")
 	if err != nil {
 		return GroundingStatus{}, err
 	}
+	defer selected.releaseInto(&err)
+	graph := selected.snapshot.graph
+	hiding, err := runtime.hidingReport(ctx, judge, graph)
+	if err != nil {
+		return GroundingStatus{}, err
+	}
+	report := ledger.Calibration(judge.Judge, request.ExcludeReplay, readablePairs(judge, graph))
 	var rendered bytes.Buffer
 	if request.Verbose {
-		presenters.RenderCalibration(&rendered, ledger.Calibration(judge.Judge, request.ExcludeReplay), auto)
+		presenters.RenderCalibration(&rendered, report, auto)
 	} else {
-		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), ledger.Calibration(judge.Judge, request.ExcludeReplay), judgeOrigin(runtime, judge), auto)
+		presenters.RenderGroundingSummary(&rendered, ledger.Tally(request.ExcludeReplay), report, judgeOrigin(runtime, judge), auto)
 	}
 	presenters.RenderHiding(&rendered, hiding)
 	return GroundingStatus{Judge: judge.Judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
 }
 
-// hidingReport reads the hiding rules of judge on the default branch's live
-// population.
-func (r *ProjectRuntime) hidingReport(ctx context.Context, judge Prefilter) (report model.HidingReport, err error) {
-	selected, err := acquireSnapshotForSearch(ctx, r, "", "")
-	if err != nil {
-		return model.HidingReport{}, err
-	}
-	defer selected.releaseInto(&err)
-	size := len(model.GroundingPopulation(selected.snapshot.graph))
+// hidingReport reads the hiding rules of judge on graph's live population.
+func (r *ProjectRuntime) hidingReport(ctx context.Context, judge Prefilter, graph *model.Graph) (model.HidingReport, error) {
+	size := len(model.GroundingPopulation(graph))
 	_, records, states, err := r.judgeHiding(ctx, judge, size)
 	if err != nil {
 		return model.HidingReport{}, err
@@ -140,7 +141,7 @@ type RescoreResult struct {
 	Judge string
 	// Scored pairs got a score; Missing pairs name an entry the graph no
 	// longer holds; Unanswered pairs the judge did not answer; Unread pairs
-	// it cannot read (relevance.Scorer.Reads).
+	// it cannot read (relevance.Reader).
 	Scored, Missing, Unanswered, Unread int
 	// Requests counts the scoring requests sent, what a reranker bills by.
 	Requests int

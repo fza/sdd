@@ -53,7 +53,7 @@ func TestCalibration_ReportsPrecisionPerCode(t *testing.T) {
 	for i := range 4 {
 		add(2000+i, 230, model.ReaderVerdict{Code: model.ReaderDismissed, Reason: termClash})
 	}
-	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	report := model.NewRelevanceLedger(batch).Calibration("j", false, nil)
 	if !report.Thresholds.Valid || report.Positive != 189 || report.Negative != 16 {
 		t.Fatalf("report %+v should count the labels and hold thresholds", report)
 	}
@@ -63,7 +63,7 @@ func TestCalibration_ReportsPrecisionPerCode(t *testing.T) {
 	if report.DominantCode() != model.VerdictTopicOnly || len(report.SetAside) != 2 || report.SetAside[1].Code != model.VerdictTermClash {
 		t.Fatalf("set aside %+v should run by count, the dominant code first", report.SetAside)
 	}
-	if report.Unscored != 0 || model.NewRelevanceLedger(batch).Calibration("new judge", false).Unscored != 205 {
+	if report.Unscored != 0 || model.NewRelevanceLedger(batch).Calibration("new judge", false, nil).Unscored != 205 {
 		t.Fatal("a new judge should report every labelled pair as unscored")
 	}
 }
@@ -88,7 +88,7 @@ func TestCalibration_CountsLivePairsPassedInFull(t *testing.T) {
 	for i := range 40 {
 		add(2000+i, 240, model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay})
 	}
-	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	report := model.NewRelevanceLedger(batch).Calibration("j", false, nil)
 	if !report.Thresholds.Valid || report.Thresholds.Relevant > model.ScoreValue(220) || report.Replay != 40 {
 		t.Fatalf("report %+v should hold thresholds that pass every label in full", report)
 	}
@@ -111,14 +111,14 @@ func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 		add(1000+i, 200, model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay})
 	}
 	ledger := model.NewRelevanceLedger(batch)
-	both := ledger.Calibration("j", false)
+	both := ledger.Calibration("j", false, nil)
 	if both.Thresholds.Stage != model.RecallFloor || both.Positive != 210 || both.Live != 150 || both.Replay != 60 || both.ReplayExcluded {
 		t.Fatalf("report %+v should calibrate on both sources and count each", both)
 	}
 	if both.Thresholds.SetAside != model.ScoreValue(200) || both.Thresholds.Relevant != model.ScoreValue(220) {
 		t.Fatalf("thresholds %+v should set aside below the lowest reference of either source and serve in full from the live ones", both.Thresholds)
 	}
-	live := ledger.Calibration("j", true)
+	live := ledger.Calibration("j", true, nil)
 	if live.Thresholds.Stage != 0.95 || live.Positive != 150 || live.Live != 150 || live.Replay != 60 || !live.ReplayExcluded {
 		t.Fatalf("report %+v should read the live labels alone and still count the replayed ones", live)
 	}
@@ -142,7 +142,7 @@ func TestCalibration_CountsOpenedHiddenEntries(t *testing.T) {
 		add(100+i, model.ReaderVerdict{OpenedHidden: true})
 	}
 	add(200, model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true})
-	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	report := model.NewRelevanceLedger(batch).Calibration("j", false, nil)
 	if report.OpenedHidden != 5 {
 		t.Fatalf("opened hidden = %d: each opening without a finding should count", report.OpenedHidden)
 	}
@@ -157,7 +157,7 @@ func TestCalibration_ReportsTheFlipRate(t *testing.T) {
 	}
 	batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: model.NewRelevancePair("20260101-000009-s-tac-ref", "20260601-000000-d-tac-sub"), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
 	ledger := model.NewRelevanceLedger(batch)
-	report := ledger.Calibration("j", false)
+	report := ledger.Calibration("j", false, nil)
 	if report.Implicit != 4 || report.Flipped != 1 || report.FlipRate() != 0.25 {
 		t.Fatalf("implicit %d, flipped %d, rate %.2f: one flip of four implicit dismissals", report.Implicit, report.Flipped, report.FlipRate())
 	}

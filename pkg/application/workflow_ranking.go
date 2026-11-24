@@ -198,7 +198,7 @@ func (w *WorkflowSession) startRanking(instance string, plan rankingPlan) error 
 	candidates := make([]relevance.Candidate, 0, len(plan.unscored))
 	for _, id := range plan.unscored {
 		e := plan.graph.ByID[id]
-		candidates = append(candidates, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(plan.graph, e), Line: model.EntryRankingLine(e)})
+		candidates = append(candidates, entryCandidate(plan.graph, e))
 	}
 	run := plan.runtime.rankings.begin(w.rankingKey(instance, plan), plan.judge, plan.subject, candidates, plan.runtime.rankingTimeout())
 	if run == nil {

@@ -54,8 +54,10 @@ func NewScanJudge(runner llm.Runner) (*ScanJudge, error) {
 }
 
 // Scan returns the IDs of the hidden entries the model flags against
-// written, in the order of hidden, all in one call.
+// written, in the order of hidden, all in one call. A hidden entry without
+// a line goes into no call and is never flagged.
 func (j *ScanJudge) Scan(ctx context.Context, written string, hidden []relevance.Candidate) ([]string, error) {
+	hidden = slices.DeleteFunc(slices.Clone(hidden), func(candidate relevance.Candidate) bool { return !readsLine(candidate) })
 	if len(hidden) == 0 {
 		return nil, nil
 	}
@@ -63,11 +65,7 @@ func (j *ScanJudge) Scan(ctx context.Context, written string, hidden []relevance
 	lines := make([]string, len(hidden))
 	for i, candidate := range hidden {
 		labels[i] = "e" + strconv.Itoa(i+1)
-		line := candidate.Line
-		if line == "" {
-			line = candidate.Text
-		}
-		lines[i] = labels[i] + " " + withoutEntryIDs(line)
+		lines[i] = labels[i] + " " + withoutEntryIDs(candidate.Line)
 	}
 	var user strings.Builder
 	data := struct {

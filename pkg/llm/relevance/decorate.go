@@ -24,6 +24,8 @@ func (d decorated) Score(ctx context.Context, request Request) (Result, error) {
 	return d.score(ctx, request)
 }
 
+func (d decorated) Reads(candidate Candidate) bool { return Reads(d.Scorer, candidate) }
+
 // Bounded gives every call a deadline.
 func Bounded(s Scorer, timeout time.Duration) Scorer {
 	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {

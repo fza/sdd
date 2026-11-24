@@ -48,9 +48,11 @@ func (j *ChatJudge) MaxBatch() int                  { return ChatBatch }
 func (j *ChatJudge) MaxInputTokens() int            { return 0 }
 func (j *ChatJudge) MaxPairTokens() int             { return 0 }
 
-// Reads holds for a candidate with a line: the judge reads no entry
-// without a summary.
-func (j *ChatJudge) Reads(candidate relevance.Candidate) bool { return candidate.Line != "" }
+func (j *ChatJudge) Reads(candidate relevance.Candidate) bool { return readsLine(candidate) }
+
+// readsLine is what a chat model reads of a candidate, the judge's and the
+// scan's alike: its line, so no entry without a summary.
+func readsLine(candidate relevance.Candidate) bool { return candidate.Line != "" }
 
 // Score rates every candidate of request in one call.
 func (j *ChatJudge) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {

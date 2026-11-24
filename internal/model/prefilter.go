@@ -289,6 +289,17 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	return pairs
 }
 
+// UnscoredReadable is Unscored without the pairs readable reports false
+// for, those whose candidate the judge cannot read, which no re-scoring
+// scores; nil keeps every pair.
+func (l *RelevanceLedger) UnscoredReadable(judge string, readable func(RelevancePair) bool) []RelevancePair {
+	pairs := l.Unscored(judge)
+	if readable == nil {
+		return pairs
+	}
+	return slices.DeleteFunc(pairs, func(pair RelevancePair) bool { return !readable(pair) })
+}
+
 // RecallStages are the Wilson lower bounds (95%) of weighted recall a
 // judge's thresholds rest on, rising. Below the first a judge has no
 // threshold, and only the far floor sets aside.

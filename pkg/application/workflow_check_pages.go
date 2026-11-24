@@ -89,7 +89,7 @@ func (w *WorkflowSession) scoreHeld(held *heldCheck) {
 	for _, line := range held.held {
 		if line.Score == nil {
 			e := line.Entry
-			pending = append(pending, relevance.Candidate{ID: e.ID, Text: model.EntryRelevanceText(parts.served.Graph, e), Line: model.EntryRankingLine(e)})
+			pending = append(pending, entryCandidate(parts.served.Graph, e))
 		}
 	}
 	if len(pending) == 0 {

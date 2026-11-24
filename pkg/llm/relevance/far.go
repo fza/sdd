@@ -45,7 +45,7 @@ func PlanWithFar(scorer Scorer, subject string, candidates, far []Candidate) (ba
 	farTokens := 0
 	for _, candidate := range far {
 		cost := EstimateTokens(candidate.Text)
-		if maxPair > 0 && subjectTokens+cost > maxPair || !scorer.Reads(candidate) {
+		if maxPair > 0 && subjectTokens+cost > maxPair || !Reads(scorer, candidate) {
 			return nil, nil, nil, false
 		}
 		farTokens += cost
