@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -75,5 +76,28 @@ func TestVerifyConfig_JudgeLimits(t *testing.T) {
 	policy := (model.VerifyConfig{JudgeTimeout: "45s", JudgeMinimum: &twenty}).GroundingPolicy()
 	if policy.JudgeTimeout != 45*time.Second || policy.JudgeMinimum != 20 {
 		t.Errorf("policy %+v should carry the resolved judge limits", policy)
+	}
+}
+
+// The stage a judge can reach counts only the unscored pairs it can read;
+// without a filter it counts every one.
+func TestReachableStage_CountsOnlyThePairsTheJudgeReads(t *testing.T) {
+	var batch model.RelevanceBatch
+	for i := range 80 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-pos", i), "20260201-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+		if i < 40 {
+			batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 200}})
+		}
+	}
+	ledger := model.NewRelevanceLedger(batch)
+	held, reachable, unscored := ledger.ReachableStage("j", nil)
+	if held != 0.90 || reachable != 0.95 || unscored != 40 {
+		t.Fatalf("held %.2f, reachable %.2f, %d unscored: every unscored pair should count without a filter", held, reachable, unscored)
+	}
+	blind := func(pair model.RelevancePair) bool { return pair.A < "20250101-000060-s-tac-pos" }
+	held, reachable, unscored = ledger.ReachableStage("j", blind)
+	if held != 0.90 || reachable != 0.90 || unscored != 20 {
+		t.Fatalf("held %.2f, reachable %.2f, %d unscored: a pair the judge cannot read should count toward no stage", held, reachable, unscored)
 	}
 }

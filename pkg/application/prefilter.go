@@ -54,7 +54,7 @@ type prefilterPass struct {
 	// wouldBelow counts the candidates the median form would put below.
 	wouldBelow int
 	// judged reports that the judge ran: then scored counts the candidates
-	// holding a score, unread those it cannot read (relevance.Scorer.Reads),
+	// holding a score, unread those it cannot read (relevance.Reader),
 	// waited how long the check waited, and broken the failures of its calls
 	// other than running out of time.
 	judged bool
@@ -105,7 +105,7 @@ func runPrefilter(ctx context.Context, prefilter Prefilter, policy GroundingPoli
 	var pending []relevance.Candidate
 	for _, candidate := range candidates {
 		if _, ok := held[candidate.Entry.ID]; !ok {
-			pending = append(pending, relevance.Candidate{ID: candidate.Entry.ID, Text: model.EntryRelevanceText(g, candidate.Entry), Line: model.EntryRankingLine(candidate.Entry)})
+			pending = append(pending, entryCandidate(g, candidate.Entry))
 		}
 	}
 	pass.status = model.PrefilterOK
@@ -243,6 +243,22 @@ type floorMark struct {
 	line  relevance.FarLine
 }
 
+// entryCandidate is e as a judge call carries it: its whole text and its
+// line.
+func entryCandidate(g *model.Graph, e *model.Entry) relevance.Candidate {
+	return relevance.Candidate{ID: e.ID, Text: model.EntryRelevanceText(g, e), Line: model.EntryRankingLine(e)}
+}
+
+// readablePairs reports for a labelled pair whether judge reads its
+// candidate in graph, pair.A as re-scoring sends it; a pair whose candidate
+// graph lacks counts as read.
+func readablePairs(judge Prefilter, graph *model.Graph) func(model.RelevancePair) bool {
+	return func(pair model.RelevancePair) bool {
+		e := graph.ByID[pair.A]
+		return e == nil || relevance.Reads(judge.Scorer, entryCandidate(graph, e))
+	}
+}
+
 // farCandidates are the far entries of floor as a judge call carries them,
 // in the form of every other candidate; none without a floor.
 func farCandidates(g *model.Graph, floor *model.FarFloor) []relevance.Candidate {
@@ -251,7 +267,7 @@ func farCandidates(g *model.Graph, floor *model.FarFloor) []relevance.Candidate 
 	}
 	far := make([]relevance.Candidate, 0, len(floor.Far))
 	for _, e := range floor.Far {
-		far = append(far, relevance.Candidate{ID: e.ID, Text: model.EntryRelevanceText(g, e), Line: model.EntryRankingLine(e)})
+		far = append(far, entryCandidate(g, e))
 	}
 	return far
 }

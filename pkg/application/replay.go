@@ -127,7 +127,7 @@ func (a *Application) replay(ctx context.Context, runtime *ProjectRuntime, graph
 	pending := make([]relevance.Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		listed = append(listed, candidate.Entry.ID)
-		pending = append(pending, relevance.Candidate{ID: candidate.Entry.ID, Text: model.EntryRelevanceText(graph, candidate.Entry), Line: model.EntryRankingLine(candidate.Entry)})
+		pending = append(pending, entryCandidate(graph, candidate.Entry))
 	}
 	// The replay holds no reference of the draft: they are the answers it checks.
 	floor := model.NewFarFloor(graph, earlier, model.FarDraft{Subject: model.RelevanceSubjectHash(text), Topics: topics}, listed)
@@ -199,7 +199,7 @@ func scanCandidates(graph *model.Graph, ids []string) []relevance.Candidate {
 	var out []relevance.Candidate
 	for _, id := range ids {
 		if e := graph.ByID[id]; e != nil {
-			out = append(out, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, e), Line: model.EntryRankingLine(e)})
+			out = append(out, entryCandidate(graph, e))
 		}
 	}
 	return out

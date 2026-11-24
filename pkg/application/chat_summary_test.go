@@ -218,3 +218,73 @@ func TestAutoCalibrate_ReplaysLeaveOutCandidatesTheJudgeCannotRead(t *testing.T)
 		}
 	}
 }
+
+// A judge short of its minimum is not sent to `sdd grounding update` for
+// labelled pairs it cannot read: those pairs count toward no stage it could
+// reach.
+func TestGather_ShortfallCountsNoPairTheJudgeCannotReadTowardItsStage(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	f.relevance = unreadPairsLedger(t, f)
+	slow := pkgllm.RunnerFunc(func(ctx context.Context, _ pkgllm.Request) (pkgllm.Result, error) {
+		<-ctx.Done()
+		return pkgllm.Result{}, ctx.Err()
+	})
+	judge, err := llmops.NewChatJudge(slow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.prefilter = sdd.Prefilter{Scorer: judge, Judge: gatherJudge}
+	policy := prefilterPolicy(1)
+	policy.JudgeMinimum, policy.JudgeTimeout = 50, 50*time.Millisecond
+	application := f.app(t, policy, nil)
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "judged, below the") || strings.Contains(result.Text, "`sdd grounding update` calibrates it") || !strings.Contains(result.Text, "too slowly") {
+		t.Fatalf("a judge too slow for the check should be named so, not sent to calibrate pairs it cannot read:\n%s", result.Text)
+	}
+}
+
+// unreadPairsLedger holds 40 referenced pairs gatherJudge scored, a first
+// recall stage, and 40 it has not, each with a candidate f writes without
+// a summary, which a chat judge cannot read.
+func unreadPairsLedger(t *testing.T, f *gatherFixture) *localadapter.MemoryRelevanceStore {
+	t.Helper()
+	subject := "20260201-000000-d-tac-sub"
+	var batch model.RelevanceBatch
+	for i := range 40 {
+		scored := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-pos", i), subject)
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: scored, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: scored, Score: model.FilterScore{Judge: gatherJudge, Score: 200}})
+		id := fmt.Sprintf("20260102-%06d-s-tac-nos", i)
+		f.write(t, id, "gap", "", "")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: model.NewRelevancePair(id, subject), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+	}
+	store := localadapter.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// `sdd grounding status` counts no labelled pair the judge cannot read as
+// unscored, so it suggests no update that could not score it.
+func TestGroundingStatus_CountsNoPairTheJudgeCannotReadAsUnscored(t *testing.T) {
+	for _, verbose := range []bool{false, true} {
+		t.Run(fmt.Sprintf("verbose %v", verbose), func(t *testing.T) {
+			f := newGatherFixture(t)
+			f.relevance = unreadPairsLedger(t, f)
+			f.prefilter = chatJudge(t, &chatModel{})
+			application := f.app(t, prefilterPolicy(1), nil)
+			status, err := application.GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{Verbose: verbose})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(status.Text, "unscored") {
+				t.Fatalf("pairs the judge cannot read should not count as unscored:\n%s", status.Text)
+			}
+		})
+	}
+}

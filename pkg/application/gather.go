@@ -325,7 +325,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	var shortfall *model.JudgeShortfall
 	if pass.judged {
-		state, err := runtime.judgeState(ctx, ledger, judge, pass.broken)
+		state, err := runtime.judgeState(ctx, ledger, prefilter, graph, pass.broken)
 		if err != nil {
 			return GatherResult{}, err
 		}
