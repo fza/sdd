@@ -38,7 +38,8 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
 	preflights := world.LLM.Calls(llm.PurposePreflight)
-	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, session.Answer(t, x.instance, "deepAnswer", "accept", nil, ""), "deepProposal")
+	serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	replay := serve.Instructions
 	for _, want := range []string{"The deep verifier left these findings without a change to the draft", "- f1 [medium, inconsistent]: " + verdict, "Show the user each one in full, as listed, never a paraphrase, before they confirm or adjust the draft."} {
@@ -118,7 +119,8 @@ func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing
 	verdict := "the gap claims an observation the graph records nowhere"
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-	serve = session.Answer(t, instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, session.Answer(t, instance, "deepAnswer", "accept", nil, ""), "deepProposal")
+	serve = session.Answer(t, instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	text := serve.Instructions
 	if strings.Contains(text, "Show the user") {
