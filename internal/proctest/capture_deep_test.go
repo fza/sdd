@@ -1227,7 +1227,8 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 				map[string]any{"target": "f1", "outcome": outcome, "note": note},
 			}}, "")
 			session.Refresh(t)
-			serve := session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, session.Report(t, x.instance, nil), "deepProposal")
+			serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 			proctest.RequireStep(t, serve, "playback")
 			if replay := serve.Instructions; !strings.Contains(replay, "the gap rests on incidents no entry records\n  withdrawn: ") {
 				t.Errorf("the replayed playback should show the withdrawn finding:\n%s", replay)
@@ -1244,5 +1245,34 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 				t.Errorf("a finding the drafter accepted without an edit is named as such, not as withdrawn:\n%s", text)
 			}
 		})
+	}
+}
+
+// Findings accepted without an edit are the drafter's to fix: accepting them
+// serves the proposal listing them before any playback, though it carries no
+// hunk.
+func TestCaptureDeep_FindingsWithoutAnEditServeTheProposal(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-unedited-proposal", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{
+		map[string]any{"verdict": "the subject stays unnamed", "axis": "inconsistent", "severity": "medium"},
+		map[string]any{"verdict": "the observation is not shown", "axis": "inconsistent", "severity": "low"},
+	})
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+
+	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "deepProposal")
+	if !strings.Contains(serve.Instructions, "Accepted without an edit, yours to fix where you agree:\n\n- f1 [medium, inconsistent]: the subject stays unnamed\n- f2 [low, inconsistent]: the observation is not shown") {
+		t.Fatalf("the proposal should list each finding without an edit as the drafter's to fix:\n%s", serve.Instructions)
+	}
+	if strings.Contains(serve.Instructions, "```diff") {
+		t.Errorf("a proposal without a hunk should serve no diff:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{
+		"bodyPatch": []any{deepEdit("observes something.", "observes the attachment writer dropping a file.")},
+	}, "")
+	entry := writeDeepEntry(t, x, serve)
+	if !strings.Contains(entry.Content, "the attachment writer dropping a file.") {
+		t.Fatalf("the entry should carry the drafter's fix, got %q", entry.Content)
 	}
 }
