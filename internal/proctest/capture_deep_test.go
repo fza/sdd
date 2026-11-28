@@ -1262,7 +1262,7 @@ func TestCaptureDeep_FindingsWithoutAnEditServeTheProposal(t *testing.T) {
 
 	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepProposal")
-	if !strings.Contains(serve.Instructions, "Accepted without an edit, yours to fix where you agree:\n\n- f1 [medium, inconsistent]: the subject stays unnamed\n- f2 [low, inconsistent]: the observation is not shown") {
+	if !strings.Contains(serve.Instructions, "Accepted without an edit, yours to fix where you agree:\n\n- f1 [medium, inconsistent] accepted without an edit\n- f2 [low, inconsistent] accepted without an edit") {
 		t.Fatalf("the proposal should list each finding without an edit as the drafter's to fix:\n%s", serve.Instructions)
 	}
 	if strings.Contains(serve.Instructions, "```diff") {
