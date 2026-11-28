@@ -197,6 +197,10 @@ type Step struct {
 	// what changed after — prose fields as content diffs, lists item-level,
 	// scalars whole (20260826-120330-d-tac-8f8).
 	ServeDelta []string
+	// Redraft is where a confirm goes that meets a draft changed since the
+	// step last played it back: the change is drafted and checked again there
+	// before any confirm binds to it.
+	Redraft string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -288,6 +292,7 @@ type stepYAML struct {
 	Transitions []transitionYAML `yaml:"transitions"`
 	Goal        string           `yaml:"goal"`
 	ServeDelta  []string         `yaml:"serveDelta"`
+	Redraft     string           `yaml:"redraft"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -477,6 +482,14 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: serveDelta names %q, which only the host sets", prefix, f)
 			}
 		}
+		if redraft := step.Redraft; redraft != "" {
+			switch {
+			case len(step.ServeDelta) == 0:
+				addProblem("%s: redraft applies only to a step with a serveDelta", prefix)
+			case spec.StepByID[redraft] == nil:
+				addProblem("%s: redraft target %q is not a step", prefix, redraft)
+			}
+		}
 		for _, o := range step.Options {
 			if !IsEndTarget(o.To) && spec.StepByID[o.To] == nil {
 				addProblem("%s: option %q target %q is not a step or end(...)", prefix, o.Choice, o.To)
@@ -593,6 +606,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Chooser:    ChooserGate,
 		Goal:       sy.Goal,
 		ServeDelta: sy.ServeDelta,
+		Redraft:    sy.Redraft,
 	}
 
 	switch sy.Chooser {

@@ -662,21 +662,6 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
 	}
-	if draftChangedUnserved(inst, step) {
-		// A draft written by Update since this step last served it was never
-		// shown: answering would confirm unseen text, so the step serves the
-		// change instead and the answer is not applied.
-		sv, err := s.serve(inst)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.checkSink(); err != nil {
-			return nil, err
-		}
-		sv.Diagnostics = append(sv.Diagnostics, "not answered: the draft changed since it was last served — play the change back and answer again")
-		sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
-		return sv, nil
-	}
 
 	var opt *Option
 	for i := range step.Options {
@@ -692,6 +677,9 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 		}
 		sort.Strings(choices)
 		return nil, fmt.Errorf("choice %q is not an option at %s (options: %s)", choice, step.ID, joinNames(choices))
+	}
+	if opt.Call == commandConfirmPlayback && draftChangedUnserved(inst, step) {
+		return s.refuseUnseenConfirm(inst, step)
 	}
 
 	// Fields on an answer are limited to the option's collect list — the
