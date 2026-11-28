@@ -273,6 +273,7 @@ func procedureSpecSchema() map[string]any {
 			"transitions": map[string]any{"type": "array", "items": transition},
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"redraft":     map[string]any{"type": "string"},
 			"delegable":   map[string]any{"type": "boolean"},
 			"unattended": map[string]any{
 				"type": "object",

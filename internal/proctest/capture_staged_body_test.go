@@ -707,3 +707,42 @@ func TestCapture_PlaybackOnAStaleSessionFails(t *testing.T) {
 		t.Error("a serve after the failed mark should fail too")
 	}
 }
+
+// A confirm meeting a re-staged body sends it back to assemble, whose checks
+// judge it before any confirm binds to it: a body the checks refuse stays
+// there.
+func TestCapture_RestageAtPlaybackIsCheckedBeforeAConfirm(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-redraft")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session.Stage(t, handle, []byte("---\nentryKind: gap\nlayer: tac\n---\n"))
+
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "assemble")
+	if !hasDiagnostic(serve, "not answered") {
+		t.Errorf("the confirm should not be taken, got diagnostics %v", serve.Diagnostics)
+	}
+}
+
+// An adjust reporting a re-staged body is the change itself: it stands, and
+// the draft is played back afresh.
+func TestCapture_AnAdjustReportingARestagedBodyStands(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-restaged-adjust")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session.Stage(t, handle, []byte(unseenStagedBody))
+
+	serve := session.Answer(t, instance, "playback", "adjust", map[string]any{"bodyHandle": handle}, "take the edited file")
+	proctest.RequireStep(t, serve, "playback")
+	if hasDiagnostic(serve, "not answered") || !strings.Contains(serve.Instructions, "not yet played back") {
+		t.Fatalf("the adjust should stand and play the re-staged body back, got diagnostics %v:\n%s", serve.Diagnostics, serve.Instructions)
+	}
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
+		t.Errorf("the entry should carry the re-staged body, got %q", entry.Content)
+	}
+}

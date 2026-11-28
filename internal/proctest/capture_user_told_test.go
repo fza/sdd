@@ -77,7 +77,8 @@ func TestCaptureDeep_SettledFindingsRideOnePlaybackRound(t *testing.T) {
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{map[string]any{"verdict": "the gap claims an observation the graph records nowhere", "axis": "inconsistent", "severity": "medium"}})
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, session.Answer(t, x.instance, "deepAnswer", "accept", nil, ""), "deepProposal")
+	serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	const settled = "- f1 [medium, inconsistent] accepted without an edit"
 	if !strings.Contains(serve.Instructions, settled) {
