@@ -218,7 +218,8 @@ func TestSinglePlayback_AFindingSettledWithoutAnEditIsNotShown(t *testing.T) {
 			x := mode.deepExchange(t, world, session)
 			x.judge(t, []any{map[string]any{"verdict": "the gap claims an observation the graph records nowhere", "axis": "inconsistent", "severity": "medium"}})
 			proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-			serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+			proctest.RequireStep(t, session.Answer(t, x.instance, "deepAnswer", "accept", nil, ""), "deepProposal")
+			serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 			if !mode.guided {
 				proctest.RequireStep(t, serve, "playback")
 				if strings.Contains(serve.Instructions, settled) || strings.Contains(serve.Instructions, "without a change to the draft") {

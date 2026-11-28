@@ -222,6 +222,10 @@ type Step struct {
 	// what changed after — prose fields as content diffs, lists item-level,
 	// scalars whole (20260826-120330-d-tac-8f8).
 	ServeDelta []string
+	// Redraft is where a confirm goes that meets a draft changed since the
+	// step last played it back: the change is drafted and checked again there
+	// before any confirm binds to it.
+	Redraft string
 	// Delegable hands a user chooser to the agent in an autonomous session;
 	// an unmarked one stays the user's in every mode.
 	Delegable bool
@@ -368,6 +372,7 @@ type stepYAML struct {
 	Transitions   []transitionYAML `yaml:"transitions"`
 	Goal          string           `yaml:"goal"`
 	ServeDelta    []string         `yaml:"serveDelta"`
+	Redraft       string           `yaml:"redraft"`
 	Delegable     bool             `yaml:"delegable"`
 	Unattended    *Unattended      `yaml:"unattended"`
 	Deliver       []string         `yaml:"deliver"`
@@ -592,6 +597,14 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: delegateEnded target %q is not a step or end(...)", prefix, ended)
 			}
 		}
+		if redraft := step.Redraft; redraft != "" {
+			switch {
+			case len(step.ServeDelta) == 0:
+				addProblem("%s: redraft applies only to a step with a serveDelta", prefix)
+			case spec.StepByID[redraft] == nil:
+				addProblem("%s: redraft target %q is not a step", prefix, redraft)
+			}
+		}
 		if gone := step.DelegateGone; gone != "" {
 			if step.DelegateEnded == "" {
 				addProblem("%s: delegateGone applies only to a gate with a delegateEnded route", prefix)
@@ -772,6 +785,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Chooser:       ChooserGate,
 		Goal:          sy.Goal,
 		ServeDelta:    sy.ServeDelta,
+		Redraft:       sy.Redraft,
 		Delegable:     sy.Delegable,
 		Unattended:    sy.Unattended,
 		Deliver:       sy.Deliver,

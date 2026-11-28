@@ -478,13 +478,17 @@ func registerBuiltinPredicates(r *Registry) {
 	})
 }
 
+// commandConfirmPlayback records a confirmation; the option calling it is a
+// spec's confirm.
+const commandConfirmPlayback = "confirmPlayback"
+
 // registerBuiltinCommands registers the dependency-free trust machinery.
 // Commands with real side effects (newEntry, replaceSummary, wipStart,
 // wipDone) are registered by the shell that owns their dependencies.
 func registerBuiltinCommands(r *Registry) {
 	mustRegisterCommand(r, Command{
 		Doc: FuncDoc{
-			Name:   "confirmPlayback",
+			Name:   commandConfirmPlayback,
 			Doc:    "Records the user's confirmation bound to the current state snapshot (chooser call, user options only), at an assisted session's approval gate as the person's approval. Any later state edit invalidates it and reopens the recording chooser.",
 			Writes: []string{fieldPlaybackConfirmation},
 		},

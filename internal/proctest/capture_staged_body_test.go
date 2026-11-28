@@ -617,3 +617,80 @@ func TestCapture_PlaybackOnAStaleSessionFails(t *testing.T) {
 		t.Error("a serve after the failed mark should fail too")
 	}
 }
+
+// In an assisted session the person approves only a checked draft: a body
+// re-staged at the approval gate goes through the checks again before it is
+// played back, whether an adjust reports it or a confirm meets it.
+func TestCapture_RestageAtTheApprovalGateIsCheckedBeforeItsPlayback(t *testing.T) {
+	const restaged = "---\nentryKind: gap\nlayer: tac\n---\nA tactical gap: the fixture observes something twice.\n"
+	answers := map[string]func(session *proctest.Session, instance, handle string) *sdd.WorkflowServe{
+		"an adjust reporting it": func(session *proctest.Session, instance, handle string) *sdd.WorkflowServe {
+			return session.Answer(t, instance, "playback", "adjust", map[string]any{"bodyHandle": handle}, "take the edited file")
+		},
+		"a confirm meeting it": func(session *proctest.Session, instance, _ string) *sdd.WorkflowServe {
+			serve := session.Answer(t, instance, "playback", "confirm", nil, "write it")
+			if !hasDiagnostic(serve, "not answered") {
+				t.Errorf("a confirm over an unseen body should not be taken, got diagnostics %v", serve.Diagnostics)
+			}
+			return serve
+		},
+	}
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			connID := "staged-body-gate-recheck"
+			world, session := newDeepWorld(t, connID, sdd.VerifierPolicy{}, proctest.WithAssistedDialogue(), clientActor(connID))
+			handle := session.Stage(t, "draft.md", []byte(relaunchBodyFile))
+			instance := session.Start(t, "capture", nil).Instance
+			session.Gather(t, instance)
+			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "deepDispatch")
+			x := dispatchDeep(t, world, session, instance)
+			x.judge(t, []any{})
+			proctest.RequireStep(t, x.pickUp(t), "playback")
+
+			session.Stage(t, handle, []byte(restaged))
+			serve := answer(session, instance, handle)
+			proctest.RequireStep(t, serve, "deepWait")
+			revision := x.pickUpRevision(t)
+			if !strings.Contains(revision.Instructions, "observes something twice.") {
+				t.Fatalf("the verifier should judge the re-staged body:\n%s", revision.Instructions)
+			}
+			x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
+			serve = x.pickUpFindings(t)
+			proctest.RequireStep(t, serve, "playback")
+			if !strings.Contains(serve.Instructions, "twice") {
+				t.Errorf("the playback should show the re-staged body:\n%s", serve.Instructions)
+			}
+
+			serve = session.Answer(t, instance, "playback", "confirm", nil, "yes, write the checked one")
+			proctest.RequireStep(t, serve, "verifySummary")
+			serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+			entryID, _ := serve.Produced["entryId"].(string)
+			if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "observes something twice.") {
+				t.Errorf("the entry should carry the re-staged body, got %q", entry.Content)
+			}
+		})
+	}
+}
+
+// The draft a redraft brings back to the approval gate is held there afresh:
+// the person's adjust without a change waits for the revision it asks for.
+func TestCapture_ARedraftedDraftIsHeldAtTheApprovalGateAfresh(t *testing.T) {
+	const connID = "staged-body-gate-rehold"
+	world, session := newDeepWorld(t, connID, sdd.VerifierPolicy{}, proctest.WithAssistedDialogue(), clientActor(connID))
+	handle := session.Stage(t, "draft.md", []byte(relaunchBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Gather(t, instance)
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "deepDispatch")
+	x := dispatchDeep(t, world, session, instance)
+	x.judge(t, []any{})
+	proctest.RequireStep(t, x.pickUp(t), "playback")
+
+	session.Stage(t, handle, []byte(strings.Replace(relaunchBodyFile, "something.", "something twice.", 1)))
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "write it"), "deepWait")
+	x.pickUpRevision(t)
+	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
+	proctest.RequireStep(t, x.pickUpFindings(t), "playback")
+
+	serve := session.Answer(t, instance, "playback", "adjust", nil, "not like this")
+	proctest.RequireStep(t, serve, "assemble")
+}

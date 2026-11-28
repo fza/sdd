@@ -75,7 +75,8 @@ func TestCaptureWording_SummaryCheckNamesTheDeepFindings(t *testing.T) {
 				map[string]any{"target": "f1", "outcome": "conceded", "note": "the dialogue carries the incidents"},
 			}}, "")
 			session.Refresh(t)
-			serve := session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, session.Report(t, x.instance, nil), "deepProposal")
+			serve := session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 			switch mode.name {
 			case "autonomous":
 				proctest.RequireStep(t, serve, "playback")

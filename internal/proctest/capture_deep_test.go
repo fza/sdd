@@ -1307,7 +1307,8 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 				map[string]any{"target": "f1", "outcome": outcome, "note": note},
 			}}, "")
 			session.Refresh(t)
-			serve = session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, session.Report(t, x.instance, nil), "deepProposal")
+			serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 			proctest.RequireStep(t, serve, "playback")
 			if replay := serve.Instructions; !strings.Contains(replay, "- f1 [medium, missing-ref] withdrawn: "+note+"\n") || strings.Contains(replay, "the gap rests on incidents") {
 				t.Errorf("the playback should show the withdrawn finding:\n%s", replay)

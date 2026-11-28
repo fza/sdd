@@ -109,7 +109,7 @@ func TestAPlaybackServesItsDraftWholeAndFirst(t *testing.T) {
 		cs, session, capture := largePlayback(t, stagedBody("as revised", 8), true)
 		var serve mcpserver.ServeResult
 		call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "write it"}}, &serve)
-		if serve.Step != "playback" || !strings.Contains(serve.Instructions, "draft changed since last served") {
+		if serve.Step != "playback" || !strings.Contains(serve.Instructions, "not answered: draft changed since") {
 			t.Fatalf("a confirm over the unseen change should play it back, got %q: %.300q", serve.Step, serve.Instructions)
 		}
 		requireDraftWholeAndFirst(t, serve)

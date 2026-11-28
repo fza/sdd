@@ -85,7 +85,8 @@ func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing
 	verdict := "the gap claims an observation the graph records nowhere"
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-	serve = session.Answer(t, instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, session.Answer(t, instance, "deepAnswer", "accept", nil, ""), "deepProposal")
+	serve = session.Answer(t, instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	text := serve.Instructions
 	if strings.Contains(text, "Show the user") {

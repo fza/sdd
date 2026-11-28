@@ -465,7 +465,7 @@ func confirmingStep(spec *Spec) string {
 	found := ""
 	for _, step := range spec.Steps {
 		for _, o := range step.Options {
-			if o.Call != "confirmPlayback" {
+			if o.Call != commandConfirmPlayback {
 				continue
 			}
 			if found != "" && found != step.ID {
@@ -628,6 +628,7 @@ func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []stri
 		return err
 	}
 	inst.consume(consumed)
+	inst.unpark(to)
 
 	switch to {
 	case EndCompleted:

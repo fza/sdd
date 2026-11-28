@@ -1057,22 +1057,6 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err != nil {
 		return nil, err
 	}
-	if draftChangedUnserved(inst, step) {
-		// A draft written by Update since this step last served it was never
-		// shown: answering would confirm unseen text, so the step serves the
-		// change instead and the answer is not applied.
-		sv, err := s.serve(inst)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.checkSink(); err != nil {
-			return nil, err
-		}
-		sv.Diagnostics = append(sv.Diagnostics, "not answered: draft changed since last served. Play the change back, then answer again")
-		sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
-		return sv, nil
-	}
-
 	var opt *Option
 	for i := range step.Options {
 		if step.Options[i].Choice == choice {
@@ -1087,6 +1071,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		}
 		sort.Strings(choices)
 		return nil, fmt.Errorf("choice %q is not an option at %s (options: %s)", choice, step.ID, joinNames(choices))
+	}
+	if opt.Call == commandConfirmPlayback && draftChangedUnserved(inst, step) {
+		return s.refuseUnseenConfirm(inst, step)
 	}
 	if err := inst.repeatedWords(step.ID, choice, userWords); err != nil {
 		return nil, err
@@ -1509,6 +1496,7 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		case []any:
 			inst.consume(asStrings(consumed))
 		}
+		inst.unpark(to)
 		switch {
 		case IsEndTarget(to):
 			// The paired completed/abandoned event carries the terminal

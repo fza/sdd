@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -221,4 +222,32 @@ func compactJSON(v any) string {
 // back. The mark rides the log, so a replayed session holds it too.
 func draftChangedUnserved(inst *Instance, step *Step) bool {
 	return len(step.ServeDelta) > 0 && inst.unservedDraft
+}
+
+// refuseUnseenConfirm declines a confirm over a draft changed since step last
+// played it back, which would bind to text never shown. With a Redraft
+// target the change is drafted and checked again there first; otherwise the
+// step serves the change. Any other answer stands: it carries or drops the
+// change itself.
+func (s *Session) refuseUnseenConfirm(inst *Instance, step *Step) (*Serve, error) {
+	diagnostic := "not answered: draft changed since last served. Play the change back, then answer again"
+	if step.Redraft != "" {
+		if err := s.transitionTo(inst, step.Redraft, false); err != nil {
+			return nil, err
+		}
+		if err := s.cascade(inst); err != nil {
+			return nil, err
+		}
+		diagnostic = fmt.Sprintf("not answered: draft changed since %s last played it back, so it went back to %s to be checked again. Play the change back once %s serves it, then answer again", step.ID, step.Redraft, step.ID)
+	}
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkSink(); err != nil {
+		return nil, err
+	}
+	sv.Diagnostics = append(sv.Diagnostics, diagnostic)
+	sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
+	return sv, nil
 }

@@ -197,7 +197,7 @@ steps:
       chooser: user
       serveDelta: [body]
       options:
-          - {choice: confirm, to: end(completed)}`
+          - {choice: confirm, call: confirmPlayback, to: end(completed)}`
 
 // A host replays the session before each call; the unserved mark and its
 // playback both ride the log.
@@ -356,5 +356,219 @@ steps:
 	}
 	if !sv.PlaysBack {
 		t.Error("the serve after a failed one should still play the change back")
+	}
+}
+
+const redraftMachine = `state:
+    body: {type: prose, desc: the draft}
+steps:
+    - id: draft
+      collect: [body]
+      transitions:
+          - when: hasBody
+            to: playback
+    - id: playback
+      chooser: user
+      serveDelta: [body]
+      redraft: draft
+      options:
+          - {choice: confirm, call: confirmPlayback, to: end(completed)}
+          - {choice: adjust, collect: ["body?"], to: draft}
+          - {choice: abort, to: end(abandoned)}`
+
+func redraftSession(t *testing.T, opts ...engine.SessionOption) (*engine.Session, *recordingSink, string) {
+	t.Helper()
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: redraftproc\n" +
+		redraftMachine + "\n---\n\nredraft procedure\n\n## unit: draft\n\nDraft it.\n\n## unit: playback\n\nPlay the draft back.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-rdr.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingSink{}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_redraft", "tester", sink, opts...)
+	sv, err := sess.Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Step != "playback" {
+		t.Fatalf("the draft should reach its playback, got %s", sv.Step)
+	}
+	if err := sess.Update(sv.Instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+	return sess, sink, sv.Instance
+}
+
+// A confirm over an unserved change goes to the redraft step, so the change is
+// drafted and checked again before any confirm binds to it.
+func TestDraftServe_AConfirmOverAnUnservedChangeRedrafts(t *testing.T) {
+	sess, sink, instance := redraftSession(t)
+	sv, err := sess.Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusRunning || !strings.Contains(sv.Instructions, "went back to draft") || !sv.PlaysBack {
+		t.Fatalf("a confirm over an unserved change should not apply, got %s %q", sv.Status, sv.Instructions)
+	}
+	redrafted := false
+	for _, ev := range sink.events {
+		if ev.Event == engine.EventTransition && ev.Data["from"] == "playback" && ev.Data["to"] == "draft" {
+			redrafted = true
+		}
+	}
+	if !redrafted {
+		t.Error("the change should pass through the redraft step")
+	}
+	sess.RecordPlayback(instance)
+	sv, err = sess.Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusCompleted {
+		t.Errorf("a confirm once the change was played back should apply, got %s", sv.Status)
+	}
+}
+
+// Only a confirm binds to the draft: an answer revising or dropping it stands
+// over an unserved change.
+func TestDraftServe_AnAnswerOtherThanAConfirmStandsOverAnUnservedChange(t *testing.T) {
+	tests := []struct {
+		choice     string
+		fields     map[string]any
+		wantStep   string
+		wantStatus engine.InstanceStatus
+	}{
+		{choice: "adjust", fields: map[string]any{"body": "second draft"}, wantStep: "playback", wantStatus: engine.StatusRunning},
+		{choice: "abort", wantStatus: engine.StatusAbandoned},
+	}
+	for _, tt := range tests {
+		t.Run(tt.choice, func(t *testing.T) {
+			sess, _, instance := redraftSession(t)
+			sv, err := sess.Answer(instance, "playback", tt.choice, tt.fields, "this one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(sv.Instructions, "not answered") || sv.Status != tt.wantStatus || (tt.wantStep != "" && sv.Step != tt.wantStep) {
+				t.Fatalf("the answer should apply, got %s at %s: %q", sv.Status, sv.Step, sv.Instructions)
+			}
+		})
+	}
+}
+
+func TestDraftServe_ARedraftNeedsADraftStepAndATarget(t *testing.T) {
+	tests := []struct {
+		name, from, to, want string
+	}{
+		{name: "a step without a serveDelta", from: "      serveDelta: [body]\n      redraft: draft\n", to: "      redraft: draft\n", want: "redraft applies only to a step with a serveDelta"},
+		{name: "an unknown target", from: "redraft: draft", to: "redraft: nowhere", want: `redraft target "nowhere" is not a step`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			machine := strings.Replace(redraftMachine, tt.from, tt.to, 1)
+			content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: redraftproc\n" +
+				machine + "\n---\n\nredraft procedure\n\n## unit: draft\n\nDraft it.\n\n## unit: playback\n\nPlay the draft back.\n"
+			entry, err := model.ParseEntry("20260826-140000-d-prc-rdr.md", content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := engine.ParseSpec(entry); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("the spec should be refused naming the redraft, got %v", err)
+			}
+		})
+	}
+}
+
+// A redraft returning to an assisted session's approval gate holds the draft
+// there afresh, so the gate binds to the redrafted draft.
+func TestDraftServe_ARedraftReturnsToTheApprovalGateHeldAfresh(t *testing.T) {
+	sess, sink, instance := redraftSession(t, assisted())
+	if _, err := sess.Answer(instance, "playback", "confirm", nil, "yes"); err != nil {
+		t.Fatal(err)
+	}
+	holds := 0
+	for _, ev := range sink.events {
+		if engine.ParkedForApproval(ev) {
+			holds++
+		}
+	}
+	if holds != 2 {
+		t.Errorf("the draft should be held at the gate on its arrival and again on its return, got %d holds", holds)
+	}
+}
+
+// A session replayed while the redrafted draft is still being checked holds
+// it at the approval gate afresh on its return, as the live session does.
+func TestDraftServe_AReplayedRedraftReturnsToTheApprovalGateHeldAfresh(t *testing.T) {
+	const machine = `state:
+    body: {type: prose, desc: the draft}
+    note: {type: text, optional: true, desc: a note}
+steps:
+    - id: draft
+      collect: [body, "note?"]
+      guard: checksPass
+      transitions:
+          - otherwise: playback
+    - id: playback
+      chooser: user
+      serveDelta: [body]
+      redraft: draft
+      options:
+          - {choice: confirm, call: confirmPlayback, to: end(completed)}`
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: redraftproc\n" +
+		machine + "\n---\n\nredraft procedure\n\n## unit: draft\n\nDraft it.\n\n## unit: playback\n\nPlay the draft back.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-rdr.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := true
+	registry := engine.NewRegistry()
+	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "checksPass"},
+		Fn:  func(*engine.Context) (bool, error) { return pass, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eng := engine.New(registry, engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	sink := &recordingSink{}
+	sv, err := eng.NewSession("s_redraft_replay", "tester", sink, assisted()).Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := sv.Instance
+	replay := func() *engine.Session {
+		t.Helper()
+		sess, err := eng.ReplaySession("s_redraft_replay", "tester", sink.events, func(string) (*engine.Spec, error) { return spec, nil }, sink, assisted())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	if err := replay().Update(instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+	pass = false
+	if sv, err = replay().Answer(instance, "playback", "confirm", nil, "yes"); err != nil || sv.Step != "draft" {
+		t.Fatalf("the redraft should wait at its checks, got %v at %v", err, sv)
+	}
+	pass = true
+	if sv, err = replay().Report(instance, map[string]any{"note": "checked"}); err != nil || sv.Step != "playback" {
+		t.Fatalf("the checked draft should return to the gate, got %v at %v", err, sv)
+	}
+	holds := 0
+	for _, ev := range sink.events {
+		if engine.ParkedForApproval(ev) {
+			holds++
+		}
+	}
+	if holds != 2 {
+		t.Errorf("the replayed session should hold the returning draft at the gate afresh, got %d holds", holds)
 	}
 }

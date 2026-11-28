@@ -348,3 +348,36 @@ func TestCaptureDeep_TheVerifierRulesServeAsALaneOfTheirOwn(t *testing.T) {
 		t.Fatalf("a revision should serve the same rules lane:\n%s", revised)
 	}
 }
+
+// Findings a revision's round raises without an edit are the drafter's to
+// fix: accepting them serves the proposal listing them before any playback,
+// though it carries no hunk.
+func TestCaptureDeep_ARevisionsFindingsWithoutAnEditServeTheProposal(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-revision-unedited", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, subjectFinding("observes something."))
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepWait")
+	x.pickUpRevision(t)
+	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{
+		map[string]any{"verdict": "the subject stays unnamed", "axis": "inconsistent", "severity": "medium"},
+		map[string]any{"verdict": "twice is not shown", "axis": "inconsistent", "severity": "low"},
+	}}, "")
+	proctest.RequireStep(t, x.pickUpFindings(t), "deepAnswer")
+
+	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "deepProposal")
+	if !strings.Contains(serve.Instructions, "f1 [medium, inconsistent] accepted without an edit") || !strings.Contains(serve.Instructions, "f2 [low, inconsistent] accepted without an edit") {
+		t.Fatalf("the proposal should list each finding without an edit as the drafter's to fix:\n%s", serve.Instructions)
+	}
+	if strings.Contains(serve.Instructions, "```diff") {
+		t.Errorf("a proposal without a hunk should serve no diff:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{
+		"bodyPatch": []any{deepEdit("observes a subject twice.", "observes the attachment writer dropping a file twice.")},
+	}, "")
+	entry := writeDeepEntry(t, x, serve)
+	if !strings.Contains(entry.Content, "the attachment writer dropping a file twice.") {
+		t.Fatalf("the entry should carry the drafter's fix, got %q", entry.Content)
+	}
+}

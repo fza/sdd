@@ -264,11 +264,12 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepProposalEmpty", Doc: "The proposal changes nothing and no finding waits for the user.", Reads: []string{fieldDeepHunks, fieldDeepOpen}},
+			Doc: engine.FuncDoc{Name: "deepProposalEmpty", Doc: "The proposal changes nothing, no finding waits for the user, and none was accepted without an edit for the drafter to fix.", Reads: []string{fieldDeepHunks, fieldDeepOpen, fieldDeepUnedited}},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				hunks, _ := workflowStoreString(ctx.Store, fieldDeepHunks)
 				open, _ := workflowStoreString(ctx.Store, fieldDeepOpen)
-				return hunks == "" && open == "", nil
+				unedited, _ := workflowStoreString(ctx.Store, fieldDeepUnedited)
+				return hunks == "" && open == "" && unedited == "", nil
 			},
 		},
 		{

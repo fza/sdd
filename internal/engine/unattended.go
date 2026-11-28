@@ -160,6 +160,14 @@ func (s *Session) hold(inst *Instance, step *Step) error {
 	return nil
 }
 
+// unpark drops a parking at a step other than to: an instance leaves the step
+// it was parked at without an answer when a redraft sends it on.
+func (inst *Instance) unpark(to string) {
+	if inst.parking != nil && inst.parking.Step != to {
+		inst.parking = nil
+	}
+}
+
 // heldForPersonLane tells the agent how the person answers a step an
 // assisted session holds for them.
 func (s *Session) heldForPersonLane(inst *Instance, step *Step) ServeLane {
